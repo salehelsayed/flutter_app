@@ -1369,7 +1369,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_background_save_fail.
   ///
   /// In en, this message translates to:
-  /// **'Background choice could not be saved'**
+  /// **'Couldn\'t save. Try again.'**
   String get settings_background_save_fail;
 
   /// No description provided for @settings_background_semantics.
@@ -1897,7 +1897,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_media_save_fail.
   ///
   /// In en, this message translates to:
-  /// **'Couldn\'t save media download settings'**
+  /// **'Couldn\'t save. Try again.'**
   String get settings_media_save_fail;
 
   /// No description provided for @settings_media_storage_usage.
@@ -3275,13 +3275,13 @@ abstract class AppLocalizations {
   /// No description provided for @mic_perm_dialog_title.
   ///
   /// In en, this message translates to:
-  /// **'Microphone access needed'**
+  /// **'Allow microphone access'**
   String get mic_perm_dialog_title;
 
   /// No description provided for @mic_perm_dialog_body.
   ///
   /// In en, this message translates to:
-  /// **'To record voice messages, allow microphone access in Settings.'**
+  /// **'To record voice messages, turn it on in your phone\'s settings.'**
   String get mic_perm_dialog_body;
 
   /// No description provided for @mic_perm_not_now.
@@ -3293,7 +3293,7 @@ abstract class AppLocalizations {
   /// No description provided for @group_read_only_not_active.
   ///
   /// In en, this message translates to:
-  /// **'You can read this group\'s history, but you are not an active member.'**
+  /// **'You were removed from this group. You can still read past messages.'**
   String get group_read_only_not_active;
 
   /// No description provided for @group_read_only_waiting_key.
@@ -5135,14 +5135,26 @@ abstract class AppLocalizations {
   /// No description provided for @private_media_ordinary.
   ///
   /// In en, this message translates to:
-  /// **'Ordinary'**
+  /// **'Keep in chat'**
   String get private_media_ordinary;
 
   /// No description provided for @private_media_protected.
   ///
   /// In en, this message translates to:
-  /// **'Protected'**
+  /// **'Protected view'**
   String get private_media_protected;
+
+  /// No description provided for @private_media_ordinary_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'They can save or share it.'**
+  String get private_media_ordinary_detail;
+
+  /// No description provided for @private_media_protected_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'They can view it again, but not save or share it.'**
+  String get private_media_protected_detail;
 
   /// No description provided for @private_media_view_once.
   ///
@@ -5189,14 +5201,32 @@ abstract class AppLocalizations {
   /// No description provided for @private_media_expiry_device_local.
   ///
   /// In en, this message translates to:
-  /// **'The expiry time is calculated on the receiving device.'**
+  /// **'Deleted from their device after this time.'**
   String get private_media_expiry_device_local;
 
   /// No description provided for @private_media_view_once_copy.
   ///
   /// In en, this message translates to:
-  /// **'Available for one view on this device.'**
+  /// **'Disappears after they open it once.'**
   String get private_media_view_once_copy;
+
+  /// No description provided for @private_media_protected_body_received.
+  ///
+  /// In en, this message translates to:
+  /// **'You can view it again. {name} doesn\'t allow saving or sharing.'**
+  String private_media_protected_body_received(String name);
+
+  /// No description provided for @private_media_view_once_body_received.
+  ///
+  /// In en, this message translates to:
+  /// **'You can only view this once.'**
+  String get private_media_view_once_body_received;
+
+  /// No description provided for @private_media_outgoing_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Only {name} can view it. They can\'t save or share it.'**
+  String private_media_outgoing_body(String name);
 
   /// No description provided for @private_media_open.
   ///

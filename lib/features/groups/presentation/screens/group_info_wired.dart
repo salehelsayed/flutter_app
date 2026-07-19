@@ -2782,6 +2782,10 @@ class _EditorField extends StatelessWidget {
         style: TextStyle(fontSize: 15, color: readableColors.textPrimary),
         decoration: InputDecoration(
           border: InputBorder.none,
+          // The surrounding container paints the fill; the light theme's
+          // filled InputDecorationTheme would otherwise paint a square fill
+          // rect on top of it.
+          filled: false,
           contentPadding: const EdgeInsets.all(14),
           hintStyle: TextStyle(color: readableColors.placeholderText),
         ),

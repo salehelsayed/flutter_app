@@ -55,6 +55,29 @@ void main() {
   );
 
   testWidgets(
+    'denied mic prompt uses allow-microphone copy with settings recovery',
+    (tester) async {
+      final gateway = FakeMicPermissionGateway();
+      await openPrompt(tester, gateway);
+
+      expect(find.text('Allow microphone access'), findsOneWidget);
+      expect(
+        find.text(
+          "To record voice messages, turn it on in your phone's settings.",
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Not now'), findsOneWidget);
+      expect(find.text('Open Settings'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('mic-perm-open-settings')));
+      await tester.pumpAndSettle();
+
+      expect(gateway.openAppSettingsCallCount, 1);
+    },
+  );
+
+  testWidgets(
     'tapping Open Settings invokes gateway.openAppSettings exactly once and dismisses',
     (tester) async {
       final gateway = FakeMicPermissionGateway();

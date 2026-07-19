@@ -77,6 +77,10 @@ class OrbitSearchDock extends StatelessWidget {
                               color: readableColors.placeholderText,
                             ),
                             border: InputBorder.none,
+                            // The surrounding container paints the fill; the
+                            // light theme's filled InputDecorationTheme would
+                            // otherwise paint a square fill rect on top of it.
+                            filled: false,
                             contentPadding: const EdgeInsets.symmetric(
                               vertical: 10,
                             ),

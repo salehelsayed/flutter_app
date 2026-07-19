@@ -366,12 +366,22 @@ class _ComposeAreaState extends State<ComposeArea>
           PopupMenuItem(
             key: const ValueKey('private-media-option-ordinary'),
             value: const PrivateMediaPolicy.ordinary(),
-            child: Text(l10n.private_media_ordinary),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_ordinary,
+              detail: l10n.private_media_ordinary_detail,
+            ),
           ),
           PopupMenuItem(
             key: const ValueKey('private-media-option-protected'),
             value: const PrivateMediaPolicy.protected(),
-            child: Text(l10n.private_media_protected),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_protected,
+              detail: l10n.private_media_protected_detail,
+            ),
           ),
           PopupMenuItem(
             key: const ValueKey('private-media-option-view-once'),
@@ -640,6 +650,11 @@ class _ComposeAreaState extends State<ComposeArea>
                                             : readableColors.composerHint),
                                 ),
                                 border: InputBorder.none,
+                                // The rounded AnimatedContainer above paints the
+                                // fill; the light theme's filled
+                                // InputDecorationTheme would otherwise paint a
+                                // square fill rect on top of it.
+                                filled: false,
                                 counterText: '',
                                 contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 16,

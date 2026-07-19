@@ -778,7 +778,7 @@ void main() {
         find.byKey(const ValueKey('upload-progress-banner')),
         findsOneWidget,
       );
-      expect(find.text('25 B / 100 B'), findsOneWidget);
+      expect(find.text('25%'), findsOneWidget);
 
       gate.complete();
       await pumpPickerFrames(tester);

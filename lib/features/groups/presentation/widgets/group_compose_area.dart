@@ -134,6 +134,10 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
                             color: Colors.white.withOpacity(0.3),
                           ),
                           border: InputBorder.none,
+                          // The rounded Container above paints the fill; the
+                          // light theme's filled InputDecorationTheme would
+                          // otherwise paint a square fill rect on top of it.
+                          filled: false,
                           contentPadding: const EdgeInsets.symmetric(
                             vertical: 10,
                           ),

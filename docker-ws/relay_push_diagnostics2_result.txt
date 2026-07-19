@@ -1,0 +1,65 @@
+=== generated 2026-07-17T23:23:38Z ===
+
+=== env file: backend config lines + file mtime (password masked) ===
+2026-07-12 14:59:14.416209384 +0000 /etc/mknoon/relay-server.env
+RELAY_BACKEND=redis
+REDIS_URL=redis://:***@localhost:6379
+
+=== journal retention: oldest available entries for relay-server ===
+May 15 15:00:13 ip-172-31-34-24 relay-server[270669]: 2026/05/15 15:00:13 [INBOX] Incoming stream from 12D3KooWKycLYWJsjpVv
+May 15 15:00:13 ip-172-31-34-24 relay-server[270669]: 2026/05/15 15:00:13 [INBOX] Stream closed for 12D3KooWKycLYWJsjpVv
+May 15 15:00:13 ip-172-31-34-24 relay-server[270669]: 2026/05/15 15:00:13 [INBOX] stream handled in 494.596µs
+IDX BOOT ID                          FIRST ENTRY                 LAST ENTRY
+  0 85d5e6e4598444fea560b8923511a40c Fri 2026-05-15 15:00:02 UTC Fri 2026-07-17 23:23:41 UTC
+
+=== redis service uptime + key counts via configured URL ===
+● redis-server.service - Advanced key-value store
+     Loaded: loaded (/usr/lib/systemd/system/redis-server.service; enabled; preset: enabled)
+     Active: active (running) since Wed 2026-06-10 06:42:28 UTC; 1 month 7 days ago
+     CGroup: /system.slice/redis-server.service
+Warning: Using a password with '-a' or '-u' option on the command line interface may not be safe.
+AUTH failed: WRONGPASS invalid username-password pair or user is disabled.
+NOAUTH Authentication required.
+
+0
+
+=== push token UpdatedAt spread (oldest 5 / newest 5) ===
+---newest---
+
+=== did the Jul-17 skipped chat peer ever register? ===
+Jul 04 17:44:12 ip-172-31-34-24 relay-server[472730]: 2026/07/04 17:44:12 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 04 17:44:12 ip-172-31-34-24 relay-server[472730]: 2026/07/04 17:44:12 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 04 17:44:12 ip-172-31-34-24 relay-server[472730]: 2026/07/04 17:44:12 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 04 17:44:12 ip-172-31-34-24 relay-server[472730]: 2026/07/04 17:44:12 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 09:13:29 ip-172-31-34-24 relay-server[472730]: 2026/07/05 09:13:29 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 09:13:29 ip-172-31-34-24 relay-server[472730]: 2026/07/05 09:13:29 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 15:33:37 ip-172-31-34-24 relay-server[472730]: 2026/07/05 15:33:37 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 15:33:37 ip-172-31-34-24 relay-server[472730]: 2026/07/05 15:33:37 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 16:15:31 ip-172-31-34-24 relay-server[472730]: 2026/07/05 16:15:31 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 16:15:32 ip-172-31-34-24 relay-server[472730]: 2026/07/05 16:15:32 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 05 16:15:32 ip-172-31-34-24 relay-server[472730]: 2026/07/05 16:15:32 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 06 14:22:05 ip-172-31-34-24 relay-server[472730]: 2026/07/06 14:22:05 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 06 14:22:05 ip-172-31-34-24 relay-server[472730]: 2026/07/06 14:22:05 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 07 09:07:38 ip-172-31-34-24 relay-server[472730]: 2026/07/07 09:07:38 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 07 09:07:39 ip-172-31-34-24 relay-server[472730]: 2026/07/07 09:07:39 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 07 20:34:37 ip-172-31-34-24 relay-server[472730]: 2026/07/07 20:34:37 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 07 20:34:37 ip-172-31-34-24 relay-server[472730]: 2026/07/07 20:34:37 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 08 07:53:03 ip-172-31-34-24 relay-server[472730]: 2026/07/08 07:53:03 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 08 07:53:03 ip-172-31-34-24 relay-server[472730]: 2026/07/08 07:53:03 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+Jul 08 19:37:47 ip-172-31-34-24 relay-server[472730]: 2026/07/08 19:37:47 [INBOX] Duplicate message for 12D3KooWM8QzsDJDkcvw from 12D3KooWHyiSmJVcHfQo — skipped
+
+=== registrations per day (register/token lines) ===
+     65 Jul 04
+    294 Jul 05
+    270 Jul 06
+    170 Jul 07
+    231 Jul 08
+    144 Jul 09
+     67 Jul 10
+    134 Jul 11
+    219 Jul 12
+    290 Jul 13
+     97 Jul 14
+    340 Jul 15
+    645 Jul 16
+    141 Jul 17

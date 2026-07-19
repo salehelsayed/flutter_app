@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Date separator between letter cards spanning different days.
 ///
@@ -13,6 +14,17 @@ class DateSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    // Translucent white is invisible on the light Signal canvas; dark keeps the
+    // original literals byte-identical.
+    final lineColor = isLightSurface
+        ? readableColors.emptyDivider
+        : const Color.fromRGBO(255, 255, 255, 0.12);
+    final labelColor = isLightSurface
+        ? readableColors.emptyDate
+        : const Color.fromRGBO(255, 255, 255, 0.3);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Row(
@@ -20,11 +32,11 @@ class DateSeparator extends StatelessWidget {
           Expanded(
             child: Container(
               height: 1,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
                     Colors.transparent,
-                    Color.fromRGBO(255, 255, 255, 0.12),
+                    lineColor,
                     Colors.transparent,
                   ],
                 ),
@@ -35,10 +47,10 @@ class DateSeparator extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               label.toUpperCase(),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
-                color: Color.fromRGBO(255, 255, 255, 0.3),
+                color: labelColor,
                 letterSpacing: 1,
               ),
             ),
@@ -46,11 +58,11 @@ class DateSeparator extends StatelessWidget {
           Expanded(
             child: Container(
               height: 1,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
                     Colors.transparent,
-                    Color.fromRGBO(255, 255, 255, 0.12),
+                    lineColor,
                     Colors.transparent,
                   ],
                 ),

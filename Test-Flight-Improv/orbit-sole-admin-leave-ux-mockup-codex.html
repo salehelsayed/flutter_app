@@ -1,0 +1,1875 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mknoon · Sole-admin group exit UX concept</title>
+  <style>
+    :root {
+      --bg-deep: #02030a;
+      --bg-mid: #050714;
+      --bg-near: #0a1124;
+      --surface-base: rgba(10, 10, 15, .90);
+      --surface-raised: rgba(24, 26, 32, .88);
+      --surface-subtle: rgba(16, 18, 24, .78);
+      --sheet: rgba(18, 20, 28, .98);
+      --text: #f8fafc;
+      --text-2: rgba(229, 231, 235, .87);
+      --muted: rgba(201, 206, 214, .72);
+      --faint: rgba(201, 206, 214, .45);
+      --border: rgba(255, 255, 255, .30);
+      --border-strong: rgba(255, 255, 255, .50);
+      --border-soft: rgba(255, 255, 255, .10);
+      --divider: rgba(255, 255, 255, .14);
+      --green: #1db954;
+      --green-bright: #1ed760;
+      --green-soft: rgba(29, 185, 84, .15);
+      --green-border: rgba(29, 185, 84, .55);
+      --teal: #4ecdc4;
+      --teal-soft: rgba(78, 205, 196, .11);
+      --indigo: #818cf8;
+      --pink: #f472b6;
+      --danger: #ff8a80;
+      --danger-strong: #ef4444;
+      --danger-soft: rgba(255, 107, 107, .13);
+      --warning: #ffd166;
+      --warning-soft: rgba(255, 209, 102, .12);
+      --shadow: 0 30px 90px rgba(0, 0, 0, .45);
+      --radius-s: 10px;
+      --radius-m: 18px;
+      --radius-l: 28px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 12%, rgba(129, 230, 217, .12), transparent 27rem),
+        radial-gradient(circle at 88% 16%, rgba(129, 140, 248, .16), transparent 32rem),
+        radial-gradient(circle at 78% 55%, rgba(244, 114, 182, .06), transparent 26rem),
+        linear-gradient(180deg, var(--bg-near), var(--bg-mid) 45%, var(--bg-deep));
+      font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::before,
+    body::after {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      content: "";
+    }
+
+    body::before {
+      opacity: .52;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,.88) 0 1px, transparent 1.5px),
+        radial-gradient(circle, rgba(255,255,255,.45) 0 1px, transparent 1.4px),
+        radial-gradient(circle, rgba(255,255,255,.30) 0 1px, transparent 1.4px);
+      background-position: 7px 17px, 41px 67px, 91px 31px;
+      background-size: 119px 127px, 157px 149px, 211px 197px;
+    }
+
+    body::after {
+      background: linear-gradient(90deg, rgba(2,3,10,.30), transparent 18%, transparent 82%, rgba(2,3,10,.30));
+    }
+
+    [hidden] { display: none !important; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    button:focus-visible, a:focus-visible {
+      outline: 3px solid rgba(78, 205, 196, .72);
+      outline-offset: 3px;
+    }
+
+    .icon {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid var(--divider);
+      background: rgba(5, 7, 20, .80);
+      backdrop-filter: blur(20px);
+    }
+
+    .header-inner {
+      width: min(1220px, calc(100% - 32px));
+      min-height: 68px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .brand img {
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      box-shadow: 0 0 28px rgba(29,185,84,.20);
+    }
+    .brand-copy { min-width: 0; }
+    .brand-title { font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+    .brand-sub { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+    .top-nav { display: flex; align-items: center; gap: 5px; }
+    .top-nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 10px;
+      border-radius: 999px;
+    }
+    .top-nav a:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+    .mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex: 0 0 auto;
+      padding: 3px;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: rgba(255,255,255,.05);
+    }
+    .mode-toggle button {
+      min-height: 30px;
+      padding: 0 12px;
+      color: var(--muted);
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .mode-toggle button[aria-pressed="true"] {
+      color: #06110a;
+      background: var(--green-bright);
+    }
+    .mode-toggle button:first-child[aria-pressed="true"] {
+      color: #fff;
+      background: rgba(239, 68, 68, .78);
+    }
+
+    main {
+      width: min(1220px, calc(100% - 32px));
+      margin: 0 auto;
+      padding-bottom: 90px;
+    }
+
+    .hero {
+      min-height: 560px;
+      display: grid;
+      grid-template-columns: 1.08fr .92fr;
+      align-items: center;
+      gap: 56px;
+      padding: 82px 0 70px;
+    }
+
+    .eyebrow,
+    .kicker {
+      color: var(--green-bright);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green-bright);
+      box-shadow: 0 0 0 5px rgba(30,215,96,.10), 0 0 18px rgba(30,215,96,.70);
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 18px 0 20px;
+      font-size: clamp(42px, 6vw, 76px);
+      line-height: 1.01;
+      letter-spacing: -.055em;
+    }
+
+    .hero-lede {
+      max-width: 690px;
+      margin: 0;
+      color: var(--text-2);
+      font-size: clamp(17px, 2vw, 21px);
+      line-height: 1.55;
+    }
+
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+    .primary-link, .secondary-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .primary-link { color: #06110a; background: var(--green-bright); }
+    .secondary-link { color: var(--text); border: 1px solid var(--border); background: rgba(255,255,255,.04); }
+
+    .finding-card {
+      position: relative;
+      overflow: hidden;
+      padding: 26px;
+      border: 1px solid var(--border-soft);
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(24,26,32,.88), rgba(10,10,15,.82));
+      box-shadow: var(--shadow);
+    }
+    .finding-card::before {
+      position: absolute;
+      top: -110px;
+      right: -80px;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: rgba(129,140,248,.16);
+      filter: blur(40px);
+      content: "";
+    }
+    .finding-head {
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .finding-head h2 { margin: 5px 0 0; font-size: 22px; line-height: 1.2; }
+    .device-pill {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      color: var(--green-bright);
+      background: var(--green-soft);
+      border: 1px solid var(--green-border);
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .finding-list { position: relative; display: grid; gap: 10px; margin-top: 22px; }
+    .finding-item {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 12px;
+      padding: 13px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.035);
+      border: 1px solid rgba(255,255,255,.07);
+    }
+    .finding-num {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      color: var(--danger);
+      background: var(--danger-soft);
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .finding-item strong { display: block; font-size: 13px; }
+    .finding-item span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .section {
+      padding: 84px 0 26px;
+      scroll-margin-top: 80px;
+    }
+    .section-head { max-width: 820px; margin-bottom: 38px; }
+    .section h2 {
+      margin: 10px 0 12px;
+      font-size: clamp(30px, 4.5vw, 50px);
+      line-height: 1.08;
+      letter-spacing: -.035em;
+    }
+    .section-head p { margin: 0; color: var(--text-2); font-size: 17px; }
+
+    .scenario-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 24px;
+    }
+    .scenario-tab {
+      min-height: 38px;
+      padding: 0 14px;
+      color: var(--muted);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .scenario-tab[aria-selected="true"] {
+      color: #06110a;
+      border-color: var(--green-bright);
+      background: var(--green-bright);
+    }
+
+    .demo-layout {
+      display: grid;
+      grid-template-columns: minmax(390px, .92fr) minmax(380px, 1.08fr);
+      gap: 56px;
+      align-items: center;
+    }
+
+    .phone-wrap { display: flex; justify-content: center; }
+    .phone {
+      position: relative;
+      width: min(390px, 100%);
+      aspect-ratio: 390 / 844;
+      padding: 9px;
+      border-radius: 46px;
+      background: linear-gradient(145deg, #23252c, #07080b 45%, #292b32);
+      box-shadow: 0 45px 100px rgba(0,0,0,.60), 0 0 0 1px rgba(255,255,255,.14);
+    }
+    .phone::before {
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      z-index: 60;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #020205;
+      box-shadow: 0 0 0 2px #1a1c24;
+      transform: translateX(-50%);
+      content: "";
+    }
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 38px;
+      background:
+        radial-gradient(circle at 8% 80%, rgba(129,230,217,.18), transparent 44%),
+        radial-gradient(circle at 92% 12%, rgba(129,140,248,.22), transparent 39%),
+        radial-gradient(circle at 86% 55%, rgba(244,114,182,.07), transparent 28%),
+        linear-gradient(180deg, #0a1124, #050714 45%, #02030a);
+      isolation: isolate;
+    }
+    .phone-stars {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: .58;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,.85) 0 1px, transparent 1.4px),
+        radial-gradient(circle, rgba(255,255,255,.34) 0 1px, transparent 1.3px);
+      background-position: 8px 17px, 37px 63px;
+      background-size: 83px 101px, 137px 151px;
+    }
+
+    .statusbar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 19px 0;
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .status-icons { display: flex; align-items: center; gap: 5px; }
+    .status-icons i {
+      display: block;
+      width: 13px;
+      height: 7px;
+      border: 1.5px solid currentColor;
+      border-radius: 2px;
+      opacity: .88;
+    }
+    .status-icons i:last-child {
+      width: 17px;
+      background: var(--green-bright);
+      border-color: var(--green-bright);
+    }
+
+    .orbit-header {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 16px 8px;
+      background: linear-gradient(180deg, rgba(10,10,15,.78), rgba(10,10,15,.20));
+      backdrop-filter: blur(20px);
+    }
+    .orbit-header strong { font-size: 18px; letter-spacing: -.02em; }
+    .orbit-header small { display: block; margin-top: 1px; color: var(--muted); font-size: 9px; font-weight: 500; }
+    .header-actions { display: flex; gap: 5px; }
+    .phone-icon-button {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--text-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 50%;
+      background: rgba(255,255,255,.04);
+    }
+    .phone-icon-button .icon { width: 17px; height: 17px; }
+
+    .view-switch {
+      width: calc(100% - 28px);
+      height: 36px;
+      margin: 5px 14px 9px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+    }
+    .view-switch span {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .view-switch .active { color: #06110a; background: var(--green-bright); }
+
+    .filter-row {
+      display: flex;
+      gap: 6px;
+      padding: 0 14px 11px;
+    }
+    .filter-chip {
+      min-height: 27px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 10px;
+      color: var(--muted);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: rgba(255,255,255,.035);
+      font-size: 8.5px;
+      font-weight: 700;
+    }
+    .filter-chip.active {
+      color: var(--text);
+      border-color: rgba(29,185,84,.34);
+      background: var(--green-soft);
+    }
+    .filter-count {
+      min-width: 15px;
+      height: 15px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: rgba(255,255,255,.10);
+      font-size: 7px;
+    }
+
+    .chat-list {
+      height: calc(100% - 222px);
+      overflow: hidden;
+      padding: 0 14px 88px;
+    }
+    .chat-section-label {
+      margin: 3px 1px 7px;
+      color: var(--faint);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .chat-row-shell {
+      position: relative;
+      min-height: 72px;
+      margin-bottom: 8px;
+      border-radius: 17px;
+    }
+    .row-actions {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 116px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 7px;
+      padding-right: 2px;
+    }
+    .swipe-action {
+      width: 51px;
+      min-height: 66px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 0;
+      color: #fff;
+      border: 0;
+      background: transparent;
+      font-size: 7.5px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .action-orb {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      box-shadow: 0 5px 18px rgba(0,0,0,.36);
+    }
+    .action-orb.archive { background: linear-gradient(145deg, #f59e0b, #f97316); }
+    .action-orb.leave { background: linear-gradient(145deg, #ef4444, #dc2626); }
+    .action-orb .icon { width: 18px; height: 18px; }
+
+    .chat-row {
+      position: relative;
+      z-index: 2;
+      min-height: 72px;
+      display: grid;
+      grid-template-columns: 46px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 17px;
+      background: linear-gradient(145deg, rgba(24,26,32,.94), rgba(16,18,24,.91));
+      box-shadow: 0 8px 24px rgba(0,0,0,.18);
+      transition: transform .25s ease, opacity .25s ease;
+    }
+    .chat-row-shell.swiped .chat-row { transform: translateX(-116px); }
+    .avatar {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      color: #fff;
+      background: linear-gradient(145deg, #193d42, #2a2752);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.09), 0 0 20px rgba(78,205,196,.08);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .avatar.friend { border-radius: 50%; background: conic-gradient(from 40deg, #1db954, #818cf8, #f472b6, #1db954); }
+    .row-copy { min-width: 0; }
+    .row-title-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .row-title {
+      overflow: hidden;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 750;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .group-badge,
+    .dissolved-badge {
+      flex: 0 0 auto;
+      padding: 2px 5px;
+      border-radius: 999px;
+      font-size: 6.5px;
+      font-weight: 900;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .group-badge { color: var(--teal); border: 1px solid rgba(78,205,196,.26); background: var(--teal-soft); }
+    .dissolved-badge { color: var(--warning); border: 1px solid rgba(255,209,102,.30); background: var(--warning-soft); }
+    .row-preview {
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 8.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row-meta { align-self: stretch; display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; padding: 3px 0; }
+    .row-time { color: var(--faint); font-size: 7px; }
+    .unread {
+      min-width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      color: #06110a;
+      border-radius: 999px;
+      background: var(--green-bright);
+      font-size: 7px;
+      font-weight: 900;
+    }
+    .row-chevron { color: var(--faint); }
+    .row-chevron .icon { width: 14px; height: 14px; }
+
+    .bottom-nav {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 5;
+      height: 76px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      align-items: start;
+      padding: 9px 22px 12px;
+      background: linear-gradient(180deg, rgba(5,7,20,.32), rgba(5,7,20,.98) 35%);
+      backdrop-filter: blur(18px);
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    .nav-item {
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      color: var(--faint);
+      font-size: 7px;
+      font-weight: 750;
+    }
+    .nav-item .icon { width: 19px; height: 19px; }
+    .nav-item.active { color: var(--green-bright); }
+
+    .phone-scrim {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      align-items: end;
+      padding: 14px;
+      background: rgba(0,0,0,.66);
+      backdrop-filter: blur(1px);
+    }
+    .phone-scrim.centered { align-items: center; }
+
+    .current-dialog {
+      padding: 20px;
+      border: 1px solid var(--border-soft);
+      border-radius: 24px;
+      background: var(--sheet);
+      box-shadow: 0 24px 70px rgba(0,0,0,.70);
+    }
+    .dialog-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      color: var(--danger);
+      border: 1px solid rgba(255,138,128,.28);
+      border-radius: 15px;
+      background: var(--danger-soft);
+    }
+    .dialog-icon .icon { width: 22px; height: 22px; }
+    .current-dialog h3 { margin: 14px 0 7px; font-size: 17px; line-height: 1.2; }
+    .current-dialog p { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.48; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .text-button,
+    .filled-button,
+    .danger-button,
+    .outline-button {
+      min-height: 42px;
+      padding: 0 14px;
+      border-radius: 13px;
+      font-size: 10.5px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .text-button { color: var(--text-2); border: 0; background: transparent; }
+    .filled-button { color: #06110a; border: 0; background: var(--green-bright); }
+    .danger-button { color: white; border: 0; background: #dc2626; }
+    .outline-button { color: var(--text); border: 1px solid var(--border); background: rgba(255,255,255,.04); }
+    .outline-button.danger { color: var(--danger); border-color: rgba(255,138,128,.36); background: var(--danger-soft); }
+    button:disabled { opacity: .42; cursor: not-allowed; }
+
+    .explain-sheet {
+      max-height: 720px;
+      overflow: auto;
+      padding: 8px 16px 16px;
+      border: 1px solid var(--border-soft);
+      border-radius: 28px;
+      background: var(--sheet);
+      box-shadow: 0 20px 60px rgba(0,0,0,.65);
+      backdrop-filter: blur(20px);
+      scrollbar-width: none;
+    }
+    .explain-sheet::-webkit-scrollbar { display: none; }
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      margin: 2px auto 13px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.24);
+    }
+    .sheet-title-row { display: flex; align-items: flex-start; gap: 10px; }
+    .sheet-title-copy { flex: 1; min-width: 0; }
+    .sheet-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 5px;
+      color: var(--warning);
+      font-size: 7.5px;
+      font-weight: 900;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+    }
+    .sheet-kicker .icon { width: 12px; height: 12px; }
+    .sheet-title { margin: 0; font-size: 18px; line-height: 1.2; }
+    .sheet-body { margin: 5px 0 13px; color: var(--muted); font-size: 10px; line-height: 1.48; }
+    .sheet-close {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--muted);
+      border: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,.06);
+      cursor: pointer;
+    }
+    .sheet-close .icon { width: 15px; height: 15px; }
+
+    .choice-list { display: grid; gap: 8px; }
+    .choice-card {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 38px 1fr 17px;
+      align-items: center;
+      gap: 10px;
+      padding: 11px;
+      color: var(--text);
+      text-align: left;
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 17px;
+      background: rgba(255,255,255,.045);
+      cursor: pointer;
+    }
+    .choice-card:hover { border-color: rgba(255,255,255,.20); transform: translateY(-1px); }
+    .choice-card.primary-choice { border-color: rgba(29,185,84,.28); background: rgba(29,185,84,.08); }
+    .choice-card.danger-choice { border-color: rgba(255,138,128,.24); background: rgba(255,107,107,.055); }
+    .choice-icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: var(--green-bright);
+      border: 1px solid rgba(29,185,84,.27);
+      border-radius: 13px;
+      background: rgba(29,185,84,.10);
+    }
+    .danger-choice .choice-icon { color: var(--danger); border-color: rgba(255,138,128,.26); background: var(--danger-soft); }
+    .choice-icon .icon { width: 19px; height: 19px; }
+    .choice-copy strong { display: block; font-size: 11.5px; }
+    .choice-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 8.5px; line-height: 1.38; }
+    .choice-card > .icon { width: 15px; height: 15px; color: var(--faint); }
+    .sheet-dismiss { width: 100%; min-height: 38px; margin-top: 8px; color: var(--muted); border: 0; background: transparent; font-size: 9.5px; font-weight: 800; cursor: pointer; }
+
+    .back-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin: -2px 0 8px;
+      padding: 0;
+      color: var(--teal);
+      border: 0;
+      background: transparent;
+      font-size: 9px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .back-button .icon { width: 14px; height: 14px; }
+    .member-list { display: grid; gap: 7px; }
+    .member-option {
+      width: 100%;
+      min-height: 55px;
+      display: grid;
+      grid-template-columns: 36px 1fr 20px;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 10px;
+      color: var(--text);
+      text-align: left;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 15px;
+      background: rgba(255,255,255,.04);
+      cursor: pointer;
+    }
+    .member-option[aria-checked="true"] { border-color: var(--green-border); background: var(--green-soft); }
+    .member-avatar {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      border-radius: 50%;
+      background: conic-gradient(from 45deg, #1db954, #818cf8, #f472b6, #1db954);
+      font-size: 9px;
+      font-weight: 900;
+    }
+    .member-copy strong { display: block; font-size: 10.5px; }
+    .member-copy small { display: block; margin-top: 1px; color: var(--muted); font-size: 8px; }
+    .radio-dot {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      color: transparent;
+      border: 1px solid rgba(255,255,255,.26);
+      border-radius: 50%;
+    }
+    .member-option[aria-checked="true"] .radio-dot { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+    .radio-dot .icon { width: 11px; height: 11px; stroke-width: 2.7; }
+    .sheet-full-button { width: 100%; margin-top: 10px; }
+
+    .success-block {
+      display: grid;
+      justify-items: center;
+      padding: 8px 8px 4px;
+      text-align: center;
+    }
+    .success-orb {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      color: #06110a;
+      border-radius: 20px;
+      background: var(--green-bright);
+      box-shadow: 0 0 32px rgba(30,215,96,.24);
+    }
+    .success-orb.warning { color: var(--warning); border: 1px solid rgba(255,209,102,.32); background: var(--warning-soft); box-shadow: none; }
+    .success-orb .icon { width: 28px; height: 28px; stroke-width: 2.3; }
+    .success-block h3 { margin: 13px 0 5px; font-size: 18px; }
+    .success-block p { margin: 0 0 12px; color: var(--muted); font-size: 9.5px; line-height: 1.48; }
+    .dual-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+
+    .phone-caption {
+      max-width: 390px;
+      min-height: 46px;
+      margin: 18px auto 0;
+      padding: 11px 13px;
+      color: var(--text-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 15px;
+      background: rgba(16,18,24,.62);
+      font-size: 10.5px;
+      line-height: 1.45;
+    }
+    .phone-caption strong { color: var(--green-bright); }
+    .phone-caption.current-result strong { color: var(--danger); }
+
+    .design-notes { display: grid; gap: 12px; }
+    .note-card {
+      padding: 19px;
+      border: 1px solid var(--border-soft);
+      border-radius: 22px;
+      background: rgba(16,18,24,.58);
+      backdrop-filter: blur(16px);
+    }
+    .note-index { color: var(--green-bright); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+    .note-card h3 { margin: 6px 0 7px; font-size: 18px; }
+    .note-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .copy-swap { display: grid; grid-template-columns: 1fr 24px 1fr; gap: 8px; align-items: center; margin-top: 13px; }
+    .copy-chip { padding: 9px 10px; border: 1px solid var(--border-soft); border-radius: 12px; background: rgba(0,0,0,.18); font-size: 11px; }
+    .copy-chip.before { color: var(--faint); text-decoration: line-through; }
+    .copy-chip.after { color: var(--green-bright); border-color: rgba(29,185,84,.28); background: rgba(29,185,84,.08); }
+    .swap-arrow { color: var(--muted); text-align: center; }
+
+    .flow-branch {
+      display: grid;
+      grid-template-columns: minmax(220px, .8fr) 72px minmax(0, 1.5fr);
+      align-items: center;
+      gap: 16px;
+      padding: 26px;
+      border: 1px solid var(--border-soft);
+      border-radius: 28px;
+      background: linear-gradient(145deg, rgba(24,26,32,.72), rgba(10,10,15,.70));
+    }
+    .branch-origin {
+      padding: 20px;
+      border: 1px solid rgba(255,209,102,.28);
+      border-radius: 20px;
+      background: var(--warning-soft);
+    }
+    .branch-origin .icon { color: var(--warning); }
+    .branch-origin strong { display: block; margin-top: 9px; font-size: 16px; }
+    .branch-origin span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+    .branch-lines { position: relative; height: 174px; }
+    .branch-lines::before {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 100%;
+      height: 1px;
+      background: var(--divider);
+      content: "";
+    }
+    .branch-lines::after {
+      position: absolute;
+      right: 0;
+      top: 22px;
+      bottom: 22px;
+      width: 1px;
+      background: var(--divider);
+      content: "";
+    }
+    .branch-paths { display: grid; gap: 12px; }
+    .branch-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--border-soft);
+      border-radius: 18px;
+      background: rgba(255,255,255,.035);
+    }
+    .branch-card::before {
+      position: absolute;
+      left: -16px;
+      top: 50%;
+      width: 16px;
+      height: 1px;
+      background: var(--divider);
+      content: "";
+    }
+    .branch-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: var(--green-bright);
+      border-radius: 14px;
+      background: var(--green-soft);
+    }
+    .branch-card.danger .branch-icon { color: var(--danger); background: var(--danger-soft); }
+    .branch-copy strong { display: block; font-size: 13px; }
+    .branch-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .outcome-pill { padding: 5px 8px; color: var(--teal); border: 1px solid rgba(78,205,196,.25); border-radius: 999px; background: var(--teal-soft); font-size: 8px; font-weight: 900; }
+
+    .state-table {
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 24px;
+      background: rgba(16,18,24,.58);
+    }
+    .state-row {
+      display: grid;
+      grid-template-columns: 1.05fr .78fr 1.4fr 1.25fr;
+      border-bottom: 1px solid var(--divider);
+    }
+    .state-row:last-child { border-bottom: 0; }
+    .state-row > div { min-width: 0; padding: 16px; color: var(--text-2); font-size: 12px; }
+    .state-row > div + div { border-left: 1px solid var(--divider); }
+    .state-row.head { background: rgba(255,255,255,.045); }
+    .state-row.head > div { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    .state-name { font-weight: 800; color: var(--text); }
+    .state-name small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; font-weight: 500; }
+    .action-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 8px;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      font-size: 9px;
+      font-weight: 850;
+    }
+    .action-pill .icon { width: 13px; height: 13px; }
+    .action-pill.leave { color: var(--danger); border-color: rgba(255,138,128,.26); }
+    .action-pill.delete { color: var(--danger); border-color: rgba(255,138,128,.26); }
+    .action-pill.allowed { color: var(--green-bright); border-color: rgba(29,185,84,.28); }
+
+    .mapping-card {
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 24px;
+      background: rgba(16,18,24,.58);
+    }
+    .mapping-row {
+      display: grid;
+      grid-template-columns: .82fr 1.1fr 1.35fr;
+      border-bottom: 1px solid var(--divider);
+    }
+    .mapping-row:last-child { border-bottom: 0; }
+    .mapping-row > div { min-width: 0; padding: 16px; font-size: 12px; }
+    .mapping-row > div + div { border-left: 1px solid var(--divider); }
+    .mapping-row.head { background: rgba(255,255,255,.045); }
+    .mapping-row.head > div { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    .mapping-trigger { color: var(--text); font-weight: 800; }
+    .mapping-trigger small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 500; }
+    .old-copy { color: var(--faint); }
+    .new-copy { color: var(--text-2); }
+    .new-copy strong { color: var(--green-bright); }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 26px;
+    }
+    .principle {
+      min-height: 195px;
+      padding: 19px;
+      border: 1px solid var(--border-soft);
+      border-radius: 22px;
+      background: linear-gradient(160deg, rgba(24,26,32,.72), rgba(10,10,15,.60));
+    }
+    .principle > .icon { color: var(--green-bright); }
+    .principle h3 { margin: 15px 0 7px; font-size: 16px; line-height: 1.25; }
+    .principle p { margin: 0; color: var(--muted); font-size: 11px; }
+
+    .footer {
+      margin-top: 80px;
+      padding: 22px 0 0;
+      color: var(--muted);
+      border-top: 1px solid var(--divider);
+      font-size: 11px;
+    }
+    .footer strong { color: var(--text-2); }
+
+    @media (max-width: 1080px) {
+      .top-nav { display: none; }
+      .demo-layout { gap: 30px; }
+    }
+
+    @media (max-width: 920px) {
+      .hero, .demo-layout { grid-template-columns: 1fr; }
+      .hero { min-height: auto; gap: 36px; padding-top: 64px; }
+      .finding-card { max-width: 700px; }
+      .design-notes { max-width: 700px; margin: 0 auto; }
+      .flow-branch { grid-template-columns: 1fr; }
+      .branch-lines { height: 40px; }
+      .branch-lines::before {
+        left: 50%;
+        top: 0;
+        width: 1px;
+        height: 100%;
+      }
+      .branch-lines::after { display: none; }
+      .branch-card::before { display: none; }
+      .principles { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 680px) {
+      .header-inner { min-height: 62px; }
+      .brand-sub { display: none; }
+      .mode-toggle button { padding: 0 9px; }
+      main { width: min(100% - 24px, 1220px); }
+      .hero { padding: 54px 0 34px; }
+      h1 { font-size: clamp(39px, 13vw, 58px); }
+      .section { padding-top: 64px; }
+      .section-head { margin-bottom: 28px; }
+      .scenario-tabs { gap: 5px; }
+      .scenario-tab { flex: 1 1 calc(50% - 5px); padding: 0 8px; }
+      .phone { width: min(390px, calc(100vw - 32px)); }
+      .phone-caption { width: min(390px, calc(100vw - 32px)); }
+      .state-row, .mapping-row {
+        grid-template-columns: 1fr;
+        padding: 15px;
+        gap: 7px;
+      }
+      .state-row.head, .mapping-row.head { display: none; }
+      .state-row > div, .mapping-row > div { padding: 0; border-left: 0 !important; }
+      .state-row > div::before, .mapping-row > div::before {
+        display: block;
+        margin-bottom: 2px;
+        color: var(--faint);
+        font-size: 7.5px;
+        font-weight: 900;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .state-row > div:nth-child(1)::before { content: "Group state"; }
+      .state-row > div:nth-child(2)::before { content: "Swipe action"; }
+      .state-row > div:nth-child(3)::before { content: "What happens"; }
+      .state-row > div:nth-child(4)::before { content: "User feedback"; }
+      .mapping-row > div:nth-child(1)::before { content: "Surface"; }
+      .mapping-row > div:nth-child(2)::before { content: "Today"; }
+      .mapping-row > div:nth-child(3)::before { content: "Proposed"; }
+      .principles { grid-template-columns: 1fr; }
+      .principle { min-height: 0; }
+      .copy-swap { grid-template-columns: 1fr; }
+      .swap-arrow { transform: rotate(90deg); }
+      .branch-card { grid-template-columns: 42px 1fr; }
+      .outcome-pill { grid-column: 2; justify-self: start; }
+    }
+
+    @media (max-width: 390px) {
+      .phone { border-radius: 38px; padding: 7px; }
+      .phone-screen { border-radius: 31px; }
+      .chat-list { padding-left: 10px; padding-right: 10px; }
+      .filter-row { padding-left: 10px; padding-right: 10px; }
+      .view-switch { width: calc(100% - 20px); margin-left: 10px; margin-right: 10px; }
+      .explain-sheet { padding-left: 13px; padding-right: 13px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body class="proposed-mode">
+  <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r=".8" fill="currentColor"/><circle cx="12" cy="12" r=".8" fill="currentColor"/><circle cx="19" cy="12" r=".8" fill="currentColor"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6m-3-3h6"/></symbol>
+    <symbol id="i-shield-user" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><circle cx="12" cy="9" r="2.5"/><path d="M8.5 16c.6-2 1.8-3 3.5-3s2.9 1 3.5 3"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><path d="M3 6h18v4H3zM5 10v10h14V10M10 14h4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m3 0-1 15H6L5 6m5 4v7m4-7v7"/></symbol>
+    <symbol id="i-leave" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5m5 5H3M14 3h6v18h-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.6 2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></symbol>
+    <symbol id="i-globe-off" viewBox="0 0 24 24"><path d="M3 3l18 18M8.1 3.7A9 9 0 0 1 20.3 16M4.2 7H7m7 0h5M3.7 16H16M12 3c1.4 1.8 2.3 3.8 2.7 6M9.3 15c.5 2.4 1.4 4.4 2.7 6M4.6 5.5A9 9 0 0 0 17.5 19.4"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+    <symbol id="i-rings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+  </svg>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <img src="../web/icons/Icon-512.png" alt="Mknoon app icon">
+        <div class="brand-copy">
+          <div class="brand-title">Sole-admin group exit</div>
+          <div class="brand-sub">Interactive UX concept · Orbit classic view</div>
+        </div>
+      </div>
+      <nav class="top-nav" aria-label="Page sections">
+        <a href="#problem">Problem</a>
+        <a href="#flow">Proposed flow</a>
+        <a href="#outcomes">Outcomes</a>
+        <a href="#states">State rules</a>
+        <a href="#copy">Copy map</a>
+      </nav>
+      <div class="mode-toggle" role="group" aria-label="Mockup version">
+        <button id="currentModeBtn" type="button" aria-pressed="false">Current</button>
+        <button id="proposedModeBtn" type="button" aria-pressed="true">Proposed</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="problem">
+      <div>
+        <div class="eyebrow"><span class="live-dot"></span>Orbit · Classic chats</div>
+        <h1>A blocked exit should explain the next move.</h1>
+        <p class="hero-lede">A sole admin cannot leave an active group. Say why at the moment they try, then offer the two valid paths: choose another admin or dissolve the group for everyone.</p>
+        <div class="hero-actions">
+          <a class="primary-link" href="#flow">Try the proposed flow <svg class="icon"><use href="#i-arrow-up"/></svg></a>
+          <a class="secondary-link" href="#copy">Review the exact copy</a>
+        </div>
+      </div>
+
+      <aside class="finding-card" aria-label="Current behavior findings">
+        <div class="finding-head">
+          <div>
+            <div class="kicker">Observed in source</div>
+            <h2>Why Delete looks broken</h2>
+          </div>
+          <span class="device-pill">SOLE ADMIN</span>
+        </div>
+        <div class="finding-list">
+          <div class="finding-item">
+            <div class="finding-num">01</div>
+            <div><strong>Delete actually means leave</strong><span>For an active group, the action leaves first and only then removes the local history.</span></div>
+          </div>
+          <div class="finding-item">
+            <div class="finding-num">02</div>
+            <div><strong>The safety rule is valid</strong><span>The only admin is blocked so an active group is not abandoned without an admin.</span></div>
+          </div>
+          <div class="finding-item">
+            <div class="finding-num">03</div>
+            <div><strong>The explanation is missing</strong><span>The classic list catches the error without showing it, so the group simply stays in place.</span></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section" id="flow">
+      <div class="section-head">
+        <div class="kicker">01 · Proposed flow</div>
+        <h2>Explain the rule where the action stops.</h2>
+        <p>Rename the active-group action to <strong>Leave</strong>. If the person is the only admin, replace the generic destructive confirmation with a persistent choice sheet that can take them directly to recovery.</p>
+      </div>
+
+      <div class="scenario-tabs" role="tablist" aria-label="Proposed flow stages">
+        <button class="scenario-tab" type="button" role="tab" data-stage="choice" aria-selected="true">Only-admin choice</button>
+        <button class="scenario-tab" type="button" role="tab" data-stage="admins" aria-selected="false">Choose an admin</button>
+        <button class="scenario-tab" type="button" role="tab" data-stage="dissolve" aria-selected="false">Confirm dissolve</button>
+        <button class="scenario-tab" type="button" role="tab" data-stage="dissolved" aria-selected="false">Dissolved state</button>
+      </div>
+
+      <div class="demo-layout">
+        <div>
+          <div class="phone-wrap">
+            <div class="phone" aria-label="Interactive sole-admin group exit mockup">
+              <div class="phone-screen">
+                <div class="phone-stars"></div>
+                <div class="statusbar">
+                  <span>11:24</span>
+                  <span class="status-icons" aria-hidden="true"><i></i><i></i><i></i></span>
+                </div>
+
+                <div class="orbit-header">
+                  <div><strong>Chats</strong><small>Private by design</small></div>
+                  <div class="header-actions">
+                    <button class="phone-icon-button" type="button" aria-label="Search"><svg class="icon"><use href="#i-search"/></svg></button>
+                    <button class="phone-icon-button" type="button" aria-label="More options"><svg class="icon"><use href="#i-more"/></svg></button>
+                  </div>
+                </div>
+
+                <div class="view-switch" aria-label="Orbit view">
+                  <span>Inner circle</span>
+                  <span class="active">All chats</span>
+                </div>
+
+                <div class="filter-row">
+                  <span class="filter-chip active">Active <span class="filter-count">7</span></span>
+                  <span class="filter-chip">Archived <span class="filter-count">2</span></span>
+                  <span class="filter-chip">Invites <span class="filter-count">1</span></span>
+                </div>
+
+                <div class="chat-list">
+                  <div class="chat-section-label">Recent</div>
+
+                  <div class="chat-row-shell">
+                    <div class="chat-row">
+                      <div class="avatar friend">M</div>
+                      <div class="row-copy">
+                        <div class="row-title">Maya</div>
+                        <div class="row-preview">See you at 8</div>
+                      </div>
+                      <div class="row-meta"><span class="row-time">11:18</span><span class="unread">2</span></div>
+                    </div>
+                  </div>
+
+                  <div class="chat-row-shell swiped" id="groupRowShell">
+                    <div class="row-actions">
+                      <button class="swipe-action" type="button" aria-label="Archive Weekend Trip">
+                        <span class="action-orb archive"><svg class="icon"><use href="#i-archive"/></svg></span>
+                        <span>Archive</span>
+                      </button>
+                      <button class="swipe-action" id="groupExitAction" type="button" aria-label="Leave Weekend Trip">
+                        <span class="action-orb leave"><svg class="icon" id="groupExitIcon"><use href="#i-leave"/></svg></span>
+                        <span id="groupExitLabel">Leave</span>
+                      </button>
+                    </div>
+                    <div class="chat-row" id="groupRow">
+                      <div class="avatar">WT</div>
+                      <div class="row-copy">
+                        <div class="row-title-line">
+                          <span class="row-title">Weekend Trip</span>
+                          <span class="group-badge" id="groupTypeBadge">Group</span>
+                          <span class="dissolved-badge" id="dissolvedBadge" hidden>Dissolved</span>
+                        </div>
+                        <div class="row-preview" id="groupPreview">Omar: I booked the cabin</div>
+                      </div>
+                      <div class="row-meta"><span class="row-time">10:42</span><span class="row-chevron"><svg class="icon"><use href="#i-chevron"/></svg></span></div>
+                    </div>
+                  </div>
+
+                  <div class="chat-row-shell">
+                    <div class="chat-row">
+                      <div class="avatar friend">O</div>
+                      <div class="row-copy">
+                        <div class="row-title">Omar</div>
+                        <div class="row-preview">Photo</div>
+                      </div>
+                      <div class="row-meta"><span class="row-time">09:57</span><span class="row-chevron"><svg class="icon"><use href="#i-chevron"/></svg></span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bottom-nav" aria-hidden="true">
+                  <div class="nav-item"><svg class="icon"><use href="#i-rings"/></svg><span>Orbit</span></div>
+                  <div class="nav-item active"><svg class="icon"><use href="#i-message"/></svg><span>Chats</span></div>
+                  <div class="nav-item"><svg class="icon"><use href="#i-settings"/></svg><span>Settings</span></div>
+                </div>
+
+                <div class="phone-scrim centered" id="currentScrim" hidden>
+                  <div class="current-dialog" role="dialog" aria-modal="true" aria-labelledby="currentDialogTitle">
+                    <div class="dialog-icon"><svg class="icon"><use href="#i-trash"/></svg></div>
+                    <h3 id="currentDialogTitle">Leave &amp; delete group?</h3>
+                    <p>This will permanently leave the group and delete all messages. This cannot be undone.</p>
+                    <div class="dialog-actions">
+                      <button class="text-button" id="currentCancel" type="button">Cancel</button>
+                      <button class="danger-button" id="currentConfirm" type="button">Delete</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="phone-scrim" id="proposedScrim">
+                  <section class="explain-sheet" id="explainSheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1">
+                    <div class="sheet-handle"></div>
+
+                    <div data-panel="choice">
+                      <div class="sheet-title-row">
+                        <div class="sheet-title-copy">
+                          <div class="sheet-kicker"><svg class="icon"><use href="#i-shield-user"/></svg>Group safeguard</div>
+                          <h3 class="sheet-title" id="sheetTitle">You’re the only admin</h3>
+                          <p class="sheet-body">A group needs at least one admin before you can leave. Choose what should happen to Weekend Trip.</p>
+                        </div>
+                        <button class="sheet-close" type="button" data-close-sheet aria-label="Keep group and close"><svg class="icon"><use href="#i-close"/></svg></button>
+                      </div>
+                      <div class="choice-list">
+                        <button class="choice-card primary-choice" id="chooseAdminPath" type="button">
+                          <span class="choice-icon"><svg class="icon"><use href="#i-user-plus"/></svg></span>
+                          <span class="choice-copy"><strong>Choose another admin</strong><small>Then you can leave and remove this group from your phone.</small></span>
+                          <svg class="icon"><use href="#i-chevron"/></svg>
+                        </button>
+                        <button class="choice-card danger-choice" id="dissolvePath" type="button">
+                          <span class="choice-icon"><svg class="icon"><use href="#i-globe-off"/></svg></span>
+                          <span class="choice-copy"><strong>Dissolve for everyone</strong><small>Ends the group for all members. Previous messages stay visible.</small></span>
+                          <svg class="icon"><use href="#i-chevron"/></svg>
+                        </button>
+                      </div>
+                      <button class="sheet-dismiss" type="button" data-close-sheet>Keep group</button>
+                    </div>
+
+                    <div data-panel="admins" hidden>
+                      <button class="back-button" type="button" data-back-choice><svg class="icon"><use href="#i-back"/></svg>Back</button>
+                      <div class="sheet-title-row">
+                        <div class="sheet-title-copy">
+                          <div class="sheet-kicker"><svg class="icon"><use href="#i-user-plus"/></svg>Keep the group going</div>
+                          <h3 class="sheet-title">Choose another admin</h3>
+                          <p class="sheet-body">They’ll help manage the group after you leave.</p>
+                        </div>
+                        <button class="sheet-close" type="button" data-close-sheet aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button>
+                      </div>
+                      <div class="member-list" role="radiogroup" aria-label="Eligible group members">
+                        <button class="member-option" type="button" role="radio" data-member="Maya" aria-checked="false">
+                          <span class="member-avatar">M</span>
+                          <span class="member-copy"><strong>Maya</strong><small>Member · joined yesterday</small></span>
+                          <span class="radio-dot"><svg class="icon"><use href="#i-check"/></svg></span>
+                        </button>
+                        <button class="member-option" type="button" role="radio" data-member="Omar" aria-checked="false">
+                          <span class="member-avatar">O</span>
+                          <span class="member-copy"><strong>Omar</strong><small>Member · joined 3 days ago</small></span>
+                          <span class="radio-dot"><svg class="icon"><use href="#i-check"/></svg></span>
+                        </button>
+                      </div>
+                      <button class="filled-button sheet-full-button" id="makeAdminButton" type="button" disabled>Choose a member</button>
+                    </div>
+
+                    <div data-panel="admin-success" hidden>
+                      <div class="success-block">
+                        <div class="success-orb"><svg class="icon"><use href="#i-check"/></svg></div>
+                        <h3><span id="newAdminName">Maya</span> is now an admin</h3>
+                        <p>Weekend Trip can continue after you leave.</p>
+                        <button class="danger-button sheet-full-button" id="resumeLeaveButton" type="button">Continue to leave</button>
+                        <button class="sheet-dismiss" type="button" data-close-sheet>Stay in group</button>
+                      </div>
+                    </div>
+
+                    <div data-panel="leave-confirm" hidden>
+                      <button class="back-button" type="button" data-stage-back="admin-success"><svg class="icon"><use href="#i-back"/></svg>Back</button>
+                      <div class="sheet-title-row">
+                        <div class="sheet-title-copy">
+                          <div class="sheet-kicker"><svg class="icon"><use href="#i-leave"/></svg>Only your membership</div>
+                          <h3 class="sheet-title">Leave and delete “Weekend Trip”?</h3>
+                          <p class="sheet-body">You’ll leave the group and delete its messages from this phone. The group will continue for everyone else.</p>
+                        </div>
+                      </div>
+                      <div class="dual-actions">
+                        <button class="outline-button" type="button" data-close-sheet>Stay in group</button>
+                        <button class="danger-button" id="finalLeaveButton" type="button">Leave &amp; delete</button>
+                      </div>
+                    </div>
+
+                    <div data-panel="dissolve" hidden>
+                      <button class="back-button" type="button" data-back-choice><svg class="icon"><use href="#i-back"/></svg>Back</button>
+                      <div class="sheet-title-row">
+                        <div class="sheet-title-copy">
+                          <div class="sheet-kicker"><svg class="icon"><use href="#i-alert"/></svg>Everyone is affected</div>
+                          <h3 class="sheet-title">Dissolve “Weekend Trip” for everyone?</h3>
+                          <p class="sheet-body">No one will be able to send new messages. Previous messages will stay visible.</p>
+                        </div>
+                        <button class="sheet-close" type="button" data-close-sheet aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button>
+                      </div>
+                      <div class="dual-actions">
+                        <button class="outline-button" type="button" data-back-choice>Cancel</button>
+                        <button class="danger-button" id="confirmDissolveButton" type="button">Dissolve group</button>
+                      </div>
+                    </div>
+
+                    <div data-panel="dissolved" hidden>
+                      <div class="success-block">
+                        <div class="success-orb warning"><svg class="icon"><use href="#i-globe-off"/></svg></div>
+                        <h3>Group dissolved</h3>
+                        <p>No one can send new messages. The history is still on this phone.</p>
+                        <button class="outline-button danger sheet-full-button" id="deleteLocalPath" type="button">Delete from this phone</button>
+                        <button class="sheet-dismiss" type="button" data-close-sheet>Keep history</button>
+                      </div>
+                    </div>
+
+                    <div data-panel="delete-local" hidden>
+                      <button class="back-button" type="button" data-stage-back="dissolved"><svg class="icon"><use href="#i-back"/></svg>Back</button>
+                      <div class="sheet-title-row">
+                        <div class="sheet-title-copy">
+                          <div class="sheet-kicker"><svg class="icon"><use href="#i-trash"/></svg>This phone only</div>
+                          <h3 class="sheet-title">Delete from this phone?</h3>
+                          <p class="sheet-body">This removes Weekend Trip and its history from this phone only. It won’t affect anyone else. This can’t be undone.</p>
+                        </div>
+                      </div>
+                      <div class="dual-actions">
+                        <button class="outline-button" type="button" data-stage-back="dissolved">Keep history</button>
+                        <button class="danger-button" id="confirmLocalDeleteButton" type="button">Delete</button>
+                      </div>
+                    </div>
+
+                    <div data-panel="removed" hidden>
+                      <div class="success-block">
+                        <div class="success-orb"><svg class="icon"><use href="#i-check"/></svg></div>
+                        <h3 id="removedTitle">Group removed</h3>
+                        <p id="removedBody">Weekend Trip was removed from this phone.</p>
+                        <button class="filled-button sheet-full-button" id="resetDemoButton" type="button">Reset demo</button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="phone-caption" id="phoneCaption"><strong>Proposed:</strong> the rule stays visible until the user picks a valid next step. Try either path above.</div>
+        </div>
+
+        <div class="design-notes">
+          <article class="note-card">
+            <div class="note-index">NAME THE REAL ACTION</div>
+            <h3>Active group: Leave, not Delete</h3>
+            <p>The first consequence is leaving the group. Reserve “Delete” for a dissolved group that is being removed from this device only.</p>
+            <div class="copy-swap">
+              <div class="copy-chip before">Delete</div>
+              <div class="swap-arrow">→</div>
+              <div class="copy-chip after">Leave</div>
+            </div>
+          </article>
+          <article class="note-card">
+            <div class="note-index">MAKE THE RULE USEFUL</div>
+            <h3>“Only admin” is a reason, not a dead end</h3>
+            <p>Explain that an active group needs an admin, then offer the two real recovery paths in the same sheet.</p>
+          </article>
+          <article class="note-card">
+            <div class="note-index">SEPARATE THE SCOPES</div>
+            <h3>My phone and everyone are different actions</h3>
+            <p>Leaving removes this person. Dissolving ends the group for everyone. Local delete is offered only after the group is dissolved.</p>
+          </article>
+          <article class="note-card">
+            <div class="note-index">KEEP IT HONEST</div>
+            <h3>Offer only joined, eligible members</h3>
+            <p>If nobody can be made an admin yet, replace the picker with: “Wait for someone to join, or dissolve the group.”</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="outcomes">
+      <div class="section-head">
+        <div class="kicker">02 · Two outcomes</div>
+        <h2>Two paths, two clear consequences.</h2>
+        <p>The sheet starts from the user’s intention—remove the group from this phone—then makes the group-wide consequence explicit before any destructive action.</p>
+      </div>
+
+      <div class="flow-branch" aria-label="Sole-admin exit decision flow">
+        <div class="branch-origin">
+          <svg class="icon"><use href="#i-shield-user"/></svg>
+          <strong>You’re the only admin</strong>
+          <span>The active group cannot be left without an admin.</span>
+        </div>
+        <div class="branch-lines" aria-hidden="true"></div>
+        <div class="branch-paths">
+          <div class="branch-card">
+            <div class="branch-icon"><svg class="icon"><use href="#i-user-plus"/></svg></div>
+            <div class="branch-copy"><strong>Choose another admin → Leave</strong><span>You leave and the history is removed from this phone. The group continues for everyone else.</span></div>
+            <span class="outcome-pill">GROUP CONTINUES</span>
+          </div>
+          <div class="branch-card danger">
+            <div class="branch-icon"><svg class="icon"><use href="#i-globe-off"/></svg></div>
+            <div class="branch-copy"><strong>Dissolve for everyone → Optional local delete</strong><span>Messaging ends for every member. Read-only history remains until each person removes it locally.</span></div>
+            <span class="outcome-pill">GROUP ENDS</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="states">
+      <div class="section-head">
+        <div class="kicker">03 · State rules</div>
+        <h2>One row action cannot mean four things.</h2>
+        <p>The label and feedback should follow the actual group state. The only-admin case needs an explanation; ordinary members and admins with a peer admin can use the normal leave confirmation.</p>
+      </div>
+
+      <div class="state-table" role="table" aria-label="Group exit behavior by state">
+        <div class="state-row head" role="row">
+          <div>Group state</div><div>Swipe action</div><div>What happens</div><div>User feedback</div>
+        </div>
+        <div class="state-row" role="row">
+          <div class="state-name">Active · ordinary member<small>Another admin manages the group</small></div>
+          <div><span class="action-pill leave"><svg class="icon"><use href="#i-leave"/></svg>Leave</span></div>
+          <div>Leave, then remove this phone’s group history.</div>
+          <div>Normal “Leave &amp; delete” confirmation.</div>
+        </div>
+        <div class="state-row" role="row">
+          <div class="state-name">Active · only admin<small>The blocked case in this mockup</small></div>
+          <div><span class="action-pill leave"><svg class="icon"><use href="#i-leave"/></svg>Leave</span></div>
+          <div>Do not leave yet. Choose another admin or dissolve.</div>
+          <div>Persistent rationale sheet with both valid paths.</div>
+        </div>
+        <div class="state-row" role="row">
+          <div class="state-name">Active · multiple admins<small>Someone else can manage it</small></div>
+          <div><span class="action-pill allowed"><svg class="icon"><use href="#i-leave"/></svg>Leave</span></div>
+          <div>Leave, then remove this phone’s group history.</div>
+          <div>Normal “Leave &amp; delete” confirmation.</div>
+        </div>
+        <div class="state-row" role="row">
+          <div class="state-name">Dissolved<small>Read-only history remains</small></div>
+          <div><span class="action-pill delete"><svg class="icon"><use href="#i-trash"/></svg>Delete</span></div>
+          <div>Remove the dissolved group and history from this phone only.</div>
+          <div>“Delete from this phone?” confirmation.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="copy">
+      <div class="section-head">
+        <div class="kicker">04 · Copy map</div>
+        <h2>Outcome first. Scope second.</h2>
+        <p>Short copy can still make the rule, the next step, and who is affected completely clear.</p>
+      </div>
+
+      <div class="mapping-card" role="table" aria-label="Current and proposed group exit copy">
+        <div class="mapping-row head" role="row"><div>Surface</div><div>Current</div><div>Proposed</div></div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Active group swipe<small>Classic all-chats list</small></div>
+          <div class="old-copy">“Delete” with a trash icon.</div>
+          <div class="new-copy"><strong>“Leave”</strong> with an exit icon. It names the first irreversible consequence.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Only-admin block<small>After tapping Leave</small></div>
+          <div class="old-copy">No visible message. The group row remains.</div>
+          <div class="new-copy"><strong>“You’re the only admin”</strong><br>A group needs at least one admin before you can leave.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Continue the group<small>Recovery path</small></div>
+          <div class="old-copy">No direct route from the failed action.</div>
+          <div class="new-copy"><strong>“Choose another admin”</strong><br>Then you can leave and remove this group from your phone.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">End the group<small>Group-wide action</small></div>
+          <div class="old-copy">Available elsewhere in Group Info.</div>
+          <div class="new-copy"><strong>“Dissolve for everyone”</strong><br>Ends the group for all members. Previous messages stay visible.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">After dissolve<small>Local cleanup</small></div>
+          <div class="old-copy">“Delete dissolved group?”</div>
+          <div class="new-copy"><strong>“Delete from this phone?”</strong><br>This removes the group and its history from this phone only.</div>
+        </div>
+      </div>
+
+      <div class="principles">
+        <article class="principle">
+          <svg class="icon"><use href="#i-leave"/></svg>
+          <h3>Name the real action</h3>
+          <p>Active-group removal begins with leaving. The swipe label should say that before the user taps.</p>
+        </article>
+        <article class="principle">
+          <svg class="icon"><use href="#i-shield-user"/></svg>
+          <h3>Explain the safeguard</h3>
+          <p>“Only admin” makes the restriction predictable. “Something failed” does not.</p>
+        </article>
+        <article class="principle">
+          <svg class="icon"><use href="#i-user-plus"/></svg>
+          <h3>Put recovery in place</h3>
+          <p>The explanation stays visible and links directly to choosing another admin or dissolving.</p>
+        </article>
+        <article class="principle">
+          <svg class="icon"><use href="#i-globe-off"/></svg>
+          <h3>Separate the scopes</h3>
+          <p>Say plainly whether an action affects this person, this phone, or everyone in the group.</p>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <strong>Basis:</strong> Graphify-guided source review of the Orbit classic-list swipe action, sole-admin leave safeguard, group-role management, dissolve flow, and dissolved local cleanup. This standalone file is an interactive UX proposal; it does not change production behavior.
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      const body = document.body;
+      const currentModeBtn = document.getElementById('currentModeBtn');
+      const proposedModeBtn = document.getElementById('proposedModeBtn');
+      const groupExitAction = document.getElementById('groupExitAction');
+      const groupExitLabel = document.getElementById('groupExitLabel');
+      const groupExitIconUse = document.querySelector('#groupExitIcon use');
+      const currentScrim = document.getElementById('currentScrim');
+      const proposedScrim = document.getElementById('proposedScrim');
+      const explainSheet = document.getElementById('explainSheet');
+      const phoneCaption = document.getElementById('phoneCaption');
+      const groupRowShell = document.getElementById('groupRowShell');
+      const groupRow = document.getElementById('groupRow');
+      const groupTypeBadge = document.getElementById('groupTypeBadge');
+      const dissolvedBadge = document.getElementById('dissolvedBadge');
+      const groupPreview = document.getElementById('groupPreview');
+      const stageTabs = [...document.querySelectorAll('.scenario-tab')];
+      const panels = [...document.querySelectorAll('[data-panel]')];
+      const memberOptions = [...document.querySelectorAll('.member-option')];
+      const makeAdminButton = document.getElementById('makeAdminButton');
+      const newAdminName = document.getElementById('newAdminName');
+      const removedTitle = document.getElementById('removedTitle');
+      const removedBody = document.getElementById('removedBody');
+
+      let mode = 'proposed';
+      let activePanel = 'choice';
+      let selectedMember = '';
+      let dissolved = false;
+      let removed = false;
+      let lastTrigger = groupExitAction;
+
+      const setCaption = (kind, html) => {
+        phoneCaption.classList.toggle('current-result', kind === 'current');
+        phoneCaption.innerHTML = html;
+      };
+
+      const setRowState = () => {
+        groupRow.hidden = removed;
+        groupRowShell.style.minHeight = removed ? '0' : '';
+        groupRowShell.style.marginBottom = removed ? '0' : '';
+        groupRowShell.classList.toggle('swiped', !removed);
+        dissolvedBadge.hidden = !dissolved;
+        groupTypeBadge.hidden = dissolved;
+        groupPreview.textContent = dissolved ? 'Group dissolved · history is read-only' : 'Omar: I booked the cabin';
+        if (dissolved) {
+          groupExitLabel.textContent = 'Delete';
+          groupExitIconUse.setAttribute('href', '#i-trash');
+          groupExitAction.setAttribute('aria-label', 'Delete Weekend Trip from this phone');
+        } else if (mode === 'current') {
+          groupExitLabel.textContent = 'Delete';
+          groupExitIconUse.setAttribute('href', '#i-trash');
+          groupExitAction.setAttribute('aria-label', 'Delete Weekend Trip');
+        } else {
+          groupExitLabel.textContent = 'Leave';
+          groupExitIconUse.setAttribute('href', '#i-leave');
+          groupExitAction.setAttribute('aria-label', 'Leave Weekend Trip');
+        }
+      };
+
+      const focusFirstInPanel = () => {
+        requestAnimationFrame(() => explainSheet.focus({ preventScroll: true }));
+      };
+
+      const setActiveTab = stage => {
+        stageTabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.stage === stage)));
+      };
+
+      const openPanel = (name, options = {}) => {
+        mode = 'proposed';
+        body.classList.remove('current-mode');
+        body.classList.add('proposed-mode');
+        currentModeBtn.setAttribute('aria-pressed', 'false');
+        proposedModeBtn.setAttribute('aria-pressed', 'true');
+        currentScrim.hidden = true;
+        proposedScrim.hidden = false;
+        activePanel = name;
+        panels.forEach(panel => { panel.hidden = panel.dataset.panel !== name; });
+
+        if (name === 'dissolved' || name === 'delete-local') dissolved = true;
+        if (name === 'removed') removed = true;
+        if (!options.keepRemoved && name !== 'removed') removed = false;
+        setRowState();
+
+        const tabStage = name === 'admins' || name === 'admin-success' || name === 'leave-confirm'
+          ? 'admins'
+          : name === 'dissolve'
+            ? 'dissolve'
+            : name === 'dissolved' || name === 'delete-local'
+              ? 'dissolved'
+              : 'choice';
+        setActiveTab(tabStage);
+        setCaption('proposed', '<strong>Proposed:</strong> the rule stays visible until the user picks a valid next step. Try either path above.');
+        focusFirstInPanel();
+      };
+
+      const closeSheets = () => {
+        proposedScrim.hidden = true;
+        currentScrim.hidden = true;
+        if (lastTrigger) requestAnimationFrame(() => lastTrigger.focus());
+      };
+
+      const resetDemo = (openChoice = true) => {
+        selectedMember = '';
+        dissolved = false;
+        removed = false;
+        memberOptions.forEach(option => option.setAttribute('aria-checked', 'false'));
+        makeAdminButton.disabled = true;
+        makeAdminButton.textContent = 'Choose a member';
+        setRowState();
+        if (openChoice) openPanel('choice');
+        else closeSheets();
+      };
+
+      const setMode = nextMode => {
+        mode = nextMode;
+        resetDemo(false);
+        currentModeBtn.setAttribute('aria-pressed', String(mode === 'current'));
+        proposedModeBtn.setAttribute('aria-pressed', String(mode === 'proposed'));
+        body.classList.toggle('current-mode', mode === 'current');
+        body.classList.toggle('proposed-mode', mode === 'proposed');
+        setRowState();
+        if (mode === 'current') {
+          currentScrim.hidden = false;
+          proposedScrim.hidden = true;
+          setCaption('current', '<strong>Current:</strong> after Delete is confirmed, the group stays and the phone shows no explanation.');
+          requestAnimationFrame(() => document.getElementById('currentCancel').focus());
+        } else {
+          openPanel('choice');
+        }
+      };
+
+      currentModeBtn.addEventListener('click', () => setMode('current'));
+      proposedModeBtn.addEventListener('click', () => setMode('proposed'));
+
+      groupExitAction.addEventListener('click', () => {
+        lastTrigger = groupExitAction;
+        if (dissolved) {
+          openPanel('delete-local');
+          return;
+        }
+        if (mode === 'current') {
+          currentScrim.hidden = false;
+          proposedScrim.hidden = true;
+          requestAnimationFrame(() => document.getElementById('currentCancel').focus());
+        } else {
+          openPanel('choice');
+        }
+      });
+
+      document.getElementById('currentCancel').addEventListener('click', closeSheets);
+      document.getElementById('currentConfirm').addEventListener('click', () => {
+        currentScrim.hidden = true;
+        setCaption('current', '<strong>No visible result:</strong> the sole-admin safeguard blocks the leave, but the current classic list only logs the error. Weekend Trip remains.');
+        requestAnimationFrame(() => groupExitAction.focus());
+      });
+
+      document.getElementById('chooseAdminPath').addEventListener('click', () => openPanel('admins'));
+      document.getElementById('dissolvePath').addEventListener('click', () => openPanel('dissolve'));
+      [...document.querySelectorAll('[data-back-choice]')].forEach(button => button.addEventListener('click', () => openPanel('choice')));
+      [...document.querySelectorAll('[data-stage-back]')].forEach(button => button.addEventListener('click', () => openPanel(button.dataset.stageBack)));
+      [...document.querySelectorAll('[data-close-sheet]')].forEach(button => button.addEventListener('click', closeSheets));
+
+      memberOptions.forEach(option => option.addEventListener('click', () => {
+        selectedMember = option.dataset.member;
+        memberOptions.forEach(item => item.setAttribute('aria-checked', String(item === option)));
+        makeAdminButton.disabled = false;
+        makeAdminButton.textContent = 'Make ' + selectedMember + ' admin';
+      }));
+
+      makeAdminButton.addEventListener('click', () => {
+        if (!selectedMember) return;
+        newAdminName.textContent = selectedMember;
+        openPanel('admin-success');
+      });
+
+      document.getElementById('resumeLeaveButton').addEventListener('click', () => openPanel('leave-confirm'));
+      document.getElementById('finalLeaveButton').addEventListener('click', () => {
+        removedTitle.textContent = 'You left Weekend Trip';
+        removedBody.textContent = 'The group and its messages were removed from this phone. The group continues for everyone else.';
+        openPanel('removed');
+      });
+
+      document.getElementById('confirmDissolveButton').addEventListener('click', () => {
+        dissolved = true;
+        openPanel('dissolved');
+      });
+      document.getElementById('deleteLocalPath').addEventListener('click', () => openPanel('delete-local'));
+      document.getElementById('confirmLocalDeleteButton').addEventListener('click', () => {
+        removedTitle.textContent = 'Group removed from this phone';
+        removedBody.textContent = 'Weekend Trip and its read-only history were deleted locally. No one else was affected.';
+        openPanel('removed');
+      });
+      document.getElementById('resetDemoButton').addEventListener('click', () => resetDemo(true));
+
+      stageTabs.forEach(tab => tab.addEventListener('click', () => {
+        const stage = tab.dataset.stage;
+        if (stage === 'choice') {
+          dissolved = false;
+          openPanel('choice');
+        } else if (stage === 'admins') {
+          dissolved = false;
+          openPanel('admins');
+        } else if (stage === 'dissolve') {
+          dissolved = false;
+          openPanel('dissolve');
+        } else {
+          dissolved = true;
+          openPanel('dissolved');
+        }
+      }));
+
+      proposedScrim.addEventListener('click', event => {
+        if (event.target === proposedScrim) closeSheets();
+      });
+      currentScrim.addEventListener('click', event => {
+        if (event.target === currentScrim) closeSheets();
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && (!proposedScrim.hidden || !currentScrim.hidden)) closeSheets();
+      });
+
+      const query = new URLSearchParams(window.location.search);
+      const requestedMode = query.get('mode');
+      const requestedStage = query.get('stage');
+      const supportedStages = new Set(['choice', 'admins', 'admin-success', 'leave-confirm', 'dissolve', 'dissolved', 'delete-local', 'removed']);
+      if (requestedMode === 'current') {
+        setMode('current');
+      } else if (requestedStage && supportedStages.has(requestedStage)) {
+        openPanel(requestedStage);
+      } else {
+        openPanel('choice');
+      }
+    })();
+  </script>
+</body>
+</html>

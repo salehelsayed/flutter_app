@@ -830,7 +830,7 @@ void main() {
   });
 
   testWidgets(
-    'failed background save stays honest and emits failure telemetry',
+    'save failure shows inline couldnt-save copy and no snackbar',
     (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final store = _FailingWriteSecureKeyStore();
@@ -857,7 +857,8 @@ void main() {
         appShellController.backgroundPreference,
         BackgroundPreference.defaultBackground,
       );
-      expect(find.text('Background choice could not be saved'), findsWidgets);
+      expect(find.text("Couldn't save. Try again."), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
       expect(
         events,
         contains(
@@ -877,6 +878,40 @@ void main() {
               ),
         ),
       );
+
+      // The media-download matrix uses the same inline-only failure contract.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: _FailingWriteSecureKeyStore(),
+      );
+      await openSheet(tester, 'settings-row-media-storage');
+
+      final mediaChoice = find.byKey(
+        const ValueKey('media-download-oneToOne-image'),
+      );
+      await tester.ensureVisible(mediaChoice);
+      await tester.pump();
+      await tester.tap(
+        find.descendant(of: mediaChoice, matching: find.text('Off')),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(
+        tester
+            .widget<SegmentedButton<MediaDownloadNetworkChoice>>(mediaChoice)
+            .selected,
+        {MediaDownloadNetworkChoice.all},
+        reason: 'a failed write must roll the optimistic choice back',
+      );
+      expect(
+        find.byKey(const ValueKey('media-download-save-error')),
+        findsOneWidget,
+      );
+      expect(find.text("Couldn't save. Try again."), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
     },
   );
 
@@ -1179,10 +1214,8 @@ void main() {
       findsOneWidget,
       reason: 'the failure must be visibly reported',
     );
-    expect(
-      find.text("Couldn't save media download settings"),
-      findsWidgets,
-    );
+    expect(find.text("Couldn't save. Try again."), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
   });
 }
 

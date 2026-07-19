@@ -601,12 +601,23 @@ def _compact_lines(
         lines.append("No matching graph anchors. Use an exact class, function, or filename.")
         return lines, {"confidence": "none", "sources": 0, "tests": 0, "seeds": []}
 
+    community_labels = _load_community_labels()
     lines.append("Anchors:")
     for nid in seeds:
         node = graph.nodes[nid]
         source = _source_file(node) or "unknown"
         location = node.get("source_location") or ""
-        lines.append(f"- {node.get('label', nid)} — {source}{':' + str(location).lstrip('L') if location else ''} [{nid}]")
+        cid = node.get("community")
+        community = community_labels.get(cid) if isinstance(cid, int) else None
+        membership = (
+            f" ∈ {community}"
+            if community and not community.startswith("Community ")
+            else ""
+        )
+        lines.append(
+            f"- {node.get('label', nid)} — {source}"
+            f"{':' + str(location).lstrip('L') if location else ''} [{nid}]{membership}"
+        )
 
     files, edges = graph.context_files(seeds, terms)
     primary_production = [

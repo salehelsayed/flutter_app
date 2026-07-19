@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/l10n/app_localizations_ar.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -3647,6 +3648,73 @@ void main() {
         // B1: a successful accept auto-opens the joined group's conversation.
         expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('Writers Room'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'accept feedback for a missing invite is localized under ar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-missing-ar',
+          groupName: 'Missing Invite',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'cursor': '',
+        };
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final shellController = AppShellController(
+          initialTab: AppShellTab.orbit,
+        );
+        addTearDown(shellController.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: shellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            locale: const Locale('ar'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final inviteRow = find.byKey(
+          ValueKey('pending-group-invite-${invite.groupId}'),
+        );
+        expect(inviteRow, findsOneWidget);
+
+        // Delete only the repository row. Orbit's cached projection remains
+        // visible until Accept drives the notFound outcome and reloads it.
+        await pendingInviteRepo.deletePendingInvite(invite.groupId);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(inviteRow, findsOneWidget);
+
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(
+          find.text(
+            AppLocalizationsAr().group_invite_no_longer_available,
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Invite no longer available'), findsNothing);
       },
     );
 

@@ -128,6 +128,10 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
                   isDense: true,
                   contentPadding: EdgeInsets.zero,
                   border: InputBorder.none,
+                  // Inline editing paints no surface of its own; the light
+                  // theme's filled InputDecorationTheme would otherwise paint
+                  // a square fill rect behind the text.
+                  filled: false,
                   counterText: '',
                 ),
                 onSubmitted: (_) => _finishEditing(),

@@ -788,7 +788,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background_daylight_lagoon_selected => 'تم اختيار سيجنال';
 
   @override
-  String get settings_background_save_fail => 'تعذر حفظ اختيار الخلفية';
+  String get settings_background_save_fail => 'تعذّر الحفظ. حاول مجددًا.';
 
   @override
   String get settings_background_semantics => 'إعداد خلفية التطبيق';
@@ -1079,7 +1079,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_media_network_all => 'واي فاي + بيانات الجوال';
 
   @override
-  String get settings_media_save_fail => 'تعذّر حفظ إعدادات تنزيل الوسائط';
+  String get settings_media_save_fail => 'تعذّر الحفظ. حاول مجددًا.';
 
   @override
   String get settings_media_storage_usage => 'استخدام التخزين';
@@ -1933,18 +1933,18 @@ class AppLocalizationsAr extends AppLocalizations {
       'يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.';
 
   @override
-  String get mic_perm_dialog_title => 'إذن الميكروفون مطلوب';
+  String get mic_perm_dialog_title => 'السماح بالوصول إلى الميكروفون';
 
   @override
   String get mic_perm_dialog_body =>
-      'للسماح بتسجيل الرسائل الصوتية، فعّل إذن الميكروفون من الإعدادات.';
+      'لتسجيل الرسائل الصوتية، فعِّله من إعدادات هاتفك.';
 
   @override
   String get mic_perm_not_now => 'ليس الآن';
 
   @override
   String get group_read_only_not_active =>
-      'يمكنك قراءة سجل هذه المجموعة، لكنك لست عضوًا نشطًا.';
+      'تمت إزالتك من هذه المجموعة. لا يزال بإمكانك قراءة الرسائل السابقة.';
 
   @override
   String get group_read_only_waiting_key =>
@@ -3119,10 +3119,17 @@ class AppLocalizationsAr extends AppLocalizations {
   String get private_media_selector_label => 'وسائط خاصة';
 
   @override
-  String get private_media_ordinary => 'عادية';
+  String get private_media_ordinary => 'يبقى في الدردشة';
 
   @override
-  String get private_media_protected => 'محمية';
+  String get private_media_protected => 'عرض محمي';
+
+  @override
+  String get private_media_ordinary_detail => 'يمكنهم حفظه أو مشاركته.';
+
+  @override
+  String get private_media_protected_detail =>
+      'يمكنهم مشاهدته مجددًا دون حفظه أو مشاركته.';
 
   @override
   String get private_media_view_once => 'عرض مرة واحدة';
@@ -3148,11 +3155,24 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get private_media_expiry_device_local =>
-      'يُحتسب وقت الانتهاء على جهاز المستلم.';
+      'يُحذف من جهازهم بعد هذه المدة.';
 
   @override
-  String get private_media_view_once_copy =>
-      'متاحة للعرض مرة واحدة على هذا الجهاز.';
+  String get private_media_view_once_copy => 'يختفي بعد أن يفتحوه مرة واحدة.';
+
+  @override
+  String private_media_protected_body_received(String name) {
+    return 'يمكنك مشاهدته مجددًا. $name لا يسمح بالحفظ أو المشاركة.';
+  }
+
+  @override
+  String get private_media_view_once_body_received =>
+      'يمكنك مشاهدة هذا مرة واحدة فقط.';
+
+  @override
+  String private_media_outgoing_body(String name) {
+    return '$name فقط يمكنه مشاهدته، ولا يمكنه حفظه أو مشاركته.';
+  }
 
   @override
   String get private_media_open => 'فتح الوسائط الخاصة';

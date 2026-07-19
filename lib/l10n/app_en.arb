@@ -415,7 +415,7 @@
   "settings_background_daylight_lagoon": "Signal",
   "settings_background_daylight_lagoon_desc": "A warm mineral sky with soft violet and sage light.",
   "settings_background_daylight_lagoon_selected": "Signal selected",
-  "settings_background_save_fail": "Background choice could not be saved",
+  "settings_background_save_fail": "Couldn't save. Try again.",
   "settings_background_semantics": "App background setting",
   "settings_background_default_selected": "Default selected",
   "settings_video_quality": "Video Quality",
@@ -541,7 +541,7 @@
   "settings_media_network_off": "Off",
   "settings_media_network_wifi": "Wi-Fi",
   "settings_media_network_all": "Wi-Fi + cellular",
-  "settings_media_save_fail": "Couldn't save media download settings",
+  "settings_media_save_fail": "Couldn't save. Try again.",
   "settings_media_storage_usage": "Storage usage",
   "settings_media_storage_compute": "Show usage",
   "settings_media_storage_clear_type": "Clear",
@@ -1013,10 +1013,10 @@
   "picker_media_library": "Media Library",
   "picker_record_video": "Record Video",
   "perm_microphone_record": "Microphone permission is required to record voice messages.",
-  "mic_perm_dialog_title": "Microphone access needed",
-  "mic_perm_dialog_body": "To record voice messages, allow microphone access in Settings.",
+  "mic_perm_dialog_title": "Allow microphone access",
+  "mic_perm_dialog_body": "To record voice messages, turn it on in your phone's settings.",
   "mic_perm_not_now": "Not now",
-  "group_read_only_not_active": "You can read this group's history, but you are not an active member.",
+  "group_read_only_not_active": "You were removed from this group. You can still read past messages.",
   "group_read_only_waiting_key": "Waiting for the current group key before you can send.",
   "group_read_only_waiting_identity": "Waiting for your identity before you can send.",
   "group_media_unsupported": "This media type is not supported in groups.",
@@ -1674,8 +1674,10 @@
   "contact_profile_introduced_by_label": "Introduced by",
   "contact_profile_message_button": "Message",
   "private_media_selector_label": "Private media",
-  "private_media_ordinary": "Ordinary",
-  "private_media_protected": "Protected",
+  "private_media_ordinary": "Keep in chat",
+  "private_media_protected": "Protected view",
+  "private_media_ordinary_detail": "They can save or share it.",
+  "private_media_protected_detail": "They can view it again, but not save or share it.",
   "private_media_view_once": "View once",
   "private_media_disappearing_1h": "Disappears after 1 hour",
   "private_media_disappearing_1d": "Disappears after 1 day",
@@ -1683,8 +1685,25 @@
   "private_media_invalid_shape": "Private media needs one photo, GIF, or video with no caption.",
   "private_media_notification_body": "Private media",
   "group_private_media_notification_body": "New private media",
-  "private_media_expiry_device_local": "The expiry time is calculated on the receiving device.",
-  "private_media_view_once_copy": "Available for one view on this device.",
+  "private_media_expiry_device_local": "Deleted from their device after this time.",
+  "private_media_view_once_copy": "Disappears after they open it once.",
+  "private_media_protected_body_received": "You can view it again. {name} doesn't allow saving or sharing.",
+  "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_view_once_body_received": "You can only view this once.",
+  "private_media_outgoing_body": "Only {name} can view it. They can't save or share it.",
+  "@private_media_outgoing_body": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "private_media_open": "Open private media",
   "private_media_opening": "Opening private media…",
   "private_media_consumed": "Already viewed on this device",

@@ -1,0 +1,2108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mknoon · Private media &amp; feedback UX concept</title>
+  <style>
+    :root {
+      --bg-deep: #02030a;
+      --bg-mid: #050714;
+      --bg-near: #0a1124;
+      --surface-base: rgba(10, 10, 15, .90);
+      --surface-raised: rgba(24, 26, 32, .88);
+      --surface-subtle: rgba(16, 18, 24, .78);
+      --sheet: rgba(18, 20, 28, .97);
+      --text: #f8fafc;
+      --text-2: rgba(229, 231, 235, .87);
+      --muted: rgba(201, 206, 214, .72);
+      --faint: rgba(201, 206, 214, .45);
+      --border: rgba(255, 255, 255, .30);
+      --border-strong: rgba(255, 255, 255, .50);
+      --border-soft: rgba(255, 255, 255, .10);
+      --divider: rgba(255, 255, 255, .14);
+      --green: #1db954;
+      --green-bright: #1ed760;
+      --green-soft: rgba(29, 185, 84, .15);
+      --green-border: rgba(29, 185, 84, .55);
+      --teal: #4ecdc4;
+      --indigo: #818cf8;
+      --pink: #f472b6;
+      --danger: #ff8a80;
+      --danger-soft: rgba(255, 107, 107, .13);
+      --warning: #ffd166;
+      --warning-soft: rgba(255, 209, 102, .12);
+      --shadow: 0 30px 90px rgba(0, 0, 0, .45);
+      --radius-s: 10px;
+      --radius-m: 18px;
+      --radius-l: 28px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 12%, rgba(129, 230, 217, .12), transparent 27rem),
+        radial-gradient(circle at 88% 16%, rgba(129, 140, 248, .16), transparent 32rem),
+        radial-gradient(circle at 78% 55%, rgba(244, 114, 182, .06), transparent 26rem),
+        linear-gradient(180deg, var(--bg-near), var(--bg-mid) 45%, var(--bg-deep));
+      font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::before,
+    body::after {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      content: "";
+    }
+
+    body::before {
+      opacity: .52;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,.88) 0 1px, transparent 1.5px),
+        radial-gradient(circle, rgba(255,255,255,.45) 0 1px, transparent 1.4px),
+        radial-gradient(circle, rgba(255,255,255,.30) 0 1px, transparent 1.4px);
+      background-position: 7px 17px, 41px 67px, 91px 31px;
+      background-size: 119px 127px, 157px 149px, 211px 197px;
+    }
+
+    body::after {
+      background: linear-gradient(90deg, rgba(2,3,10,.30), transparent 18%, transparent 82%, rgba(2,3,10,.30));
+    }
+
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    button:focus-visible, a:focus-visible {
+      outline: 3px solid rgba(78, 205, 196, .72);
+      outline-offset: 3px;
+    }
+
+    .icon {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid var(--divider);
+      background: rgba(5, 7, 20, .80);
+      backdrop-filter: blur(20px);
+    }
+
+    .header-inner {
+      width: min(1220px, calc(100% - 32px));
+      min-height: 68px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .brand img {
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      box-shadow: 0 0 28px rgba(29,185,84,.20);
+    }
+    .brand-copy { min-width: 0; }
+    .brand-title { font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+    .brand-sub { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+    .top-nav { display: flex; align-items: center; gap: 6px; }
+    .top-nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 10px;
+      border-radius: 999px;
+    }
+    .top-nav a:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+    [hidden] { display: none !important; }
+    .copy-toggle { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; padding: 3px; border: 1px solid var(--border-soft); border-radius: 999px; background: rgba(255,255,255,.05); }
+    .copy-toggle-btn { min-height: 30px; padding: 0 12px; color: var(--muted); border: 0; border-radius: 999px; background: transparent; font-size: 11px; font-weight: 800; cursor: pointer; }
+    .copy-toggle-btn[aria-pressed="true"] { color: #06110a; background: var(--green-bright); }
+    .orig-mode [data-alt]:not([data-alt=""]) { text-decoration: underline dotted rgba(30,215,96,.55); text-underline-offset: 2px; }
+    .rev-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 28px; }
+    @media (max-width: 680px) { .rev-notes { grid-template-columns: 1fr; } }
+
+    main { width: min(1220px, calc(100% - 32px)); margin: 0 auto; padding-bottom: 90px; }
+
+    .hero {
+      min-height: 560px;
+      display: grid;
+      grid-template-columns: 1.08fr .92fr;
+      align-items: center;
+      gap: 56px;
+      padding: 86px 0 70px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green-bright);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green-bright);
+      box-shadow: 0 0 0 5px rgba(30,215,96,.10), 0 0 18px rgba(30,215,96,.70);
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 18px 0 20px;
+      font-size: clamp(42px, 6vw, 76px);
+      line-height: 1.01;
+      letter-spacing: -.055em;
+    }
+
+    .hero-lede {
+      max-width: 690px;
+      margin: 0;
+      color: var(--text-2);
+      font-size: clamp(17px, 2vw, 21px);
+      line-height: 1.55;
+    }
+
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+    .primary-link, .secondary-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .primary-link { color: #06110a; background: var(--green-bright); }
+    .secondary-link { color: var(--text); border: 1px solid var(--border); background: rgba(255,255,255,.04); }
+
+    .finding-card {
+      position: relative;
+      overflow: hidden;
+      padding: 26px;
+      border: 1px solid var(--border-soft);
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(24,26,32,.88), rgba(10,10,15,.82));
+      box-shadow: var(--shadow);
+    }
+    .finding-card::before {
+      position: absolute;
+      top: -110px;
+      right: -80px;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: rgba(129,140,248,.16);
+      filter: blur(40px);
+      content: "";
+    }
+    .finding-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .finding-head h2 { margin: 5px 0 0; font-size: 22px; line-height: 1.2; }
+    .device-pill {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      color: var(--green-bright);
+      background: var(--green-soft);
+      border: 1px solid var(--green-border);
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .finding-list { position: relative; display: grid; gap: 10px; margin-top: 22px; }
+    .finding-item {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 12px;
+      padding: 13px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.035);
+      border: 1px solid rgba(255,255,255,.07);
+    }
+    .finding-num {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      color: var(--danger);
+      background: var(--danger-soft);
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .finding-item strong { display: block; font-size: 13px; }
+    .finding-item span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .section { padding: 84px 0 26px; scroll-margin-top: 80px; }
+    .section-head { max-width: 790px; margin-bottom: 38px; }
+    .kicker { color: var(--green-bright); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    .section h2 { margin: 10px 0 12px; font-size: clamp(30px, 4.5vw, 50px); line-height: 1.08; letter-spacing: -.035em; }
+    .section-head p { margin: 0; color: var(--text-2); font-size: 17px; }
+
+    .privacy-layout {
+      display: grid;
+      grid-template-columns: minmax(390px, .92fr) minmax(390px, 1.08fr);
+      gap: 54px;
+      align-items: center;
+    }
+
+    .phone-wrap { display: flex; justify-content: center; }
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      padding: 9px;
+      border-radius: 46px;
+      background: linear-gradient(145deg, #23252c, #07080b 45%, #292b32);
+      box-shadow: 0 45px 100px rgba(0,0,0,.60), 0 0 0 1px rgba(255,255,255,.14);
+    }
+    .phone::before {
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      z-index: 30;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #020205;
+      box-shadow: 0 0 0 2px #1a1c24;
+      transform: translateX(-50%);
+      content: "";
+    }
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 38px;
+      background:
+        radial-gradient(circle at 8% 80%, rgba(129,230,217,.18), transparent 44%),
+        radial-gradient(circle at 92% 12%, rgba(129,140,248,.22), transparent 39%),
+        radial-gradient(circle at 86% 55%, rgba(244,114,182,.07), transparent 28%),
+        linear-gradient(180deg, #0a1124, #050714 45%, #02030a);
+      isolation: isolate;
+    }
+    .phone-stars {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: .58;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,.85) 0 1px, transparent 1.4px),
+        radial-gradient(circle, rgba(255,255,255,.34) 0 1px, transparent 1.3px);
+      background-position: 8px 17px, 37px 63px;
+      background-size: 83px 101px, 137px 151px;
+    }
+
+    .statusbar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 19px 0;
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .status-icons { display: flex; align-items: center; gap: 5px; }
+    .status-icons i { display: block; width: 13px; height: 7px; border: 1.5px solid currentColor; border-radius: 2px; opacity: .88; }
+    .status-icons i:last-child { width: 17px; background: var(--green-bright); border-color: var(--green-bright); }
+
+    .chat-header {
+      height: 72px;
+      display: grid;
+      grid-template-columns: 34px 46px 1fr 30px;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 13px 8px;
+      background: linear-gradient(180deg, rgba(10,10,15,.82), rgba(10,10,15,.28));
+      backdrop-filter: blur(20px);
+    }
+    .icon-button {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--text-2);
+      background: transparent;
+      border: 0;
+      border-radius: 50%;
+    }
+    .avatar-orbit {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 2px dashed rgba(255,50,50,.75);
+      border-radius: 50%;
+      box-shadow: 0 0 22px rgba(244,114,182,.20);
+    }
+    .avatar-orbit::before {
+      width: 25px;
+      height: 25px;
+      border: 5px solid rgba(29,185,84,.70);
+      border-radius: 50%;
+      background: #b4147d;
+      box-shadow: inset 0 0 0 6px #672070;
+      content: "";
+    }
+    .contact-name { font-size: 15px; font-weight: 700; }
+    .contact-state { color: var(--muted); font-size: 11px; }
+
+    .chat-body { height: calc(100% - 110px); padding: 14px 13px 142px; display: flex; flex-direction: column; gap: 10px; }
+    .day-label { align-self: center; color: var(--faint); font-size: 10px; }
+    .mini-bubble {
+      max-width: 78%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-strong);
+      border-radius: 18px 18px 18px 6px;
+      color: var(--text-2);
+      background: var(--surface-raised);
+      font-size: 12px;
+    }
+    .mini-bubble.out { align-self: flex-end; border-radius: 18px 18px 6px 18px; background: var(--surface-subtle); }
+    .bubble-meta { margin-top: 4px; color: var(--muted); font-size: 9px; text-align: right; }
+
+    .draft-photo {
+      align-self: flex-end;
+      width: 134px;
+      margin-top: auto;
+      padding: 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      background: rgba(16,18,24,.82);
+    }
+    .photo-art {
+      position: relative;
+      height: 104px;
+      overflow: hidden;
+      border-radius: 11px;
+      background:
+        linear-gradient(135deg, transparent 46%, rgba(255,255,255,.14) 47% 49%, transparent 50%),
+        radial-gradient(circle at 72% 26%, #ffd166 0 8%, transparent 9%),
+        linear-gradient(145deg, #4ecdc4, #334a73 48%, #17243a 49% 62%, #0a121d 63%);
+    }
+    .photo-art::after {
+      position: absolute;
+      left: -10%;
+      right: -10%;
+      bottom: -34%;
+      height: 70%;
+      border-radius: 50% 50% 0 0;
+      background: linear-gradient(155deg, #1db954, #132b3f 63%);
+      transform: rotate(-7deg);
+      content: "";
+    }
+    .draft-photo .remove {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      margin: -18px 0 0 111px;
+      display: grid;
+      place-items: center;
+      color: white;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: rgba(5,7,20,.95);
+    }
+    .draft-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; font-size: 9px; color: var(--muted); }
+
+    .composer-shell {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 5;
+      padding: 9px 13px 14px;
+      background: linear-gradient(180deg, transparent, rgba(10,10,15,.95) 28%);
+      backdrop-filter: blur(20px);
+    }
+    .privacy-summary {
+      width: max-content;
+      max-width: calc(100% - 10px);
+      min-height: 38px;
+      margin: 0 0 7px 47px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 10px;
+      color: var(--text);
+      border: 1px solid var(--green-border);
+      border-radius: 14px;
+      background: rgba(10,10,15,.88);
+      cursor: pointer;
+    }
+    .privacy-summary .icon { width: 17px; height: 17px; color: var(--green-bright); }
+    .summary-copy { min-width: 0; text-align: left; }
+    .summary-copy strong { display: block; font-size: 11px; line-height: 1.2; }
+    .summary-copy small { display: block; overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+    .summary-change { margin-left: 4px; color: var(--green-bright); font-size: 9px; font-weight: 800; }
+    .composer-row { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; align-items: center; }
+    .round-control {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--text-2);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: rgba(16,18,24,.80);
+    }
+    .round-control.send { color: var(--green-bright); border-color: rgba(29,185,84,.30); background: rgba(29,185,84,.15); }
+    .composer-input { height: 44px; padding: 12px 15px; color: rgba(255,255,255,.30); border: 1px solid var(--border); border-radius: 22px; background: rgba(255,255,255,.06); font-size: 12px; }
+
+    .sheet-scrim {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      align-items: end;
+      padding: 14px;
+      background: rgba(0,0,0,.66);
+      transition: opacity .2s ease;
+    }
+    .sheet-scrim[hidden] { display: none; }
+    .privacy-sheet {
+      max-height: 746px;
+      overflow: auto;
+      padding: 8px 16px 16px;
+      border: 1px solid var(--border-soft);
+      border-radius: 28px;
+      background: var(--sheet);
+      box-shadow: 0 20px 60px rgba(0,0,0,.65);
+      backdrop-filter: blur(20px);
+      scrollbar-width: none;
+    }
+    .privacy-sheet::-webkit-scrollbar { display: none; }
+    .sheet-handle { width: 36px; height: 4px; margin: 2px auto 13px; border-radius: 999px; background: rgba(255,255,255,.24); }
+    .sheet-title-row { display: flex; align-items: flex-start; gap: 10px; }
+    .sheet-title-row > div { flex: 1; }
+    .sheet-title { margin: 0; font-size: 17px; line-height: 1.2; }
+    .sheet-subtitle { margin: 4px 0 13px; color: var(--muted); font-size: 10px; }
+    .sheet-close { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; color: var(--muted); border: 0; border-radius: 50%; background: rgba(255,255,255,.06); cursor: pointer; }
+
+    .mode-list { display: grid; gap: 7px; }
+    .mode-option {
+      width: 100%;
+      min-height: 62px;
+      display: grid;
+      grid-template-columns: 36px 1fr 22px;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      color: var(--text);
+      text-align: left;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 17px;
+      background: rgba(255,255,255,.045);
+      cursor: pointer;
+      transition: border-color .16s ease, background .16s ease, transform .16s ease;
+    }
+    .mode-option:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.20); }
+    .mode-option[aria-checked="true"] { border-color: var(--green-border); background: var(--green-soft); }
+    .mode-icon { width: 36px; height: 36px; display: grid; place-items: center; color: var(--text-2); border: 1px solid var(--border-soft); border-radius: 12px; background: rgba(0,0,0,.18); }
+    .mode-option[aria-checked="true"] .mode-icon { color: var(--green-bright); border-color: rgba(29,185,84,.35); background: rgba(29,185,84,.12); }
+    .mode-copy strong { display: block; font-size: 12px; line-height: 1.2; }
+    .mode-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.32; }
+    .check {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      color: transparent;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 50%;
+    }
+    .mode-option[aria-checked="true"] .check { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+    .check .icon { width: 13px; height: 13px; stroke-width: 2.5; }
+
+    .duration-panel { margin: 7px 0 0 46px; padding: 9px; border: 1px solid var(--divider); border-radius: 14px; background: rgba(0,0,0,.18); }
+    .duration-panel[hidden] { display: none; }
+    .duration-label { margin-bottom: 7px; color: var(--muted); font-size: 9px; font-weight: 700; }
+    .duration-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .duration-button { min-height: 32px; color: var(--text-2); border: 1px solid var(--border-soft); border-radius: 10px; background: rgba(255,255,255,.04); font-size: 9px; font-weight: 700; cursor: pointer; }
+    .duration-button[aria-pressed="true"] { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+
+    .disclosure {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 7px;
+      margin-top: 10px;
+      padding: 9px;
+      color: var(--muted);
+      border-radius: 12px;
+      background: rgba(255,255,255,.035);
+      font-size: 8.5px;
+      line-height: 1.35;
+    }
+    .disclosure .icon { width: 16px; height: 16px; color: var(--warning); }
+    .sheet-cta { width: 100%; min-height: 42px; margin-top: 10px; color: #06110a; border: 0; border-radius: 14px; background: var(--green-bright); font-size: 11px; font-weight: 800; cursor: pointer; }
+
+    .design-notes { display: grid; gap: 12px; }
+    .note-card { padding: 19px; border: 1px solid var(--border-soft); border-radius: 22px; background: rgba(16,18,24,.58); backdrop-filter: blur(16px); }
+    .note-index { color: var(--green-bright); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+    .note-card h3 { margin: 6px 0 7px; font-size: 18px; }
+    .note-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .copy-swap { display: grid; grid-template-columns: 1fr 24px 1fr; gap: 8px; align-items: center; margin-top: 13px; }
+    .copy-chip { padding: 9px 10px; border: 1px solid var(--border-soft); border-radius: 12px; background: rgba(0,0,0,.18); font-size: 11px; }
+    .copy-chip.before { color: var(--faint); text-decoration: line-through; }
+    .copy-chip.after { color: var(--green-bright); border-color: rgba(29,185,84,.28); background: rgba(29,185,84,.08); }
+    .swap-arrow { color: var(--muted); text-align: center; }
+    .truth-list { display: grid; gap: 8px; margin-top: 12px; }
+    .truth-item { display: flex; gap: 9px; color: var(--text-2); font-size: 12px; }
+    .truth-item .icon { width: 16px; height: 16px; margin-top: 1px; color: var(--teal); }
+
+    .state-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .state-card { min-height: 282px; padding: 18px; border: 1px solid var(--border-soft); border-radius: 24px; background: linear-gradient(160deg, rgba(24,26,32,.80), rgba(10,10,15,.72)); }
+    .state-label { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase; }
+    .private-bubble {
+      margin-top: 17px;
+      overflow: hidden;
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      background: rgba(16,18,24,.82);
+    }
+    .private-visual { position: relative; height: 112px; display: grid; place-items: center; background: linear-gradient(135deg, rgba(78,205,196,.14), rgba(129,140,248,.12)), repeating-linear-gradient(45deg, rgba(255,255,255,.025) 0 8px, transparent 8px 16px); }
+    .private-visual::after { position: absolute; inset: 0; background: radial-gradient(circle at 50% 40%, rgba(29,185,84,.18), transparent 34%); content: ""; }
+    .private-visual .mode-icon { z-index: 1; width: 50px; height: 50px; border-radius: 16px; color: var(--green-bright); }
+    .private-content { padding: 12px; }
+    .private-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; }
+    .private-content p { min-height: 34px; margin: 4px 0 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .private-action { width: 100%; min-height: 34px; color: #06110a; border: 0; border-radius: 11px; background: var(--green-bright); font-size: 10px; font-weight: 800; }
+    .private-action.secondary { color: var(--text-2); border: 1px solid var(--border); background: rgba(255,255,255,.04); }
+    .private-meta { display: flex; justify-content: space-between; margin-top: 8px; color: var(--faint); font-size: 8px; }
+
+    .outbox-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .outbox-card { min-width: 0; padding: 16px; border: 1px solid var(--border-soft); border-radius: 24px; background: linear-gradient(160deg, rgba(24,26,32,.80), rgba(10,10,15,.72)); }
+    .outbox-card.current-media { border-color: rgba(255,138,128,.24); }
+    .outbox-card.proposed { border-color: rgba(29,185,84,.34); box-shadow: inset 0 0 42px rgba(29,185,84,.035); }
+    .outbox-card-head { min-height: 62px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .outbox-card-head h3 { margin: 5px 0 0; font-size: 17px; line-height: 1.2; }
+    .outbox-card-head p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
+    .outbox-lane { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .10em; text-transform: uppercase; }
+    .outbox-lane.good { color: var(--green-bright); }
+    .outbox-lane.bad { color: var(--danger); }
+    .outbox-chip { flex: 0 0 auto; padding: 4px 7px; color: var(--muted); border: 1px solid var(--border-soft); border-radius: 999px; background: rgba(255,255,255,.035); font-size: 8px; font-weight: 800; }
+    .outbox-screen { position: relative; min-height: 318px; margin-top: 12px; overflow: hidden; padding: 12px; border: 1px solid var(--border-soft); border-radius: 19px; background: radial-gradient(circle at 88% 3%, rgba(129,140,248,.14), transparent 40%), linear-gradient(180deg, rgba(10,17,36,.96), rgba(2,3,10,.98)); }
+    .outbox-chat-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--divider); }
+    .outbox-avatar { width: 26px; height: 26px; border-radius: 50%; background: conic-gradient(from 25deg, var(--green), var(--indigo), var(--pink), var(--green)); box-shadow: 0 0 16px rgba(29,185,84,.18); }
+    .outbox-chat-head strong { display: block; font-size: 10px; }
+    .outbox-chat-head small { display: block; color: var(--muted); font-size: 7.5px; }
+    .outbox-banner { display: flex; gap: 7px; margin: 10px 0; padding: 8px; color: var(--text-2); border: 1px solid rgba(129,140,248,.26); border-radius: 11px; background: rgba(50,59,91,.42); font-size: 8px; line-height: 1.35; }
+    .outbox-banner .icon { width: 14px; height: 14px; color: var(--teal); }
+    .outbox-bubble { width: 86%; margin: 10px 0 0 auto; padding: 9px; border: 1px solid var(--border); border-radius: 15px 15px 5px 15px; background: rgba(24,26,32,.88); font-size: 9px; }
+    .outbox-bubble.error { color: #ffd7d3; border-color: rgba(255,138,128,.48); background: rgba(81,29,29,.55); }
+    .outbox-bubble.queued { border-color: rgba(78,205,196,.34); background: linear-gradient(145deg, rgba(24,26,32,.93), rgba(20,33,43,.88)); }
+    .outbox-photo { position: relative; height: 87px; display: grid; place-items: center; overflow: hidden; border-radius: 11px; background: radial-gradient(circle at 25% 30%, rgba(255,209,102,.42), transparent 18%), radial-gradient(circle at 73% 25%, rgba(244,114,182,.38), transparent 21%), linear-gradient(145deg, rgba(78,205,196,.40), rgba(129,140,248,.44)); }
+    .outbox-photo::after { position: absolute; inset: auto -15px -38px 25px; height: 90px; border-radius: 50% 50% 0 0; background: rgba(5,7,20,.38); content: ""; transform: rotate(-8deg); }
+    .outbox-photo .icon { position: relative; z-index: 1; width: 24px; height: 24px; color: rgba(255,255,255,.92); }
+    .outbox-mode { position: absolute; z-index: 2; left: 6px; top: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; color: white; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; background: rgba(2,3,10,.70); backdrop-filter: blur(8px); font-size: 7px; font-weight: 800; }
+    .outbox-mode .icon { width: 10px; height: 10px; color: var(--green-bright); }
+    .outbox-meta { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 6px; color: var(--faint); font-size: 7px; }
+    .outbox-meta .icon { width: 10px; height: 10px; }
+    .outbox-inline-state { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 8px; color: var(--text-2); border-radius: 10px; background: rgba(78,205,196,.08); font-size: 8px; line-height: 1.35; }
+    .outbox-inline-state.error { color: #ffd7d3; background: rgba(255,107,107,.09); }
+    .outbox-inline-state .icon { width: 14px; height: 14px; color: var(--teal); }
+    .outbox-inline-state.error .icon { color: var(--danger); }
+    .outbox-inline-state strong { display: block; margin-bottom: 1px; font-size: 8.5px; }
+    .outbox-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .outbox-action { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px; color: var(--teal); border: 1px solid rgba(78,205,196,.46); border-radius: 10px; background: rgba(78,205,196,.07); font-size: 8px; font-weight: 800; }
+    .outbox-action.danger { color: var(--danger); border-color: rgba(255,138,128,.38); background: rgba(255,107,107,.06); }
+    .outbox-snack { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 7px; min-height: 42px; padding: 9px 10px; color: white; border-radius: 8px; background: #455a64; box-shadow: 0 8px 22px rgba(0,0,0,.42); font-size: 8.5px; }
+    .outbox-snack.error { background: #b3261e; }
+    .outbox-snack .icon { width: 15px; height: 15px; }
+    .outbox-composer-echo { position: absolute; left: 10px; right: 10px; bottom: 60px; display: flex; align-items: center; gap: 7px; padding: 7px; border: 1px solid var(--border); border-radius: 11px; background: rgba(24,26,32,.95); font-size: 7.5px; }
+    .outbox-composer-thumb { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 7px; background: linear-gradient(145deg, rgba(78,205,196,.54), rgba(129,140,248,.52)); }
+    .outbox-composer-echo span { color: var(--muted); }
+    .outbox-after { min-height: 72px; margin-top: 11px; padding: 10px; color: var(--muted); border-left: 2px solid var(--divider); background: rgba(255,255,255,.025); font-size: 9px; line-height: 1.45; }
+    .outbox-after strong { color: var(--text-2); }
+    .outbox-after.warning { border-color: var(--danger); background: rgba(255,107,107,.035); }
+    .outbox-after.solution { border-color: var(--green); background: rgba(29,185,84,.035); }
+
+    .outbox-sequence { margin-top: 18px; overflow: hidden; border: 1px solid var(--border-soft); border-radius: 24px; background: rgba(10,10,15,.58); }
+    .sequence-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 19px; border-bottom: 1px solid var(--divider); background: rgba(255,255,255,.025); }
+    .sequence-head h3 { margin: 0; font-size: 18px; }
+    .sequence-head p { max-width: 650px; margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+    .sequence-badge { padding: 5px 8px; color: var(--green-bright); border: 1px solid var(--green-border); border-radius: 999px; background: var(--green-soft); font-size: 8px; font-weight: 900; white-space: nowrap; }
+    .sequence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .sequence-step { position: relative; min-width: 0; min-height: 190px; padding: 16px; border-right: 1px solid var(--divider); }
+    .sequence-step:last-child { border-right: 0; }
+    .sequence-num { width: 25px; height: 25px; display: grid; place-items: center; color: var(--green-bright); border: 1px solid var(--green-border); border-radius: 9px; background: var(--green-soft); font-size: 9px; font-weight: 900; }
+    .sequence-step.terminal .sequence-num { color: var(--danger); border-color: rgba(255,138,128,.42); background: var(--danger-soft); }
+    .sequence-step h4 { margin: 10px 0 4px; font-size: 12px; }
+    .sequence-step > p { min-height: 42px; margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .sequence-ui { margin-top: 12px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 12px; background: rgba(10,17,36,.78); }
+    .sequence-status { display: flex; align-items: flex-start; gap: 6px; font-size: 8px; line-height: 1.35; }
+    .sequence-status .icon { width: 13px; height: 13px; color: var(--teal); }
+    .sequence-status strong { display: block; font-size: 8.5px; }
+    .sequence-progress { height: 4px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.10); }
+    .sequence-progress::after { display: block; width: 68%; height: 100%; border-radius: inherit; background: var(--green-bright); content: ""; }
+    .sequence-mini-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .sequence-mini-actions span { padding: 4px 6px; color: var(--teal); border: 1px solid rgba(78,205,196,.38); border-radius: 7px; font-size: 7px; font-weight: 800; }
+    .sequence-mini-actions span:last-child { color: var(--danger); border-color: rgba(255,138,128,.34); }
+    .solution-contract { display: grid; grid-template-columns: .82fr 1.18fr; gap: 16px; margin-top: 18px; padding: 18px; border: 1px solid rgba(29,185,84,.28); border-radius: 24px; background: linear-gradient(145deg, rgba(29,185,84,.055), rgba(10,10,15,.68)); }
+    .solution-contract h3 { margin: 5px 0 7px; font-size: 20px; }
+    .solution-contract p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .solution-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .solution-rule { display: grid; grid-template-columns: 24px 1fr; gap: 8px; padding: 10px; border: 1px solid var(--border-soft); border-radius: 13px; background: rgba(16,18,24,.62); }
+    .solution-rule .rule-icon { width: 24px; height: 24px; display: grid; place-items: center; color: var(--green-bright); border-radius: 8px; background: var(--green-soft); font-size: 9px; font-weight: 900; }
+    .solution-rule strong { display: block; font-size: 9.5px; }
+    .solution-rule span { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+
+    .audit-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px; }
+    .metric { padding: 16px; border: 1px solid var(--border-soft); border-radius: 18px; background: rgba(16,18,24,.58); }
+    .metric strong { display: block; font-size: 27px; line-height: 1; }
+    .metric span { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+    .audit-note {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 18px;
+      margin: -12px 0 28px;
+      padding: 11px 14px;
+      color: var(--muted);
+      border-left: 2px solid var(--green);
+      background: rgba(29,185,84,.055);
+      font-size: 10px;
+    }
+    .audit-note strong { color: var(--text-2); }
+
+    .feedback-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 28px; align-items: start; }
+    .scenario-list { display: grid; gap: 8px; }
+    .scenario-button {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 38px 1fr auto;
+      align-items: center;
+      gap: 11px;
+      padding: 11px;
+      color: var(--text);
+      text-align: left;
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      background: rgba(16,18,24,.55);
+      cursor: pointer;
+    }
+    .scenario-button[aria-selected="true"] { border-color: var(--green-border); background: var(--green-soft); }
+    .scenario-icon { width: 38px; height: 38px; display: grid; place-items: center; color: var(--muted); border-radius: 12px; background: rgba(255,255,255,.05); }
+    .scenario-button[aria-selected="true"] .scenario-icon { color: var(--green-bright); }
+    .scenario-copy strong { display: block; font-size: 12px; }
+    .scenario-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .pattern-tag { padding: 4px 7px; color: var(--muted); border: 1px solid var(--border-soft); border-radius: 999px; font-size: 8px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+
+    .feedback-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+    .compare-column { min-width: 0; display: grid; justify-items: center; gap: 12px; }
+    .compare-heading { width: min(100%, 330px); min-height: 55px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 16px; background: rgba(16,18,24,.58); }
+    .compare-heading.current { border-color: rgba(255,138,128,.24); background: rgba(255,107,107,.06); }
+    .compare-heading.proposed { border-color: rgba(29,185,84,.28); background: rgba(29,185,84,.07); }
+    .compare-badge { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+    .compare-heading.current .compare-badge { color: #ffd7d3; background: rgba(255,107,107,.16); }
+    .compare-heading.proposed .compare-badge { color: var(--green-bright); background: var(--green-soft); }
+    .compare-heading strong { display: block; font-size: 11px; line-height: 1.2; }
+    .compare-heading small { display: block; margin-top: 2px; color: var(--muted); font-size: 8.5px; line-height: 1.3; }
+    .feedback-phone .phone { width: 330px; height: 690px; }
+    .feedback-phone .phone-screen { border-radius: 37px; }
+    .feedback-phone .scene { position: absolute; inset: 110px 0 0; display: none; }
+    .feedback-phone .scene.active { display: flex; flex-direction: column; }
+    .current-phone .phone { box-shadow: 0 34px 80px rgba(0,0,0,.54), 0 0 0 1px rgba(255,138,128,.15); }
+    .scene-body { position: relative; flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+    .scene-caption { padding: 11px 14px 15px; color: var(--muted); border-top: 1px solid var(--divider); background: rgba(10,10,15,.92); font-size: 10px; }
+    .scene-caption strong { color: var(--green-bright); }
+    .current-scene .scene-caption strong { color: var(--danger); }
+    .current-snackbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; min-height: 48px; display: flex; align-items: center; gap: 9px; padding: 11px 13px; color: #322f35; border-radius: 5px 5px 0 0; background: #e7e0ec; box-shadow: 0 -4px 18px rgba(0,0,0,.30); font-size: 10px; line-height: 1.35; }
+    .current-snackbar.floating { left: 10px; right: 10px; bottom: 12px; border-radius: 7px; box-shadow: 0 8px 24px rgba(0,0,0,.46); }
+    .current-snackbar.error { color: #fff; background: #b3261e; }
+    .current-snackbar.info { color: #fff; background: #455a64; }
+    .current-snackbar .snack-copy { flex: 1; }
+    .current-snackbar .snack-action { flex: 0 0 auto; color: #005ac1; font-weight: 900; letter-spacing: .04em; }
+    .current-snackbar.error .snack-action { color: #ffd7d3; }
+    .current-placeholder { align-self: flex-end; width: 78%; height: 96px; display: grid; place-items: center; color: rgba(255,255,255,.28); border: 1px solid var(--border); border-radius: 17px 17px 6px 17px; background: rgba(16,18,24,.50); font-size: 9px; }
+    .current-invite-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+    .current-invite-actions span { min-height: 32px; display: grid; place-items: center; color: var(--text-2); border: 1px solid var(--border); border-radius: 10px; font-size: 9px; font-weight: 800; }
+    .current-invite-actions span:first-child { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+    .chat-banner { display: flex; gap: 9px; align-items: flex-start; padding: 10px; color: #fff2c7; border: 1px solid rgba(255,209,102,.34); border-radius: 14px; background: rgba(83,62,18,.58); font-size: 10px; }
+    .chat-banner .icon { width: 17px; height: 17px; color: var(--warning); }
+    .message-failure { align-self: flex-end; width: 78%; padding: 10px; border: 1px solid rgba(255,138,128,.55); border-radius: 18px 18px 6px 18px; background: rgba(81,29,29,.58); }
+    .message-failure strong { display: flex; align-items: center; gap: 6px; color: #ffd7d3; font-size: 12px; }
+    .message-failure p { margin: 5px 0 9px; color: rgba(255,215,211,.72); font-size: 10px; }
+    .inline-actions { display: flex; gap: 6px; }
+    .inline-actions button { min-height: 30px; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.06); font-size: 9px; font-weight: 800; }
+    .inline-actions button:first-child { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+    .mock-message { max-width: 78%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 17px 17px 17px 6px; background: var(--surface-raised); color: var(--text-2); font-size: 11px; }
+    .mock-message.out { align-self: flex-end; border-radius: 17px 17px 6px 17px; }
+    .pending-row { display: flex; justify-content: flex-end; gap: 5px; color: var(--warning); font-size: 9px; }
+    .scene-divider { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 8px; font-weight: 900; letter-spacing: .10em; text-transform: uppercase; }
+    .scene-divider::after { height: 1px; flex: 1; background: var(--divider); content: ""; }
+    .current-snackbar.sample { position: static; min-height: 40px; border-radius: 7px; box-shadow: 0 7px 19px rgba(0,0,0,.34); }
+    .feedback-phone .outbox-bubble { width: 90%; margin-top: 0; }
+    .feedback-phone .outbox-photo { height: 67px; }
+    .feedback-phone .outbox-inline-state { margin-top: 6px; padding: 7px; }
+    .feedback-phone .outbox-banner { margin: 0; }
+    .feedback-phone .outbox-actions { margin-top: 6px; }
+
+    .permission-sheet { margin: auto 0 0; padding: 18px; border: 1px solid var(--border-soft); border-radius: 28px 28px 0 0; background: var(--sheet); box-shadow: 0 -20px 50px rgba(0,0,0,.35); }
+    .permission-icon { width: 46px; height: 46px; display: grid; place-items: center; color: var(--green-bright); border-radius: 16px; background: var(--green-soft); }
+    .permission-sheet h4 { margin: 13px 0 5px; font-size: 17px; }
+    .permission-sheet p { margin: 0 0 15px; color: var(--muted); font-size: 11px; }
+    .sheet-actions { display: grid; grid-template-columns: .7fr 1.3fr; gap: 7px; }
+    .sheet-actions button { min-height: 40px; color: var(--text-2); border: 1px solid var(--border); border-radius: 13px; background: transparent; font-size: 10px; font-weight: 800; }
+    .sheet-actions .primary { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+
+    .invite-card { padding: 13px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-raised); }
+    .invite-card .person { display: flex; align-items: center; gap: 9px; }
+    .mini-avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(145deg, var(--indigo), var(--pink)); }
+    .person strong { display: block; font-size: 12px; }
+    .person small { color: var(--muted); font-size: 9px; }
+    .invite-state { display: flex; align-items: center; gap: 7px; margin-top: 11px; padding: 9px; color: #ffe4a1; border-radius: 12px; background: var(--warning-soft); font-size: 10px; }
+    .invite-action { margin-top: 9px; color: var(--green-bright); font-size: 10px; font-weight: 800; }
+
+    .settings-row { display: flex; align-items: center; gap: 10px; padding: 13px; border-bottom: 1px solid var(--divider); background: rgba(16,18,24,.55); }
+    .settings-row > .icon { color: var(--teal); }
+    .settings-row div { flex: 1; }
+    .settings-row strong { display: block; font-size: 11px; }
+    .settings-row small { color: var(--muted); font-size: 9px; }
+    .toggle { width: 34px; height: 20px; padding: 2px; border-radius: 999px; background: var(--green); }
+    .toggle::after { display: block; width: 16px; height: 16px; margin-left: 14px; border-radius: 50%; background: white; content: ""; }
+    .field-help { display: flex; align-items: flex-start; gap: 6px; padding: 7px 13px; color: var(--danger); background: rgba(255,107,107,.06); font-size: 9px; }
+    .field-help .icon { width: 14px; height: 14px; }
+
+    .media-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .media-tile { aspect-ratio: 1; border-radius: 11px; background: linear-gradient(145deg, rgba(78,205,196,.50), rgba(129,140,248,.40)); }
+    .media-tile:nth-child(2n) { background: linear-gradient(145deg, rgba(244,114,182,.45), rgba(255,209,102,.34)); }
+    .media-tile.removed { opacity: .16; border: 1px dashed var(--border); background: transparent; }
+    .undo-bar { position: absolute; left: 12px; right: 12px; bottom: 14px; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--text); border: 1px solid var(--border); border-radius: 16px; background: rgba(24,26,32,.98); box-shadow: 0 14px 32px rgba(0,0,0,.45); font-size: 10px; }
+    .undo-bar span { flex: 1; }
+    .undo-bar button { color: var(--green-bright); border: 0; background: transparent; font-size: 10px; font-weight: 900; }
+
+    .qr-card { width: 210px; margin: 45px auto 0; padding: 18px; border: 1px solid var(--border); border-radius: 24px; background: rgba(255,255,255,.93); }
+    .fake-qr { aspect-ratio: 1; opacity: .86; background: repeating-conic-gradient(#050714 0 25%, transparent 0 50%) 0/20px 20px; }
+    .quiet-pill { position: absolute; left: 50%; bottom: 28px; display: flex; align-items: center; gap: 7px; padding: 8px 13px; color: var(--text); border: 1px solid var(--border-soft); border-radius: 999px; background: rgba(24,26,32,.96); box-shadow: 0 10px 24px rgba(0,0,0,.45); font-size: 10px; font-weight: 700; transform: translateX(-50%); }
+    .quiet-pill .icon { width: 15px; height: 15px; color: var(--green-bright); }
+
+    .mapping-card { overflow: hidden; border: 1px solid var(--border-soft); border-radius: 24px; background: rgba(10,10,15,.58); }
+    .mapping-row { display: grid; grid-template-columns: .56fr 1fr 1fr; gap: 14px; padding: 17px 19px; border-bottom: 1px solid var(--divider); }
+    .mapping-row:last-child { border-bottom: 0; }
+    .mapping-row.head { color: var(--muted); background: rgba(255,255,255,.035); font-size: 9px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase; }
+    .mapping-trigger { font-size: 12px; font-weight: 700; }
+    .mapping-trigger small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 400; }
+    .old-copy { color: var(--faint); font-size: 11px; }
+    .new-copy { color: var(--text-2); font-size: 11px; }
+    .new-copy strong { color: var(--green-bright); }
+    .ui-preview { position: relative; min-height: 172px; overflow: hidden; padding: 11px; border: 1px solid var(--border-soft); border-radius: 17px; background: radial-gradient(circle at 90% 8%, rgba(129,140,248,.12), transparent 42%), linear-gradient(180deg, rgba(10,17,36,.92), rgba(2,3,10,.96)); }
+    .ui-preview.current-ui { border-color: rgba(255,138,128,.20); }
+    .ui-preview.proposed-ui { border-color: rgba(29,185,84,.30); }
+    .preview-context { position: relative; z-index: 2; color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .preview-canvas { position: relative; min-height: 126px; margin-top: 7px; }
+    .preview-message { width: 72%; padding: 8px 9px; color: var(--text-2); border: 1px solid var(--border); border-radius: 13px 13px 13px 5px; background: var(--surface-raised); font-size: 9px; }
+    .preview-message.out { margin-left: auto; border-radius: 13px 13px 5px 13px; }
+    .preview-message.failed { color: #ffd7d3; border-color: rgba(255,138,128,.50); background: rgba(81,29,29,.62); }
+    .preview-message.queued { border-color: rgba(78,205,196,.36); background: linear-gradient(145deg, rgba(24,26,32,.92), rgba(20,33,43,.86)); }
+    .preview-message strong { display: block; margin-bottom: 3px; font-size: 10px; }
+    .preview-meta { margin-top: 4px; color: var(--faint); font-size: 7px; text-align: right; }
+    .preview-status { display: flex; align-items: flex-start; gap: 5px; margin-top: 6px; padding: 6px; color: var(--text-2); border-radius: 8px; background: rgba(78,205,196,.08); font-size: 7.5px; line-height: 1.35; }
+    .preview-status .icon { width: 12px; height: 12px; color: var(--teal); }
+    .preview-status strong { display: block; margin: 0; font-size: 8px; }
+    .preview-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .preview-action { min-height: 24px; display: inline-grid; place-items: center; padding: 0 8px; color: var(--text-2); border: 1px solid var(--border); border-radius: 8px; font-size: 8px; font-weight: 800; }
+    .preview-action.primary { color: #06110a; border-color: var(--green-bright); background: var(--green-bright); }
+    .preview-snack { position: absolute; left: -11px; right: -11px; bottom: -11px; min-height: 43px; display: flex; align-items: center; gap: 7px; padding: 9px 11px; color: #322f35; background: #e7e0ec; box-shadow: 0 -4px 15px rgba(0,0,0,.30); font-size: 9px; line-height: 1.3; }
+    .preview-snack.floating { left: 2px; right: 2px; bottom: 2px; border-radius: 7px; box-shadow: 0 7px 19px rgba(0,0,0,.44); }
+    .preview-snack.error { color: white; background: #b3261e; }
+    .preview-snack.info { color: white; background: #455a64; }
+    .preview-snack .icon { width: 14px; height: 14px; }
+    .preview-snack span:first-child { flex: 1; }
+    .preview-snack .action { color: #005ac1; font-weight: 900; }
+    .preview-snack.error .action { color: #ffd7d3; }
+    .preview-media { display: grid; grid-template-columns: 54px 1fr; gap: 9px; align-items: center; padding: 9px; border: 1px solid var(--border); border-radius: 13px; background: rgba(16,18,24,.84); }
+    .preview-media.queued { border-color: rgba(78,205,196,.36); background: linear-gradient(145deg, rgba(16,18,24,.90), rgba(20,33,43,.80)); }
+    .preview-media.failed { border-color: rgba(255,138,128,.46); background: rgba(81,29,29,.50); }
+    .preview-media-visual { width: 54px; height: 58px; display: grid; place-items: center; color: var(--green-bright); border-radius: 10px; background: linear-gradient(145deg, rgba(78,205,196,.14), rgba(129,140,248,.16)); }
+    .preview-media-visual .icon { width: 22px; height: 22px; }
+    .preview-media strong { display: block; font-size: 9.5px; }
+    .preview-media small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; line-height: 1.35; }
+    .preview-progress { height: 3px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.10); }
+    .preview-progress::after { display: block; width: 68%; height: 100%; border-radius: inherit; background: var(--green-bright); content: ""; }
+    .preview-invite { padding: 9px; border: 1px solid var(--border); border-radius: 13px; background: rgba(24,26,32,.82); }
+    .preview-invite-head { display: flex; align-items: center; gap: 7px; }
+    .preview-invite-head::before { width: 27px; height: 27px; flex: 0 0 auto; border-radius: 50%; background: linear-gradient(145deg, var(--indigo), var(--pink)); content: ""; }
+    .preview-invite strong { display: block; font-size: 9.5px; }
+    .preview-invite small { color: var(--muted); font-size: 7.5px; }
+    .preview-inline-state { margin-top: 8px; padding: 7px; color: #ffe4a1; border-radius: 9px; background: var(--warning-soft); font-size: 8px; line-height: 1.35; }
+    .preview-sheet-mini { position: absolute; left: -2px; right: -2px; bottom: -2px; padding: 11px; border: 1px solid var(--border-soft); border-radius: 18px 18px 0 0; background: var(--sheet); box-shadow: 0 -10px 28px rgba(0,0,0,.34); }
+    .preview-sheet-mini strong { display: block; font-size: 10px; }
+    .preview-sheet-mini p { margin: 4px 0 8px; color: var(--muted); font-size: 8px; line-height: 1.35; }
+    .preview-sheet-actions { display: flex; justify-content: flex-end; gap: 5px; }
+    .preview-banner-mini { display: flex; gap: 7px; padding: 9px; color: #fff2c7; border: 1px solid rgba(255,209,102,.34); border-radius: 11px; background: rgba(83,62,18,.58); font-size: 8px; line-height: 1.35; }
+    .preview-banner-mini .icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--warning); }
+    .preview-setting { display: flex; align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 11px; background: rgba(24,26,32,.80); }
+    .preview-setting-copy { flex: 1; }
+    .preview-setting strong { display: block; font-size: 9px; }
+    .preview-setting small { color: var(--muted); font-size: 7.5px; }
+    .preview-toggle { width: 29px; height: 17px; padding: 2px; border-radius: 999px; background: var(--green); }
+    .preview-toggle::after { display: block; width: 13px; height: 13px; margin-left: 12px; border-radius: 50%; background: white; content: ""; }
+    .preview-field-error { display: flex; gap: 5px; margin-top: 5px; padding: 6px 8px; color: var(--danger); border-radius: 8px; background: rgba(255,107,107,.08); font-size: 8px; line-height: 1.35; }
+    .preview-qr { width: 62px; height: 62px; margin: 8px auto; padding: 7px; border-radius: 9px; background: rgba(255,255,255,.92); }
+    .preview-qr::after { display: block; width: 100%; height: 100%; opacity: .86; background: repeating-conic-gradient(#050714 0 25%, transparent 0 50%) 0/10px 10px; content: ""; }
+    .preview-pill { position: absolute; left: 50%; bottom: 11px; display: flex; align-items: center; gap: 5px; padding: 6px 10px; color: var(--text); border: 1px solid var(--border-soft); border-radius: 999px; background: rgba(24,26,32,.97); box-shadow: 0 8px 18px rgba(0,0,0,.40); font-size: 8px; font-weight: 800; white-space: nowrap; transform: translateX(-50%); }
+    .preview-pill .icon { width: 13px; height: 13px; color: var(--green-bright); }
+    .preview-undo { position: absolute; left: 2px; right: 2px; bottom: 2px; min-height: 43px; display: flex; align-items: center; gap: 7px; padding: 8px 10px; color: var(--text); border: 1px solid var(--border); border-radius: 12px; background: rgba(24,26,32,.98); box-shadow: 0 8px 20px rgba(0,0,0,.44); font-size: 8px; }
+    .preview-undo span { flex: 1; }
+    .preview-undo b { color: var(--green-bright); font-size: 8px; }
+    .preview-undo::after { position: absolute; left: 0; bottom: 0; width: 58%; height: 2px; border-radius: 0 0 0 12px; background: var(--green); content: ""; }
+
+    .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 24px; }
+    .principle { padding: 17px; border: 1px solid var(--border-soft); border-radius: 18px; background: rgba(16,18,24,.52); }
+    .principle .icon { color: var(--teal); }
+    .principle h3 { margin: 10px 0 5px; font-size: 13px; }
+    .principle p { margin: 0; color: var(--muted); font-size: 10px; }
+
+    .footer { margin-top: 72px; padding-top: 22px; color: var(--muted); border-top: 1px solid var(--divider); font-size: 11px; }
+    .footer strong { color: var(--text-2); }
+
+    @media (max-width: 1120px) {
+      .feedback-layout { grid-template-columns: 1fr; }
+      .scenario-list { grid-template-columns: 1fr 1fr; order: 2; }
+      .feedback-comparison { order: 1; }
+    }
+
+    @media (max-width: 980px) {
+      .hero, .privacy-layout, .feedback-layout { grid-template-columns: 1fr; }
+      .hero { padding-top: 62px; gap: 36px; }
+      .finding-card { max-width: 680px; }
+      .privacy-layout, .feedback-layout { gap: 34px; }
+      .design-notes { grid-template-columns: repeat(2, 1fr); }
+      .state-grid { grid-template-columns: 1fr 1fr; }
+      .outbox-grid { grid-template-columns: 1fr 1fr; }
+      .outbox-card.proposed { grid-column: 1 / -1; }
+      .sequence-grid { grid-template-columns: 1fr 1fr; }
+      .sequence-step:nth-child(2) { border-right: 0; }
+      .sequence-step:nth-child(-n+2) { border-bottom: 1px solid var(--divider); }
+      .solution-contract { grid-template-columns: 1fr; }
+      .audit-strip, .principles { grid-template-columns: 1fr 1fr; }
+      .feedback-layout .scenario-list { order: 2; }
+      .feedback-comparison { order: 1; }
+    }
+
+    @media (max-width: 680px) {
+      .top-nav { display: none; }
+      .brand-sub { display: none; }
+      main, .header-inner { width: min(100% - 22px, 1220px); }
+      .hero { min-height: 0; padding: 48px 0; }
+      h1 { font-size: 45px; }
+      .section { padding-top: 68px; }
+      .phone { width: min(390px, calc(100vw - 32px)); height: min(844px, calc((100vw - 32px) * 2.164)); min-height: 690px; }
+      .feedback-comparison { grid-template-columns: 1fr; gap: 30px; }
+      .feedback-phone .phone { width: min(330px, calc(100vw - 32px)); }
+      .design-notes, .state-grid, .outbox-grid, .sequence-grid, .solution-rules, .audit-strip, .scenario-list, .principles { grid-template-columns: 1fr; }
+      .outbox-card.proposed { grid-column: auto; }
+      .sequence-step, .sequence-step:nth-child(2) { border-right: 0; border-bottom: 1px solid var(--divider); }
+      .sequence-step:last-child { border-bottom: 0; }
+      .sequence-head { display: block; }
+      .sequence-badge { display: inline-block; margin-top: 10px; }
+      .mapping-card { overflow: visible; display: grid; gap: 12px; border: 0; border-radius: 0; background: transparent; }
+      .mapping-row { grid-template-columns: 1fr; gap: 10px; padding: 14px; border: 1px solid var(--border-soft); border-radius: 18px; background: rgba(10,10,15,.62); }
+      .mapping-row.head { display: none; }
+      .copy-swap { grid-template-columns: 1fr; }
+      .swap-arrow { transform: rotate(90deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m0 0L6.5 10.5M12 5l5.5 5.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="9" r="1.5"/><path d="M4 17l5-5 3.5 3.5 2.5-2.5 5 5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3z"/><path d="M9.5 12l1.7 1.7 3.5-3.7"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 018 0v3"/></symbol>
+    <symbol id="i-one" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10.5 9.5L12 8v8"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.5h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3L2.8 19h18.4L12 3z"/><path d="M12 9v4.5M12 17h.01"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M19 8a8 8 0 10.5 7M19 8V3m0 5h-5"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4"/><path d="M5 11a7 7 0 0014 0M12 18v3M9 21h6"/></symbol>
+    <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M3 3l18 18M5 9a12 12 0 013.1-1.7M13 6.1A12 12 0 0119 9M8.5 12.5a5 5 0 015.6-.9M12 18h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0115 0"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1"/></symbol>
+    <symbol id="i-banner" viewBox="0 0 24 24"><path d="M4 5h16v12H7l-3 3V5z"/></symbol>
+  </svg>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <img src="../web/icons/Icon-512.png" alt="Mknoon app icon">
+        <div class="brand-copy">
+          <div class="brand-title">Private media &amp; feedback</div>
+          <div class="brand-sub">Interactive UX concept · Pixel inspection</div>
+        </div>
+      </div>
+      <nav class="top-nav" aria-label="Mockup sections">
+        <a href="#protection">Send protection</a>
+        <a href="#message-states">Chat states</a>
+        <a href="#outbox">Offline sending</a>
+        <a href="#feedback">Feedback system</a>
+        <a href="#copy">Copy map</a>
+        <a href="#revision">Copy revision</a>
+      </nav>
+      <div class="copy-toggle" role="group" aria-label="Copy variant shown in the mockups">
+        <button class="copy-toggle-btn" id="copyOriginalBtn" type="button" aria-pressed="false">Original</button>
+        <button class="copy-toggle-btn" id="copyRevisedBtn" type="button" aria-pressed="true">Revised</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <div class="eyebrow"><span class="live-dot"></span>Pixel 6 · chat with iPhone-11</div>
+        <h1>Private should feel clear, not broken.</h1>
+        <p class="hero-lede">A protection choice users can understand before sending, message states that remain useful after sending, and a feedback system that puts each result where it belongs.</p>
+        <div class="hero-actions">
+          <a class="primary-link" href="#protection">Try the protection picker <svg class="icon"><use href="#i-arrow-up"/></svg></a>
+          <a class="secondary-link" href="#feedback">Review feedback alternatives</a>
+        </div>
+      </div>
+
+      <aside class="finding-card" aria-label="Live device findings">
+        <div class="finding-head">
+          <div>
+            <div class="kicker">Observed, not assumed</div>
+            <h2>What the Pixel showed</h2>
+          </div>
+          <span class="device-pill">CONNECTED</span>
+        </div>
+        <div class="finding-list">
+          <div class="finding-item">
+            <div class="finding-num">01</div>
+            <div><strong>Sent private media looks empty</strong><span>Protected and View once render as blank outlined bubbles, with the mode label visually detached underneath.</span></div>
+          </div>
+          <div class="finding-item">
+            <div class="finding-num">02</div>
+            <div><strong>The first open can appear to do nothing</strong><span>Private media downloads on the first tap without inline progress; opening requires another tap after the download.</span></div>
+          </div>
+          <div class="finding-item">
+            <div class="finding-num">03</div>
+            <div><strong>The chooser explains too little, too late</strong><span>Six flat menu items mix vague labels with repeated technical copy and provide no visible selected state.</span></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section" id="protection">
+      <div class="section-head">
+        <div class="kicker">01 · Before sending</div>
+        <h2>Ask one human question.</h2>
+        <p>Replace the generic “Private media / Ordinary” chip and six-row popup with a visible Photo privacy summary and four consequence-led choices. Expiry duration appears only when it is relevant.</p>
+      </div>
+
+      <div class="privacy-layout">
+        <div class="phone-wrap">
+          <div class="phone" aria-label="Interactive Pixel protection picker mockup">
+            <div class="phone-screen">
+              <div class="phone-stars"></div>
+              <div class="statusbar"><span>11:24</span><span class="status-icons"><i></i><i></i></span></div>
+              <div class="chat-header">
+                <button class="icon-button" aria-label="Back"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+                <div class="avatar-orbit" aria-hidden="true"></div>
+                <div><div class="contact-name">iPhone-11</div><div class="contact-state">Connected today</div></div>
+                <button class="icon-button" aria-label="More options"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+              <div class="chat-body">
+                <div class="day-label">TODAY</div>
+                <div class="mini-bubble">Send me the photo when you get a chance.<div class="bubble-meta">11:22 AM</div></div>
+                <div class="mini-bubble out">Got it, sending it privately.<div class="bubble-meta">11:23 AM · delivered</div></div>
+                <div class="draft-photo">
+                  <div class="remove" aria-hidden="true"><svg class="icon" style="width:13px"><use href="#i-close"/></svg></div>
+                  <div class="photo-art"></div>
+                  <div class="draft-label"><span>1 photo</span><span>Ready</span></div>
+                </div>
+              </div>
+              <div class="composer-shell">
+                <button class="privacy-summary" id="privacySummary" type="button" aria-haspopup="dialog">
+                  <svg class="icon"><use id="summaryIcon" href="#i-shield"/></svg>
+                  <span class="summary-copy"><strong id="summaryTitle">Protected view</strong><small id="summaryDetail">Viewable again · no saving or sharing</small></span>
+                  <span class="summary-change">Change</span>
+                </button>
+                <div class="composer-row">
+                  <button class="round-control" aria-label="Add attachment"><svg class="icon"><use href="#i-plus"/></svg></button>
+                  <div class="composer-input">Write something…</div>
+                  <button class="round-control send" aria-label="Send photo"><svg class="icon"><use href="#i-arrow-up"/></svg></button>
+                </div>
+              </div>
+
+              <div class="sheet-scrim" id="privacyScrim">
+                <section class="privacy-sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+                  <div class="sheet-handle"></div>
+                  <div class="sheet-title-row">
+                    <div>
+                      <h3 class="sheet-title" id="sheetTitle">How should iPhone-11 see this photo?</h3>
+                      <p class="sheet-subtitle" data-alt="" hidden>Choose what happens after iPhone-11 receives it.</p>
+                    </div>
+                    <button class="sheet-close" id="sheetClose" type="button" aria-label="Close protection choices"><svg class="icon" style="width:17px"><use href="#i-close"/></svg></button>
+                  </div>
+
+                  <div class="mode-list" role="radiogroup" aria-label="Photo privacy">
+                    <button class="mode-option" type="button" role="radio" aria-checked="false" data-mode="standard">
+                      <span class="mode-icon"><svg class="icon"><use href="#i-image"/></svg></span>
+                      <span class="mode-copy"><strong>Keep in chat</strong><small data-alt="Shows like a normal photo. They can save or share it.">A normal photo. iPhone-11 can save or share it.</small></span>
+                      <span class="check"><svg class="icon"><use href="#i-check"/></svg></span>
+                    </button>
+                    <button class="mode-option" type="button" role="radio" aria-checked="true" data-mode="protected">
+                      <span class="mode-icon"><svg class="icon"><use href="#i-shield"/></svg></span>
+                      <span class="mode-copy"><strong>Protected view</strong><small data-alt="Opens privately, can be viewed again. Saving and sharing are off.">iPhone-11 can view it again, but not save or share it.</small></span>
+                      <span class="check"><svg class="icon"><use href="#i-check"/></svg></span>
+                    </button>
+                    <button class="mode-option" type="button" role="radio" aria-checked="false" data-mode="once">
+                      <span class="mode-icon"><svg class="icon"><use href="#i-one"/></svg></span>
+                      <span class="mode-copy"><strong>View once</strong><small data-alt="Can be opened once on their device, then it disappears.">Disappears after iPhone-11 opens it once.</small></span>
+                      <span class="check"><svg class="icon"><use href="#i-check"/></svg></span>
+                    </button>
+                    <button class="mode-option" type="button" role="radio" aria-checked="false" data-mode="expiry">
+                      <span class="mode-icon"><svg class="icon"><use href="#i-clock"/></svg></span>
+                      <span class="mode-copy"><strong>Set an expiry</strong><small data-alt="Available for a limited time on their device.">Disappears from iPhone-11’s phone after a time you choose.</small></span>
+                      <span class="check"><svg class="icon"><use href="#i-check"/></svg></span>
+                    </button>
+                  </div>
+
+                  <div class="duration-panel" id="durationPanel" hidden>
+                    <div class="duration-label" data-alt="Keep it available for">Delete after</div>
+                    <div class="duration-row">
+                      <button class="duration-button" type="button" aria-pressed="false" data-duration="1 hour">1 hour</button>
+                      <button class="duration-button" type="button" aria-pressed="true" data-duration="1 day">1 day</button>
+                      <button class="duration-button" type="button" aria-pressed="false" data-duration="7 days">7 days</button>
+                    </div>
+                  </div>
+
+                  <div class="disclosure" id="privateDisclosure">
+                    <svg class="icon" style="color:var(--green-bright)"><use href="#i-shield"/></svg>
+                    <span data-alt="After sending a private photo, you won’t be able to reopen it from this chat. Screen protection helps while it is open, but another camera can still capture it.">Only iPhone-11 can open it. No saving, sharing, or screenshots. You can reopen it once here after sending.</span>
+                  </div>
+                  <button class="sheet-cta" id="sheetCta" type="button">Use Protected view</button>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="design-notes">
+          <article class="note-card">
+            <div class="note-index">MAKE THE CONSEQUENCE THE LABEL</div>
+            <h3>Use language people can predict</h3>
+            <p>“Ordinary” and “Protected” describe internal modes. The replacement names describe what the recipient will experience.</p>
+            <div class="copy-swap"><div class="copy-chip before">Ordinary</div><div class="swap-arrow">→</div><div class="copy-chip after">Keep in chat</div></div>
+            <div class="copy-swap"><div class="copy-chip before">Protected</div><div class="swap-arrow">→</div><div class="copy-chip after">Protected view</div></div>
+          </article>
+          <article class="note-card">
+            <div class="note-index">PROGRESSIVE DISCLOSURE</div>
+            <h3>Four choices, not six competing rows</h3>
+            <p>“Set an expiry” is one intent. Show 1 hour, 1 day, and 7 days only after that intent is selected.</p>
+          </article>
+          <article class="note-card">
+            <div class="note-index">PERSIST THE SELECTION</div>
+            <h3>Keep privacy visible next to the photo</h3>
+            <p>The composer summary says both the selected mode and its consequence. Users can change it without reopening a mystery lock menu.</p>
+          </article>
+          <article class="note-card">
+            <div class="note-index">REASSURE AT THE SENSITIVE MOMENT</div>
+            <h3>Answer the sender’s real questions</h3>
+            <div class="truth-list">
+              <div class="truth-item"><svg class="icon"><use href="#i-lock"/></svg><span>Only the recipient can open it; saving, sharing, and screenshots are blocked.</span></div>
+              <div class="truth-item"><svg class="icon"><use href="#i-shield"/></svg><span>The sender keeps one more look: private media reopens once from this chat after sending.</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="message-states">
+      <div class="section-head">
+        <div class="kicker">02 · After sending</div>
+        <h2>Never render a blank message.</h2>
+        <p>Private bytes may remain hidden, but the message itself should still explain what it is, who can open it, what is happening now, and what to do next.</p>
+      </div>
+      <div class="state-grid">
+        <article class="state-card">
+          <div class="state-label">Receiver · ready</div>
+          <div class="private-bubble">
+            <div class="private-visual"><span class="mode-icon"><svg class="icon"><use href="#i-shield"/></svg></span></div>
+            <div class="private-content">
+              <div class="private-title">Protected photo</div>
+              <p data-alt="Opens in a protected screen. You can view it again.">You can view it again. iPhone-11 doesn’t allow saving or sharing.</p>
+              <button class="private-action">Open photo</button>
+              <div class="private-meta"><span>iPhone-11</span><span>9:13 AM</span></div>
+            </div>
+          </div>
+        </article>
+        <article class="state-card">
+          <div class="state-label">Receiver · not downloaded</div>
+          <div class="private-bubble">
+            <div class="private-visual"><span class="mode-icon"><svg class="icon"><use href="#i-one"/></svg></span></div>
+            <div class="private-content">
+              <div class="private-title">View-once photo</div>
+              <p data-alt="Opening starts your one view. Download progress stays here.">You can only view this once.</p>
+              <button class="private-action" data-alt="Download for one view">View photo</button>
+              <div class="private-meta"><span data-alt="Tap once—not twice">iPhone-11</span><span>9:19 AM</span></div>
+            </div>
+          </div>
+        </article>
+        <article class="state-card">
+          <div class="state-label">Sender · sent</div>
+          <div class="private-bubble">
+            <div class="private-visual"><span class="mode-icon"><svg class="icon"><use href="#i-lock"/></svg></span></div>
+            <div class="private-content">
+              <div class="private-title">Protected photo sent</div>
+              <p data-alt="Only iPhone-11 can open it from this chat.">Only iPhone-11 can view it, in the app. They can’t save, share, or screenshot it.</p>
+              <button class="private-action secondary">View photo</button>
+              <div class="private-meta"><span>Sent directly</span><span>11:08 AM · ✓</span></div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="outbox">
+      <div class="section-head">
+        <div class="kicker">03 · Offline delivery</div>
+        <h2>One promise for text and media.</h2>
+        <p>Text already saves first, retries automatically, and tells the user “Will send when you’re back online”. That stays exactly as it is today. Media saves a durable local copy too, yet the same temporary network problem is presented as a red failure with manual Retry. The proposal gives queued media the promise text already makes.</p>
+      </div>
+
+      <div class="outbox-grid" aria-label="Current text, current media, and proposed shared offline behavior">
+        <article class="outbox-card">
+          <div class="outbox-card-head">
+            <div>
+              <div class="outbox-lane good">Text · how it works today</div>
+              <h3>Saved and self-healing</h3>
+              <p>No manual Retry when the encrypted message is safely queued.</p>
+            </div>
+            <span class="outbox-chip">CURRENT</span>
+          </div>
+          <div class="outbox-screen">
+            <div class="outbox-chat-head"><span class="outbox-avatar"></span><span><strong>iPhone-11</strong><small>Waiting for connection</small></span></div>
+            <div class="outbox-bubble">
+              I’m on my way.
+              <div class="outbox-meta"><span>11:42</span><svg class="icon"><use href="#i-check"/></svg></div>
+            </div>
+            <div class="outbox-snack"><svg class="icon"><use href="#i-wifi-off"/></svg><span>Will send when you’re back online</span></div>
+          </div>
+          <div class="outbox-after">
+            <strong>What actually happens:</strong> the message and its encrypted envelope are stored before transport. A network-restored signal can retry it automatically after about one second. After the snackbar disappears, however, the bubble only shows a check, with no visible “queued” explanation. One current exception promises automatic send when the node is not running but still leaves a failed row with Retry.
+          </div>
+        </article>
+
+        <article class="outbox-card current-media">
+          <div class="outbox-card-head">
+            <div>
+              <div class="outbox-lane bad">Media · how it looks today</div>
+              <h3>Retryable, but shown as failed</h3>
+              <p>The durable queue and the visible UI tell two different stories.</p>
+            </div>
+            <span class="outbox-chip">CURRENT</span>
+          </div>
+          <div class="outbox-screen">
+            <div class="outbox-chat-head"><span class="outbox-avatar"></span><span><strong>iPhone-11</strong><small>Waiting for connection</small></span></div>
+            <div class="outbox-bubble error">
+              <div class="outbox-photo"><span class="outbox-mode"><svg class="icon"><use href="#i-shield"/></svg>Protected</span><svg class="icon"><use href="#i-image"/></svg></div>
+              <div class="outbox-inline-state error"><svg class="icon"><use href="#i-alert"/></svg><span><strong>Photo marked failed</strong>The saved upload is still eligible for automatic retry.</span></div>
+              <div class="outbox-actions"><span class="outbox-action"><svg class="icon" style="width:12px"><use href="#i-retry"/></svg>Retry</span><span class="outbox-action danger"><svg class="icon" style="width:12px"><use href="#i-trash"/></svg>Delete</span></div>
+            </div>
+            <div class="outbox-composer-echo"><span class="outbox-composer-thumb"></span><span><strong style="color:var(--text-2)">Photo restored to composer</strong><br>The original queued row still exists.</span></div>
+            <div class="outbox-snack error"><svg class="icon"><use href="#i-alert"/></svg><span>Failed to upload media. Try again.</span></div>
+          </div>
+          <div class="outbox-after warning">
+            <strong>Why this is risky:</strong> the app has already copied the file into durable <code>upload_pending</code> storage and can retry it in the background. Today, media misses text’s fast one-second reconnect flush and waits for the full node-ready pass, app resume, or periodic backstop. The current manual Retry can also misread its relative staged path as missing. Restoring the photo to the composer invites a competing send while the original remains recoverable.
+          </div>
+        </article>
+
+        <article class="outbox-card proposed">
+          <div class="outbox-card-head">
+            <div>
+              <div class="outbox-lane good">Media · proposed</div>
+              <h3>Media joins the text promise</h3>
+              <p>Text is unchanged. Queued media reuses its exact words. No red, no Retry.</p>
+            </div>
+            <span class="outbox-chip">PROPOSED</span>
+          </div>
+          <div class="outbox-screen">
+            <div class="outbox-chat-head"><span class="outbox-avatar"></span><span><strong>iPhone-11</strong><small>Waiting for connection</small></span></div>
+            <div class="outbox-banner"><svg class="icon"><use href="#i-wifi-off"/></svg><span><strong>You’re offline</strong><br>Messages and media will send when you’re back online.</span></div>
+            <div class="outbox-bubble">
+              I’m on my way.
+              <div class="outbox-meta"><span>11:42</span><svg class="icon"><use href="#i-check"/></svg></div>
+            </div>
+            <div class="outbox-bubble queued">
+              <div class="outbox-photo"><span class="outbox-mode"><svg class="icon"><use href="#i-shield"/></svg>Protected photo</span><svg class="icon"><use href="#i-image"/></svg></div>
+              <div class="outbox-inline-state"><svg class="icon"><use href="#i-wifi-off"/></svg><span><strong data-alt="Waiting for connection">Will send when you’re back online</strong><span data-alt="" hidden>Saved on this phone. It will upload and send automatically when you’re online.</span></span></div>
+            </div>
+          </div>
+          <div class="outbox-after solution">
+            <strong>No Retry button while automatic recovery owns the item.</strong> Keep the protection badge and preview visible. View-once media adds: “<span data-alt="The recipient’s one view has not started.">Not viewed yet.</span>” A discreet message menu may still offer Cancel.
+          </div>
+        </article>
+      </div>
+
+      <div class="outbox-sequence" aria-label="Proposed automatic media delivery sequence">
+        <div class="sequence-head">
+          <div><h3>The proposed media sequence</h3><p>The status remains attached to the photo from offline save through reconnect. Red and manual recovery appear only after a non-retryable problem or exhausted automatic retry budget.</p></div>
+          <span class="sequence-badge">NO ACTION NEEDED UNTIL STEP 4</span>
+        </div>
+        <div class="sequence-grid">
+          <article class="sequence-step">
+            <div class="sequence-num">1</div>
+            <h4>Saved offline</h4>
+            <p>Save the parent message, privacy policy, stable attachment ID, and app-owned media copy together.</p>
+            <div class="sequence-ui"><div class="sequence-status"><svg class="icon"><use href="#i-wifi-off"/></svg><span><strong>Protected photo saved</strong><span data-alt="It will upload and send automatically when you’re online.">Will send when you’re back online.</span></span></div></div>
+          </article>
+          <article class="sequence-step">
+            <div class="sequence-num">2</div>
+            <h4>Sending automatically…</h4>
+            <p>As soon as connectivity returns, wake the media queue just as the text queue is woken.</p>
+            <div class="sequence-ui"><div class="sequence-status"><svg class="icon"><use href="#i-retry"/></svg><span><strong>Uploading photo · 68%</strong><span data-alt="" hidden>No action needed.</span></span></div><div class="sequence-progress"></div></div>
+          </article>
+          <article class="sequence-step">
+            <div class="sequence-num">3</div>
+            <h4>Sent securely</h4>
+            <p>One stable operation completes the upload and sends the original parent once, without a duplicate draft.</p>
+            <div class="sequence-ui"><div class="sequence-status"><svg class="icon"><use href="#i-check"/></svg><span><strong data-alt="Sent to inbox">Sent</strong>Protected photo · 11:43</span></div></div>
+          </article>
+          <article class="sequence-step terminal">
+            <div class="sequence-num">4</div>
+            <h4>Needs attention</h4>
+            <p>Use this only when automatic recovery cannot continue. Explain the exact reason and offer a useful action.</p>
+            <div class="sequence-ui"><div class="sequence-status"><svg class="icon" style="color:var(--danger)"><use href="#i-alert"/></svg><span><strong>Photo is no longer on this phone</strong>Choose it again to send.</span></div><div class="sequence-mini-actions"><span>Choose photo</span><span>Remove</span></div></div>
+          </article>
+        </div>
+      </div>
+
+      <div class="solution-contract">
+        <div>
+          <div class="outbox-lane good">Production behavior proposal</div>
+          <h3>Make the durable outbox the source of truth.</h3>
+          <p>Do not infer terminal failure from the parent message’s <code>failed</code> status alone. Project one visible state from the parent plus every attachment, and let a single idempotent worker own both automatic and user-triggered recovery.</p>
+        </div>
+        <div class="solution-rules">
+          <div class="solution-rule"><span class="rule-icon">1</span><span><strong>Save before network</strong><span>Commit the message, protection mode, durable file path, and stable blob ID before upload.</span></span></div>
+          <div class="solution-rule"><span class="rule-icon">2</span><span><strong>Wake media on reconnect</strong><span>Wake the media coordinator from the fast network-restored path; keep node-online, resume, and periodic retries as backstops.</span></span></div>
+          <div class="solution-rule"><span class="rule-icon">3</span><span><strong>Keep one operation</strong><span>Claim work with a durable lease/CAS. Foreground, reconnect, resume, and manual actions reuse the same message and blob IDs.</span></span></div>
+          <div class="solution-rule"><span class="rule-icon">4</span><span><strong>Separate transient from terminal</strong><span><code>upload_pending</code> means automatic. Only <code>upload_failed</code> or a missing local copy exposes manual recovery.</span></span></div>
+          <div class="solution-rule"><span class="rule-icon">5</span><span><strong>Return typed outcomes</strong><span>Offline/no route stays queued and does not consume the terminal retry budget. Missing files and invalid input stop with a precise reason.</span></span></div>
+          <div class="solution-rule"><span class="rule-icon">6</span><span><strong>Promote before cleanup</strong><span>Persist and verify the canonical media path before deleting the pending-upload directory, so a recovered photo still renders for its sender.</span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="feedback">
+      <div class="section-head">
+        <div class="kicker">04 · App feedback audit</div>
+        <h2>Replace one global channel with a small feedback system.</h2>
+        <p>The source scan found snackbars carrying failures, permissions, state changes, destructive actions, and quiet successes. Select a case to compare how that feedback appears today with the proposed in-context treatment.</p>
+      </div>
+
+      <div class="audit-strip" aria-label="Snackbar audit summary">
+        <div class="metric"><strong>72</strong><span>SnackBar construction/show sites</span></div>
+        <div class="metric"><strong>23</strong><span>Dart files using the channel</span></div>
+        <div class="metric"><strong>3</strong><span>SnackBarAction instances</span></div>
+        <div class="metric"><strong>0</strong><span>Global SnackBarTheme definitions</span></div>
+      </div>
+      <div class="audit-note" aria-label="Additional snackbar audit findings">
+        <span><strong>25</strong> explicitly floating</span>
+        <span><strong>20</strong> hard-code red styling</span>
+        <span>timing ranges from <strong>1.2 to 8 seconds</strong></span>
+        <span>some paths expose raw exceptions or hard-code English</span>
+      </div>
+
+      <div class="feedback-layout">
+        <div class="scenario-list" role="tablist" aria-label="Feedback examples">
+          <button class="scenario-button" type="button" role="tab" aria-selected="true" data-scene="send-failure">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-retry"/></svg></span>
+            <span class="scenario-copy"><strong>Terminal media problem</strong><small>Manual action only when required</small></span>
+            <span class="pattern-tag">Inline</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="connection">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-wifi-off"/></svg></span>
+            <span class="scenario-copy"><strong>Offline outbox</strong><small>Text and media, same promise</small></span>
+            <span class="pattern-tag">Banner</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="permission">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-mic"/></svg></span>
+            <span class="scenario-copy"><strong>Permission blocked</strong><small>Explain and offer the next step</small></span>
+            <span class="pattern-tag">Sheet</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="invite">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-user"/></svg></span>
+            <span class="scenario-copy"><strong>Invite outcome</strong><small>Update the invite itself</small></span>
+            <span class="pattern-tag">Row state</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="validation">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-alert"/></svg></span>
+            <span class="scenario-copy"><strong>Setting or field error</strong><small>Place help beside the control</small></span>
+            <span class="pattern-tag">Field help</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="undo">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-trash"/></svg></span>
+            <span class="scenario-copy"><strong>Reversible removal</strong><small>Reserve the bottom bar for Undo</small></span>
+            <span class="pattern-tag">Undo bar</span>
+          </button>
+          <button class="scenario-button" type="button" role="tab" aria-selected="false" data-scene="success">
+            <span class="scenario-icon"><svg class="icon"><use href="#i-copy"/></svg></span>
+            <span class="scenario-copy"><strong>Quiet success</strong><small>Acknowledge without interruption</small></span>
+            <span class="pattern-tag">Pill</span>
+          </button>
+        </div>
+
+        <div class="feedback-comparison">
+          <div class="compare-column">
+            <div class="compare-heading current">
+              <span class="compare-badge">NOW</span>
+              <span><strong>One bottom snackbar</strong><small>Transient, screen-wide, and often detached from what changed.</small></span>
+            </div>
+            <div class="phone-wrap feedback-phone current-phone">
+              <div class="phone" aria-label="Current snackbar feedback mockup">
+                <div class="phone-screen">
+                  <div class="phone-stars"></div>
+                  <div class="statusbar"><span>11:27</span><span class="status-icons"><i></i><i></i></span></div>
+                  <div class="chat-header">
+                    <button class="icon-button" aria-label="Back"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+                    <div class="avatar-orbit" aria-hidden="true"></div>
+                    <div><div class="contact-name" id="currentFeedbackTitle">iPhone-11</div><div class="contact-state" id="currentFeedbackSubtitle">Connected today</div></div>
+                    <button class="icon-button" aria-label="More options"><svg class="icon"><use href="#i-more"/></svg></button>
+                  </div>
+
+                  <div class="scene current-scene active" data-current-scene-panel="send-failure">
+                    <div class="scene-body">
+                      <div class="mock-message">Could you send that photo again?</div>
+                      <div class="message-failure">
+                        <strong><svg class="icon" style="width:15px"><use href="#i-alert"/></svg>Photo attachment</strong>
+                        <p>Every failed media row receives the same generic treatment.</p>
+                        <div class="inline-actions"><button>Retry</button><button>Delete</button></div>
+                      </div>
+                      <div class="current-snackbar floating error"><span class="snack-copy">Failed to upload media. Try again.</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current UI:</strong> a red snackbar plus Retry/Delete appear without explaining whether the cause is offline, exhausted retries, or a missing file.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="connection">
+                    <div class="scene-body">
+                      <div class="scene-divider">Text today</div>
+                      <div class="mock-message out">Five minutes away. <span style="color:var(--faint);font-size:8px">11:42 · ✓</span></div>
+                      <div class="current-snackbar sample info"><svg class="icon" style="width:16px"><use href="#i-wifi-off"/></svg><span class="snack-copy">Will send when you’re back online</span></div>
+                      <div class="scene-divider">Protected media today</div>
+                      <div class="message-failure" style="width:90%">
+                        <strong><svg class="icon" style="width:15px"><use href="#i-alert"/></svg>Protected photo marked failed</strong>
+                        <p>The durable upload can still retry automatically.</p>
+                        <div class="inline-actions"><button>Retry</button><button>Delete</button></div>
+                      </div>
+                      <div class="current-snackbar floating error"><span class="snack-copy">Failed to upload media. Try again.</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current mismatch:</strong> text promises automatic delivery; media looks terminal and asks for a tap even though its durable row remains retryable.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="permission">
+                    <div class="scene-body">
+                      <div class="mock-message">Send me a voice note.</div>
+                      <div class="current-snackbar floating error"><span class="snack-copy">Microphone permission is required to record voice messages.</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current snackbar:</strong> reports the block after the tap, but offers no direct Open Settings recovery.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="invite">
+                    <div class="scene-body">
+                      <div class="day-label">INVITATIONS</div>
+                      <div class="invite-card">
+                        <div class="person"><div class="mini-avatar"></div><div><strong>Weekend Trip</strong><small>Invited by Lina · 4 members</small></div></div>
+                        <div class="current-invite-actions"><span>Accept</span><span>Decline</span></div>
+                      </div>
+                      <div class="current-snackbar"><span class="snack-copy">Invite expired</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current snackbar:</strong> the invite still looks actionable while its real state appears elsewhere and then disappears.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="validation">
+                    <div class="scene-body">
+                      <div class="day-label">MEDIA DOWNLOADS</div>
+                      <div class="settings-row"><svg class="icon"><use href="#i-image"/></svg><div><strong>Download photos automatically</strong><small>Wi-Fi only</small></div><span class="toggle"></span></div>
+                      <div class="field-help"><svg class="icon"><use href="#i-alert"/></svg><span>Couldn’t save this preference.</span></div>
+                      <div class="current-snackbar error"><span class="snack-copy">Couldn’t save this preference.</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current snackbar:</strong> duplicates an inline error that already exists beside the setting.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="undo">
+                    <div class="scene-body">
+                      <div class="day-label">INVITATIONS</div>
+                      <div class="invite-card" style="opacity:.34">
+                        <div class="person"><div class="mini-avatar"></div><div><strong>Weekend Trip</strong><small>Invite removed from the list</small></div></div>
+                      </div>
+                      <div class="current-snackbar"><span class="snack-copy">Invite declined</span><span class="snack-action">UNDO</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current snackbar:</strong> this is one of only three actionable bars, but timing, placement, and styling are not standardized.</div>
+                  </div>
+
+                  <div class="scene current-scene" data-current-scene-panel="success">
+                    <div class="scene-body">
+                      <div class="qr-card"><div class="fake-qr"></div></div>
+                      <div class="current-snackbar"><span class="snack-copy">QR data copied to clipboard!</span></div>
+                    </div>
+                    <div class="scene-caption"><strong>Current snackbar:</strong> a large bottom surface interrupts the screen for a low-risk confirmation.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="compare-column">
+            <div class="compare-heading proposed">
+              <span class="compare-badge">PROPOSED</span>
+              <span><strong>Feedback where it belongs</strong><small>Persistent when needed, actionable, and bound to the affected object.</small></span>
+            </div>
+            <div class="phone-wrap feedback-phone">
+          <div class="phone" aria-label="Interactive feedback pattern mockup">
+            <div class="phone-screen">
+              <div class="phone-stars"></div>
+              <div class="statusbar"><span>11:27</span><span class="status-icons"><i></i><i></i></span></div>
+              <div class="chat-header">
+                <button class="icon-button" aria-label="Back"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+                <div class="avatar-orbit" aria-hidden="true"></div>
+                <div><div class="contact-name" id="feedbackTitle">iPhone-11</div><div class="contact-state" id="feedbackSubtitle">Connected today</div></div>
+                <button class="icon-button" aria-label="More options"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+
+              <div class="scene active" data-scene-panel="send-failure">
+                <div class="scene-body">
+                  <div class="mock-message">Could you send that photo again?</div>
+                  <div class="message-failure">
+                    <strong><svg class="icon" style="width:15px"><use href="#i-alert"/></svg>Photo is no longer on this phone</strong>
+                    <p data-alt="Choose it again to send. This is a terminal local-file problem—not an offline wait.">Choose it again to send.</p>
+                    <div class="inline-actions"><button>Choose photo</button><button>Remove</button></div>
+                  </div>
+                </div>
+                <div class="scene-caption"><strong>Precise terminal state:</strong> shows why automatic recovery stopped and offers an action that can actually fix it. Retry appears only when a saved local copy still exists.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="connection">
+                <div class="scene-body">
+                  <div class="outbox-banner"><svg class="icon"><use href="#i-wifi-off"/></svg><span><strong>You’re offline</strong><br>Messages and media will send when you’re back online.</span></div>
+                  <div class="outbox-bubble">Five minutes away.<div class="outbox-meta"><span>11:42</span><svg class="icon"><use href="#i-check"/></svg></div></div>
+                  <div class="outbox-bubble queued"><div class="outbox-photo"><span class="outbox-mode"><svg class="icon"><use href="#i-one"/></svg>View once</span><svg class="icon"><use href="#i-image"/></svg></div><div class="outbox-inline-state"><svg class="icon"><use href="#i-wifi-off"/></svg><span><strong data-alt="Waiting for connection">Will send when you’re back online</strong><span data-alt="Saved on this phone. It will upload and send automatically. The recipient’s one view has not started.">Not viewed yet.</span></span></div></div>
+                </div>
+                <div class="scene-caption"><strong>Same promise:</strong> text keeps today’s behavior; queued media carries the familiar “back online” line on the bubble. No Retry while the automatic outbox owns delivery.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="permission">
+                <div class="scene-body" style="background:rgba(0,0,0,.46)">
+                  <div class="mock-message">Send me a voice note.</div>
+                  <div class="permission-sheet">
+                    <div class="permission-icon"><svg class="icon"><use href="#i-mic"/></svg></div>
+                    <h4>Allow microphone access</h4>
+                    <p data-alt="Mknoon needs microphone access to record voice messages. You can enable it in your phone’s settings.">To record voice messages, turn it on in your phone’s settings.</p>
+                    <div class="sheet-actions"><button>Not now</button><button class="primary">Open Settings</button></div>
+                  </div>
+                </div>
+                <div class="scene-caption"><strong>Rationale sheet:</strong> explains why, names the blocked action, and provides a direct recovery path.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="invite">
+                <div class="scene-body">
+                  <div class="day-label">INVITATIONS</div>
+                  <div class="invite-card">
+                    <div class="person"><div class="mini-avatar"></div><div><strong>Weekend Trip</strong><small>Invited by Lina · 4 members</small></div></div>
+                    <div class="invite-state"><svg class="icon" style="width:16px"><use href="#i-clock"/></svg><span><strong>Invite expired</strong><span data-alt="" hidden><br>This invite can no longer be used.</span></span></div>
+                    <div class="invite-action">Ask for a new invite</div>
+                  </div>
+                </div>
+                <div class="scene-caption"><strong>Row state:</strong> an invite outcome belongs on the invite, not in one of many transient “Failed to accept” messages.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="validation">
+                <div class="scene-body">
+                  <div class="day-label">MEDIA DOWNLOADS</div>
+                  <div class="settings-row"><svg class="icon"><use href="#i-image"/></svg><div><strong>Download photos automatically</strong><small>Wi-Fi only</small></div><span class="toggle"></span></div>
+                  <div class="field-help"><svg class="icon"><use href="#i-alert"/></svg><span data-alt="Couldn’t save this preference. Check your connection and try again.">Couldn’t save. Check your connection and try again.</span></div>
+                  <div class="settings-row"><svg class="icon"><use href="#i-shield"/></svg><div><strong>Private media</strong><small>Download only when opened</small></div><span class="toggle"></span></div>
+                </div>
+                <div class="scene-caption"><strong>Inline field help:</strong> stays attached to the setting that failed and clears after a successful retry.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="undo">
+                <div class="scene-body">
+                  <div class="day-label">INVITATIONS</div>
+                  <div class="invite-card" style="opacity:.34">
+                    <div class="person"><div class="mini-avatar"></div><div><strong>Weekend Trip</strong><small>Invite removed from the list</small></div></div>
+                  </div>
+                  <div class="undo-bar"><svg class="icon" style="color:var(--muted)"><use href="#i-user"/></svg><span>Invite declined</span><button>UNDO</button></div>
+                </div>
+                <div class="scene-caption"><strong>Standardized Undo bar:</strong> keep this pattern for reversible actions, theme it consistently, and align the visible bar with the commit timer.</div>
+              </div>
+
+              <div class="scene" data-scene-panel="success">
+                <div class="scene-body">
+                  <div class="qr-card"><div class="fake-qr"></div></div>
+                  <div class="quiet-pill"><svg class="icon"><use href="#i-check"/></svg>Link copied</div>
+                </div>
+                <div class="scene-caption"><strong>Quiet confirmation:</strong> compact, centered, and non-error colored. The changed control remains the main evidence.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="copy">
+      <div class="section-head">
+        <div class="kicker">05 · Copy map</div>
+        <h2>Outcome first. Recovery second.</h2>
+        <p>Each comparison shows both the words and their presentation. Offline text, offline media, automatic retry, and terminal recovery are separate rows so a transient queue is never mistaken for a failure that needs a tap.</p>
+      </div>
+      <div class="mapping-card" role="table" aria-label="Snackbar replacement copy">
+        <div class="mapping-row head" role="row"><div>Trigger</div><div>How it looks now</div><div>Proposed presentation</div></div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Offline text message<small>Conversation · transient</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · queued behavior, temporary explanation</div>
+            <div class="preview-canvas">
+              <div class="preview-message out">Five minutes away.<div class="preview-meta">11:42 · ✓</div></div>
+              <div class="preview-snack floating info"><svg class="icon"><use href="#i-wifi-off"/></svg><span>Will send when you’re back online</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · keep today’s behavior</div>
+            <div class="preview-canvas">
+              <div class="preview-message out">Five minutes away.<div class="preview-meta">11:42 · ✓</div></div>
+              <div class="preview-snack floating info"><svg class="icon"><use href="#i-wifi-off"/></svg><span>Will send when you’re back online</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Offline protected or view-once photo<small>Conversation · transient</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · retryable upload presented as failure</div>
+            <div class="preview-canvas">
+              <div class="preview-media failed"><div class="preview-media-visual"><svg class="icon" style="color:var(--danger)"><use href="#i-alert"/></svg></div><div><strong>Protected photo</strong><small>Saved as upload_pending, but the bubble exposes Retry and Delete.</small><div class="preview-actions"><span class="preview-action">Retry</span><span class="preview-action">Delete</span></div></div></div>
+              <div class="preview-snack floating error"><span>Failed to upload media. Try again.</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · same promise as text</div>
+            <div class="preview-canvas">
+              <div class="preview-media queued"><div class="preview-media-visual"><svg class="icon"><use href="#i-shield"/></svg></div><div><strong data-alt="Protected photo · Waiting for connection">Protected photo</strong><small style="display:flex;align-items:center;gap:4px"><svg class="icon" style="width:11px;height:11px;flex:0 0 auto"><use href="#i-wifi-off"/></svg><span data-alt="Saved on this phone. It will upload and send automatically when you’re online.">Will send when you’re back online.</span></small><div class="preview-status" data-alt="" hidden><svg class="icon"><use href="#i-clock"/></svg><span>No action needed.</span></div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Connection restored<small>Conversation · automatic retry</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · media may still look failed</div>
+            <div class="preview-canvas">
+              <div class="preview-media failed"><div class="preview-media-visual"><svg class="icon" style="color:var(--danger)"><use href="#i-alert"/></svg></div><div><strong>Retry</strong><small>Media waits for the later full node-ready pass while the text fast path runs first.</small><div class="preview-actions"><span class="preview-action">Retry</span></div></div></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · status changes without a tap</div>
+            <div class="preview-canvas">
+              <div class="preview-media queued"><div class="preview-media-visual"><svg class="icon"><use href="#i-image"/></svg></div><div><strong>Sending automatically…</strong><small data-alt="Uploading protected photo · 68% · No action needed.">Uploading protected photo · 68%</small><div class="preview-progress"></div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Media needs attention<small>Conversation · terminal</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · one generic failure treatment</div>
+            <div class="preview-canvas">
+              <div class="preview-message out failed"><strong>Photo attachment</strong>The cause is not visible.<div class="preview-actions"><span class="preview-action">Retry</span><span class="preview-action">Delete</span></div></div>
+              <div class="preview-snack floating error"><span>Failed to upload media. Try again.</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · exact reason + useful recovery</div>
+            <div class="preview-canvas">
+              <div class="preview-message out failed"><strong>Photo is no longer on this phone</strong>Choose it again to send.<div class="preview-actions"><span class="preview-action primary">Choose photo</span><span class="preview-action">Remove</span></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Private media could not open<small>Conversation</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · first tap has no visible response</div>
+            <div class="preview-canvas">
+              <div class="preview-media"><div class="preview-media-visual"><svg class="icon"><use href="#i-lock"/></svg></div><div><strong>Open private media</strong><small>The card looks unchanged while it downloads. The user has to tap again.</small><div class="preview-actions"><span class="preview-action primary">Open private media</span></div></div></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · media owns progress and recovery</div>
+            <div class="preview-canvas">
+              <div class="preview-media"><div class="preview-media-visual"><svg class="icon"><use href="#i-alert"/></svg></div><div><strong data-alt="Couldn’t prepare this photo">Couldn’t open this photo</strong><small data-alt="Your one view has not started.">Your one view is still available.</small><div class="preview-actions"><span class="preview-action primary">Try again</span></div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Invite unavailable or expired<small>Orbit / Groups</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · invite looks active + snackbar</div>
+            <div class="preview-canvas">
+              <div class="preview-invite"><div class="preview-invite-head"><div><strong>Weekend Trip</strong><small>Invited by Lina · 4 members</small></div></div><div class="preview-actions"><span class="preview-action primary">Accept</span><span class="preview-action">Decline</span></div></div>
+              <div class="preview-snack"><span>Invite expired</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · state lives on the invite</div>
+            <div class="preview-canvas">
+              <div class="preview-invite"><div class="preview-invite-head"><div><strong>Weekend Trip</strong><small>Invited by Lina · 4 members</small></div></div><div class="preview-inline-state"><strong>Invite expired</strong><span data-alt="" hidden><br>This invite can no longer be used.</span></div><div class="preview-actions"><span class="preview-action primary">Ask for a new invite</span></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Microphone permission denied<small>Conversation / Identity</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · error after tapping the mic</div>
+            <div class="preview-canvas">
+              <div class="preview-message">Send me a voice note.</div>
+              <div class="preview-snack floating error"><span>Microphone permission is required to record voice messages.</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · rationale with direct recovery</div>
+            <div class="preview-canvas">
+              <div class="preview-sheet-mini"><strong>Allow microphone access</strong><p>To record voice messages, turn it on in your phone’s settings.</p><div class="preview-sheet-actions"><span class="preview-action">Not now</span><span class="preview-action primary">Open Settings</span></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Screen becomes unavailable<small>Group / Push</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · durable truth in a temporary bar</div>
+            <div class="preview-canvas">
+              <div class="preview-message">See you all next week.</div>
+              <div class="preview-snack"><span>You were removed from this group.</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · persistent screen state</div>
+            <div class="preview-canvas">
+              <div class="preview-banner-mini"><svg class="icon"><use href="#i-info"/></svg><span><strong data-alt="You can no longer send messages to this group.">You were removed from this group.</strong><br><span data-alt="Your message history is still available.">You can still read past messages.</span></span></div>
+              <div class="preview-setting" style="margin-top:8px;opacity:.62"><svg class="icon" style="width:16px"><use href="#i-lock"/></svg><div class="preview-setting-copy"><strong data-alt="Sending is turned off">You can’t send messages in this group</strong><small data-alt="" hidden>The composer is replaced while this state is true.</small></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Setting could not save<small>Settings</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · message detached from its control</div>
+            <div class="preview-canvas">
+              <div class="preview-setting"><div class="preview-setting-copy"><strong>Download photos automatically</strong><small>Wi-Fi only</small></div><span class="preview-toggle"></span></div>
+              <div class="preview-snack error"><span>Couldn’t save this preference.</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · error anchored to the setting</div>
+            <div class="preview-canvas">
+              <div class="preview-setting"><div class="preview-setting-copy"><strong>Download photos automatically</strong><small>Your previous choice is still active.</small></div><span class="preview-toggle"></span></div>
+              <div class="preview-field-error"><svg class="icon" style="width:13px;height:13px"><use href="#i-alert"/></svg><span data-alt="Couldn’t save this preference. Check your connection and try again.">Couldn’t save. Check your connection and try again.</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Copy / quiet success<small>QR / Profile / Settings</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · full-width snackbar</div>
+            <div class="preview-canvas">
+              <div class="preview-qr"></div>
+              <div class="preview-snack"><span>QR data copied to clipboard!</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · quiet acknowledgement</div>
+            <div class="preview-canvas">
+              <div class="preview-qr"></div>
+              <div class="preview-pill"><svg class="icon"><use href="#i-check"/></svg>Link copied</div>
+            </div>
+          </div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Reversible removal<small>Media / Group invite</small></div>
+          <div class="ui-preview current-ui">
+            <div class="preview-context">Current · one of only three action bars</div>
+            <div class="preview-canvas">
+              <div class="preview-invite" style="opacity:.35"><div class="preview-invite-head"><div><strong>Weekend Trip</strong><small>Invite removed from the list</small></div></div></div>
+              <div class="preview-snack"><span>Invite declined</span><span class="action">UNDO</span></div>
+            </div>
+          </div>
+          <div class="ui-preview proposed-ui">
+            <div class="preview-context">Proposed · standardized Undo treatment</div>
+            <div class="preview-canvas">
+              <div class="preview-invite" style="opacity:.35"><div class="preview-invite-head"><div><strong>Weekend Trip</strong><small>Invite removed from the list</small></div></div></div>
+              <div class="preview-undo"><span>Invite declined</span><b>UNDO</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="principles">
+        <article class="principle"><svg class="icon"><use href="#i-link"/></svg><h3>Bind feedback to its object</h3><p>A failed message, invite, setting, or media item should carry its own state.</p></article>
+        <article class="principle"><svg class="icon"><use href="#i-banner"/></svg><h3>Match the lifetime</h3><p>Persistent truth stays visible. A two-second toast cannot explain a blocked screen.</p></article>
+        <article class="principle"><svg class="icon"><use href="#i-retry"/></svg><h3>Expose the right recovery</h3><p>Say “No action needed” while automatic retry owns the item. Show a button only when the user can meaningfully help.</p></article>
+        <article class="principle"><svg class="icon"><use href="#i-shield"/></svg><h3>Reserve red for failure</h3><p>Success, progress, warning, and destructive actions need distinct semantic treatments.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="revision">
+      <div class="section-head">
+        <div class="kicker">06 · Copy revision</div>
+        <h2>Same design, fewer words.</h2>
+        <p>A second pass over every string a user would actually see in the mockups above. The phone screens now use the revised copy by default; flip the <strong>Original / Revised</strong> toggle in the header to compare. In Original view, changed strings show a dotted underline. Each change and its reason is below, so you can accept or reject per row.</p>
+      </div>
+
+      <div class="rev-notes">
+        <article class="note-card">
+          <div class="note-index">REMOVE LEAKED ANNOTATIONS</div>
+          <h3>Design notes are sitting in user-visible slots</h3>
+          <p>“This is a terminal local-file problem—not an offline wait.”, “Download progress stays here.”, “Tap once—not twice”, and “The composer is replaced while this state is true.” are notes to reviewers placed where app copy belongs. The captions under each phone already carry that rationale.</p>
+        </article>
+        <article class="note-card">
+          <div class="note-index">ONE FAMILIAR PROMISE</div>
+          <h3>Media borrows the words text already uses</h3>
+          <p>Offline text keeps today’s “Will send when you’re back online” snackbar untouched. Queued media shows the same sentence with the offline icon on the bubble. One promise learned once, with no new “Waiting for connection” vocabulary.</p>
+        </article>
+        <article class="note-card">
+          <div class="note-index">CUT TITLE + BODY ECHOES</div>
+          <h3>Bodies that restate their titles</h3>
+          <p>“Invite expired / This invite can no longer be used.”, “Allow microphone access / Mknoon needs microphone access…”, and the sheet title plus its subtitle each say one thing twice. A body line earns its space only by adding new information.</p>
+        </article>
+        <article class="note-card">
+          <div class="note-index">TRUST THE ABSENCE OF CONTROLS</div>
+          <h3>Don’t narrate what the UI already shows</h3>
+          <p>“No action needed.” warns against a button that isn’t on screen, and “Sent to inbox” invents a place this app doesn’t have. A progress bar and a plain “Sent” carry the same meaning with zero extra words.</p>
+        </article>
+      </div>
+
+      <div class="mapping-card" role="table" aria-label="Copy revision comparison">
+        <div class="mapping-row head" role="row"><div>Surface</div><div>Original copy</div><div>Revised copy</div></div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Privacy sheet subtitle<small>Protection picker</small></div>
+          <div class="old-copy">“Choose what happens after iPhone-11 receives it.”</div>
+          <div class="new-copy">Removed. The title, now <strong>“How should iPhone-11 see this photo?”</strong>, already asks it and names the friend.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Protected view option<small>Protection picker</small></div>
+          <div class="old-copy">“Opens privately, can be viewed again. Saving and sharing are off.” Two sentences, and “opens privately” is vague.</div>
+          <div class="new-copy">“<strong>iPhone-11 can view it again, but not save or share it.</strong>” One sentence that names the friend, matching the other options.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">View once option<small>Protection picker</small></div>
+          <div class="old-copy">“Can be opened once on their device, then it disappears.”</div>
+          <div class="new-copy">“<strong>Disappears after iPhone-11 opens it once.</strong>” Leads with the consequence.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Set an expiry option<small>Protection picker</small></div>
+          <div class="old-copy">“Available for a limited time on their device.” States availability, not the ending.</div>
+          <div class="new-copy">“<strong>Disappears from iPhone-11’s phone after a time you choose.</strong>” Names the event users care about.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Expiry duration label<small>Protection picker</small></div>
+          <div class="old-copy">“Keep it available for” + 1 hour / 1 day / 7 days.</div>
+          <div class="new-copy">“<strong>Delete after</strong>” + the same chips. Reads as the consequence: “Delete after 1 day”.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Privacy warning<small>Protection picker</small></div>
+          <div class="old-copy">“After sending a private photo, you won’t be able to reopen it from this chat. Screen protection helps while it is open, but another camera can still capture it.” 30 words at the smallest type size.</div>
+          <div class="new-copy">“<strong>Only iPhone-11 can open it. No saving, sharing, or screenshots. You can reopen it once here after sending.</strong>” Reassures the sender instead of warning them; the View once variant adds that the recipient can open it once.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Protected photo · receiver<small>Chat states</small></div>
+          <div class="old-copy">“Opens in a protected screen. You can view it again.” “Protected screen” is system language.</div>
+          <div class="new-copy">“<strong>You can view it again. iPhone-11 doesn’t allow saving or sharing.</strong>” Names the friend, so the rule reads as their choice rather than the app policing.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">View-once photo · receiver<small>Chat states</small></div>
+          <div class="old-copy">“Opening starts your one view. Download progress stays here.” + button “Download for one view” + meta “Tap once—not twice” The last two are design annotations in user slots.</div>
+          <div class="new-copy">“<strong>You can only view this once.</strong>” + button “<strong>View photo</strong>” + sender name in the meta line, like every other bubble.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Protected photo · sender<small>Chat states</small></div>
+          <div class="old-copy">“Only iPhone-11 can open it from this chat.” “From this chat” adds confusion, not meaning.</div>
+          <div class="new-copy">“<strong>Only iPhone-11 can view it, in the app. They can’t save, share, or screenshot it.</strong>” Spells out the protections the sender just chose.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Sender card action<small>Chat states</small></div>
+          <div class="old-copy">“View message info” is vague and hides that the sender still has one look left.</div>
+          <div class="new-copy">“<strong>View photo</strong>” matches the promise made before sending: you can reopen it once.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Queued message status<small>Offline outbox</small></div>
+          <div class="old-copy">“Waiting for connection / Saved on this phone. It will send automatically when you’re online.” under every queued bubble, while the banner says the same thing.</div>
+          <div class="new-copy">Text keeps today’s snackbar unchanged. Queued media reuses its exact words, “<strong>Will send when you’re back online</strong>”, with the offline icon on the bubble.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Offline banner body<small>Offline outbox</small></div>
+          <div class="old-copy">“Messages and media will send automatically when connected.” invents new wording for a promise the app already makes.</div>
+          <div class="new-copy">“<strong>Messages and media will send when you’re back online.</strong>” Reuses the words users already know.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Queued view-once extra line<small>Offline outbox</small></div>
+          <div class="old-copy">“The recipient’s one view has not started.” Passive and abstract.</div>
+          <div class="new-copy">“<strong>Not viewed yet.</strong>”</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Upload progress<small>Offline outbox</small></div>
+          <div class="old-copy">“Uploading photo · 68% / No action needed.”</div>
+          <div class="new-copy">“<strong>Uploading photo · 68%</strong>” The absence of any button already says no action is needed.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Sent confirmation<small>Offline outbox</small></div>
+          <div class="old-copy">“Sent to inbox”. This app has no “inbox”.</div>
+          <div class="new-copy">“<strong>Sent</strong>”</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Terminal failure body<small>Feedback · inline</small></div>
+          <div class="old-copy">“Choose it again to send. This is a terminal local-file problem—not an offline wait.” The second sentence is reviewer commentary.</div>
+          <div class="new-copy">“<strong>Choose it again to send.</strong>” The title “Photo is no longer on this phone” already names the cause.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Microphone rationale<small>Feedback · sheet</small></div>
+          <div class="old-copy">“Mknoon needs microphone access to record voice messages. You can enable it in your phone’s settings.” Repeats the title’s “microphone access” in two sentences.</div>
+          <div class="new-copy">“<strong>To record voice messages, turn it on in your phone’s settings.</strong>” One sentence; the title already named what “it” is.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Expired invite body<small>Feedback · row state</small></div>
+          <div class="old-copy">“Invite expired / This invite can no longer be used.” The body restates the title.</div>
+          <div class="new-copy">“<strong>Invite expired</strong>” alone; “Ask for a new invite” underneath is the useful next step.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Setting save error<small>Feedback · field help</small></div>
+          <div class="old-copy">“Couldn’t save this preference. Check your connection and try again.” “This preference” restates the control it sits under.</div>
+          <div class="new-copy">“<strong>Couldn’t save. Check your connection and try again.</strong>”</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">View-once open failure<small>Copy map</small></div>
+          <div class="old-copy">“Couldn’t prepare this photo / Your one view has not started.” “Prepare” is internal vocabulary, and the body reads like a status report.</div>
+          <div class="new-copy">“<strong>Couldn’t open this photo / Your one view is still available.</strong>” Reassures about the thing the user fears losing.</div>
+        </div>
+        <div class="mapping-row" role="row">
+          <div class="mapping-trigger">Removed from group<small>Copy map</small></div>
+          <div class="old-copy">“You can no longer send messages to this group. / Your message history is still available.” + composer note “Sending is turned off / The composer is replaced while this state is true.” Hides the cause and leaks an annotation.</div>
+          <div class="new-copy">“<strong>You were removed from this group. / You can still read past messages.</strong>” + composer line “<strong>You can’t send messages in this group</strong>”. States the cause once, plainly.</div>
+        </div>
+      </div>
+
+      <div class="audit-note" style="margin-top:26px" aria-label="Strings deliberately kept">
+        <span><strong>Kept as-is:</strong> “You’re offline” heading</span>
+        <span>“Photo is no longer on this phone / Choose it again to send.”</span>
+        <span>“Not now / Open Settings”</span>
+        <span>“Link copied”</span>
+        <span>“Invite declined + UNDO”</span>
+        <span>“Use Protected view” CTA</span>
+        <span>mode names “Keep in chat / Protected view / View once / Set an expiry”</span>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <strong>Basis:</strong> live Pixel 6 inspection of the iPhone-11 conversation plus a Graphify-guided source audit of private-media state, durable text/media retry, theme tokens, and app-owned snackbar usage. This file is an interactive UX proposal; it does not change production behavior.
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      const modes = {
+        standard: {
+          title: 'Keep in chat',
+          detail: 'Normal photo · can be saved or shared',
+          icon: '#i-image',
+          button: 'Use Keep in chat',
+          private: false
+        },
+        protected: {
+          title: 'Protected view',
+          detail: 'Viewable again · no saving or sharing',
+          detailOrig: 'Private screen · can be viewed again',
+          icon: '#i-shield',
+          button: 'Use Protected view',
+          private: true
+        },
+        once: {
+          title: 'View once',
+          detail: 'One view for iPhone-11',
+          icon: '#i-one',
+          button: 'Use View once',
+          private: true
+        },
+        expiry: {
+          title: 'Expires after 1 day',
+          detail: 'No saving or sharing · deleted after 1 day',
+          detailOrig: 'Private screen · available for 1 day',
+          icon: '#i-clock',
+          button: 'Use 1 day expiry',
+          private: true
+        }
+      };
+
+      let selectedMode = 'protected';
+      let selectedDuration = '1 day';
+      let revMode = true;
+      const options = [...document.querySelectorAll('.mode-option')];
+      const durations = [...document.querySelectorAll('.duration-button')];
+      const durationPanel = document.getElementById('durationPanel');
+      const disclosure = document.getElementById('privateDisclosure');
+      const cta = document.getElementById('sheetCta');
+      const scrim = document.getElementById('privacyScrim');
+      const summary = document.getElementById('privacySummary');
+      const summaryTitle = document.getElementById('summaryTitle');
+      const summaryDetail = document.getElementById('summaryDetail');
+      const summaryIcon = document.getElementById('summaryIcon');
+
+      const disclosureCopy = {
+        protected: 'Only iPhone-11 can open it. No saving, sharing, or screenshots. You can reopen it once here after sending.',
+        once: 'iPhone-11 can open it once, then it’s gone. No saving, sharing, or screenshots. You can also reopen it once here after sending.',
+        expiry: 'Only iPhone-11 can open it until it expires. No saving, sharing, or screenshots. You can reopen it once here after sending.'
+      };
+      const disclosureText = disclosure.querySelector('span');
+
+      const refreshMode = () => {
+        const config = modes[selectedMode];
+        options.forEach(option => option.setAttribute('aria-checked', String(option.dataset.mode === selectedMode)));
+        durationPanel.hidden = selectedMode !== 'expiry';
+        disclosure.hidden = !config.private;
+        if (config.private) {
+          disclosureText.dataset.base = disclosureCopy[selectedMode];
+          if (revMode) disclosureText.textContent = disclosureCopy[selectedMode];
+        }
+        if (selectedMode === 'expiry') {
+          config.title = `Expires after ${selectedDuration}`;
+          config.detail = `No saving or sharing · deleted after ${selectedDuration}`;
+          config.detailOrig = `Private screen · available for ${selectedDuration}`;
+          config.button = `Use ${selectedDuration} expiry`;
+        }
+        cta.textContent = config.button;
+      };
+
+      options.forEach(option => option.addEventListener('click', () => {
+        selectedMode = option.dataset.mode;
+        refreshMode();
+      }));
+
+      durations.forEach(button => button.addEventListener('click', () => {
+        selectedDuration = button.dataset.duration;
+        durations.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        refreshMode();
+      }));
+
+      const openSheet = () => {
+        scrim.hidden = false;
+        refreshMode();
+        requestAnimationFrame(() => document.querySelector(`.mode-option[data-mode="${selectedMode}"]`).focus());
+      };
+      const closeSheet = () => {
+        scrim.hidden = true;
+        summary.focus();
+      };
+      let appliedMode = 'protected';
+      const applyChip = () => {
+        const config = modes[appliedMode];
+        summaryTitle.textContent = config.title;
+        summaryDetail.textContent = !revMode && config.detailOrig ? config.detailOrig : config.detail;
+        summaryIcon.setAttribute('href', config.icon);
+      };
+      const applyMode = () => {
+        appliedMode = selectedMode;
+        applyChip();
+        closeSheet();
+      };
+
+      summary.addEventListener('click', openSheet);
+      document.getElementById('sheetClose').addEventListener('click', closeSheet);
+      cta.addEventListener('click', applyMode);
+      scrim.addEventListener('click', event => { if (event.target === scrim) closeSheet(); });
+      document.addEventListener('keydown', event => { if (event.key === 'Escape' && !scrim.hidden) closeSheet(); });
+
+      const feedbackLabels = {
+        'send-failure': ['iPhone-11', 'Needs attention'],
+        connection: ['iPhone-11', 'Waiting for connection'],
+        permission: ['iPhone-11', 'Voice message'],
+        invite: ['Invitations', 'Orbit'],
+        validation: ['Settings', 'Media downloads'],
+        undo: ['Shared media', 'iPhone-11'],
+        success: ['Your QR code', 'Share securely']
+      };
+      const scenarioButtons = [...document.querySelectorAll('.scenario-button')];
+      const scenePanels = [...document.querySelectorAll('[data-scene-panel]')];
+      const currentScenePanels = [...document.querySelectorAll('[data-current-scene-panel]')];
+      const feedbackTitle = document.getElementById('feedbackTitle');
+      const feedbackSubtitle = document.getElementById('feedbackSubtitle');
+      const currentFeedbackTitle = document.getElementById('currentFeedbackTitle');
+      const currentFeedbackSubtitle = document.getElementById('currentFeedbackSubtitle');
+
+      scenarioButtons.forEach(button => button.addEventListener('click', () => {
+        const scene = button.dataset.scene;
+        scenarioButtons.forEach(item => item.setAttribute('aria-selected', String(item === button)));
+        scenePanels.forEach(panel => panel.classList.toggle('active', panel.dataset.scenePanel === scene));
+        currentScenePanels.forEach(panel => panel.classList.toggle('active', panel.dataset.currentScenePanel === scene));
+        [feedbackTitle.textContent, feedbackSubtitle.textContent] = feedbackLabels[scene];
+        [currentFeedbackTitle.textContent, currentFeedbackSubtitle.textContent] = feedbackLabels[scene];
+      }));
+
+      const altEls = [...document.querySelectorAll('[data-alt]')];
+      altEls.forEach(el => { el.dataset.base = el.textContent; });
+      const originalBtn = document.getElementById('copyOriginalBtn');
+      const revisedBtn = document.getElementById('copyRevisedBtn');
+      const setCopyMode = revised => {
+        revMode = revised;
+        document.body.classList.toggle('orig-mode', !revised);
+        altEls.forEach(el => {
+          const alt = el.getAttribute('data-alt');
+          if (alt === '') { el.hidden = revised; }
+          else { el.textContent = revised ? el.dataset.base : alt; }
+        });
+        originalBtn.setAttribute('aria-pressed', String(!revised));
+        revisedBtn.setAttribute('aria-pressed', String(revised));
+        applyChip();
+      };
+      originalBtn.addEventListener('click', () => setCopyMode(false));
+      revisedBtn.addEventListener('click', () => setCopyMode(true));
+
+      refreshMode();
+      setCopyMode(true);
+    })();
+  </script>
+</body>
+</html>

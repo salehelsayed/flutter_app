@@ -169,6 +169,77 @@ void main() {
     expect(selected?.durationSeconds, isNull);
   });
 
+  testWidgets('private media menu uses consequence-led labels and details', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.image,
+        ),
+        onPolicyChanged: (_) {},
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Keep in chat'), findsNWidgets(2));
+    expect(find.text('Protected view'), findsOneWidget);
+    expect(find.text('They can save or share it.'), findsOneWidget);
+    expect(
+      find.text('They can view it again, but not save or share it.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Disappears after they open it once.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Deleted from their device after this time.'),
+      findsNWidgets(3),
+    );
+    expect(find.text('Ordinary'), findsNothing);
+  });
+
+  testWidgets('chip renders Protected view after protected selection', (
+    tester,
+  ) async {
+    var selectedPolicy = const PrivateMediaPolicy.ordinary();
+
+    await tester.pumpWidget(
+      StatefulBuilder(
+        builder: (context, setState) => buildComposer(
+          eligibility: const PrivateMediaEligibility(
+            attachmentCount: 1,
+            attachmentKind: PrivateMediaAttachmentKind.image,
+          ),
+          policy: selectedPolicy,
+          onPolicyChanged: (policy) {
+            setState(() => selectedPolicy = policy);
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('private-media-option-protected')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(selectedPolicy, const PrivateMediaPolicy.protected());
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('private-media-selector')),
+        matching: find.text('Protected view'),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('view-once and exact disappearing durations emit typed policy', (
     tester,
   ) async {
@@ -204,14 +275,6 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('private-media-selector')));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Available for one view on this device.'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('The expiry time is calculated on the receiving device.'),
-        findsNWidgets(3),
-      );
       await tester.tap(find.byKey(testCase.key));
       await tester.pumpAndSettle();
       expect(selected, testCase.expected, reason: testCase.key.toString());

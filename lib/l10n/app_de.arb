@@ -373,7 +373,7 @@
   "settings_background_daylight_lagoon": "Signal",
   "settings_background_daylight_lagoon_desc": "Ein warmer mineralischer Himmel mit sanftem violettem und salbeigrünem Licht.",
   "settings_background_daylight_lagoon_selected": "Signal ausgewählt",
-  "settings_background_save_fail": "Hintergrundauswahl konnte nicht gespeichert werden",
+  "settings_background_save_fail": "Speichern fehlgeschlagen. Versuch es erneut.",
   "settings_background_semantics": "App-Hintergrundeinstellung",
   "settings_background_default_selected": "Standard ausgewählt",
   "settings_video_quality": "Videoqualität",
@@ -499,7 +499,7 @@
   "settings_media_network_off": "Aus",
   "settings_media_network_wifi": "WLAN",
   "settings_media_network_all": "WLAN + Mobilfunk",
-  "settings_media_save_fail": "Medien-Download-Einstellungen konnten nicht gespeichert werden",
+  "settings_media_save_fail": "Speichern fehlgeschlagen. Versuch es erneut.",
   "settings_media_storage_usage": "Speichernutzung",
   "settings_media_storage_compute": "Nutzung anzeigen",
   "settings_media_storage_clear_type": "Leeren",
@@ -964,10 +964,10 @@
   "picker_media_library": "Medienbibliothek",
   "picker_record_video": "Video aufnehmen",
   "perm_microphone_record": "Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.",
-  "mic_perm_dialog_title": "Mikrofonzugriff erforderlich",
-  "mic_perm_dialog_body": "Um Sprachnachrichten aufzunehmen, erlaube den Mikrofonzugriff in den Einstellungen.",
+  "mic_perm_dialog_title": "Mikrofonzugriff erlauben",
+  "mic_perm_dialog_body": "Um Sprachnachrichten aufzunehmen, aktiviere ihn in den Einstellungen deines Telefons.",
   "mic_perm_not_now": "Nicht jetzt",
-  "group_read_only_not_active": "Du kannst den Verlauf dieser Gruppe lesen, bist aber kein aktives Mitglied.",
+  "group_read_only_not_active": "Du wurdest aus dieser Gruppe entfernt. Du kannst frühere Nachrichten weiterhin lesen.",
   "group_read_only_waiting_key": "Warte auf den aktuellen Gruppenschlüssel, bevor du senden kannst.",
   "group_read_only_waiting_identity": "Warte auf deine Identität, bevor du senden kannst.",
   "group_media_unsupported": "Dieser Medientyp wird in Gruppen nicht unterstützt.",
@@ -1559,8 +1559,10 @@
   "contact_profile_introduced_by_label": "Vorgestellt von",
   "contact_profile_message_button": "Nachricht",
   "private_media_selector_label": "Private Medien",
-  "private_media_ordinary": "Normal",
-  "private_media_protected": "Geschützt",
+  "private_media_ordinary": "Im Chat behalten",
+  "private_media_protected": "Geschützte Ansicht",
+  "private_media_ordinary_detail": "Kann gespeichert oder geteilt werden.",
+  "private_media_protected_detail": "Kann erneut angesehen, aber nicht gespeichert oder geteilt werden.",
   "private_media_view_once": "Einmal ansehen",
   "private_media_disappearing_1h": "Verschwindet nach 1 Stunde",
   "private_media_disappearing_1d": "Verschwindet nach 1 Tag",
@@ -1568,8 +1570,25 @@
   "private_media_invalid_shape": "Private Medien benötigen ein Foto, GIF oder Video ohne Bildunterschrift.",
   "private_media_notification_body": "Private Medien",
   "group_private_media_notification_body": "Neue private Medien",
-  "private_media_expiry_device_local": "Der Ablaufzeitpunkt wird auf dem empfangenden Gerät berechnet.",
-  "private_media_view_once_copy": "Auf diesem Gerät einmal verfügbar.",
+  "private_media_expiry_device_local": "Wird nach dieser Zeit von ihrem Gerät gelöscht.",
+  "private_media_view_once_copy": "Verschwindet, nachdem es einmal geöffnet wurde.",
+  "private_media_protected_body_received": "Du kannst es erneut ansehen. {name} erlaubt kein Speichern oder Teilen.",
+  "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_view_once_body_received": "Du kannst dies nur einmal ansehen.",
+  "private_media_outgoing_body": "Nur {name} kann es ansehen und weder speichern noch teilen.",
+  "@private_media_outgoing_body": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "private_media_open": "Private Medien öffnen",
   "private_media_opening": "Private Medien werden geöffnet…",
   "private_media_consumed": "Auf diesem Gerät bereits angesehen",

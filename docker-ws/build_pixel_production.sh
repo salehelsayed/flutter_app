@@ -11,8 +11,16 @@ cd "$(dirname "$0")/.."
 RESULT=docker-ws/build_pixel_production_result.txt
 rm -f "$RESULT"
 
+# Provenance: git SHA stamped into versionName (see deploy_all_phones.sh).
+GIT_SHA=$(git rev-parse --short HEAD)
+GIT_DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
+BUILD_NAME="1.0.0-${GIT_SHA}"
+[ "$GIT_DIRTY" != "0" ] && BUILD_NAME="${BUILD_NAME}.d${GIT_DIRTY}"
+echo "PROVENANCE sha=$GIT_SHA dirty_files=$GIT_DIRTY build_name=$BUILD_NAME"
+
 echo "Building non-E2E debug APK (arm64)..."
-if flutter build apk --debug --target-platform=android-arm64 --target=lib/main.dart; then
+if flutter build apk --debug --target-platform=android-arm64 --target=lib/main.dart \
+    --build-name="$BUILD_NAME"; then
   APK=build/app/outputs/flutter-apk/app-debug.apk
   if [ -f "$APK" ]; then
     echo "OK $APK" > "$RESULT"

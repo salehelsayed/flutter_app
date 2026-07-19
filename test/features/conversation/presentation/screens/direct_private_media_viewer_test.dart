@@ -903,6 +903,52 @@ void main() {
     },
   );
 
+  testWidgets('view-once placeholder states single view', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: DirectPrivateMediaOpenPlaceholder(
+            onOpen: null,
+            policy: PrivateMediaPolicy.viewOnce(),
+            contactDisplayName: 'Layla',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('You can only view this once.'), findsOneWidget);
+    expect(
+      find.textContaining("doesn't allow saving or sharing"),
+      findsNothing,
+    );
+  });
+
+  testWidgets('mode caption renders Protected view', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: DirectPrivateMediaOpenPlaceholder(
+            onOpen: null,
+            policy: PrivateMediaPolicy.protected(),
+            contactDisplayName: 'Layla',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final modeLabel = find.byKey(const ValueKey('private-media-mode-label'));
+    expect(modeLabel, findsOneWidget);
+    expect(tester.widget<Text>(modeLabel).data, 'Protected view');
+  });
+
   testWidgets(
     'attachmentless consumed and expired parents render generic terminal actions without synthetic media',
     (tester) async {
@@ -991,10 +1037,14 @@ void main() {
                 key: const ValueKey('private-state-copy-scroll'),
                 child: Column(
                   children: const <Widget>[
-                    DirectPrivateMediaOpenPlaceholder(onOpen: null),
+                    DirectPrivateMediaOpenPlaceholder(
+                      onOpen: null,
+                      contactDisplayName: 'Layla',
+                    ),
                     DirectPrivateMediaOpenPlaceholder(
                       onOpen: null,
                       opening: true,
+                      contactDisplayName: 'Layla',
                     ),
                     DirectPrivateMediaTerminalPlaceholder(
                       state: PrivateMediaLifecycleState.consumed,

@@ -158,6 +158,7 @@ ios/build/
 .codex-bin/
 .codex-gocache/
 .codex-home/
+.claude-host-tmp/
 CompilationCache.noindex/
 Logs/
 output/
@@ -182,3 +183,4 @@ graphify-arch/tdd-overlay.json
 
 # SIMS iOS notification external inputs (credential-adjacent) — never commit.
 /docker-ws/sims-ios-notification/
+graphify-arch/graphify-out/20*/

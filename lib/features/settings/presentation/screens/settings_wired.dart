@@ -299,10 +299,6 @@ class _SettingsWiredState extends State<SettingsWired> {
           'error': e.toString(),
         },
       );
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_backgroundPreferenceError!)));
     }
   }
 
@@ -369,9 +365,6 @@ class _SettingsWiredState extends State<SettingsWired> {
         event: 'SETTINGS_FL_MEDIA_DOWNLOAD_SAVE_ERROR',
         details: {'outcome': 'failure', 'error': e.toString()},
       );
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_mediaDownloadError!)));
     }
   }
 

@@ -16,7 +16,8 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 
 fake_bin="${tmp_dir}/bin"
 docker_log="${tmp_dir}/docker.log"
-mkdir -p "${fake_bin}" "${tmp_dir}/claude-home"
+mkdir -p "${fake_bin}" "${tmp_dir}/claude-home/.android/debug.keystore" "${tmp_dir}/host-home/.android"
+printf 'host debug keystore\n' >"${tmp_dir}/host-home/.android/debug.keystore"
 
 grep -Fxq 'FROM node:22-bullseye' "${DOCKERFILE}" ||
   fail 'Claude Code image must use Node 22 or newer'
@@ -40,6 +41,7 @@ chmod +x "${fake_bin}/docker"
 run_runner() {
   PATH="${fake_bin}:${PATH}" \
     FAKE_DOCKER_LOG="${docker_log}" \
+    HOME="${tmp_dir}/host-home" \
     CLAUDE_DOCKER_HOME="${tmp_dir}/claude-home" \
     CLAUDE_DOCKER_IMAGE="claude-code-test" \
     "${RUNNER}" "$@"
@@ -72,5 +74,19 @@ fi
 grep -Fxq $'ARG\t--version' "${docker_log}" || fail 'normal CLI arguments were not forwarded'
 grep -Fxq $'ARG\tDISABLE_AUTOUPDATER=1' "${docker_log}" ||
   fail 'normal launch did not disable the in-container auto-updater'
+grep -Fq $'ARG\tPATH=/claude-host-bin:' "${docker_log}" ||
+  fail 'normal launch did not put host shims first on PATH'
+for clipboard_shim in xclip wl-paste wl-copy xsel pbpaste pbcopy; do
+  [ -x "${tmp_dir}/claude-home/host-bin/${clipboard_shim}" ] ||
+    fail "missing executable clipboard shim: ${clipboard_shim}"
+done
+grep -Fq 'clipboard_image_stdout' "${tmp_dir}/claude-home/host-bin/xclip" ||
+  fail 'xclip shim does not bridge image clipboard reads'
+if grep -Fq 'debug.keystore:/claude-home/.android/debug.keystore' "${docker_log}"; then
+  fail 'normal launch still tries to nested-bind-mount the Android debug keystore'
+fi
+cmp -s "${tmp_dir}/host-home/.android/debug.keystore" \
+  "${tmp_dir}/claude-home/.android/debug.keystore" ||
+  fail 'normal launch did not sync the Android debug keystore into Claude home'
 
 printf 'PASS: Claude Docker update contract\n'

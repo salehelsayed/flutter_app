@@ -1,21 +1,24 @@
 #!/bin/bash
-# Fresh-identity build + install + launch of the real (non-E2E) mknoon app on
-# all 3 phones: every paired USB iPhone (devicectl) and the Pixel (adb).
-# Fresh identity = uninstall first; app data/identity DB die with the app.
+# Build + install + launch of the real (non-E2E) mknoon app on all connected
+# phones: every USB-connected iPhone (idevice_id/devicectl) and the physical
+# Pixel (adb, emulators excluded). NO uninstall — installs as an in-place
+# UPDATE, so app data and identity DB survive (unlike run_fresh_all_phones.sh).
 # Run ON THE MAC (phones plugged in, unlocked, and trusted):
-#   /Users/I560101/Project-Sat/mknoon-2/flutter_app/docker-ws/run_fresh_all_phones.sh
-# Per-device results land in docker-ws/run_fresh_all_phones_result.txt.
+#   /Users/I560101/Project-Sat/mknoon-2/flutter_app/docker-ws/deploy_all_phones.sh
+# Per-device results land in docker-ws/deploy_all_phones_result.txt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BUNDLE_ID=com.mknoon.app
-RESULT_FILE="docker-ws/run_fresh_all_phones_result.txt"
+RESULT_FILE="docker-ws/deploy_all_phones_result.txt"
 : > "$RESULT_FILE"
 note() { echo "$*" | tee -a "$RESULT_FILE"; }
 FAILED=0
 
-# --- 0. Build provenance: git SHA stamped into versionName (verifiable via
-# dumpsys / devicectl) + freshness gate refusing silently-reused artifacts.
+# --- 0. Build provenance: stamp the git SHA into versionName so every install
+# is verifiable (dumpsys / devicectl read it back). A build from a dirty tree
+# carries .dN (N = dirty file count). Freshness gate: artifacts must be newer
+# than this marker file, or a silently-reused stale artifact is refused.
 GIT_SHA=$(git rev-parse --short HEAD)
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 GIT_DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
@@ -23,10 +26,25 @@ GIT_COMMITS=$(git rev-list --count HEAD)
 BUILD_NAME="1.0.0-${GIT_SHA}"
 [ "$GIT_DIRTY" != "0" ] && BUILD_NAME="${BUILD_NAME}.d${GIT_DIRTY}"
 FRESH_MARK=$(mktemp)
-# iOS sanitizes CFBundleShortVersionString to digits/dots — CFBundleVersion
-# (numeric commit count) carries iOS provenance; Android versionName keeps the
-# readable sha; Android versionCode deliberately untouched (E2E install safety).
+# iOS sanitizes CFBundleShortVersionString to digits/dots, so the sha string
+# cannot be verified there; CFBundleVersion (numeric commit count) is the iOS
+# carrier. Android versionName keeps the readable sha; Android versionCode is
+# deliberately NOT touched (a raised versionCode would block later E2E installs).
 note "PROVENANCE sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY commits=$GIT_COMMITS build_name=$BUILD_NAME ios_bundle_version=$GIT_COMMITS date=$(date '+%Y-%m-%d %H:%M:%S')"
+
+ios_installed_bundle_version() { # $1=udid — prints installed CFBundleVersion for BUNDLE_ID
+  local json; json=$(mktemp)
+  xcrun devicectl device info apps --device "$1" --json-output "$json" >/dev/null 2>&1 || { echo "?"; return; }
+  python3 - "$json" "$BUNDLE_ID" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for a in data.get("result", {}).get("apps", []):
+    if a.get("bundleIdentifier") == sys.argv[2]:
+        print(a.get("bundleVersion", "?")); break
+else:
+    print("not-installed")
+PY
+}
 
 # --- 1. Android: defines-free debug APK (real app UX — no E2E gate), arm64 ---
 echo "== Building Android debug APK (no dart-defines, arm64)"
@@ -50,7 +68,9 @@ elif [ ! "$APP/Runner" -nt "$FRESH_MARK" ]; then
   note "IOS FAILED(stale-artifact: $APP/Runner predates this build run)"; APP=""; FAILED=1
 fi
 
-# --- 3. iPhones: uninstall -> install -> launch ---
+# --- 3. iPhones: install (in-place update) -> launch -> VERIFY stamped version.
+# Discovery via devicectl (paired, incl. wifi) — idevice_id -l missed paired
+# phones that were not on USB, which is exactly how stale builds lingered.
 if [ -n "$APP" ]; then
   JSON=$(mktemp)
   xcrun devicectl list devices --json-output "$JSON" >/dev/null
@@ -70,35 +90,19 @@ for d in data.get("result", {}).get("devices", []):
 PY
 ))
   if [ ${#DEVICES[@]} -eq 0 ]; then
-    note "IPHONES FAILED(none-paired — unlock the phones, tap Trust, rerun)"
+    note "IPHONES FAILED(none paired — plug in, unlock, tap Trust, rerun)"
     FAILED=1
   fi
   for UDID in "${DEVICES[@]}"; do
-    echo "== iPhone $UDID: uninstall $BUNDLE_ID (fresh identity)"
-    xcrun devicectl device uninstall app --device "$UDID" "$BUNDLE_ID" \
-      || echo "   (uninstall failed or app not installed — continuing)"
-    echo "== iPhone $UDID: install"
+    echo "== iPhone $UDID: install (update in place, data kept)"
     if ! xcrun devicectl device install app --device "$UDID" "$APP"; then
-      note "$UDID FAILED(install)"; FAILED=1; continue
+      note "$UDID FAILED(install — unlocked and reachable?)"; FAILED=1; continue
     fi
     echo "== iPhone $UDID: launch"
     if ! xcrun devicectl device process launch --device "$UDID" --terminate-existing "$BUNDLE_ID"; then
       note "$UDID FAILED(launch — is the phone unlocked?)"; FAILED=1; continue
     fi
-    JSONAPPS=$(mktemp)
-    GOT="?"
-    if xcrun devicectl device info apps --device "$UDID" --json-output "$JSONAPPS" >/dev/null 2>&1; then
-      GOT=$(python3 - "$JSONAPPS" "$BUNDLE_ID" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1]))
-for a in data.get("result", {}).get("apps", []):
-    if a.get("bundleIdentifier") == sys.argv[2]:
-        print(a.get("bundleVersion", "?")); break
-else:
-    print("not-installed")
-PY
-)
-    fi
+    GOT=$(ios_installed_bundle_version "$UDID")
     if [ "$GOT" = "$GIT_COMMITS" ]; then
       note "$UDID OK $BUILD_NAME bundleVersion=$GIT_COMMITS (verified)"
     else
@@ -107,17 +111,14 @@ PY
   done
 fi
 
-# --- 4. Pixel: uninstall -> install -> launch ---
+# --- 4. Pixel (physical only): install -r (update in place) -> launch -> VERIFY ---
 if [ -n "$APK" ]; then
-  SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+  SERIAL=$(adb devices | awk 'NR>1 && $2=="device" && $1 !~ /^emulator-/ {print $1; exit}')
   if [ -z "$SERIAL" ]; then
-    note "PIXEL FAILED(no authorized adb device)"; FAILED=1
+    note "PIXEL FAILED(no authorized physical adb device)"; FAILED=1
   else
-    echo "== Pixel $SERIAL: uninstall $BUNDLE_ID (fresh identity)"
-    adb -s "$SERIAL" uninstall "$BUNDLE_ID" \
-      || echo "   (uninstall failed or app not installed — continuing)"
-    echo "== Pixel $SERIAL: install + launch"
-    if ! adb -s "$SERIAL" install "$APK"; then
+    echo "== Pixel $SERIAL: install -r (update in place, data kept)"
+    if ! adb -s "$SERIAL" install -r "$APK"; then
       note "$SERIAL FAILED(install)"; FAILED=1
     elif ! adb -s "$SERIAL" shell monkey -p "$BUNDLE_ID" -c android.intent.category.LAUNCHER 1 >/dev/null; then
       note "$SERIAL FAILED(launch)"; FAILED=1
@@ -136,5 +137,7 @@ echo "---"
 cat "$RESULT_FILE"
 if [ "$FAILED" -ne 0 ]; then
   echo "!!! STALE-BUILD RISK: every FAILED device above may still be running an OLD commit."
+  echo "!!! Verify any phone anytime:  Android: adb shell dumpsys package $BUNDLE_ID | grep versionName"
+  echo "!!!                            iPhone:  xcrun devicectl device info apps --device <udid> (version column)"
 fi
 exit $FAILED

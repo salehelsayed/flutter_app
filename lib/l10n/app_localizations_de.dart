@@ -788,7 +788,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_background_save_fail =>
-      'Hintergrundauswahl konnte nicht gespeichert werden';
+      'Speichern fehlgeschlagen. Versuch es erneut.';
 
   @override
   String get settings_background_semantics => 'App-Hintergrundeinstellung';
@@ -1086,7 +1086,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_media_save_fail =>
-      'Medien-Download-Einstellungen konnten nicht gespeichert werden';
+      'Speichern fehlgeschlagen. Versuch es erneut.';
 
   @override
   String get settings_media_storage_usage => 'Speichernutzung';
@@ -1956,18 +1956,18 @@ class AppLocalizationsDe extends AppLocalizations {
       'Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.';
 
   @override
-  String get mic_perm_dialog_title => 'Mikrofonzugriff erforderlich';
+  String get mic_perm_dialog_title => 'Mikrofonzugriff erlauben';
 
   @override
   String get mic_perm_dialog_body =>
-      'Um Sprachnachrichten aufzunehmen, erlaube den Mikrofonzugriff in den Einstellungen.';
+      'Um Sprachnachrichten aufzunehmen, aktiviere ihn in den Einstellungen deines Telefons.';
 
   @override
   String get mic_perm_not_now => 'Nicht jetzt';
 
   @override
   String get group_read_only_not_active =>
-      'Du kannst den Verlauf dieser Gruppe lesen, bist aber kein aktives Mitglied.';
+      'Du wurdest aus dieser Gruppe entfernt. Du kannst frühere Nachrichten weiterhin lesen.';
 
   @override
   String get group_read_only_waiting_key =>
@@ -3136,10 +3136,18 @@ class AppLocalizationsDe extends AppLocalizations {
   String get private_media_selector_label => 'Private Medien';
 
   @override
-  String get private_media_ordinary => 'Normal';
+  String get private_media_ordinary => 'Im Chat behalten';
 
   @override
-  String get private_media_protected => 'Geschützt';
+  String get private_media_protected => 'Geschützte Ansicht';
+
+  @override
+  String get private_media_ordinary_detail =>
+      'Kann gespeichert oder geteilt werden.';
+
+  @override
+  String get private_media_protected_detail =>
+      'Kann erneut angesehen, aber nicht gespeichert oder geteilt werden.';
 
   @override
   String get private_media_view_once => 'Einmal ansehen';
@@ -3165,11 +3173,25 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get private_media_expiry_device_local =>
-      'Der Ablaufzeitpunkt wird auf dem empfangenden Gerät berechnet.';
+      'Wird nach dieser Zeit von ihrem Gerät gelöscht.';
 
   @override
   String get private_media_view_once_copy =>
-      'Auf diesem Gerät einmal verfügbar.';
+      'Verschwindet, nachdem es einmal geöffnet wurde.';
+
+  @override
+  String private_media_protected_body_received(String name) {
+    return 'Du kannst es erneut ansehen. $name erlaubt kein Speichern oder Teilen.';
+  }
+
+  @override
+  String get private_media_view_once_body_received =>
+      'Du kannst dies nur einmal ansehen.';
+
+  @override
+  String private_media_outgoing_body(String name) {
+    return 'Nur $name kann es ansehen und weder speichern noch teilen.';
+  }
 
   @override
   String get private_media_open => 'Private Medien öffnen';

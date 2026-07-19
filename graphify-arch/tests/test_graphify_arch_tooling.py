@@ -101,6 +101,20 @@ class GraphifyArchToolingTest(unittest.TestCase):
         self.assertIn("Caller/bypass candidates:", output)
         self.assertIn("group_media_integrity_policy_test.dart", output)
 
+    def test_code_level_anchors_carry_community_membership(self):
+        lines, meta = CONTEXT._compact_lines(
+            self.graph,
+            self.overlay,
+            "deleteMessageForMe cleanup attachments",
+            "tdd",
+        )
+        self.assertEqual(meta["confidence"], "anchored")
+        anchor_lines = [line for line in lines if line.startswith("- ") and " [" in line]
+        self.assertTrue(
+            any(" ∈ " in line for line in anchor_lines),
+            f"no anchor carries a community label: {anchor_lines[:3]}",
+        )
+
     def test_component_level_renders_labeled_map_with_relationships(self):
         lines, meta = CONTEXT._component_lines(
             self.graph, "group media download pipeline", "general", 500

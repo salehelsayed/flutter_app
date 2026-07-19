@@ -1,0 +1,107 @@
+=== generated 2026-07-17T23:19:08Z ===
+
+=== relay version + uptime ===
+● relay-server.service - mknoon relay server
+     Loaded: loaded (/etc/systemd/system/relay-server.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2026-07-14 12:32:02 UTC; 3 days ago
+   Main PID: 543236 (relay-server)
+      Tasks: 9 (limit: 1071)
+     Memory: 34.1M (peak: 53.5M)
+        CPU: 41min 8.616s
+     CGroup: /system.slice/relay-server.service
+             └─543236 /usr/local/bin/relay-server
+
+Jul 17 23:19:08 ip-172-31-34-24 relay-server[543236]: 2026/07/17 23:19:08 [INBOX] Incoming stream from 12D3KooWHMCwfg99gaS3
+Jul 17 23:19:08 ip-172-31-34-24 relay-server[543236]: 2026/07/17 23:19:08 [INBOX] Stream closed for 12D3KooWHMCwfg99gaS3
+
+=== boot lines: version + backend/durability history (30 days) ===
+Jul 14 12:27:29 ip-172-31-34-24 relay-server[542391]: 2026/07/14 12:27:29 Starting relay-server v1.6.0
+Jul 14 12:27:29 ip-172-31-34-24 relay-server[542391]: 2026/07/14 12:27:29 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:27:41 ip-172-31-34-24 relay-server[542407]: 2026/07/14 12:27:41 Starting relay-server v1.6.0
+Jul 14 12:27:41 ip-172-31-34-24 relay-server[542407]: 2026/07/14 12:27:41 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:27:59 ip-172-31-34-24 relay-server[542495]: 2026/07/14 12:27:59 Starting relay-server v1.6.0
+Jul 14 12:27:59 ip-172-31-34-24 relay-server[542495]: 2026/07/14 12:27:59 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:28:11 ip-172-31-34-24 relay-server[542503]: 2026/07/14 12:28:11 Starting relay-server v1.6.0
+Jul 14 12:28:11 ip-172-31-34-24 relay-server[542503]: 2026/07/14 12:28:11 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:28:29 ip-172-31-34-24 relay-server[542511]: 2026/07/14 12:28:29 Starting relay-server v1.6.0
+Jul 14 12:28:29 ip-172-31-34-24 relay-server[542511]: 2026/07/14 12:28:29 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:28:41 ip-172-31-34-24 relay-server[542522]: 2026/07/14 12:28:41 Starting relay-server v1.6.0
+Jul 14 12:28:41 ip-172-31-34-24 relay-server[542522]: 2026/07/14 12:28:41 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:28:59 ip-172-31-34-24 relay-server[542530]: 2026/07/14 12:28:59 Starting relay-server v1.6.0
+Jul 14 12:28:59 ip-172-31-34-24 relay-server[542530]: 2026/07/14 12:28:59 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:29:11 ip-172-31-34-24 relay-server[542711]: 2026/07/14 12:29:11 Starting relay-server v1.6.0
+Jul 14 12:29:11 ip-172-31-34-24 relay-server[542711]: 2026/07/14 12:29:11 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:29:29 ip-172-31-34-24 relay-server[542727]: 2026/07/14 12:29:29 Starting relay-server v1.6.0
+Jul 14 12:29:29 ip-172-31-34-24 relay-server[542727]: 2026/07/14 12:29:29 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:29:41 ip-172-31-34-24 relay-server[542735]: 2026/07/14 12:29:41 Starting relay-server v1.6.0
+Jul 14 12:29:41 ip-172-31-34-24 relay-server[542735]: 2026/07/14 12:29:41 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:29:59 ip-172-31-34-24 relay-server[542743]: 2026/07/14 12:29:59 Starting relay-server v1.6.0
+Jul 14 12:29:59 ip-172-31-34-24 relay-server[542743]: 2026/07/14 12:29:59 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:30:11 ip-172-31-34-24 relay-server[542828]: 2026/07/14 12:30:11 Starting relay-server v1.6.0
+Jul 14 12:30:11 ip-172-31-34-24 relay-server[542828]: 2026/07/14 12:30:11 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:30:35 ip-172-31-34-24 relay-server[542837]: 2026/07/14 12:30:35 Starting relay-server v1.6.0
+Jul 14 12:30:35 ip-172-31-34-24 relay-server[542837]: 2026/07/14 12:30:35 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:30:43 ip-172-31-34-24 relay-server[542845]: 2026/07/14 12:30:43 Starting relay-server v1.6.0
+Jul 14 12:30:43 ip-172-31-34-24 relay-server[542845]: 2026/07/14 12:30:43 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:30:59 ip-172-31-34-24 relay-server[542955]: 2026/07/14 12:30:59 Starting relay-server v1.6.0
+Jul 14 12:30:59 ip-172-31-34-24 relay-server[542955]: 2026/07/14 12:30:59 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:31:11 ip-172-31-34-24 relay-server[542972]: 2026/07/14 12:31:11 Starting relay-server v1.6.0
+Jul 14 12:31:11 ip-172-31-34-24 relay-server[542972]: 2026/07/14 12:31:11 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:31:31 ip-172-31-34-24 relay-server[543054]: 2026/07/14 12:31:31 Starting relay-server v1.6.0
+Jul 14 12:31:31 ip-172-31-34-24 relay-server[543054]: 2026/07/14 12:31:31 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:31:45 ip-172-31-34-24 relay-server[543062]: 2026/07/14 12:31:45 Starting relay-server v1.6.0
+Jul 14 12:31:45 ip-172-31-34-24 relay-server[543062]: 2026/07/14 12:31:45 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:31:59 ip-172-31-34-24 relay-server[543139]: 2026/07/14 12:31:59 Starting relay-server v1.6.0
+Jul 14 12:31:59 ip-172-31-34-24 relay-server[543139]: 2026/07/14 12:31:59 Control-plane: backend=redis durable=true prefix=relay:
+Jul 14 12:32:02 ip-172-31-34-24 relay-server[543236]: 2026/07/14 12:32:02 Starting relay-server v1.6.0
+Jul 14 12:32:02 ip-172-31-34-24 relay-server[543236]: 2026/07/14 12:32:02 Control-plane: backend=redis durable=true prefix=relay:
+
+=== current metrics: durability, push counters, token counts ===
+relay_backend_durable 1
+relay_inbox_push_tokens 1327
+relay_push_sent_total{result="missing_token"} 444
+relay_push_sent_total{result="oversized_fallback"} 8
+relay_push_sent_total{result="payload_too_large_fallback"} 6
+relay_push_sent_total{result="success"} 299
+relay_push_tokens_by_platform{platform="android"} 206
+relay_push_tokens_by_platform{platform="ios"} 1121
+
+=== push log outcomes last 14 days (counted by type) ===
+    514 [PUSH] Skip chat push 
+    462 [PUSH] Notification sent
+    177 [PUSH] Group notification sent
+
+=== recent no-token / invalid-token lines (tail 30) ===
+Jul 16 12:41:16 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:41:16 [PUSH] Skip group push to 12D3KooWMsjhNMexKtvb for group f079bdf2-2239-4824-9: no registered token
+Jul 16 12:45:55 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:45:55 [PUSH] Skip group push to 12D3KooWHJQtwoGNHs3s for group 4f9ac14e-6fa5-4044-a: no registered token
+Jul 16 12:45:57 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:45:57 [PUSH] Skip group push to 12D3KooWHJQtwoGNHs3s for group 4f9ac14e-6fa5-4044-a: no registered token
+Jul 16 12:48:44 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:44 [PUSH] Skip group push to 12D3KooWAhuyRppwWb1V for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:44 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:44 [PUSH] Skip group push to 12D3KooW9ykRaLJVgQW4 for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:44 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:44 [PUSH] Skip group push to 12D3KooWGEh1zKNeoYkf for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:44 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:44 [PUSH] Skip group push to 12D3KooW9ykRaLJVgQW4 for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:50 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:50 [PUSH] Skip group push to 12D3KooWAhuyRppwWb1V for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:50 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:50 [PUSH] Skip group push to 12D3KooWGEh1zKNeoYkf for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:52 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:52 [PUSH] Skip group push to 12D3KooW9ykRaLJVgQW4 for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:48:52 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:48:52 [PUSH] Skip group push to 12D3KooWAhuyRppwWb1V for group bf0df86a-5124-4ca4-a: no registered token
+Jul 16 12:51:51 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:51:51 [PUSH] Skip group push to 12D3KooWPanC8PdUeor9 for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:51:53 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:51:53 [PUSH] Skip group push to 12D3KooWLWvUkKXLuqro for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:51:57 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:51:57 [PUSH] Skip group push to 12D3KooWLWvUkKXLuqro for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:51:57 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:51:57 [PUSH] Skip group push to 12D3KooWPanC8PdUeor9 for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:52:00 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:52:00 [PUSH] Skip group push to 12D3KooWLWvUkKXLuqro for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:52:00 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:52:00 [PUSH] Skip group push to 12D3KooWPanC8PdUeor9 for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:52:02 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:52:02 [PUSH] Skip group push to 12D3KooWLWvUkKXLuqro for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:52:02 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:52:02 [PUSH] Skip group push to 12D3KooWRi8fb4owURtT for group ec7a3e2c-123c-4480-b: no registered token
+Jul 16 12:55:37 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:55:37 [PUSH] Skip group push to 12D3KooWASgzN5BTGMTB for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:55:37 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:55:37 [PUSH] Skip group push to 12D3KooWSJHZtgoWMkG1 for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:56:43 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:56:43 [PUSH] Skip group push to 12D3KooWSJHZtgoWMkG1 for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:56:46 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:56:46 [PUSH] Skip group push to 12D3KooWSJHZtgoWMkG1 for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:58:02 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:58:02 [PUSH] Skip group push to 12D3KooWASgzN5BTGMTB for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:58:02 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:58:02 [PUSH] Skip group push to 12D3KooWSJHZtgoWMkG1 for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:58:54 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:58:54 [PUSH] Skip group push to 12D3KooWSJHZtgoWMkG1 for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:58:56 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:58:56 [PUSH] Skip group push to 12D3KooWASgzN5BTGMTB for group f861c934-f3a3-4522-8: no registered token
+Jul 16 12:58:56 ip-172-31-34-24 relay-server[543236]: 2026/07/16 12:58:56 [PUSH] Skip group push to 12D3KooWDHH8gnVBQYno for group f861c934-f3a3-4522-8: no registered token
+Jul 17 09:16:16 ip-172-31-34-24 relay-server[543236]: 2026/07/17 09:16:16 [PUSH] Skip chat push to 12D3KooWM8QzsDJDkcvw: no registered token
+Jul 17 09:16:16 ip-172-31-34-24 relay-server[543236]: 2026/07/17 09:16:16 [PUSH] Skip chat push to 12D3KooWM8QzsDJDkcvw: no registered token
+
+=== redis push token keys (count + updatedAt spread) ===
+0

@@ -11,11 +11,11 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
-import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
@@ -1219,7 +1219,7 @@ void main() {
             .evaluate()
             .isNotEmpty,
       );
-      expect(find.text('Ordinary'), findsOneWidget);
+      expect(find.text('Keep in chat'), findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpUntil(tester, () => capturedPolicies.length == 2);
@@ -8468,13 +8468,7 @@ void main() {
       });
       await tester.pump();
 
-      expect(
-        find.text(
-          '${formatPendingComposerBudgetBytes(5)} / '
-          '${formatPendingComposerBudgetBytes(10)}',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,

@@ -436,11 +436,13 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
   const DirectPrivateMediaOpenPlaceholder({
     super.key,
     required this.onOpen,
+    required this.contactDisplayName,
     this.opening = false,
     this.policy,
   });
 
   final VoidCallback? onOpen;
+  final String contactDisplayName;
   final bool opening;
   final PrivateMediaPolicy? policy;
 
@@ -464,6 +466,12 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
     if (labeledPolicy == null || !labeledPolicy.isPrivate) {
       return button;
     }
+    final body = switch (labeledPolicy.mode) {
+      PrivateMediaMode.protected || PrivateMediaMode.disappearing =>
+        l10n.private_media_protected_body_received(contactDisplayName),
+      PrivateMediaMode.viewOnce => l10n.private_media_view_once_body_received,
+      _ => null,
+    };
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -475,6 +483,10 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
           key: const ValueKey('private-media-mode-label'),
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (body != null) ...[
+          const SizedBox(height: 2),
+          Text(body, style: Theme.of(context).textTheme.bodySmall),
+        ],
       ],
     );
   }
@@ -488,14 +500,17 @@ class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
   const DirectPrivateMediaOutgoingPlaceholder({
     super.key,
     required this.policy,
+    required this.contactDisplayName,
   });
 
   final PrivateMediaPolicy policy;
+  final String contactDisplayName;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final label = privateMediaModeLabel(l10n, policy);
+    final body = l10n.private_media_outgoing_body(contactDisplayName);
     return Semantics(
       label: label,
       child: Container(
@@ -505,12 +520,20 @@ class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.lock_outline_rounded, size: 16),
-            const SizedBox(width: 6),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_outline_rounded, size: 16),
+                const SizedBox(width: 6),
+                Text(label, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(body, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       ),

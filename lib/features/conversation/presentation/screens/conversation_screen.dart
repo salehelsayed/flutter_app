@@ -904,6 +904,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 // affordance that silently does nothing.
                 privatePlaceholder = DirectPrivateMediaOutgoingPlaceholder(
                   policy: message.privateMediaPolicy,
+                  contactDisplayName: widget.contactUsername,
                 );
               } else {
                 final attachment = visual.length == 1 ? visual.single : null;
@@ -918,6 +919,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 privatePlaceholder = DirectPrivateMediaOpenPlaceholder(
                   opening: opening,
                   policy: message.privateMediaPolicy,
+                  contactDisplayName: widget.contactUsername,
                   // A currently-denied decision disables the button instead of
                   // masquerading as "unsupported"; the open path re-evaluates
                   // from fresh rows anyway before revealing anything.

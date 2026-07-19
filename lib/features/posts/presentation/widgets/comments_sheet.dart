@@ -340,6 +340,11 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                     color: Color.fromRGBO(255, 255, 255, 0.42),
                                   ),
                                   border: InputBorder.none,
+                                  // The surrounding container paints the fill;
+                                  // the light theme's filled
+                                  // InputDecorationTheme would otherwise paint
+                                  // a square fill rect on top of it.
+                                  filled: false,
                                   isCollapsed: true,
                                 ),
                               ),

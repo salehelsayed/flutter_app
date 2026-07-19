@@ -218,6 +218,8 @@ readonly ONE_TO_ONE_TESTS=(
   # 234 Session 05: dedicated private route/lifecycle/native-protection host
   # contract. Native and device proofs stay exact manual commands.
   "test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart"
+  # 259: receiver/sender reassurance copy, name substitution, and RTL safety.
+  "test/features/conversation/presentation/screens/direct_private_media_placeholder_body_test.dart"
   "test/core/media/private_media_protection_coordinator_test.dart"
   # 234 Session 06: strict fail-closed evaluator for the fully automated,
   # availability-bounded physical-Android + emulator device-local artifact.

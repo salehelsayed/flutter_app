@@ -136,6 +136,10 @@ class FriendPickerScreen extends StatelessWidget {
                     color: readableColors.iconMuted,
                   ),
                   border: InputBorder.none,
+                  // The surrounding container paints the fill; the light
+                  // theme's filled InputDecorationTheme would otherwise paint
+                  // a square fill rect on top of it.
+                  filled: false,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 10,

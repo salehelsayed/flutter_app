@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -19,9 +18,7 @@ class UploadProgressViewState {
     return clamped / totalBytes;
   }
 
-  String get progressLabel =>
-      '${formatPendingComposerBudgetBytes(sentBytes)} / '
-      '${formatPendingComposerBudgetBytes(totalBytes)}';
+  String get progressLabel => '${(progress * 100).round()}%';
 }
 
 class UploadProgressBanner extends StatelessWidget {

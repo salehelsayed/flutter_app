@@ -135,6 +135,10 @@ class _FeedComposerState extends State<FeedComposer> {
                   decoration: InputDecoration(
                     isDense: true,
                     border: InputBorder.none,
+                    // The rounded Container above paints the fill; the light
+                    // theme's filled InputDecorationTheme would otherwise paint
+                    // a square fill rect on top of it.
+                    filled: false,
                     hintText: hint,
                     hintStyle: tokens.textMeta,
                   ),

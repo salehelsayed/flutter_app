@@ -1105,6 +1105,10 @@ class _InnerCircleInteractiveSurfaceState
                           decoration: InputDecoration(
                             isDense: true,
                             border: InputBorder.none,
+                            // The surrounding container paints the fill; the
+                            // light theme's filled InputDecorationTheme would
+                            // otherwise paint a square fill rect on top of it.
+                            filled: false,
                             hintText: l10n.orbit_find_placeholder,
                             // 248 (TC-19) — explicit AA-readable placeholder;
                             // without it the hint fell back to a near-white

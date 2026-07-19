@@ -214,7 +214,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
     await settleSheetClose(tester);
 
-    expect(find.text('Background choice could not be saved'), findsWidgets);
+    expect(find.text("Couldn't save. Try again."), findsOneWidget);
     expect(await store.read(BackgroundPreference.storageKey), isNull);
     expect(shell.backgroundPreference, BackgroundPreference.defaultBackground);
 

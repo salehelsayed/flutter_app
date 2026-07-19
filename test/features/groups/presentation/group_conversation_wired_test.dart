@@ -3582,6 +3582,49 @@ void main() {
       },
     );
 
+    testWidgets('group private media menu uses consequence-led labels', (
+      tester,
+    ) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-private-copy-',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final file = File('${tempDir.path}/private.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          initialPendingMedia: <PendingComposerMedia>[
+            PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
+          ],
+          privateMediaAvailability:
+              const GroupPrivateMediaAvailability.enabledForTesting(),
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      final selector = find.byKey(
+        const ValueKey('group-private-media-selector'),
+      );
+      expect(selector, findsOneWidget);
+      await tester.ensureVisible(selector);
+      await tester.tap(selector);
+      await pumpFrames(tester, count: 6);
+
+      expect(find.text('Keep in chat'), findsWidgets);
+      expect(find.text('Protected view'), findsWidgets);
+      expect(find.text('Ordinary'), findsNothing);
+      expect(find.text('They can save or share it.'), findsNothing);
+    });
+
     testWidgets(
       'GPL-03A-S private selection fails closed for missing identity empty or failed roster and reader role',
       (tester) async {
@@ -4414,8 +4457,8 @@ void main() {
           find.descendant(
             of: find.byKey(const ValueKey('group-read-only-banner')),
             matching: find.text(
-              "You can read this group's history, but you are not an active "
-              'member.',
+              'You were removed from this group. You can still read past '
+              'messages.',
             ),
           ),
           findsOneWidget,
@@ -8059,7 +8102,7 @@ void main() {
         expect(find.byType(TextField), findsNothing);
         expect(
           find.text(
-            "You can read this group's history, but you are not an active member.",
+            'You were removed from this group. You can still read past messages.',
           ),
           findsOneWidget,
         );
@@ -8131,7 +8174,7 @@ void main() {
         expect(find.byType(TextField), findsNothing);
         expect(
           find.text(
-            "You can read this group's history, but you are not an active member.",
+            'You were removed from this group. You can still read past messages.',
           ),
           findsOneWidget,
         );
@@ -8378,58 +8421,57 @@ void main() {
         expect(find.byType(TextField), findsNothing);
         expect(
           find.text(
-            "You can read this group's history, but you are not an active member.",
+            'You were removed from this group. You can still read past messages.',
           ),
           findsOneWidget,
         );
       },
     );
 
-    testWidgets(
-      'retained self-removal shows the read-only banner and NO removed snackbar',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        // A second member survives (saveActiveGroupMembers keeps peer-bob), so
-        // members.isEmpty is false after removing self — the active-member gate
-        // flips read-only instead of failing open.
-        await saveActiveGroupMembers(groupRepo, group);
-        final removedStreamController = StreamController<String>.broadcast();
-        addTearDown(removedStreamController.close);
+    testWidgets('removed member sees removed-banner copy on retained group', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      // A second member survives (saveActiveGroupMembers keeps peer-bob), so
+      // members.isEmpty is false after removing self — the active-member gate
+      // flips read-only instead of failing open.
+      await saveActiveGroupMembers(groupRepo, group);
+      final removedStreamController = StreamController<String>.broadcast();
+      addTearDown(removedStreamController.close);
 
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            removedStreamController: removedStreamController,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          removedStreamController: removedStreamController,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
 
-        expect(find.byType(GroupConversationScreen), findsOneWidget);
-        expect(find.byType(TextField), findsOneWidget);
+      expect(find.byType(GroupConversationScreen), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
 
-        // Passive self-removal with the group row RETAINED (B3 read-only shell).
-        await groupRepo.removeMember(group.id, testIdentity.peerId);
-        removedStreamController.add(group.id);
-        await pumpFrames(tester, count: 20);
+      // Passive self-removal with the group row RETAINED (B3 read-only shell).
+      await groupRepo.removeMember(group.id, testIdentity.peerId);
+      removedStreamController.add(group.id);
+      await pumpFrames(tester, count: 20);
 
-        // The durable composer read-only banner IS the single feedback surface…
-        expect(find.byType(GroupConversationScreen), findsOneWidget);
-        expect(find.byType(TextField), findsNothing);
-        expect(
-          find.byKey(const ValueKey('group-read-only-banner')),
-          findsOneWidget,
-        );
-        expect(
-          find.text(
-            "You can read this group's history, but you are not an active member.",
-          ),
-          findsOneWidget,
-        );
-        // …and the redundant transient toast is NOT shown (the discriminator).
-        expect(find.text('You were removed from this group.'), findsNothing);
-      },
-    );
+      // The durable composer read-only banner IS the single feedback surface…
+      expect(find.byType(GroupConversationScreen), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      expect(
+        find.byKey(const ValueKey('group-read-only-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'You were removed from this group. You can still read past messages.',
+        ),
+        findsOneWidget,
+      );
+      // …and the redundant transient toast is NOT shown (the discriminator).
+      expect(find.text('You were removed from this group.'), findsNothing);
+    });
 
     testWidgets(
       'dissolve-while-viewing flips the read-only banner with no snackbar',
@@ -8721,8 +8763,8 @@ void main() {
           find.descendant(
             of: find.byKey(const ValueKey('group-read-only-banner')),
             matching: find.text(
-              "You can read this group's history, but you are not an active "
-              'member.',
+              'You were removed from this group. You can still read past '
+              'messages.',
             ),
           ),
           findsOneWidget,
@@ -8791,8 +8833,8 @@ void main() {
           find.descendant(
             of: find.byKey(const ValueKey('group-read-only-banner')),
             matching: find.text(
-              "You can read this group's history, but you are not an active "
-              'member.',
+              'You were removed from this group. You can still read past '
+              'messages.',
             ),
           ),
           findsOneWidget,
@@ -9235,7 +9277,7 @@ void main() {
       expect(find.text('ML-017 old history'), findsOneWidget);
       expect(
         find.text(
-          "You can read this group's history, but you are not an active member.",
+          'You were removed from this group. You can still read past messages.',
         ),
         findsOneWidget,
       );
@@ -10469,13 +10511,7 @@ void main() {
       });
       await tester.pump();
 
-      expect(
-        find.text(
-          '${formatPendingComposerBudgetBytes(5)} / '
-          '${formatPendingComposerBudgetBytes(10)}',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,

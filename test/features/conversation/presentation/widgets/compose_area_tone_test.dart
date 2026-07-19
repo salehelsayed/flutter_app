@@ -52,6 +52,9 @@ void main() {
     expect(textField.style!.color, colors.textPrimary);
     final inputDecoration = textField.decoration!;
     expect(inputDecoration.hintStyle!.color, colors.composerHint);
+    // Explicit false (not null): null lets the light theme's filled
+    // InputDecorationTheme paint a square fill rect over the rounded pill.
+    expect(inputDecoration.filled, isFalse);
     expectTextContrast(colors.composerHint, const Color(0xFFEDEEF3));
 
     final sendContainer = tester.widget<Container>(

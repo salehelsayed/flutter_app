@@ -373,7 +373,7 @@
   "settings_background_daylight_lagoon": "سيجنال",
   "settings_background_daylight_lagoon_desc": "سماء معدنية دافئة بضوء بنفسجي ومريمي ناعم.",
   "settings_background_daylight_lagoon_selected": "تم اختيار سيجنال",
-  "settings_background_save_fail": "تعذر حفظ اختيار الخلفية",
+  "settings_background_save_fail": "تعذّر الحفظ. حاول مجددًا.",
   "settings_background_semantics": "إعداد خلفية التطبيق",
   "settings_background_default_selected": "تم اختيار الافتراضية",
   "settings_video_quality": "جودة الفيديو",
@@ -499,7 +499,7 @@
   "settings_media_network_off": "إيقاف",
   "settings_media_network_wifi": "واي فاي",
   "settings_media_network_all": "واي فاي + بيانات الجوال",
-  "settings_media_save_fail": "تعذّر حفظ إعدادات تنزيل الوسائط",
+  "settings_media_save_fail": "تعذّر الحفظ. حاول مجددًا.",
   "settings_media_storage_usage": "استخدام التخزين",
   "settings_media_storage_compute": "عرض الاستخدام",
   "settings_media_storage_clear_type": "مسح",
@@ -964,10 +964,10 @@
   "picker_media_library": "مكتبة الوسائط",
   "picker_record_video": "تسجيل فيديو",
   "perm_microphone_record": "يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.",
-  "mic_perm_dialog_title": "إذن الميكروفون مطلوب",
-  "mic_perm_dialog_body": "للسماح بتسجيل الرسائل الصوتية، فعّل إذن الميكروفون من الإعدادات.",
+  "mic_perm_dialog_title": "السماح بالوصول إلى الميكروفون",
+  "mic_perm_dialog_body": "لتسجيل الرسائل الصوتية، فعِّله من إعدادات هاتفك.",
   "mic_perm_not_now": "ليس الآن",
-  "group_read_only_not_active": "يمكنك قراءة سجل هذه المجموعة، لكنك لست عضوًا نشطًا.",
+  "group_read_only_not_active": "تمت إزالتك من هذه المجموعة. لا يزال بإمكانك قراءة الرسائل السابقة.",
   "group_read_only_waiting_key": "بانتظار مفتاح المجموعة الحالي قبل أن تتمكن من الإرسال.",
   "group_read_only_waiting_identity": "بانتظار هويتك قبل أن تتمكن من الإرسال.",
   "group_media_unsupported": "هذا النوع من الوسائط غير مدعوم في المجموعات.",
@@ -1559,8 +1559,10 @@
   "contact_profile_introduced_by_label": "عرّفك به",
   "contact_profile_message_button": "مراسلة",
   "private_media_selector_label": "وسائط خاصة",
-  "private_media_ordinary": "عادية",
-  "private_media_protected": "محمية",
+  "private_media_ordinary": "يبقى في الدردشة",
+  "private_media_protected": "عرض محمي",
+  "private_media_ordinary_detail": "يمكنهم حفظه أو مشاركته.",
+  "private_media_protected_detail": "يمكنهم مشاهدته مجددًا دون حفظه أو مشاركته.",
   "private_media_view_once": "عرض مرة واحدة",
   "private_media_disappearing_1h": "تختفي بعد ساعة",
   "private_media_disappearing_1d": "تختفي بعد يوم",
@@ -1568,8 +1570,25 @@
   "private_media_invalid_shape": "تتطلب الوسائط الخاصة صورة أو GIF أو فيديو واحدًا بلا تعليق.",
   "private_media_notification_body": "وسائط خاصة",
   "group_private_media_notification_body": "وسائط خاصة جديدة",
-  "private_media_expiry_device_local": "يُحتسب وقت الانتهاء على جهاز المستلم.",
-  "private_media_view_once_copy": "متاحة للعرض مرة واحدة على هذا الجهاز.",
+  "private_media_expiry_device_local": "يُحذف من جهازهم بعد هذه المدة.",
+  "private_media_view_once_copy": "يختفي بعد أن يفتحوه مرة واحدة.",
+  "private_media_protected_body_received": "يمكنك مشاهدته مجددًا. {name} لا يسمح بالحفظ أو المشاركة.",
+  "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_view_once_body_received": "يمكنك مشاهدة هذا مرة واحدة فقط.",
+  "private_media_outgoing_body": "{name} فقط يمكنه مشاهدته، ولا يمكنه حفظه أو مشاركته.",
+  "@private_media_outgoing_body": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "private_media_open": "فتح الوسائط الخاصة",
   "private_media_opening": "جارٍ فتح الوسائط الخاصة…",
   "private_media_consumed": "تم عرضها مسبقًا على هذا الجهاز",

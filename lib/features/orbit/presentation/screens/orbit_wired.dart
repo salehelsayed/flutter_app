@@ -1560,34 +1560,34 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           }
           break;
         case AcceptPendingGroupInviteResult.notFound:
-          _showSnackBar('Invite no longer available');
+          _showSnackBar(l10n.group_invite_no_longer_available);
           break;
         case AcceptPendingGroupInviteResult.expired:
-          _showSnackBar('Invite expired');
+          _showSnackBar(l10n.group_invite_expired);
           break;
         case AcceptPendingGroupInviteResult.expiredFreshness:
           _showSnackBar(l10n.group_invite_expired_ask_resend);
           break;
         case AcceptPendingGroupInviteResult.revoked:
-          _showSnackBar('Invite was revoked');
+          _showSnackBar(l10n.group_invite_revoked);
           break;
         case AcceptPendingGroupInviteResult.alreadyUsed:
-          _showSnackBar('Invite already used');
+          _showSnackBar(l10n.group_invite_already_used);
           break;
         case AcceptPendingGroupInviteResult.wrongIdentity:
-          _showSnackBar('Invite is for another identity');
+          _showSnackBar(l10n.group_invite_wrong_identity);
           break;
         case AcceptPendingGroupInviteResult.repairPending:
-          _showSnackBar('Invite needs fresh key material');
+          _showSnackBar(l10n.group_invite_needs_key);
           break;
         case AcceptPendingGroupInviteResult.invalidPayload:
-          _showSnackBar('Invite is no longer valid');
+          _showSnackBar(l10n.group_invite_invalid);
           break;
         case AcceptPendingGroupInviteResult.duplicateGroup:
-          _showSnackBar('Group already added');
+          _showSnackBar(l10n.group_invite_duplicate_group);
           break;
         case AcceptPendingGroupInviteResult.bridgeError:
-          _showSnackBar('Failed to accept invite');
+          _showSnackBar(l10n.group_invite_accept_failed);
           break;
       }
     } catch (e) {
@@ -1603,7 +1603,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       await _loadPendingGroupInvites();
       if (mounted) {
-        _showSnackBar('Failed to accept invite');
+        final l10n = AppLocalizations.of(context)!;
+        _showSnackBar(l10n.group_invite_accept_failed);
       }
     } finally {
       if (mounted) {

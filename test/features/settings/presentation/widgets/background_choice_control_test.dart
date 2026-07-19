@@ -381,9 +381,9 @@ void main() {
 
   testWidgets('shows failed-save copy when provided', (tester) async {
     await tester.pumpWidget(
-      wrap(errorText: 'Background choice could not be saved'),
+      wrap(errorText: "Couldn't save. Try again."),
     );
 
-    expect(find.text('Background choice could not be saved'), findsOneWidget);
+    expect(find.text("Couldn't save. Try again."), findsOneWidget);
   });
 }
