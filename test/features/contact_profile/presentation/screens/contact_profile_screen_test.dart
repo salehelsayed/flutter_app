@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -96,7 +97,7 @@ void main() {
     },
   );
 
-  testWidgets('tapping the peer ID card copies it and confirms', (
+  testWidgets('peer ID and safety-number copy use the shared quiet pill', (
     tester,
   ) async {
     final List<MethodCall> platformCalls = [];
@@ -119,7 +120,7 @@ void main() {
 
     await tester.tap(find.text(peerId));
     await tester.pump(); // run the copy + show the SnackBar
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 600));
 
     final copyCall = platformCalls.firstWhere(
       (c) => c.method == 'Clipboard.setData',
@@ -128,6 +129,33 @@ void main() {
     expect(copyCall.method, 'Clipboard.setData');
     expect((copyCall.arguments as Map)['text'], peerId);
     expect(find.text('Peer ID copied'), findsOneWidget);
+    expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
+    expect(
+      tester.widgetList<SnackBar>(find.byType(SnackBar)).every(
+        (bar) => bar.key == const ValueKey('quiet-confirm'),
+      ),
+      isTrue,
+    );
+
+    final safetyNumber = ContactSafetyNumber.build(
+      peerId: peerId,
+      publicKey: buildContact().publicKey,
+      mlKemPublicKey: buildContact().mlKemPublicKey,
+    );
+    expect(safetyNumber, isNotNull);
+    await tester.ensureVisible(find.text(safetyNumber!));
+    await tester.pump();
+    await tester.tap(find.text(safetyNumber));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final copyCalls = platformCalls
+        .where((call) => call.method == 'Clipboard.setData')
+        .toList();
+    expect(copyCalls, hasLength(2));
+    expect((copyCalls.last.arguments as Map)['text'], safetyNumber);
+    expect(find.text('Copied to clipboard'), findsOneWidget);
+    expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
   });
 
   testWidgets('shows the message button only when onMessage is provided', (

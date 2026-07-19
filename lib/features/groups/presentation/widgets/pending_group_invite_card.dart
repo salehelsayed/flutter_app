@@ -29,10 +29,19 @@ class PendingInviteRowOutcome {
   final String? reason;
   final String groupName;
 
+  /// Inviter identity snapshotted before a terminal outcome deletes the live
+  /// invite. This is only a candidate conversation target: wired surfaces
+  /// must still resolve an active, unblocked, non-archived contact both when
+  /// rendering and when the action is tapped.
+  final String? inviterPeerId;
+  final String? inviterUsername;
+
   const PendingInviteRowOutcome({
     required this.state,
     required this.groupName,
     this.reason,
+    this.inviterPeerId,
+    this.inviterUsername,
   });
 }
 
@@ -50,6 +59,15 @@ class PendingGroupInviteCard extends StatelessWidget {
   /// Defaulted null so non-group-list callsites stay unchanged.
   final VoidCallback? onRetry;
 
+  /// Optional localized detail for a live-row outcome (for example a thrown
+  /// accept/decline that kept the invite in the repository).
+  final String? rowReason;
+
+  /// Available only for an expired invite whose inviter still resolves to an
+  /// active contact. The wired owner re-checks that authority on tap.
+  final VoidCallback? onAskForNewInvite;
+  final bool inviteContactUnavailable;
+
   const PendingGroupInviteCard({
     super.key,
     required this.invite,
@@ -58,6 +76,9 @@ class PendingGroupInviteCard extends StatelessWidget {
     required this.onDecline,
     this.rowState = PendingInviteRowState.idle,
     this.onRetry,
+    this.rowReason,
+    this.onAskForNewInvite,
+    this.inviteContactUnavailable = false,
   });
 
   @override
@@ -239,6 +260,43 @@ class PendingGroupInviteCard extends StatelessWidget {
               ),
             ),
           ],
+          if (rowReason != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              rowReason!,
+              key: ValueKey(
+                'pending-group-invite-outcome-reason-${invite.groupId}',
+              ),
+              style: TextStyle(
+                fontSize: 13,
+                color: readableColors.textSecondary,
+              ),
+            ),
+          ],
+          if (isExpired && onAskForNewInvite != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                key: ValueKey('pending-group-invite-ask-new-${invite.groupId}'),
+                onPressed: onAskForNewInvite,
+                icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                label: Text(l10n.group_invite_ask_new),
+              ),
+            ),
+          ] else if (isExpired && inviteContactUnavailable) ...[
+            const SizedBox(height: 8),
+            Text(
+              l10n.group_invite_contact_unavailable,
+              key: ValueKey(
+                'pending-group-invite-contact-unavailable-${invite.groupId}',
+              ),
+              style: TextStyle(
+                fontSize: 13,
+                color: readableColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -250,5 +308,91 @@ class PendingGroupInviteCard extends StatelessWidget {
       l10n.localeName,
     ).add_jm().format(local);
     return l10n.pending_invite_expires(formatted);
+  }
+}
+
+/// Compact feedback row for a terminal invite outcome whose repository row no
+/// longer exists. The inviter snapshot is deliberately not trusted here; the
+/// wired owner decides whether the optional ask action is available.
+class PendingInviteOutcomeRow extends StatelessWidget {
+  final String inviteId;
+  final PendingInviteRowOutcome outcome;
+  final VoidCallback? onAskForNewInvite;
+  final bool inviteContactUnavailable;
+
+  const PendingInviteOutcomeRow({
+    super.key,
+    required this.inviteId,
+    required this.outcome,
+    this.onAskForNewInvite,
+    this.inviteContactUnavailable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      key: ValueKey('pending-group-invite-outcome-$inviteId'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: readableColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: readableColors.divider),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 18, color: readableColors.textMuted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  outcome.groupName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: readableColors.textPrimary,
+                  ),
+                ),
+                if (outcome.reason != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    outcome.reason!,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: readableColors.textSecondary,
+                    ),
+                  ),
+                ],
+                if (onAskForNewInvite != null) ...[
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    key: ValueKey('pending-group-invite-ask-new-$inviteId'),
+                    onPressed: onAskForNewInvite,
+                    icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                    label: Text(l10n.group_invite_ask_new),
+                  ),
+                ] else if (inviteContactUnavailable) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    l10n.group_invite_contact_unavailable,
+                    key: ValueKey(
+                      'pending-group-invite-contact-unavailable-$inviteId',
+                    ),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: readableColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

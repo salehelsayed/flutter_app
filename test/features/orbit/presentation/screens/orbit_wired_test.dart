@@ -484,6 +484,7 @@ void main() {
       String groupName = 'Book Club',
       DateTime? receivedAt,
       String? recipientDeviceId,
+      String? overrideGroupKey,
     }) {
       final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc())
           .toUtc();
@@ -551,7 +552,7 @@ void main() {
       final payload = GroupInvitePayload(
         id: 'invite-$groupId',
         groupId: groupId,
-        groupKey: 'base64-key',
+        groupKey: overrideGroupKey ?? 'base64-key',
         keyEpoch: 1,
         groupConfig: groupConfig,
         senderPeerId: '12D3KooWAlice',
@@ -3582,6 +3583,129 @@ void main() {
     );
 
     testWidgets(
+      'TC-32 live-expired Ask opens the exact inviter conversation with a '
+      'localized group draft',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+        final invite = makePendingInvite(
+          groupId: 'grp-orbit-ask-live',
+          groupName: 'Old Writers Room',
+          receivedAt: DateTime.now().toUtc().subtract(
+            pendingGroupInviteTtl + const Duration(minutes: 1),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+
+        final ask = find.byKey(
+          const ValueKey(
+            'pending-group-invite-ask-new-grp-orbit-ask-live',
+          ),
+        );
+        expect(ask, findsOneWidget);
+        await tester.ensureVisible(ask);
+        await tester.tap(ask, warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 10);
+
+        final conversation = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(conversation.contact.peerId, invite.senderPeerId);
+        expect(
+          conversation.initialText,
+          'Could you send me a new invite to Old Writers Room?',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-32 live-expired Ask rechecks contact authority and retains the row '
+      'when the contact disappears',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+        final invite = makePendingInvite(
+          groupId: 'grp-orbit-ask-race',
+          receivedAt: DateTime.now().toUtc().subtract(
+            pendingGroupInviteTtl + const Duration(minutes: 1),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+        final askKey = ValueKey(
+          'pending-group-invite-ask-new-${invite.groupId}',
+        );
+        expect(find.byKey(askKey), findsOneWidget);
+
+        await contactRepo.deleteContact(invite.senderPeerId);
+        await tester.ensureVisible(find.byKey(askKey));
+        await tester.tap(find.byKey(askKey), warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.byKey(askKey), findsNothing);
+        expect(
+          find.text('This contact is no longer available.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'accepting a pending group invite from Intros joins the group',
       (tester) async {
         setLargeTestSurface(tester);
@@ -3715,6 +3839,98 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('Invite no longer available'), findsNothing);
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-outcome-${invite.groupId}'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(SnackBar), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-31 thrown accept stays on a retryable live row after reload without '
+      'snackbar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo = _ThrowingIdentityRepository();
+        final invite = makePendingInvite(groupId: 'grp-orbit-accept-error');
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
+        await pumpOrbitFrames(tester, count: 20);
+
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-retry-${invite.groupId}'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Failed to accept invite'), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
+        pendingInviteController.add(invite);
+        await pumpOrbitFrames(tester, count: 10);
+        expect(find.text('Failed to accept invite'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'TC-31 repairPending survives a late pending-invite refresh as a live '
+      'row without snackbar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-orbit-repair',
+          overrideGroupKey: '',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          find.descendant(
+            of: find.byKey(
+              ValueKey('pending-group-invite-${invite.groupId}'),
+            ),
+            matching: find.text('Waiting for key'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(SnackBar), findsNothing);
+
+        pendingInviteController.add(invite);
+        await pumpOrbitFrames(tester, count: 10);
+        expect(find.text('Waiting for key'), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
       },
     );
 
@@ -3768,6 +3984,13 @@ void main() {
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNotNull,
         );
+        expect(find.byKey(const ValueKey('undo-bar')), findsOneWidget);
+        expect(
+          tester
+              .widget<SnackBar>(find.byKey(const ValueKey('undo-bar')))
+              .duration,
+          const Duration(seconds: 4),
+        );
         expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
 
         await tester.pump(const Duration(seconds: 5));
@@ -3783,6 +4006,63 @@ void main() {
               .length,
           1,
         );
+        final ghost = find.byKey(
+          ValueKey('pending-group-invite-outcome-${invite.groupId}'),
+        );
+        expect(ghost, findsOneWidget);
+        expect(
+          find.descendant(of: ghost, matching: find.text('Invite declined')),
+          findsOneWidget,
+        );
+        expect(find.byType(SnackBar), findsNothing);
+
+        pendingInviteController.add(invite);
+        await pumpOrbitFrames(tester, count: 10);
+        expect(ghost, findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-31 thrown decline re-surfaces a live inline outcome without snackbar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo = _ThrowingIdentityRepository();
+        final invite = makePendingInvite(groupId: 'grp-orbit-decline-error');
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.pump(const Duration(seconds: 5));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.text('Failed to decline invite'), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
       },
     );
 
@@ -4036,7 +4316,19 @@ void main() {
       (tester) async {
         setLargeTestSurface(tester);
         suppressOverflowErrors();
+        suppressNavAssetErrors();
         identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
 
         // Card valid (~3h) but the membership freshness proof (anchored ~6h
         // earlier than the card) is ~3h stale → expiredFreshness, not
@@ -4084,6 +4376,34 @@ void main() {
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNull,
+        );
+
+        // A late repository refresh cannot erase the terminal feedback.
+        pendingInviteController.add(invite);
+        await pumpOrbitFrames(tester, count: 10);
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-outcome-${invite.groupId}'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(SnackBar), findsNothing);
+
+        final ask = find.byKey(
+          ValueKey('pending-group-invite-ask-new-${invite.groupId}'),
+        );
+        expect(ask, findsOneWidget);
+        await tester.ensureVisible(ask);
+        await tester.tap(ask, warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 10);
+
+        final conversation = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(conversation.contact.peerId, '12D3KooWAlice');
+        expect(
+          conversation.initialText,
+          'Could you send me a new invite to Aged Invite?',
         );
       },
     );
@@ -5854,6 +6174,13 @@ class _SlowIdentityRepository extends FakeIdentityRepository {
   Future<IdentityModel?> loadIdentity() async {
     await Future<void>.delayed(const Duration(seconds: 2));
     return super.loadIdentity();
+  }
+}
+
+class _ThrowingIdentityRepository extends FakeIdentityRepository {
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    throw StateError('identity load failed (test injection)');
   }
 }
 

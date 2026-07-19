@@ -14,6 +14,7 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
+        debugShowCheckedModeBanner: false,
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
@@ -35,14 +36,16 @@ void main() {
   }
 
   testWidgets(
-    'permanentlyDenied shows the rationale dialog with an Open Settings action',
+    'permanentlyDenied shows the rationale sheet with an Open Settings action',
     (tester) async {
       final l10n = await AppLocalizations.delegate.load(const Locale('en'));
       final gateway = FakeMicPermissionGateway()
         ..statusToReturn = MicPermissionStatus.permanentlyDenied;
       await openPrompt(tester, gateway);
 
-      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.byType(BottomSheet), findsOneWidget);
+      expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
       expect(find.text(l10n.mic_perm_dialog_title), findsOneWidget);
       expect(find.text(l10n.mic_perm_dialog_body), findsOneWidget);
       expect(
@@ -89,7 +92,7 @@ void main() {
       expect(gateway.openAppSettingsCallCount, 1);
       // Guard against wiring the deep-link to the wrong button.
       expect(gateway.requestCallCount, 0);
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(BottomSheet), findsNothing);
     },
   );
 
@@ -103,6 +106,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.openAppSettingsCallCount, 0);
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(BottomSheet), findsNothing);
   });
 }

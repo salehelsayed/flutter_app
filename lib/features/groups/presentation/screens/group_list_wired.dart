@@ -9,6 +9,8 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/widgets/undo_bar.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -37,6 +39,9 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+typedef GroupInviteConversationLauncher =
+    Future<void> Function(ContactModel contact, {required String initialText});
+
 /// Wired widget connecting GroupListScreen to business logic.
 class GroupListWired extends StatefulWidget {
   final GroupRepository groupRepo;
@@ -61,6 +66,10 @@ class GroupListWired extends StatefulWidget {
   groupReactionReplayOutboxRepository;
   final BackgroundPreference backgroundPreference;
 
+  /// Narrow host-provided seam used only by the expired-invite recovery
+  /// action. GroupList has no other ownership of 1:1 conversation routing.
+  final GroupInviteConversationLauncher? openInviteConversation;
+
   const GroupListWired({
     super.key,
     required this.groupRepo,
@@ -83,6 +92,7 @@ class GroupListWired extends StatefulWidget {
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.openInviteConversation,
   });
 
   @override
@@ -114,21 +124,19 @@ class _GroupListWiredState extends State<GroupListWired>
 
   /// 153: invites optimistically hidden while their deferred decline commit is
   /// pending. Filtered inside [_loadGroups] so every reactive reload respects
-  /// the hide; the per-invite [Timer] in [_declineCommitTimers] commits on
-  /// timeout (Undo / dispose cancel it first).
+  /// the hide; the per-invite [UndoBarHandle] commits on timeout (Undo /
+  /// dispose cancels it first).
   final Set<String> _optimisticallyDeclinedInviteIds = <String>{};
-  final Map<String, Timer> _declineCommitTimers = <String, Timer>{};
+  final Map<String, UndoBarHandle> _declineUndoBars = <String, UndoBarHandle>{};
 
-  /// 153: captured when a decline SnackBar is shown so [dispose] can dismiss
-  /// the still-visible Undo affordance even after this State is torn down
-  /// (the app-level messenger outlives the screen).
-  ScaffoldMessengerState? _declineScaffoldMessenger;
-
-  /// Per-row accept outcome state keyed by invite id (plan 150). In-memory
-  /// derived state: set in the accept switch, CLEARED on every `_loadGroups`
-  /// (refresh/resume/init) so stale row state never survives a reload.
+  /// Per-row invite outcome state keyed by group id. It intentionally survives
+  /// reactive/lifecycle reloads so a terminal ghost is not erased by the
+  /// repository event triggered by deleting its live invite.
   final Map<String, PendingInviteRowOutcome> _inviteRowOutcomes =
       <String, PendingInviteRowOutcome>{};
+  Set<String> _askNewInviteIds = <String>{};
+  Set<String> _unavailableInviteContactIds = <String>{};
+  int _inviteRequestQualificationEpoch = 0;
 
   bool get _hasDisplayableContent =>
       _groups.isNotEmpty || _pendingInvites.isNotEmpty;
@@ -153,6 +161,14 @@ class _GroupListWiredState extends State<GroupListWired>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadGroups());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant GroupListWired oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.openInviteConversation != widget.openInviteConversation) {
+      unawaited(_refreshInviteRequestAvailability());
     }
   }
 
@@ -201,14 +217,10 @@ class _GroupListWiredState extends State<GroupListWired>
         _unreadCounts = unreadCounts;
         _rejoinAttempts = rejoinAttempts;
         _pendingInvites = visibleInvites;
-        // Clear stale per-row accept outcomes on every reload (plan 150 TC-09).
-        // The accept switch runs AFTER its own awaited `_loadGroups`, so a fresh
-        // outcome survives the in-accept refresh; the NEXT refresh/resume wipes
-        // it (in-memory derived state, never persisted).
-        _inviteRowOutcomes.clear();
         _isLoading = false;
         _currentLoadErrorMessage = null;
       });
+      unawaited(_refreshInviteRequestAvailability());
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -338,7 +350,12 @@ class _GroupListWiredState extends State<GroupListWired>
       return;
     }
 
-    setState(() => _processingInviteIds.add(invite.groupId));
+    setState(() {
+      _processingInviteIds.add(invite.groupId);
+      _inviteRowOutcomes.remove(invite.groupId);
+      _askNewInviteIds.remove(invite.groupId);
+      _unavailableInviteContactIds.remove(invite.groupId);
+    });
     try {
       await _drainPendingGroupInviteInboxBeforeAccept(
         inviteListener,
@@ -464,20 +481,17 @@ class _GroupListWiredState extends State<GroupListWired>
       _inviteRowOutcomes[invite.groupId] = PendingInviteRowOutcome(
         state: state,
         groupName: invite.groupName,
+        inviterPeerId: invite.senderPeerId,
+        inviterUsername: invite.senderUsername,
       );
     });
+    unawaited(_refreshInviteRequestAvailability());
   }
 
   /// Sets a terminal ghost-row outcome (plan 150 C1). The invite was deleted by
   /// the use-case, so the name is snapshotted from [invite] BEFORE `_loadGroups`
   /// dropped the live card. No snackbar — the ghost row IS the feedback.
   ///
-  /// FRAGILITY NOTE: ghost-row survival relies on the use-case's
-  /// `deletePendingInvite` NOT publishing on `pendingInviteStream`. The
-  /// `pendingInviteStream.listen(_loadGroups)` subscription (see
-  /// `_startListening`) runs `_loadGroups`, which `_inviteRowOutcomes.clear()`s
-  /// — so if a future change makes the repo emit on delete, that reactive
-  /// reload would wipe the ghost row we set here moments before it can render.
   void _setTerminalOutcome(PendingGroupInvite invite, String reason) {
     if (!mounted) return;
     setState(() {
@@ -485,8 +499,95 @@ class _GroupListWiredState extends State<GroupListWired>
         state: PendingInviteRowState.idle,
         groupName: invite.groupName,
         reason: reason,
+        inviterPeerId: invite.senderPeerId,
+        inviterUsername: invite.senderUsername,
       );
     });
+    unawaited(_refreshInviteRequestAvailability());
+  }
+
+  Map<String, _InviteRequestTarget> _inviteRequestTargets() {
+    if (widget.openInviteConversation == null) return const {};
+
+    final now = DateTime.now().toUtc();
+    final liveIds = _pendingInvites.map((invite) => invite.groupId).toSet();
+    final targets = <String, _InviteRequestTarget>{};
+    for (final invite in _pendingInvites) {
+      if (invite.isExpiredAt(now) && invite.senderPeerId.isNotEmpty) {
+        targets[invite.groupId] = _InviteRequestTarget(
+          peerId: invite.senderPeerId,
+          groupName: invite.groupName,
+        );
+      }
+    }
+    for (final entry in _inviteRowOutcomes.entries) {
+      if (liveIds.contains(entry.key)) continue;
+      final peerId = entry.value.inviterPeerId;
+      if (peerId != null && peerId.isNotEmpty) {
+        targets[entry.key] = _InviteRequestTarget(
+          peerId: peerId,
+          groupName: entry.value.groupName,
+        );
+      }
+    }
+    return targets;
+  }
+
+  bool _isQualifiedInviteContact(ContactModel? contact, String peerId) {
+    return contact != null &&
+        contact.peerId == peerId &&
+        !contact.isBlocked &&
+        !contact.isArchived;
+  }
+
+  Future<void> _refreshInviteRequestAvailability() async {
+    final epoch = ++_inviteRequestQualificationEpoch;
+    final targets = _inviteRequestTargets();
+    final eligible = <String>{};
+    for (final entry in targets.entries) {
+      ContactModel? contact;
+      try {
+        contact = await widget.contactRepo.getContact(entry.value.peerId);
+      } catch (_) {
+        contact = null;
+      }
+      if (_isQualifiedInviteContact(contact, entry.value.peerId)) {
+        eligible.add(entry.key);
+      }
+    }
+    if (!mounted || epoch != _inviteRequestQualificationEpoch) return;
+    setState(() {
+      _askNewInviteIds = eligible;
+      _unavailableInviteContactIds = _unavailableInviteContactIds.intersection(
+        targets.keys.toSet(),
+      )..removeAll(eligible);
+    });
+  }
+
+  Future<void> _onAskForNewInvite(String inviteId) async {
+    final launcher = widget.openInviteConversation;
+    final target = _inviteRequestTargets()[inviteId];
+    if (launcher == null || target == null) return;
+
+    ContactModel? contact;
+    try {
+      contact = await widget.contactRepo.getContact(target.peerId);
+    } catch (_) {
+      contact = null;
+    }
+    if (!mounted) return;
+    if (!_isQualifiedInviteContact(contact, target.peerId)) {
+      setState(() {
+        _askNewInviteIds.remove(inviteId);
+        _unavailableInviteContactIds.add(inviteId);
+      });
+      return;
+    }
+
+    final draft = AppLocalizations.of(
+      context,
+    )!.group_invite_request_new_draft(target.groupName);
+    await launcher(contact!, initialText: draft);
   }
 
   Future<(AcceptPendingGroupInviteResult, GroupModel?)>
@@ -615,32 +716,21 @@ class _GroupListWiredState extends State<GroupListWired>
     });
 
     final l10n = AppLocalizations.of(context)!;
-    _declineScaffoldMessenger = ScaffoldMessenger.of(context);
-    _showSnackBar(
-      l10n.group_invite_declined,
-      duration: kDeclineUndoWindow + const Duration(seconds: 1),
-      action: SnackBarAction(
-        label: l10n.feed_undo,
-        onPressed: () => _undoDecline(invite),
-      ),
-    );
-
-    _declineCommitTimers[invite.groupId] = Timer(
-      kDeclineUndoWindow,
-      () => unawaited(_commitDecline(invite)),
+    _declineUndoBars[invite.groupId] = showUndoBar(
+      context,
+      message: l10n.group_invite_declined,
+      window: kDeclineUndoWindow,
+      onUndo: () => _undoDecline(invite),
+      onCommit: () => _commitDecline(invite),
     );
   }
 
   /// Cancel a pending decline before its window elapses: re-surface the invite,
-  /// emit UNDONE, never send the decline-ack. No-op if the commit already fired
-  /// (late-tap race — the Timer is already gone).
+  /// emit UNDONE, and never send the decline-ack. The shared handle invokes
+  /// this callback only while the Undo authority is still active.
   void _undoDecline(PendingGroupInvite invite) {
-    // The SnackBar (and its Undo action) can outlive this State on the
-    // app-level messenger; a stale tap after dispose must be a safe no-op.
     if (!mounted) return;
-    final timer = _declineCommitTimers.remove(invite.groupId);
-    if (timer == null) return;
-    timer.cancel();
+    _declineUndoBars.remove(invite.groupId);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_DECLINE_UNDONE',
@@ -655,7 +745,6 @@ class _GroupListWiredState extends State<GroupListWired>
       _optimisticallyDeclinedInviteIds.remove(invite.groupId);
       _processingInviteIds.remove(invite.groupId);
     });
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     unawaited(_loadGroups());
   }
 
@@ -665,14 +754,7 @@ class _GroupListWiredState extends State<GroupListWired>
   /// still-present invite (no permanently-stuck row), while a successful commit
   /// keeps it gone (the repo deleted it).
   Future<void> _commitDecline(PendingGroupInvite invite) async {
-    // Already undone/cancelled (or this is a duplicate fire) — commit once.
-    if (_declineCommitTimers.remove(invite.groupId) == null) return;
-    // 153 (review P2): the undo window has closed — drop the Undo affordance the
-    // moment the commit fires, not after the (possibly slow) use-case + reload,
-    // so a stale no-op Undo never lingers during a slow commit.
-    if (mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    }
+    _declineUndoBars.remove(invite.groupId);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_DECLINE_COMMITTED',
@@ -739,17 +821,9 @@ class _GroupListWiredState extends State<GroupListWired>
     }
   }
 
-  void _showSnackBar(
-    String message, {
-    Duration? duration,
-    SnackBarAction? action,
-  }) {
+  void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: duration ?? const Duration(seconds: 4),
-        action: action,
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
 
@@ -809,16 +883,10 @@ class _GroupListWiredState extends State<GroupListWired>
     _pendingInviteSubscription?.cancel();
     // 153: never commit a deferred decline after unmount (safe-failure = the
     // invite is kept; a re-mount re-surfaces it = implicit undo).
-    for (final timer in _declineCommitTimers.values) {
-      timer.cancel();
+    for (final bar in _declineUndoBars.values) {
+      bar.cancel();
     }
-    // 153 (review P1): dismiss the still-visible decline SnackBar so its Undo
-    // action cannot be tapped after this State is gone, and clear the map so a
-    // stale tap finds no timer (the no-op guard holds).
-    if (_declineCommitTimers.isNotEmpty) {
-      _declineScaffoldMessenger?.hideCurrentSnackBar();
-    }
-    _declineCommitTimers.clear();
+    _declineUndoBars.clear();
     super.dispose();
   }
 
@@ -831,6 +899,8 @@ class _GroupListWiredState extends State<GroupListWired>
       pendingInvites: _pendingInvites,
       processingInviteIds: _processingInviteIds,
       inviteRowOutcomes: _inviteRowOutcomes,
+      askNewInviteIds: _askNewInviteIds,
+      unavailableInviteContactIds: _unavailableInviteContactIds,
       rejoinAttempts: _rejoinAttempts,
       isLoading: _isLoading,
       loadErrorMessage: _currentLoadErrorMessage,
@@ -839,10 +909,18 @@ class _GroupListWiredState extends State<GroupListWired>
       onAcceptPendingInvite: _onAcceptPendingInvite,
       onDeclinePendingInvite: _onDeclinePendingInvite,
       onRetryPendingInvite: _onRetryPendingInvite,
+      onAskForNewInvite: _onAskForNewInvite,
       onRetryStuckRejoin: _onRetryStuckRejoin,
       onLeaveStuckGroup: _onLeaveStuckGroup,
       onBack: _onBack,
       backgroundPreference: widget.backgroundPreference,
     );
   }
+}
+
+class _InviteRequestTarget {
+  final String peerId;
+  final String groupName;
+
+  const _InviteRequestTarget({required this.peerId, required this.groupName});
 }

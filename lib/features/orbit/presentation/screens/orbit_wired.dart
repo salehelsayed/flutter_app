@@ -18,6 +18,7 @@ import 'package:flutter_app/features/settings/application/image_quality_preferen
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/widgets/undo_bar.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
@@ -88,6 +89,7 @@ import 'package:flutter_app/features/introduction/application/unseen_review_coun
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
@@ -317,13 +319,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // 153: parity with group_list — invites optimistically hidden while their
   // deferred decline commit is pending. Filtered inside
   // [_loadPendingGroupInvites] so every reactive reload respects the hide; the
-  // per-invite [Timer] commits on timeout (Undo / dispose cancel it first).
+  // per-invite [UndoBarHandle] commits on timeout (Undo / dispose cancels it
+  // first).
   final Set<String> _optimisticallyDeclinedInviteIds = <String>{};
-  final Map<String, Timer> _declineCommitTimers = <String, Timer>{};
-
-  /// 153: captured when a decline SnackBar is shown so [dispose] can dismiss
-  /// the still-visible Undo affordance even after this State is torn down.
-  ScaffoldMessengerState? _declineScaffoldMessenger;
+  final Map<String, UndoBarHandle> _declineUndoBars = <String, UndoBarHandle>{};
+  final Map<String, PendingInviteRowOutcome> _inviteRowOutcomes =
+      <String, PendingInviteRowOutcome>{};
+  Set<String> _askNewInviteIds = <String>{};
+  Set<String> _unavailableInviteContactIds = <String>{};
+  int _inviteRequestQualificationEpoch = 0;
   final Set<String> _openingFriendPeerIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
@@ -379,6 +383,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     final currentReviewKeys = _currentReviewKeys();
     final unseenReviewCount = _unseenReviewKeys(currentReviewKeys).length;
+    final pendingInviteIds = _pendingGroupInvites
+        .map((invite) => invite.groupId)
+        .toSet();
+    final ghostInviteCount = _inviteRowOutcomes.keys
+        .where((id) => !pendingInviteIds.contains(id))
+        .length;
+    final inviteReviewCount = _pendingGroupInvites.length + ghostInviteCount;
 
     return OrbitViewProjection(
       allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
@@ -388,8 +399,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       activeCount: _activeFriends.length + _activeGroups.length,
       archivedCount: _archivedFriends.length + _archivedGroups.length,
       introCount: _introsCount,
-      pendingGroupInviteCount: _pendingGroupInvites.length,
-      reviewCount: _introsCount + _pendingGroupInvites.length,
+      pendingGroupInviteCount: inviteReviewCount,
+      reviewCount: _introsCount + inviteReviewCount,
       unseenReviewCount: unseenReviewCount,
       introsData: OrbitIntrosViewData(
         groupedIntros: _groupedIntros,
@@ -401,6 +412,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         pendingGroupInvites: List<PendingGroupInvite>.unmodifiable(
           _pendingGroupInvites,
         ),
+        inviteRowOutcomes: Map<String, PendingInviteRowOutcome>.unmodifiable(
+          _inviteRowOutcomes,
+        ),
+        askNewInviteIds: Set<String>.unmodifiable(_askNewInviteIds),
+        unavailableInviteContactIds: Set<String>.unmodifiable(
+          _unavailableInviteContactIds,
+        ),
         processingIntroductionIds: _processingIntroductionIds,
         processingPendingInviteIds: _processingPendingInviteIds,
         onAccept: _onAcceptIntro,
@@ -409,6 +427,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         onSendMessage: _onIntroSendMessage,
         onAcceptPendingInvite: _onAcceptPendingInvite,
         onDeclinePendingInvite: _onDeclinePendingInvite,
+        onRetryPendingInvite: _onAcceptPendingInvite,
+        onAskForNewInvite: _onAskForNewInvite,
         blockedPeerIds: _blockedPeerIds,
       ),
       searchActive: _searchActive,
@@ -424,6 +444,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         introReviewKeyForIntroTarget(item.targetPeerId),
       for (final invite in _pendingGroupInvites)
         introReviewKeyForGroupInvite(invite.groupId),
+      for (final inviteId in _inviteRowOutcomes.keys)
+        introReviewKeyForGroupInvite(inviteId),
     };
   }
 
@@ -912,6 +934,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (_pendingGroupInvites.isNotEmpty) {
         _pendingGroupInvites = const [];
         _publishListProjection();
+        unawaited(_refreshInviteRequestAvailability());
       }
       return;
     }
@@ -936,6 +959,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           )
           .toList();
       _publishListProjection();
+      unawaited(_refreshInviteRequestAvailability());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1519,7 +1543,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       return;
     }
 
-    setState(() => _processingPendingInviteIds.add(invite.groupId));
+    setState(() {
+      _processingPendingInviteIds.add(invite.groupId);
+      _inviteRowOutcomes.remove(invite.groupId);
+      _askNewInviteIds.remove(invite.groupId);
+      _unavailableInviteContactIds.remove(invite.groupId);
+    });
+    _publishListProjection();
     try {
       await _drainPendingGroupInviteInboxBeforeAccept(
         inviteListener,
@@ -1560,34 +1590,48 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           }
           break;
         case AcceptPendingGroupInviteResult.notFound:
-          _showSnackBar(l10n.group_invite_no_longer_available);
+          _setTerminalInviteOutcome(
+            invite,
+            l10n.group_invite_no_longer_available,
+          );
           break;
         case AcceptPendingGroupInviteResult.expired:
-          _showSnackBar(l10n.group_invite_expired);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_expired);
           break;
         case AcceptPendingGroupInviteResult.expiredFreshness:
-          _showSnackBar(l10n.group_invite_expired_ask_resend);
+          _setTerminalInviteOutcome(
+            invite,
+            l10n.group_invite_expired_ask_resend,
+          );
           break;
         case AcceptPendingGroupInviteResult.revoked:
-          _showSnackBar(l10n.group_invite_revoked);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_revoked);
           break;
         case AcceptPendingGroupInviteResult.alreadyUsed:
-          _showSnackBar(l10n.group_invite_already_used);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_already_used);
           break;
         case AcceptPendingGroupInviteResult.wrongIdentity:
-          _showSnackBar(l10n.group_invite_wrong_identity);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_wrong_identity);
           break;
         case AcceptPendingGroupInviteResult.repairPending:
-          _showSnackBar(l10n.group_invite_needs_key);
+          _setInviteRowOutcome(invite, PendingInviteRowState.waitingForKey);
           break;
         case AcceptPendingGroupInviteResult.invalidPayload:
-          _showSnackBar(l10n.group_invite_invalid);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_invalid);
           break;
         case AcceptPendingGroupInviteResult.duplicateGroup:
-          _showSnackBar(l10n.group_invite_duplicate_group);
+          _setTerminalInviteOutcome(invite, l10n.group_invite_duplicate_group);
           break;
         case AcceptPendingGroupInviteResult.bridgeError:
-          _showSnackBar(l10n.group_invite_accept_failed);
+          if (group != null) {
+            _openGroupConversationFromModel(group);
+          } else {
+            _setInviteRowOutcome(
+              invite,
+              PendingInviteRowState.retryable,
+              reason: l10n.group_invite_accept_failed,
+            );
+          }
           break;
       }
     } catch (e) {
@@ -1604,13 +1648,120 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await _loadPendingGroupInvites();
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        _showSnackBar(l10n.group_invite_accept_failed);
+        _setInviteRowOutcome(
+          invite,
+          PendingInviteRowState.retryable,
+          reason: l10n.group_invite_accept_failed,
+        );
       }
     } finally {
       if (mounted) {
         setState(() => _processingPendingInviteIds.remove(invite.groupId));
+        _publishListProjection();
       }
     }
+  }
+
+  void _setInviteRowOutcome(
+    PendingGroupInvite invite,
+    PendingInviteRowState state, {
+    String? reason,
+  }) {
+    if (!mounted) return;
+    _inviteRowOutcomes[invite.groupId] = PendingInviteRowOutcome(
+      state: state,
+      groupName: invite.groupName,
+      reason: reason,
+      inviterPeerId: invite.senderPeerId,
+      inviterUsername: invite.senderUsername,
+    );
+    _publishListProjection();
+    unawaited(_refreshInviteRequestAvailability());
+  }
+
+  void _setTerminalInviteOutcome(PendingGroupInvite invite, String reason) {
+    _setInviteRowOutcome(invite, PendingInviteRowState.idle, reason: reason);
+  }
+
+  Map<String, _OrbitInviteRequestTarget> _inviteRequestTargets() {
+    final now = DateTime.now().toUtc();
+    final liveIds = _pendingGroupInvites
+        .map((invite) => invite.groupId)
+        .toSet();
+    final targets = <String, _OrbitInviteRequestTarget>{};
+    for (final invite in _pendingGroupInvites) {
+      if (invite.isExpiredAt(now) && invite.senderPeerId.isNotEmpty) {
+        targets[invite.groupId] = _OrbitInviteRequestTarget(
+          peerId: invite.senderPeerId,
+          groupName: invite.groupName,
+        );
+      }
+    }
+    for (final entry in _inviteRowOutcomes.entries) {
+      if (liveIds.contains(entry.key)) continue;
+      final peerId = entry.value.inviterPeerId;
+      if (peerId != null && peerId.isNotEmpty) {
+        targets[entry.key] = _OrbitInviteRequestTarget(
+          peerId: peerId,
+          groupName: entry.value.groupName,
+        );
+      }
+    }
+    return targets;
+  }
+
+  bool _isQualifiedInviteContact(ContactModel? contact, String peerId) {
+    return contact != null &&
+        contact.peerId == peerId &&
+        !contact.isBlocked &&
+        !contact.isArchived;
+  }
+
+  Future<void> _refreshInviteRequestAvailability() async {
+    final epoch = ++_inviteRequestQualificationEpoch;
+    final targets = _inviteRequestTargets();
+    final eligible = <String>{};
+    for (final entry in targets.entries) {
+      ContactModel? contact;
+      try {
+        contact = await widget.contactRepo.getContact(entry.value.peerId);
+      } catch (_) {
+        contact = null;
+      }
+      if (_isQualifiedInviteContact(contact, entry.value.peerId)) {
+        eligible.add(entry.key);
+      }
+    }
+    if (!mounted || epoch != _inviteRequestQualificationEpoch) return;
+    _askNewInviteIds = eligible;
+    _unavailableInviteContactIds = _unavailableInviteContactIds.intersection(
+      targets.keys.toSet(),
+    )..removeAll(eligible);
+    _publishListProjection();
+  }
+
+  Future<void> _onAskForNewInvite(String inviteId) async {
+    final target = _inviteRequestTargets()[inviteId];
+    if (target == null) return;
+
+    ContactModel? contact;
+    try {
+      contact = await widget.contactRepo.getContact(target.peerId);
+    } catch (_) {
+      contact = null;
+    }
+    if (!mounted) return;
+    if (!_isQualifiedInviteContact(contact, target.peerId)) {
+      _askNewInviteIds.remove(inviteId);
+      _unavailableInviteContactIds.add(inviteId);
+      _publishListProjection();
+      return;
+    }
+
+    final initialText = AppLocalizations.of(
+      context,
+    )!.group_invite_request_new_draft(target.groupName);
+    await _openConversationForContact(contact!, initialText: initialText);
   }
 
   Future<(AcceptPendingGroupInviteResult, GroupModel?)>
@@ -1736,6 +1887,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     _processingPendingInviteIds.add(invite.groupId);
     _optimisticallyDeclinedInviteIds.add(invite.groupId);
+    _inviteRowOutcomes.remove(invite.groupId);
+    _askNewInviteIds.remove(invite.groupId);
+    _unavailableInviteContactIds.remove(invite.groupId);
     _pendingGroupInvites = _pendingGroupInvites
         .where((i) => !_optimisticallyDeclinedInviteIds.contains(i.groupId))
         .toList();
@@ -1743,32 +1897,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _publishListProjection();
 
     final l10n = AppLocalizations.of(context)!;
-    _declineScaffoldMessenger = ScaffoldMessenger.of(context);
-    _showSnackBar(
-      l10n.group_invite_declined,
-      duration: kDeclineUndoWindow + const Duration(seconds: 1),
-      action: SnackBarAction(
-        label: l10n.feed_undo,
-        onPressed: () => _undoDecline(invite),
-      ),
-    );
-
-    _declineCommitTimers[invite.groupId] = Timer(
-      kDeclineUndoWindow,
-      () => unawaited(_commitDecline(invite)),
+    _declineUndoBars[invite.groupId] = showUndoBar(
+      context,
+      message: l10n.group_invite_declined,
+      window: kDeclineUndoWindow,
+      onUndo: () => _undoDecline(invite),
+      onCommit: () => _commitDecline(invite),
     );
   }
 
   /// Cancel a pending decline before its window elapses: re-surface the invite,
-  /// emit UNDONE, never send the decline-ack. No-op if the commit already fired
-  /// (late-tap race — the Timer is already gone).
+  /// emit UNDONE, and never send the decline-ack. The shared handle invokes
+  /// this callback only while the Undo authority is still active.
   void _undoDecline(PendingGroupInvite invite) {
-    // The SnackBar (and its Undo action) can outlive this State on the
-    // app-level messenger; a stale tap after dispose must be a safe no-op.
     if (!mounted) return;
-    final timer = _declineCommitTimers.remove(invite.groupId);
-    if (timer == null) return;
-    timer.cancel();
+    _declineUndoBars.remove(invite.groupId);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_DECLINE_UNDONE',
@@ -1781,9 +1924,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
     _optimisticallyDeclinedInviteIds.remove(invite.groupId);
     _processingPendingInviteIds.remove(invite.groupId);
-    if (mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    }
     unawaited(_loadPendingGroupInvites());
   }
 
@@ -1792,13 +1932,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// hide + processing guard and reloads — so a throwing commit re-surfaces the
   /// still-present invite, while a successful commit keeps it gone.
   Future<void> _commitDecline(PendingGroupInvite invite) async {
-    // Already undone/cancelled (or this is a duplicate fire) — commit once.
-    if (_declineCommitTimers.remove(invite.groupId) == null) return;
-    // 153 (review P2): the undo window has closed — drop the Undo affordance the
-    // moment the commit fires, not after the (possibly slow) use-case + reload.
-    if (mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    }
+    _declineUndoBars.remove(invite.groupId);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_DECLINE_COMMITTED',
@@ -1847,36 +1981,29 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         final l10n = AppLocalizations.of(context)!;
         if (error != null) {
-          _showSnackBar(l10n.group_invite_decline_failed);
+          _setInviteRowOutcome(
+            invite,
+            PendingInviteRowState.idle,
+            reason: l10n.group_invite_decline_failed,
+          );
         } else if (result != null) {
           switch (result) {
             case DeclinePendingGroupInviteResult.success:
-              _showSnackBar(l10n.group_invite_declined);
+              _setTerminalInviteOutcome(invite, l10n.group_invite_declined);
               break;
             case DeclinePendingGroupInviteResult.notFound:
-              _showSnackBar(l10n.group_invite_no_longer_available);
+              _setTerminalInviteOutcome(
+                invite,
+                l10n.group_invite_no_longer_available,
+              );
               break;
             case DeclinePendingGroupInviteResult.expired:
-              _showSnackBar(l10n.group_invite_expired);
+              _setTerminalInviteOutcome(invite, l10n.group_invite_expired);
               break;
           }
         }
       }
     }
-  }
-
-  void _showSnackBar(
-    String message, {
-    Duration? duration,
-    SnackBarAction? action,
-  }) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: duration ?? const Duration(seconds: 4),
-        action: action,
-      ),
-    );
   }
 
   void _onIntroSendMessage(String peerId) {
@@ -2348,7 +2475,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// double-push and restoring the post-close refresh on pop. Shared by the
   /// friend-row tap and the contact-request accept flow (215) so the deps
   /// block lives in exactly one place.
-  Future<void> _openConversationForContact(ContactModel contact) async {
+  Future<void> _openConversationForContact(
+    ContactModel contact, {
+    String? initialText,
+  }) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
 
@@ -2357,6 +2487,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         buildConversationRoute(
           builder: (_) => ConversationWired(
             contact: contact,
+            initialText: initialText,
             identityRepo: widget.identityRepo,
             messageRepo: widget.messageRepo,
             chatMessageListener: widget.chatMessageListener,
@@ -2612,17 +2743,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _groupReadSubscription?.cancel();
     // 153: never commit a deferred decline after unmount (safe-failure = the
     // invite is kept; a re-mount re-surfaces it = implicit undo).
-    for (final timer in _declineCommitTimers.values) {
-      timer.cancel();
+    for (final bar in _declineUndoBars.values) {
+      bar.cancel();
     }
-    // 153 (review P1): dismiss the still-visible decline SnackBar so its Undo
-    // action cannot be tapped after this State is gone (defensive: in
-    // embeddings where the snackbar outlives the orbit Scaffold), and clear the
-    // map so a stale tap finds no timer (the no-op guard holds).
-    if (_declineCommitTimers.isNotEmpty) {
-      _declineScaffoldMessenger?.hideCurrentSnackBar();
-    }
-    _declineCommitTimers.clear();
+    _declineUndoBars.clear();
     _detachExternalRouteChangesListenable(
       widget.externalRouteChangesListenable,
     );
@@ -2931,4 +3055,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         )
         .then((result) => unawaited(_applyRouteChanges(result)));
   }
+}
+
+class _OrbitInviteRequestTarget {
+  final String peerId;
+  final String groupName;
+
+  const _OrbitInviteRequestTarget({
+    required this.peerId,
+    required this.groupName,
+  });
 }

@@ -40,6 +40,9 @@ class OrbitIntrosViewData {
   final Map<String, String> introducerUsernames;
   final String ownPeerId;
   final List<PendingGroupInvite> pendingGroupInvites;
+  final Map<String, PendingInviteRowOutcome> inviteRowOutcomes;
+  final Set<String> askNewInviteIds;
+  final Set<String> unavailableInviteContactIds;
   final Set<String> processingIntroductionIds;
   final Set<String> processingPendingInviteIds;
   final void Function(String introductionId) onAccept;
@@ -48,6 +51,8 @@ class OrbitIntrosViewData {
   final void Function(String peerId)? onSendMessage;
   final void Function(PendingGroupInvite invite)? onAcceptPendingInvite;
   final void Function(PendingGroupInvite invite)? onDeclinePendingInvite;
+  final void Function(PendingGroupInvite invite)? onRetryPendingInvite;
+  final void Function(String inviteId)? onAskForNewInvite;
   final Set<String> blockedPeerIds;
 
   const OrbitIntrosViewData({
@@ -56,6 +61,9 @@ class OrbitIntrosViewData {
     required this.introducerUsernames,
     required this.ownPeerId,
     this.pendingGroupInvites = const [],
+    this.inviteRowOutcomes = const <String, PendingInviteRowOutcome>{},
+    this.askNewInviteIds = const <String>{},
+    this.unavailableInviteContactIds = const <String>{},
     this.processingIntroductionIds = const {},
     this.processingPendingInviteIds = const {},
     required this.onAccept,
@@ -64,6 +72,8 @@ class OrbitIntrosViewData {
     this.onSendMessage,
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
+    this.onRetryPendingInvite,
+    this.onAskForNewInvite,
     this.blockedPeerIds = const {},
   });
 
@@ -71,7 +81,18 @@ class OrbitIntrosViewData {
       foldedReviewItems?.length ??
       groupedIntros.values.fold(0, (sum, entries) => sum + entries.length);
 
-  int get reviewCount => introCount + pendingGroupInvites.length;
+  Set<String> get _pendingInviteIds =>
+      pendingGroupInvites.map((invite) => invite.groupId).toSet();
+
+  int get ghostInviteCount => inviteRowOutcomes.keys
+      .where((id) => !_pendingInviteIds.contains(id))
+      .length;
+
+  bool get hasInviteRows =>
+      pendingGroupInvites.isNotEmpty || ghostInviteCount > 0;
+
+  int get reviewCount =>
+      introCount + pendingGroupInvites.length + ghostInviteCount;
 }
 
 @immutable
@@ -138,6 +159,7 @@ enum _OrbitIntroEntryType {
   context,
   pendingInviteHeader,
   pendingInvite,
+  pendingInviteOutcome,
   introHeader,
   introRow,
   foldedIntroRow,
@@ -157,6 +179,8 @@ class _OrbitIntroEntry {
   final IntroductionModel? introduction;
   final FoldedIntroductionReviewItem? foldedIntroduction;
   final PendingGroupInvite? pendingInvite;
+  final String? pendingInviteOutcomeId;
+  final PendingInviteRowOutcome? pendingInviteOutcome;
 
   const _OrbitIntroEntry._(
     this.type, {
@@ -164,6 +188,8 @@ class _OrbitIntroEntry {
     this.introduction,
     this.foldedIntroduction,
     this.pendingInvite,
+    this.pendingInviteOutcomeId,
+    this.pendingInviteOutcome,
   });
 
   const _OrbitIntroEntry.context() : this._(_OrbitIntroEntryType.context);
@@ -189,6 +215,15 @@ class _OrbitIntroEntry {
 
   const _OrbitIntroEntry.pendingInvite(PendingGroupInvite invite)
     : this._(_OrbitIntroEntryType.pendingInvite, pendingInvite: invite);
+
+  const _OrbitIntroEntry.pendingInviteOutcome(
+    String inviteId,
+    PendingInviteRowOutcome outcome,
+  ) : this._(
+        _OrbitIntroEntryType.pendingInviteOutcome,
+        pendingInviteOutcomeId: inviteId,
+        pendingInviteOutcome: outcome,
+      );
 
   const _OrbitIntroEntry.spacer() : this._(_OrbitIntroEntryType.spacer);
 }
@@ -1168,22 +1203,33 @@ class _OrbitScreenView extends StatelessWidget {
   }
 
   List<_OrbitIntroEntry> _buildIntroEntries(OrbitIntrosViewData data) {
-    if (data.introCount == 0 && data.pendingGroupInvites.isEmpty) {
+    if (data.introCount == 0 && !data.hasInviteRows) {
       return const [_OrbitIntroEntry.context()];
     }
 
     final entries = <_OrbitIntroEntry>[const _OrbitIntroEntry.context()];
-    if (data.pendingGroupInvites.isNotEmpty) {
+    if (data.hasInviteRows) {
       entries.add(const _OrbitIntroEntry.pendingInviteHeader());
       entries.addAll(
         data.pendingGroupInvites.map(_OrbitIntroEntry.pendingInvite),
+      );
+      final pendingIds = data.pendingGroupInvites
+          .map((invite) => invite.groupId)
+          .toSet();
+      entries.addAll(
+        data.inviteRowOutcomes.entries
+            .where((entry) => !pendingIds.contains(entry.key))
+            .map(
+              (entry) =>
+                  _OrbitIntroEntry.pendingInviteOutcome(entry.key, entry.value),
+            ),
       );
     }
 
     final foldedItems = data.foldedReviewItems;
     if (foldedItems != null) {
       if (foldedItems.isNotEmpty) {
-        if (data.pendingGroupInvites.isNotEmpty) {
+        if (data.hasInviteRows) {
           entries.add(const _OrbitIntroEntry.spacer());
         }
         entries.addAll(foldedItems.map(_OrbitIntroEntry.foldedRow));
@@ -1198,7 +1244,7 @@ class _OrbitScreenView extends StatelessWidget {
       final introducerName =
           data.introducerUsernames[introducerId] ?? 'Unknown';
 
-      if (groupIndex > 0 || data.pendingGroupInvites.isNotEmpty) {
+      if (groupIndex > 0 || data.hasInviteRows) {
         entries.add(const _OrbitIntroEntry.spacer());
       }
       entries.add(_OrbitIntroEntry.header(introducerName));
@@ -1234,7 +1280,7 @@ class _OrbitScreenView extends StatelessWidget {
 
     switch (entry.type) {
       case _OrbitIntroEntryType.context:
-        if (data.introCount == 0 && data.pendingGroupInvites.isEmpty) {
+        if (data.introCount == 0 && !data.hasInviteRows) {
           return Padding(
             padding: const EdgeInsets.all(32),
             child: Center(
@@ -1248,7 +1294,7 @@ class _OrbitScreenView extends StatelessWidget {
         return Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            data.pendingGroupInvites.isNotEmpty
+            data.hasInviteRows
                 ? l10n.orbit_pending_group_intro_desc
                 : l10n.intro_tab_desc,
             style: TextStyle(fontSize: 13, color: readableColors.textMuted),
@@ -1270,6 +1316,7 @@ class _OrbitScreenView extends StatelessWidget {
         );
       case _OrbitIntroEntryType.pendingInvite:
         final invite = entry.pendingInvite!;
+        final outcome = data.inviteRowOutcomes[invite.groupId];
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: PendingGroupInviteCard(
@@ -1277,12 +1324,42 @@ class _OrbitScreenView extends StatelessWidget {
             isProcessing: data.processingPendingInviteIds.contains(
               invite.groupId,
             ),
+            rowState: outcome?.state ?? PendingInviteRowState.idle,
+            rowReason: outcome?.reason,
             onAccept: data.onAcceptPendingInvite != null
                 ? () => data.onAcceptPendingInvite!(invite)
                 : null,
             onDecline: data.onDeclinePendingInvite != null
                 ? () => data.onDeclinePendingInvite!(invite)
                 : null,
+            onRetry: data.onRetryPendingInvite != null
+                ? () => data.onRetryPendingInvite!(invite)
+                : null,
+            onAskForNewInvite:
+                data.onAskForNewInvite != null &&
+                    data.askNewInviteIds.contains(invite.groupId)
+                ? () => data.onAskForNewInvite!(invite.groupId)
+                : null,
+            inviteContactUnavailable: data.unavailableInviteContactIds.contains(
+              invite.groupId,
+            ),
+          ),
+        );
+      case _OrbitIntroEntryType.pendingInviteOutcome:
+        final inviteId = entry.pendingInviteOutcomeId!;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: PendingInviteOutcomeRow(
+            inviteId: inviteId,
+            outcome: entry.pendingInviteOutcome!,
+            onAskForNewInvite:
+                data.onAskForNewInvite != null &&
+                    data.askNewInviteIds.contains(inviteId)
+                ? () => data.onAskForNewInvite!(inviteId)
+                : null,
+            inviteContactUnavailable: data.unavailableInviteContactIds.contains(
+              inviteId,
+            ),
           ),
         );
       case _OrbitIntroEntryType.introHeader:

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
+import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
@@ -89,28 +90,8 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
 
   Future<void> _copy(String value, String confirmation) async {
     await Clipboard.setData(ClipboardData(text: value));
-    await HapticFeedback.selectionClick();
     if (!mounted) return;
-    final readable = context.backgroundReadableColors;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: readable.surfaceRaised,
-          duration: const Duration(milliseconds: 1600),
-          content: Row(
-            children: [
-              Icon(Icons.check_circle_rounded, size: 18, color: _accent),
-              const SizedBox(width: 10),
-              Text(
-                confirmation,
-                style: TextStyle(color: readable.textPrimary, fontSize: 13),
-              ),
-            ],
-          ),
-        ),
-      );
+    showQuietConfirm(context, confirmation);
   }
 
   /// Staggered fade + slide-up reveal driven by [_entrance].

@@ -21,17 +21,33 @@ void showQuietConfirm(BuildContext context, String message) {
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (messenger == null) return;
   final scheme = Theme.of(context).colorScheme;
+  final availableWidth = MediaQuery.sizeOf(context).width - 32;
+  final pillWidth = availableWidth.clamp(180.0, 320.0).toDouble();
   messenger
     ..hideCurrentSnackBar()
     ..showSnackBar(
       SnackBar(
         key: const ValueKey('quiet-confirm'),
-        content: Text(
-          message,
-          style: TextStyle(color: scheme.onSecondaryContainer),
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_rounded, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ),
+          ],
         ),
-        backgroundColor: scheme.secondaryContainer,
+        backgroundColor: scheme.surfaceContainerHighest,
         behavior: SnackBarBehavior.floating,
+        width: pillWidth,
+        shape: StadiumBorder(side: BorderSide(color: scheme.outlineVariant)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         duration: const Duration(milliseconds: 1200),
       ),
     );

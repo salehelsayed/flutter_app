@@ -16,17 +16,18 @@ Spec: free-text intent (no formal spec). Source design: `Test-Flight-Improv/priv
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-19 | contract extraction / Step 0 | working-tree inventory; `/tmp/plan-260-analyze-before.txt` | Flutter 3.41.4; stale-literal sweep PASS; `run_test_gates.sh 1to1` `+2105 All tests passed`; serial groups rerun `+2204 -3 Some tests failed`; analyzer snapshot contains 1,956 pre-existing diagnostics | baseline HEAD is `2be07626e` (the prose baseline hash is stale); the three exact groups failures remain a forward-fix/closure obligation and are not re-baselined | identify/fix the three groups failures before named-gate closure |
+| 2026-07-19 | S6a l10n enabler | en/ar/de ARBs, generated localization, exact l10n contract test | exact private-media UX copy contract + l10n integrity: 5/5 PASS; checkpoint `6c5fdc940` | all plan copy keys and placeholder metadata are present; E16 promise strings use l10n | keep literal/parity sentinels green at final closure |
+| 2026-07-19 | S1 cards (interim) | direct/group conversation card composition, LetterCard private slot, focused tests | direct private card 4/4; direct conversation 79/79; group screen 70/70; direct viewer placeholder 21/21 | sender/receiver/terminal private state is inside the decorated keyed slot with no private pixels; screenshot-vs-mockup evidence still pending live capture | capture and record §02 visual comparison, then checkpoint |
+| 2026-07-19 | S2 picker sheets (interim) | shared picker sheet, direct ComposeArea, group conversation picker adapters | direct composer 12/12; group screen 73/73; group wired action 1/1 | summary chip + CTA-only modal selection is wired on both policy types; screenshot-vs-mockup evidence still pending live capture | capture and record §01 visual comparison, then checkpoint |
+| 2026-07-19 | S3a1 typed upload boundary | typed outcome/wrapper and ten production consumers | upload/direct/group background focused set 57/57; retry/failed-media/voice set 81/81; upload suite 32/32; targeted analyze has no errors | E9 is green; `MEDIA_UPLOAD_START` is emitted only at transport issuance after encryption and carries no raw identifiers | finish S3a2 projection/gating and rerun offline-text sentinel |
+| 2026-07-19 | S5 feedback checkpoint | shared UndoBar; Orbit/GroupList durable invite outcomes; quiet confirm; microphone permission sheet; contact-profile copy feedback | UndoBar 3/3; GroupList 46/46; Orbit 101/101; quiet + microphone + contact-profile 13/13; §04 artifact `Test-Flight-Improv/evidence/260/s5-permission-sheet.png` captured at 390×844 | the stale queued-SnackBar/controller race is fixed by replacing existing feedback before mounting UndoBar; the permission prompt now matches §04's scrim, rounded sheet, icon, title/body, and two live actions; at the narrow capture width its action bar wraps vertically as an intentional responsive difference | preserve these focused greens in final family gates |
+| 2026-07-19 | S7 host contracts (interim) | SIMS manifest/validator/protocol/controller/dispatch; TC-38 harness/schema/runner | protocol/controller/dispatch/main focused 7/7; manifest/criteria 18/18; TC-38 criteria 87/87; Android integration APK compile PASS | TC-37 production endpoint/host runner/device proof remain; TC-38 strict production-card artifact still needs the pinned live run | finish production endpoint and SIMS runner, then resolve/pin live Android pair |
+| | final preservation / named gates / QA | | pending | no final verdict yet | focused suites, justified family sweeps, wave-level `host-all`, device proofs, incremental Graphify refresh |
 
 ## Source Of Truth
 - Design: the mockup's proposed side; **this plan's contracts win wherever the mockup contradicts platform truth or shipped 259 copy** — every delta is listed in Accepted Differences.
-- Baseline: the CURRENT WORKING TREE = HEAD (`5ae501f9c`) + plan 259 E1-E7 applied uncommitted. "RED on HEAD" below means RED on this tree. Step 0 re-runs 259's stale-literal sweep as baseline sanity.
+- Baseline: execution resolved the CURRENT WORKING TREE at HEAD (`2be07626e`) before Plan 260 changes; the earlier planning snapshot `5ae501f9c` is superseded. "RED on HEAD" below means RED on that recorded execution baseline. Step 0 re-runs 259's stale-literal sweep as baseline sanity.
 - Gate definitions: `scripts/run_test_gates.sh` (script wins over prose)
 - Discovery/registration: `scripts/check_reliability_simulation_discovery.sh`
 - Numbering / index: `Test-Flight-Improv/00-INDEX.md`

@@ -45,6 +45,12 @@ class GroupListScreen extends StatelessWidget {
   /// row is tapped (plan 150). Routes back through the accept handler.
   final ValueChanged<PendingGroupInvite>? onRetryPendingInvite;
 
+  /// Invite ids whose inviter currently resolves to an active contact and can
+  /// therefore receive a prefilled request for a replacement invite.
+  final Set<String> askNewInviteIds;
+  final Set<String> unavailableInviteContactIds;
+  final ValueChanged<String>? onAskForNewInvite;
+
   /// Invoked when the user taps "Retry now" on a group whose rejoin has given
   /// up (attempt ≥ [_joinGiveUpThreshold]). Forces the rejoin row eligible and
   /// kicks a fresh rejoin pass (G2).
@@ -72,6 +78,9 @@ class GroupListScreen extends StatelessWidget {
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
     this.onRetryPendingInvite,
+    this.askNewInviteIds = const <String>{},
+    this.unavailableInviteContactIds = const <String>{},
+    this.onAskForNewInvite,
     this.onRetryStuckRejoin,
     this.onLeaveStuckGroup,
     required this.onBack,
@@ -223,57 +232,6 @@ class GroupListScreen extends StatelessWidget {
     return inviteRowOutcomes.keys.any((id) => !pendingInviteIds.contains(id));
   }
 
-  /// A compact one-line ghost row that survives the deletion of a terminal
-  /// invite (plan 150 C1). Keyed `pending-group-invite-outcome-<id>`.
-  Widget _buildInviteOutcomeRow(
-    BuildContext context,
-    String inviteId,
-    PendingInviteRowOutcome outcome,
-  ) {
-    final readableColors = context.backgroundReadableColors;
-    return Container(
-      key: ValueKey('pending-group-invite-outcome-$inviteId'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: readableColors.surfaceRaised,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: readableColors.divider),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline, size: 18, color: readableColors.textMuted),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  outcome.groupName,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: readableColors.textPrimary,
-                  ),
-                ),
-                if (outcome.reason != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    outcome.reason!,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: readableColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildContent(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     // Ghost rows: terminal outcomes whose invite was deleted by the use-case
@@ -302,6 +260,7 @@ class GroupListScreen extends StatelessWidget {
                 invite: invite,
                 isProcessing: processingInviteIds.contains(invite.groupId),
                 rowState: outcome?.state ?? PendingInviteRowState.idle,
+                rowReason: outcome?.reason,
                 onAccept: onAcceptPendingInvite != null
                     ? () => onAcceptPendingInvite!(invite)
                     : null,
@@ -311,13 +270,32 @@ class GroupListScreen extends StatelessWidget {
                 onRetry: onRetryPendingInvite != null
                     ? () => onRetryPendingInvite!(invite)
                     : null,
+                onAskForNewInvite:
+                    onAskForNewInvite != null &&
+                        askNewInviteIds.contains(invite.groupId)
+                    ? () => onAskForNewInvite!(invite.groupId)
+                    : null,
+                inviteContactUnavailable: unavailableInviteContactIds.contains(
+                  invite.groupId,
+                ),
               ),
             );
           }),
           ...ghostOutcomes.map(
             (entry) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: _buildInviteOutcomeRow(context, entry.key, entry.value),
+              child: PendingInviteOutcomeRow(
+                inviteId: entry.key,
+                outcome: entry.value,
+                onAskForNewInvite:
+                    onAskForNewInvite != null &&
+                        askNewInviteIds.contains(entry.key)
+                    ? () => onAskForNewInvite!(entry.key)
+                    : null,
+                inviteContactUnavailable: unavailableInviteContactIds.contains(
+                  entry.key,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 8),

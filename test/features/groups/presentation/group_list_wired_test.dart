@@ -542,6 +542,7 @@ void main() {
     Widget buildWidget({
       GroupMessageListener? groupMessageListener,
       FakeReactionRepository? reactionRepo,
+      GroupInviteConversationLauncher? openInviteConversation,
     }) {
       return MaterialApp(
         locale: const Locale('en'),
@@ -559,6 +560,7 @@ void main() {
           p2pService: p2pService,
           groupInviteListener: groupInviteListener,
           reactionRepo: reactionRepo,
+          openInviteConversation: openInviteConversation,
         ),
       );
     }
@@ -1482,13 +1484,10 @@ void main() {
       },
     );
 
-    // TC-09 (plan 150) — derived `_inviteRowOutcomes` is in-memory and cleared
-    // on `_loadGroups`; after a resume a repairPending invite re-renders from
-    // the repo as a plain idle accept/decline card (no stale "Waiting for
-    // key", no ghost row). The invite itself stays KEPT.
+    // TC-31 (plan 260) — row outcomes are session-durable: a lifecycle reload
+    // must not erase the state produced after accept's awaited reload.
     testWidgets(
-      'TC-09 repairPending row reverts to idle accept card after resume '
-      '(lifecycle)',
+      'TC-31 repairPending row survives a late lifecycle reload',
       (tester) async {
         final invite = makePendingInvite(overrideGroupKey: '');
         await pendingInviteRepo.savePendingInvite(invite);
@@ -1510,38 +1509,18 @@ void main() {
           findsOneWidget,
         );
 
-        // Simulate a resume: the lifecycle observer re-runs `_loadGroups`,
-        // which clears the derived row outcomes.
+        // Simulate a late refresh after the outcome was installed.
         WidgetsBinding.instance.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );
-        // The resume `_loadGroups` is UNawaited (fire-and-forget), so a fixed
-        // pump count can race the reload. Pump-until the row has reverted to
-        // the plain idle card (bounded): the accept key is present AND the
-        // stale "Waiting for key" inline state has been cleared by the reload.
-        // (The accept key alone is not a sufficient settle signal — it stays
-        // visible on the kept repairPending card even while "Waiting for key"
-        // still shows.)
-        await pumpUntil(
-          tester,
-          () =>
-              find
-                  .byKey(
-                    ValueKey(
-                      'pending-group-invite-accept-${invite.groupId}',
-                    ),
-                  )
-                  .evaluate()
-                  .isNotEmpty &&
-              find.text('Waiting for key').evaluate().isEmpty,
-        );
+        await pumpFrames(tester, count: 20);
 
         // The invite is still KEPT in the repo.
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNotNull,
         );
-        // Back to a plain idle accept/decline card.
+        // The live row and its exact outcome survive that reload.
         expect(
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsOneWidget,
@@ -1552,14 +1531,231 @@ void main() {
           ),
           findsOneWidget,
         );
-        // No stale "Waiting for key" state, no terminal ghost row.
-        expect(find.text('Waiting for key'), findsNothing);
+        expect(find.text('Waiting for key'), findsOneWidget);
         expect(
           find.byKey(
             ValueKey('pending-group-invite-outcome-${invite.groupId}'),
           ),
           findsNothing,
         );
+      },
+    );
+
+    testWidgets(
+      'TC-32 live-expired Ask resolves the exact active contact and localized '
+      'group draft',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-ask-live',
+          groupName: 'Old Book Club',
+          receivedAt: DateTime.now().toUtc().subtract(
+            pendingGroupInviteTtl + const Duration(minutes: 1),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        ContactModel? launchedContact;
+        String? launchedDraft;
+
+        await tester.pumpWidget(
+          buildWidget(
+            openInviteConversation:
+                (contact, {required String initialText}) async {
+                  launchedContact = contact;
+                  launchedDraft = initialText;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final ask = find.byKey(
+          const ValueKey('pending-group-invite-ask-new-grp-ask-live'),
+        );
+        expect(ask, findsOneWidget);
+        await tester.tap(ask);
+        await pumpFrames(tester);
+
+        expect(launchedContact?.peerId, aliceContact.peerId);
+        expect(
+          launchedDraft,
+          'Could you send me a new invite to Old Book Club?',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-32 live-expired Ask is hidden without contact authority or launcher '
+      '(table)',
+      (tester) async {
+        final cases = <
+          ({String label, ContactModel? contact, bool provideLauncher})
+        >[
+          (
+            label: 'blocked',
+            contact: aliceContact.copyWith(isBlocked: true),
+            provideLauncher: true,
+          ),
+          (
+            label: 'archived',
+            contact: aliceContact.copyWith(isArchived: true),
+            provideLauncher: true,
+          ),
+          (label: 'non-contact', contact: null, provideLauncher: true),
+          (
+            label: 'missing-launcher',
+            contact: aliceContact,
+            provideLauncher: false,
+          ),
+        ];
+
+        for (final testCase in cases) {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+          await contactRepo.deleteContact(aliceContact.peerId);
+          if (testCase.contact != null) {
+            contactRepo.addTestContact(testCase.contact!);
+          }
+          final groupId = 'grp-ask-${testCase.label}';
+          final invite = makePendingInvite(
+            groupId: groupId,
+            receivedAt: DateTime.now().toUtc().subtract(
+              pendingGroupInviteTtl + const Duration(minutes: 1),
+            ),
+          );
+          await pendingInviteRepo.savePendingInvite(invite);
+
+          await tester.pumpWidget(
+            buildWidget(
+              openInviteConversation: testCase.provideLauncher
+                  ? (contact, {required String initialText}) async {}
+                  : null,
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            find.byKey(
+              ValueKey('pending-group-invite-ask-new-$groupId'),
+            ),
+            findsNothing,
+            reason: testCase.label,
+          );
+          await pendingInviteRepo.deletePendingInvite(groupId);
+        }
+      },
+    );
+
+    testWidgets(
+      'TC-32 contact loss between render and tap retains the expired row and '
+      'shows unavailable',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-ask-race',
+          receivedAt: DateTime.now().toUtc().subtract(
+            pendingGroupInviteTtl + const Duration(minutes: 1),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        var launchCount = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            openInviteConversation:
+                (contact, {required String initialText}) async {
+                  launchCount++;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        final askKey = ValueKey(
+          'pending-group-invite-ask-new-${invite.groupId}',
+        );
+        expect(find.byKey(askKey), findsOneWidget);
+
+        await contactRepo.deleteContact(invite.senderPeerId);
+        await tester.tap(find.byKey(askKey));
+        await pumpFrames(tester);
+
+        expect(launchCount, 0);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.byKey(askKey), findsNothing);
+        expect(
+          find.text('This contact is no longer available.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-32 two deleted ghosts retain exact Ask actions and group-named '
+      'drafts after a late refresh',
+      (tester) async {
+        final receivedAt = DateTime.now().toUtc().subtract(
+          const Duration(days: 6, hours: 21),
+        );
+        final first = makePendingInvite(
+          groupId: 'grp-ghost-one',
+          groupName: 'Ghost One',
+          receivedAt: receivedAt,
+        );
+        final second = makePendingInvite(
+          groupId: 'grp-ghost-two',
+          groupName: 'Ghost Two',
+          receivedAt: receivedAt,
+        );
+        await pendingInviteRepo.savePendingInvite(first);
+        await pendingInviteRepo.savePendingInvite(second);
+        final launchedDrafts = <String>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            openInviteConversation:
+                (contact, {required String initialText}) async {
+                  expect(contact.peerId, aliceContact.peerId);
+                  launchedDrafts.add(initialText);
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        for (final invite in [first, second]) {
+          final accept = find.byKey(
+            ValueKey('pending-group-invite-accept-${invite.groupId}'),
+          );
+          await tester.ensureVisible(accept);
+          await tester.tap(accept);
+          await pumpFrames(tester, count: 30);
+        }
+
+        pendingInviteStreamController.add(first);
+        await pumpFrames(tester, count: 20);
+        for (final invite in [first, second]) {
+          expect(
+            find.byKey(
+              ValueKey('pending-group-invite-outcome-${invite.groupId}'),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(
+              ValueKey('pending-group-invite-ask-new-${invite.groupId}'),
+            ),
+            findsOneWidget,
+          );
+        }
+        expect(find.byType(SnackBar), findsNothing);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-ask-new-${second.groupId}'),
+          ),
+        );
+        await pumpFrames(tester);
+        expect(launchedDrafts, [
+          'Could you send me a new invite to Ghost Two?',
+        ]);
       },
     );
 
@@ -2018,9 +2214,16 @@ void main() {
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNotNull,
         );
+        expect(find.byKey(const ValueKey('undo-bar')), findsOneWidget);
+        expect(
+          tester
+              .widget<SnackBar>(find.byKey(const ValueKey('undo-bar')))
+              .duration,
+          const Duration(seconds: 4),
+        );
         expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
 
-        // Past the 4s undo window (+1s margin) → the deferred commit fires.
+        // Past the exact 4s visible/commit window → the deferred commit fires.
         await tester.pump(const Duration(seconds: 5));
         await pumpFrames(tester, count: 10);
 
