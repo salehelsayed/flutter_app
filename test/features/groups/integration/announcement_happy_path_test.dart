@@ -179,7 +179,10 @@ void main() {
         find.byKey(
           const ValueKey('failed-media-retry-failed-announcement-media'),
         ),
-        findsOneWidget,
+        findsNothing,
+        reason:
+            'an upload_failed row below the bounded retry ceiling with no '
+            'resolvable source is not eligible for manual rearm',
       );
       expect(
         find.byKey(
