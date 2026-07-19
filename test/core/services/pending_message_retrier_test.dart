@@ -1686,6 +1686,69 @@ void main() {
       });
     });
 
+    test('TC-15 restored media pass keeps claim priority over an earlier '
+        'node-full timer', () {
+      fakeAsync((async) {
+        final restored = StreamController<void>.broadcast(sync: true);
+        final calls = <String>[];
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          networkRestoredSignal: restored.stream,
+          retryDebounce: const Duration(milliseconds: 100),
+          networkRestoredDebounce: const Duration(seconds: 1),
+          retryIncompleteUploadsFn: () async {
+            calls.add('full-direct');
+            return 0;
+          },
+          retryIncompleteGroupUploadsFn: () async {
+            calls.add('full-group');
+            return 0;
+          },
+          retryIncompleteUploadsNetworkRestoredFn: () async {
+            calls.add('restored-direct');
+            return 0;
+          },
+          retryIncompleteGroupUploadsNetworkRestoredFn: () async {
+            calls.add('restored-group');
+            return 0;
+          },
+          retryFailedMessagesOverride: () async {
+            calls.add('full-non-media');
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async => 0,
+        );
+        retrier.start();
+
+        // Reproduce the device race: the OS-restored callback arrives while
+        // a node-online full-pass timer is already close to firing.
+        restored.add(null);
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: <String>['/addr'],
+          ),
+        );
+        async.elapse(const Duration(milliseconds: 100));
+        async.flushMicrotasks();
+
+        expect(calls, contains('full-non-media'));
+        expect(calls, isNot(contains('full-direct')));
+        expect(calls, isNot(contains('full-group')));
+
+        async.elapse(const Duration(milliseconds: 900));
+        async.flushMicrotasks();
+        expect(calls.where((call) => call == 'restored-direct'), hasLength(1));
+        expect(calls.where((call) => call == 'restored-group'), hasLength(1));
+        restored.close();
+      });
+    });
+
     test('TC-195-05 the flush runs INSIDE the post-restore recovery window '
         '(external recovery in progress) and skips group/failed steps — the '
         'field-hit gap: the full pass is guard-skipped exactly when the OS edge '

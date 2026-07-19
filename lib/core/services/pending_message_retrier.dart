@@ -316,6 +316,14 @@ class PendingMessageRetrier {
         true;
   }
 
+  /// A restored edge owns incomplete-media retry priority until its dedicated
+  /// pass finishes. The node can report online early enough that an older
+  /// full-pass timer fires inside the shorter restored debounce window; letting
+  /// that pass claim media would erase the restored source's causal ownership.
+  bool get _networkRestoredMediaPassHasPriority =>
+      _networkRestoredDebounceTimer?.isActive == true ||
+      _isNetworkRestoredFlushing;
+
   Future<int> _retryFailedMessagesNow() {
     if (retryFailedMessagesOverride != null) {
       return retryFailedMessagesOverride!();
@@ -620,7 +628,8 @@ class PendingMessageRetrier {
               ? retryIncompleteGroupUploadsPeriodicFn ??
                     retryIncompleteGroupUploadsFn
               : retryIncompleteGroupUploadsFn;
-          if (retryIncompleteGroupUploadsForPass != null) {
+          if (retryIncompleteGroupUploadsForPass != null &&
+              !_networkRestoredMediaPassHasPriority) {
             try {
               await retryIncompleteGroupUploadsForPass();
             } catch (e) {
@@ -688,7 +697,8 @@ class PendingMessageRetrier {
       final retryIncompleteUploadsForPass = periodic
           ? retryIncompleteUploadsPeriodicFn ?? retryIncompleteUploadsFn
           : retryIncompleteUploadsFn;
-      if (retryIncompleteUploadsForPass != null) {
+      if (retryIncompleteUploadsForPass != null &&
+          !_networkRestoredMediaPassHasPriority) {
         try {
           final count = await retryIncompleteUploadsForPass();
           if (count > 0) {
