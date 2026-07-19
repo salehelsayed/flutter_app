@@ -8,6 +8,8 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
+import 'package:flutter_app/core/debug/private_media_outbox_e2e_conversation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
@@ -24,6 +26,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -357,6 +360,7 @@ class ConversationWired extends StatefulWidget {
   final IntroductionRepository? introductionRepository;
   final DeleteContactFn? deleteContactFn;
   final UploadMediaFn uploadMediaFn;
+  final DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo;
   final SendVoiceMessageFn sendVoiceMessageFn;
   final DownloadMediaFn downloadMediaFn;
 
@@ -367,6 +371,11 @@ class ConversationWired extends StatefulWidget {
   final DateTime? notificationTappedAt;
   final AppShellController? appShellController;
   final TransportMetrics? transportMetrics;
+
+  /// Debug/E2E-only controller for the manifest-owned private-media outbox
+  /// proof. Production routes leave this null; the controller itself also
+  /// rejects registration unless the explicit E2E build flag enabled it.
+  final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
 
   /// 229: user auto-download policy consulted immediately before every
   /// automatic visible-media recovery transfer (initial mount, staged-drain
@@ -440,12 +449,14 @@ class ConversationWired extends StatefulWidget {
     this.introductionRepository,
     this.deleteContactFn,
     this.uploadMediaFn = uploadMedia,
+    this.uploadRetryProjectionRepo,
     this.sendVoiceMessageFn = sendVoiceMessage,
     this.downloadMediaFn = downloadMedia,
     this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
     this.notificationTappedAt,
     this.appShellController,
     this.transportMetrics,
+    this.privateMediaOutboxE2EController,
     this.autoDownloadDecider,
     this.receivedMediaActionController,
     this.forwardGroupRepository,
@@ -468,6 +479,14 @@ class _ConversationWiredState extends State<ConversationWired>
   static const _uuid = Uuid();
   static const _pageSize = 50;
   static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
+
+  late AppLifecycleState _appLifecycleState;
+  int _appLifecycleGeneration = 0;
+  Object? _privateMediaOutboxE2EEndpointToken;
+  String? _privateMediaOutboxE2ENextMessageId;
+  String? _privateMediaOutboxE2ENextAttachmentId;
+  int? _privateMediaOutboxE2ELifecycleBaseline;
+  bool _privateMediaOutboxE2ERunInFlight = false;
 
   IdentityModel? _identity;
   late ContactModel _contact;
@@ -537,6 +556,8 @@ class _ConversationWiredState extends State<ConversationWired>
   int _trackedUploadCompletedBytes = 0;
   int _trackedCurrentUploadBytes = 0;
   String? _trackedCurrentUploadId;
+  final Map<String, MessageUploadProgressViewState> _messageUploadProgress =
+      <String, MessageUploadProgressViewState>{};
   bool _allowPopDuringActiveUpload = false;
   _ActiveAttachmentUpload? _activeAttachmentUpload;
 
@@ -555,8 +576,44 @@ class _ConversationWiredState extends State<ConversationWired>
     );
   }
 
+  Map<String, String> _activeVisualUploadOwnersByAttachmentId() {
+    final result = <String, String>{};
+    for (final message in _messages) {
+      if (message.isIncoming ||
+          message.isDeleted ||
+          message.status != 'sending') {
+        continue;
+      }
+      for (final attachment in message.media) {
+        if (attachment.mediaType == 'image' ||
+            attachment.mediaType == 'video' ||
+            attachment.mime == 'image/gif') {
+          result[attachment.id] = message.id;
+        }
+      }
+    }
+    return result;
+  }
+
+  Map<String, MessageUploadProgressViewState>
+  get _messageUploadProgressViewStates {
+    final activeOwners = _activeVisualUploadOwnersByAttachmentId();
+    _messageUploadProgress.removeWhere(
+      (messageId, state) => activeOwners[state.attachmentId] != messageId,
+    );
+    return Map<String, MessageUploadProgressViewState>.unmodifiable(
+      _messageUploadProgress,
+    );
+  }
+
   bool get _supportsDurableMediaUploads =>
       widget.mediaAttachmentRepo != null && widget.mediaFileManager != null;
+
+  DirectUploadRetryProjectionRepository? get _uploadRetryProjection =>
+      widget.uploadRetryProjectionRepo ??
+      (widget.messageRepo is DirectUploadRetryProjectionRepository
+          ? widget.messageRepo as DirectUploadRetryProjectionRepository
+          : null);
 
   Future<List<_PreparedConversationMediaUpload>> _prepareDurableMediaUploads({
     required String messageId,
@@ -685,7 +742,15 @@ class _ConversationWiredState extends State<ConversationWired>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _appLifecycleState =
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
     _contact = widget.contact;
+    final outboxController = widget.privateMediaOutboxE2EController;
+    if (outboxController != null && outboxController.enabled) {
+      _privateMediaOutboxE2EEndpointToken = outboxController.registerEndpoint(
+        _runPrivateMediaOutboxE2E,
+      );
+    }
     _draftText = widget.initialText ?? '';
     widget.appShellController?.addListener(_onAppShellChanged);
     widget.conversationTracker?.setActive(widget.contact.peerId);
@@ -772,22 +837,79 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   void _handleMediaUploadProgress(Map<String, dynamic> event) {
-    if (!_isTrackingRelayUpload) return;
     final id = event['id'] as String?;
     final sentBytes = event['sentBytes'];
-    if (id == null || sentBytes is! num) return;
-    if (_trackedCurrentUploadId != null && _trackedCurrentUploadId != id) {
+    final recipient = event['toPeerId'];
+    if (id == null || id.isEmpty || sentBytes is! num) return;
+    if (recipient is String &&
+        recipient.isNotEmpty &&
+        recipient != _contact.peerId) {
       return;
     }
-    final nextBytes = sentBytes.toInt().clamp(0, _trackedUploadTotalBytes);
-    if (mounted) {
-      setState(() {
+
+    final activeOwners = _activeVisualUploadOwnersByAttachmentId();
+    final messageId = activeOwners[id];
+    final existing = messageId == null
+        ? null
+        : _messageUploadProgress[messageId];
+    MessageUploadProgressViewState? nextMessageProgress;
+    if (messageId != null) {
+      final rawTotal = event['totalBytes'];
+      final eventTotal = rawTotal is num ? rawTotal.toInt() : 0;
+      final totalBytes = eventTotal > 0
+          ? eventTotal
+          : existing?.attachmentId == id
+          ? existing!.totalBytes
+          : 0;
+      var nextSentBytes = sentBytes.toInt();
+      if (nextSentBytes < 0) nextSentBytes = 0;
+      if (totalBytes > 0 && nextSentBytes > totalBytes) {
+        nextSentBytes = totalBytes;
+      }
+      if (existing?.attachmentId != id ||
+          nextSentBytes >= (existing?.sentBytes ?? 0)) {
+        nextMessageProgress = MessageUploadProgressViewState(
+          messageId: messageId,
+          attachmentId: id,
+          sentBytes: nextSentBytes,
+          totalBytes: totalBytes,
+        );
+      }
+    }
+
+    final updatesGlobalProgress =
+        _isTrackingRelayUpload &&
+        (_trackedCurrentUploadId == null || _trackedCurrentUploadId == id);
+    final nextGlobalBytes = updatesGlobalProgress
+        ? sentBytes.toInt().clamp(0, _trackedUploadTotalBytes).toInt()
+        : _trackedCurrentUploadBytes;
+    final hasStaleMessageProgress = _messageUploadProgress.entries.any(
+      (entry) => activeOwners[entry.value.attachmentId] != entry.key,
+    );
+    if (!updatesGlobalProgress &&
+        nextMessageProgress == null &&
+        !hasStaleMessageProgress) {
+      return;
+    }
+
+    void applyProgress() {
+      _messageUploadProgress.removeWhere(
+        (candidateMessageId, state) =>
+            activeOwners[state.attachmentId] != candidateMessageId,
+      );
+      if (nextMessageProgress != null) {
+        _messageUploadProgress[messageId!] = nextMessageProgress;
+      }
+      if (updatesGlobalProgress) {
         _trackedCurrentUploadId = id;
-        _trackedCurrentUploadBytes = nextBytes;
-      });
+        _trackedCurrentUploadBytes = nextGlobalBytes;
+      }
+    }
+
+    if (mounted) {
+      setState(applyProgress);
     } else {
-      _trackedCurrentUploadId = id;
-      _trackedCurrentUploadBytes = nextBytes;
+      applyProgress();
     }
   }
 
@@ -2492,21 +2614,65 @@ class _ConversationWiredState extends State<ConversationWired>
     );
   }
 
-  Future<void> _openDirectPrivateMedia(
+  Future<DirectPrivateMediaOpenResult> _openDirectPrivateMedia(
     DirectPrivateMediaViewerIdentity identity,
+    DirectPrivateMediaContinuityGuard continuityGuard,
   ) async {
     final controller = _privateMediaViewerController;
-    if (controller == null) return;
-    final grant = await controller.prepare(identity);
-    if (grant == null) return;
-    if (!mounted) {
-      await controller.settle(
-        grant,
-        DirectPrivateMediaExitReason.routePushFailure,
+    if (controller == null) {
+      return const DirectPrivateMediaOpenResult.failed(
+        DirectPrivateMediaOpenFailureReason.authorityLost,
+        canRetry: false,
       );
-      return;
+    }
+    final prepared = await controller.prepareResult(identity, continuityGuard);
+    final grant = prepared.grant;
+    if (grant == null) {
+      final reason = prepared.failureReason!;
+      final canRetry = await controller.canRetryAfterPrepareFailure(
+        identity,
+        reason,
+        settleResult: prepared.settleResult,
+      );
+      return DirectPrivateMediaOpenResult.failed(
+        reason ==
+                DirectPrivateMediaPrepareFailureReason
+                    .appLifecycleContinuityLost
+            ? DirectPrivateMediaOpenFailureReason.lifecycleInterrupted
+            : DirectPrivateMediaOpenFailureReason.prepareFailed,
+        settleResult: prepared.settleResult,
+        canRetry: canRetry,
+      );
+    }
+    final continuityState = continuityGuard.state;
+    if (!mounted ||
+        continuityState != DirectPrivateMediaContinuityState.valid) {
+      final appLifecycleInvalidated =
+          continuityState ==
+          DirectPrivateMediaContinuityState.appLifecycleInvalidated;
+      final settled = await controller.settle(
+        grant,
+        appLifecycleInvalidated
+            ? DirectPrivateMediaExitReason.appLifecycleLoss
+            : DirectPrivateMediaExitReason.routeContinuityLoss,
+      );
+      final failureReason = appLifecycleInvalidated
+          ? DirectPrivateMediaOpenFailureReason.lifecycleInterrupted
+          : DirectPrivateMediaOpenFailureReason.preFrameFailure;
+      final canRetry = await controller.canRetryAfterOpenFailure(
+        identity,
+        failureReason,
+        settleResult: settled,
+      );
+      return DirectPrivateMediaOpenResult.failed(
+        failureReason,
+        settleResult: settled,
+        canRetry: canRetry,
+      );
     }
     MaterialPageRoute<void>? privateRoute;
+    DirectPrivateMediaSettleResult? settled;
+    var routePushFailed = false;
     try {
       privateRoute = MaterialPageRoute<void>(
         builder: (_) => DirectPrivateMediaViewer(
@@ -2556,22 +2722,60 @@ class _ConversationWiredState extends State<ConversationWired>
       await Navigator.of(context).push<void>(privateRoute);
       await privateRoute.completed;
     } catch (_) {
-      await controller.settle(
+      routePushFailed = true;
+      settled = await controller.settle(
         grant,
         DirectPrivateMediaExitReason.routePushFailure,
+        releaseProtection: false,
       );
-      return;
     } finally {
       if (!grant.settled) {
-        await controller.settle(
+        settled = await controller.settle(
           grant,
           DirectPrivateMediaExitReason.close,
           releaseProtection: false,
         );
+      } else {
+        settled ??= grant.settleResult;
       }
       await controller.releaseProtectionOwner(grant);
     }
+    final result = settled ?? grant.settleResult;
+    if (result != null && result.firstFrameRecorded) {
+      return DirectPrivateMediaOpenResult.displayed(result);
+    }
+    final failureReason = routePushFailed
+        ? DirectPrivateMediaOpenFailureReason.routePushFailure
+        : _privateMediaOpenFailureReason(result);
+    final canRetry = await controller.canRetryAfterOpenFailure(
+      identity,
+      failureReason,
+      settleResult: result,
+    );
+    return DirectPrivateMediaOpenResult.failed(
+      failureReason,
+      settleResult: result,
+      canRetry: canRetry,
+    );
   }
+
+  DirectPrivateMediaOpenFailureReason _privateMediaOpenFailureReason(
+    DirectPrivateMediaSettleResult? result,
+  ) => switch (result?.exitReason) {
+    DirectPrivateMediaExitReason.routePushFailure =>
+      DirectPrivateMediaOpenFailureReason.routePushFailure,
+    DirectPrivateMediaExitReason.preFrameDecodeFailure ||
+    DirectPrivateMediaExitReason.routeContinuityLoss ||
+    DirectPrivateMediaExitReason.protectionEnterFailure ||
+    DirectPrivateMediaExitReason.revalidationFailure =>
+      DirectPrivateMediaOpenFailureReason.preFrameFailure,
+    DirectPrivateMediaExitReason.appLifecycleLoss ||
+    DirectPrivateMediaExitReason.background ||
+    DirectPrivateMediaExitReason.capture ||
+    DirectPrivateMediaExitReason.dispose =>
+      DirectPrivateMediaOpenFailureReason.lifecycleInterrupted,
+    _ => DirectPrivateMediaOpenFailureReason.authorityLost,
+  };
 
   Future<bool> _forwardDirectReceivedMedia(
     String messageId, {
@@ -2803,11 +3007,7 @@ class _ConversationWiredState extends State<ConversationWired>
       _isSending = true;
     });
 
-    // 127-Bug-B: blob ids this foreground send is uploading. The background
-    // retrier consults `mediaUploadInFlightTracker` and skips these so it can
-    // never re-encrypt + re-upload them mid-send (divergent ciphertext vs the
-    // contentHash advertised in the envelope). Cleared in the outer finally.
-    final inFlightUploadIds = <String>{};
+    MediaUploadLease? uploadLease;
 
     try {
       emitFlowEvent(
@@ -2842,10 +3042,13 @@ class _ConversationWiredState extends State<ConversationWired>
 
       if (mediaToUpload.isNotEmpty) {
         final now = DateTime.now().toUtc().toIso8601String();
-        optimisticMedia = mediaToUpload.map((m) {
+        optimisticMedia = mediaToUpload.indexed.map((entry) {
+          final (index, m) = entry;
           final mime = _mimeFromPath(m.file.path);
           return MediaAttachment(
-            id: _uuid.v4(),
+            id: index == 0 && _privateMediaOutboxE2ENextAttachmentId != null
+                ? _privateMediaOutboxE2ENextAttachmentId!
+                : _uuid.v4(),
             messageId: '',
             mime: mime,
             size: m.budgetBytes,
@@ -2866,9 +3069,15 @@ class _ConversationWiredState extends State<ConversationWired>
         // land during the LAN-send window) now always sees the blob in-flight
         // and defers, instead of racing in to re-encrypt + re-upload. Released
         // in the outer finally.
-        for (final optimistic in optimisticMedia) {
-          mediaUploadInFlightTracker.begin(optimistic.id);
-          inFlightUploadIds.add(optimistic.id);
+        uploadLease = mediaUploadInFlightTracker.tryClaimAll(
+          optimisticMedia.map((attachment) => attachment.id),
+          source: MediaUploadTriggerSource.foreground,
+        );
+        if (uploadLease == null) {
+          if (quotedMessageId != null && mounted) {
+            setState(() => _activeQuoteMessageId = quotedMessageId);
+          }
+          return;
         }
       }
 
@@ -2882,7 +3091,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
       final now = DateTime.now().toUtc().toIso8601String();
       final optimisticMessage = ConversationMessage(
-        id: _uuid.v4(),
+        id: _privateMediaOutboxE2ENextMessageId ?? _uuid.v4(),
         contactPeerId: _contact.peerId,
         senderPeerId: identity.peerId,
         text: sanitizedText,
@@ -3056,9 +3265,8 @@ class _ConversationWiredState extends State<ConversationWired>
                 relayTrackingStarted = true;
               }
               _markRelayUploadStarted(mediaId);
-              mediaUploadInFlightTracker.begin(mediaId);
-              inFlightUploadIds.add(mediaId);
-              final result = await widget.uploadMediaFn(
+              final uploadOutcome = await runUploadMedia(
+                uploadMediaFn: widget.uploadMediaFn,
                 bridge: widget.bridge!,
                 localFilePath: sourcePath,
                 mime: mime,
@@ -3076,6 +3284,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 deleteSourceWhenDone: true,
                 preparedArtifact: preparedArtifact,
               );
+              final result = uploadOutcome.attachmentOrNull;
 
               if (await _cancelActiveAttachmentUploadIfRequested(
                 messenger: messenger,
@@ -3087,7 +3296,31 @@ class _ConversationWiredState extends State<ConversationWired>
                 if (relayTrackingStarted) {
                   await _stopRelayUploadTracking();
                 }
-                await _restoreComposerSnapshot(
+                final failure = uploadOutcome as UploadMediaFailed;
+                final projection = _uploadRetryProjection;
+                if (projection == null) {
+                  await _restoreComposerSnapshot(
+                    composerSnapshot,
+                    optimisticMessageId: optimisticMessage.id,
+                    messenger: messenger,
+                    snackText: 'Failed to upload media. Try again.',
+                  );
+                  return;
+                }
+                final projected = await projection.projectUploadFailure(
+                  messageId: optimisticMessage.id,
+                  attachmentId: mediaId,
+                  failure: failure,
+                );
+                if (!projected.isTerminal) {
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) {
+                    _updateComposerState(isUploading: false);
+                  }
+                  return;
+                }
+                await _restoreComposerAfterProjectedTerminal(
                   composerSnapshot,
                   optimisticMessageId: optimisticMessage.id,
                   messenger: messenger,
@@ -3298,8 +3531,9 @@ class _ConversationWiredState extends State<ConversationWired>
           // 192: when the lane is open but the phone BELIEVES it is online
           // (stale relay state), "back online" would be dishonest — the queued-
           // retry copy names what is actually happening.
-          const senderOfflineCopy = "Will send when you're back online";
-          const queuedRetryCopy = 'Delivery delayed — retrying automatically';
+          final l10n = AppLocalizations.of(context)!;
+          final senderOfflineCopy = l10n.offline_send_promise;
+          final queuedRetryCopy = l10n.offline_retry_delayed;
           final snackText =
               result == SendChatMessageResult.nodeNotRunning ||
                   (keepRetriable && senderOffline)
@@ -3392,11 +3626,9 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
     } finally {
-      // 127-Bug-B: release foreground ownership of every uploaded blob across
-      // ALL exit paths (early returns in the upload loop, exceptions, success)
-      // so the retrier can resume a genuinely-incomplete send later.
-      for (final blobId in inFlightUploadIds) {
-        mediaUploadInFlightTracker.end(blobId);
+      final lease = uploadLease;
+      if (lease != null) {
+        mediaUploadInFlightTracker.release(lease);
       }
       if (mounted) {
         setState(() => _isSending = false);
@@ -3544,6 +3776,10 @@ class _ConversationWiredState extends State<ConversationWired>
       bridge: bridge,
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
       uploadMediaFn: widget.uploadMediaFn,
+      mediaFileManager: widget.mediaFileManager,
+      tryClaimUploadLease: (attachmentIds) => mediaUploadInFlightTracker
+          .tryClaimAll(attachmentIds, source: MediaUploadTriggerSource.manual),
+      releaseUploadLease: mediaUploadInFlightTracker.release,
     );
 
     await _refreshMessageWithHydratedMedia(
@@ -3625,6 +3861,43 @@ class _ConversationWiredState extends State<ConversationWired>
         ),
       );
     }
+  }
+
+  Future<void> _restoreComposerAfterProjectedTerminal(
+    _ComposerSnapshot snapshot, {
+    required String optimisticMessageId,
+    required ScaffoldMessengerState? messenger,
+    required String snackText,
+  }) async {
+    _draftText = snapshot.draftText;
+    _privateMediaPolicy = snapshot.privateMediaPolicy;
+    _pendingAttachments = List<PendingComposerMedia>.from(
+      snapshot.pendingAttachments,
+    );
+    _updateComposerState(
+      pendingAttachments: _pendingAttachmentFiles(),
+      isUploading: false,
+    );
+    _updateLocalMessageStatus(optimisticMessageId, 'failed');
+    await _refreshMessageWithHydratedMedia(optimisticMessageId);
+    if (snapshot.pendingAttachments.isEmpty && snapshot.draftText.isNotEmpty) {
+      _restoredFailedMessageId = optimisticMessageId;
+      _restoredFailedDraftText = snapshot.draftText;
+      _restoredFailedQuotedMessageId = snapshot.quotedMessageId;
+    } else {
+      _clearRestoredFailedDraftTracking();
+    }
+    if (mounted) {
+      setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
+    }
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(snackText),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+        margin: _composerClearingSnackBarMargin(),
+      ),
+    );
   }
 
   void _clearRestoredFailedDraftTracking() {
@@ -4027,14 +4300,90 @@ class _ConversationWiredState extends State<ConversationWired>
     final identity = _identity;
     if (identity == null) return;
     final quotedMessageId = _activeQuoteMessageId;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final voiceMessageId = _uuid.v4();
+    final voiceAttachmentId = _uuid.v4();
+    final voiceUploadLease = mediaUploadInFlightTracker.tryClaimAll([
+      voiceAttachmentId,
+    ], source: MediaUploadTriggerSource.foreground);
+    if (voiceUploadLease == null) return;
+
     if (quotedMessageId != null && mounted) {
       setState(() => _activeQuoteMessageId = null);
     }
 
-    final now = DateTime.now().toUtc().toIso8601String();
-    final voiceAttachmentId = _uuid.v4();
+    var storedVoicePath = recording.filePath;
+    var uploadVoicePath = recording.filePath;
+    final mediaFileManager = widget.mediaFileManager;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    try {
+      if (mediaFileManager != null && mediaAttachmentRepo != null) {
+        storedVoicePath = await mediaFileManager.copyToDurableStorage(
+          sourceFilePath: recording.filePath,
+          messageId: voiceMessageId,
+          attachmentId: voiceAttachmentId,
+          mime: recording.mime,
+        );
+        uploadVoicePath = await mediaFileManager.resolveStoredPath(
+          storedVoicePath,
+        );
+        if (uploadVoicePath != recording.filePath) {
+          try {
+            await File(recording.filePath).delete();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_DURABLE_PREP_ERROR',
+        details: {'error': e.toString()},
+      );
+      final failedMessage = ConversationMessage(
+        id: voiceMessageId,
+        contactPeerId: _contact.peerId,
+        senderPeerId: identity.peerId,
+        text: '',
+        timestamp: now,
+        status: 'failed',
+        isIncoming: false,
+        createdAt: now,
+        quotedMessageId: quotedMessageId,
+      );
+      try {
+        await widget.messageRepo.saveMessage(failedMessage);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _upsertMessageById(failedMessage);
+          if (quotedMessageId != null) {
+            _activeQuoteMessageId = quotedMessageId;
+          }
+        });
+        _updateComposerState(isUploading: false);
+        _showFloatingSnackBar(
+          AppLocalizations.of(context)!.conversation_voice_fail,
+          backgroundColor: Colors.red[700],
+        );
+      }
+      mediaUploadInFlightTracker.release(voiceUploadLease);
+      return;
+    }
+
+    final persistedVoiceAttachment = MediaAttachment(
+      id: voiceAttachmentId,
+      messageId: voiceMessageId,
+      mime: recording.mime,
+      size: recording.sizeBytes,
+      mediaType: 'audio',
+      durationMs: recording.durationMs,
+      localPath: storedVoicePath,
+      downloadStatus: 'upload_pending',
+      createdAt: now,
+      waveform: waveform,
+    );
     final optimisticMessage = ConversationMessage(
-      id: _uuid.v4(),
+      id: voiceMessageId,
       contactPeerId: _contact.peerId,
       senderPeerId: identity.peerId,
       text: '',
@@ -4043,20 +4392,7 @@ class _ConversationWiredState extends State<ConversationWired>
       isIncoming: false,
       createdAt: now,
       quotedMessageId: quotedMessageId,
-      media: [
-        MediaAttachment(
-          id: voiceAttachmentId,
-          messageId: '',
-          mime: recording.mime,
-          size: recording.sizeBytes,
-          mediaType: 'audio',
-          durationMs: recording.durationMs,
-          localPath: recording.filePath,
-          downloadStatus: 'done',
-          createdAt: now,
-          waveform: waveform,
-        ),
-      ],
+      media: [persistedVoiceAttachment.copyWith(localPath: uploadVoicePath)],
     );
 
     if (mounted) {
@@ -4069,10 +4405,9 @@ class _ConversationWiredState extends State<ConversationWired>
 
     try {
       await widget.messageRepo.saveMessage(optimisticMessage);
-      await _persistOptimisticAttachments(
-        optimisticMessage.id,
-        optimisticMessage.media,
-        errorEvent: 'CONV_FL_VOICE_OPTIMISTIC_ATTACHMENT_SAVE_ERROR',
+      await mediaAttachmentRepo?.saveAttachment(
+        persistedVoiceAttachment,
+        owner: MediaOwnerLane.direct,
       );
     } catch (e) {
       emitFlowEvent(
@@ -4080,20 +4415,49 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_VOICE_OPTIMISTIC_SAVE_ERROR',
         details: {'error': e.toString()},
       );
+      final failedMessage = optimisticMessage.copyWith(status: 'failed');
+      try {
+        await widget.messageRepo.saveMessage(failedMessage);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _upsertMessageById(failedMessage);
+          if (quotedMessageId != null) {
+            _activeQuoteMessageId = quotedMessageId;
+          }
+        });
+        _updateComposerState(isUploading: false);
+      }
+      mediaUploadInFlightTracker.release(voiceUploadLease);
+      return;
     }
+
+    final stagedRecording = AudioRecording(
+      filePath: uploadVoicePath,
+      durationMs: recording.durationMs,
+      mime: recording.mime,
+      sizeBytes: recording.sizeBytes,
+    );
 
     // Re-read contact from DB to pick up ML-KEM key updates.
     if (widget.contactRepo != null) {
-      final fresh = await widget.contactRepo!.getContact(_contact.peerId);
-      if (fresh != null && mounted) {
-        setState(() => _contact = fresh);
-      }
+      try {
+        final fresh = await widget.contactRepo!.getContact(_contact.peerId);
+        if (fresh != null && mounted) {
+          setState(() => _contact = fresh);
+        }
+      } catch (_) {}
     }
 
     // Acquire background task BEFORE local transfer / relay upload.
-    final bgTaskId = widget.bridge != null
-        ? await callBgBegin(widget.bridge!)
-        : null;
+    String? bgTaskId;
+    try {
+      bgTaskId = widget.bridge != null
+          ? await callBgBegin(widget.bridge!)
+          : null;
+    } catch (_) {
+      bgTaskId = null;
+    }
 
     try {
       // Try local WiFi first for voice messages, then keep the relay upload
@@ -4107,7 +4471,7 @@ class _ConversationWiredState extends State<ConversationWired>
         try {
           voiceArtifact = await widget.prepareEncryptedMediaArtifactFn(
             bridge: widget.bridge!,
-            localFilePath: recording.filePath,
+            localFilePath: uploadVoicePath,
           );
           await widget.p2pService.sendLocalMedia(
             peerId: _contact.peerId,
@@ -4127,26 +4491,14 @@ class _ConversationWiredState extends State<ConversationWired>
 
       final bridge = widget.bridge;
       if (bridge == null) {
-        _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-        await _persistMessageStatus(optimisticMessage.id, 'failed');
-        if (quotedMessageId != null && mounted) {
-          setState(() => _activeQuoteMessageId = quotedMessageId);
-        }
         emitFlowEvent(
           layer: 'FL',
-          event: 'CONV_FL_VOICE_SEND_NO_BRIDGE',
+          event: 'CONV_FL_VOICE_SEND_QUEUED_NO_BRIDGE',
           details: {},
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context)!.conversation_voice_fail,
-              ),
-              backgroundColor: Colors.red[700],
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          _updateComposerState(isUploading: false);
+          _updateLocalMessageStatus(optimisticMessage.id, 'sending');
         }
         return;
       }
@@ -4154,16 +4506,13 @@ class _ConversationWiredState extends State<ConversationWired>
       // Upload + send (relay fallback)
       await _startRelayUploadTracking(recording.sizeBytes);
       _markRelayUploadStarted(voiceAttachmentId);
-      // 127-Bug-B: own this blob so the background retrier can't race + re-encrypt
-      // it mid-send. Released in the outer finally below.
-      mediaUploadInFlightTracker.begin(voiceAttachmentId);
       final (result, voiceMessage) = await widget.sendVoiceMessageFn(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepo,
         targetPeerId: _contact.peerId,
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
-        recording: recording,
+        recording: stagedRecording,
         bridge: bridge,
         recipientMlKemPublicKey: _contact.mlKemPublicKey,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
@@ -4175,7 +4524,7 @@ class _ConversationWiredState extends State<ConversationWired>
         blobId: voiceAttachmentId,
         preparedArtifact: voiceArtifact,
       );
-      if (result != SendVoiceMessageResult.uploadFailed) {
+      if (result == SendVoiceMessageResult.success) {
         _markRelayUploadCompleted(recording.sizeBytes);
       }
       await _stopRelayUploadTracking();
@@ -4202,9 +4551,15 @@ class _ConversationWiredState extends State<ConversationWired>
       } else if (result == SendVoiceMessageResult.success) {
         _updateLocalMessageStatus(optimisticMessage.id, 'sent');
         await _persistMessageStatus(optimisticMessage.id, 'sent');
+      } else if (result == SendVoiceMessageResult.uploadQueued) {
+        _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+        await _refreshMessageWithHydratedMedia(optimisticMessage.id);
       } else {
         _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-        await _persistMessageStatus(optimisticMessage.id, 'failed');
+        if (result != SendVoiceMessageResult.uploadFailed ||
+            _uploadRetryProjection == null) {
+          await _persistMessageStatus(optimisticMessage.id, 'failed');
+        }
         if (quotedMessageId != null && mounted) {
           setState(() => _activeQuoteMessageId = quotedMessageId);
         }
@@ -4225,8 +4580,7 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
     } finally {
-      // 127-Bug-B: release foreground ownership of the voice blob on every exit.
-      mediaUploadInFlightTracker.end(voiceAttachmentId);
+      mediaUploadInFlightTracker.release(voiceUploadLease);
       await _stopRelayUploadTracking();
       if (bgTaskId != null && widget.bridge != null) {
         await callBgEnd(widget.bridge!, bgTaskId);
@@ -5056,6 +5410,9 @@ class _ConversationWiredState extends State<ConversationWired>
       imageProcessor: imageProcessor,
       qualityPreference: widget.qualityPreference,
       videoQualityPreference: widget.videoQualityPreference,
+      shareStoredOfflinePromise: AppLocalizations.of(
+        context,
+      )!.share_stored_offline_promise,
     );
     final delivery = DirectMediaBatchForwardDeliveryCoordinator(
       revalidateForDispatch: ({required contactPeerId, required draft}) =>
@@ -5518,9 +5875,215 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  Future<Map<String, Object?>> _runPrivateMediaOutboxE2E(
+    PrivateMediaOutboxE2ERequest request,
+    PrivateMediaOutboxE2EProgressWriter writeProgress,
+    PrivateMediaOutboxE2EHostReleaseWaiter waitForHostRelease,
+  ) async {
+    if (_privateMediaOutboxE2ERunInFlight) {
+      throw StateError('private-media outbox conversation is already running');
+    }
+    _privateMediaOutboxE2ERunInFlight = true;
+    try {
+      final endpoint = PrivateMediaOutboxE2EConversationEndpoint(
+        contactPeerId: _contact.peerId,
+        sendPrivateMedia: _sendPrivateMediaOutboxE2EFixture,
+        isSenderQueued: _isPrivateMediaOutboxE2ESenderQueued,
+        isSenderDelivered: _isPrivateMediaOutboxE2ESenderDelivered,
+        isReceiverDelivered: _isPrivateMediaOutboxE2EReceiverDelivered,
+        waitForSenderHostRelease: () => waitForHostRelease(request),
+        waitForOfflinePauseResume: () =>
+            _waitForPrivateMediaOutboxE2EOfflinePauseResume(request),
+      );
+      return await endpoint.run(request, writeProgress);
+    } finally {
+      _privateMediaOutboxE2ELifecycleBaseline = null;
+      _privateMediaOutboxE2ERunInFlight = false;
+    }
+  }
+
+  Future<void> _sendPrivateMediaOutboxE2EFixture(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    await waitForPrivateMediaOutboxE2ECondition(
+      label: privateMediaOutboxConversationReadyCondition,
+      timeout: request.timeout,
+      check: () async =>
+          mounted &&
+          _identity != null &&
+          widget.bridge != null &&
+          widget.mediaAttachmentRepo != null &&
+          widget.mediaFileManager != null,
+    );
+    if (!mounted ||
+        _isSending ||
+        _pendingAttachments.isNotEmpty ||
+        _draftText.isNotEmpty) {
+      throw StateError('private-media outbox composer is not clean');
+    }
+    final mediaFileManager = widget.mediaFileManager!;
+    final source = await createPrivateMediaOutboxE2ESource(
+      mediaFileManager: mediaFileManager,
+      request: request,
+    );
+    _privateMediaOutboxE2ENextMessageId = request.messageId;
+    _privateMediaOutboxE2ENextAttachmentId = request.attachmentId;
+    _privateMediaOutboxE2ELifecycleBaseline = _appLifecycleGeneration;
+    try {
+      final pending = PendingComposerMedia(
+        file: source,
+        budgetBytes: await source.length(),
+        width: 1,
+        height: 1,
+      );
+      if (!mounted) {
+        throw StateError('private-media outbox route was disposed');
+      }
+      setState(() {
+        _pendingAttachments = <PendingComposerMedia>[pending];
+        _privateMediaPolicy = _privateMediaOutboxPolicy(request);
+        _draftText = '';
+        _activeQuoteMessageId = null;
+        _restoredFailedMessageId = null;
+        _restoredFailedDraftText = null;
+        _restoredFailedQuotedMessageId = null;
+      });
+      _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
+      await _onSend('');
+    } finally {
+      _privateMediaOutboxE2ENextMessageId = null;
+      _privateMediaOutboxE2ENextAttachmentId = null;
+      try {
+        if (await source.exists()) await source.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<bool> _isPrivateMediaOutboxE2ESenderQueued(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    final mediaFileManager = widget.mediaFileManager;
+    final attachment = await _loadPrivateMediaOutboxE2EAttachment(request);
+    final parent = await widget.messageRepo.getMessage(request.messageId);
+    if (mediaFileManager == null ||
+        parent == null ||
+        attachment == null ||
+        parent.isIncoming ||
+        parent.contactPeerId != request.contactPeerId ||
+        parent.status != 'sending' ||
+        parent.privateMediaPolicy != _privateMediaOutboxPolicy(request) ||
+        attachment.downloadStatus != 'upload_pending' ||
+        (attachment.uploadRetryCount ?? 0) != 0 ||
+        attachment.mime != 'image/jpeg' ||
+        attachment.localPath == null ||
+        !attachment.localPath!.startsWith('pending_uploads/')) {
+      return false;
+    }
+    final resolved = await mediaFileManager.resolveStoredPath(
+      attachment.localPath!,
+    );
+    return File(resolved).existsSync() &&
+        _pendingAttachments.isEmpty &&
+        _draftText.isEmpty &&
+        _privateMediaPolicy == const PrivateMediaPolicy.ordinary() &&
+        _restoredFailedMessageId == null;
+  }
+
+  Future<bool> _isPrivateMediaOutboxE2ESenderDelivered(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    final mediaFileManager = widget.mediaFileManager;
+    final attachment = await _loadPrivateMediaOutboxE2EAttachment(request);
+    final parent = await widget.messageRepo.getMessage(request.messageId);
+    if (mediaFileManager == null ||
+        parent == null ||
+        attachment == null ||
+        parent.isIncoming ||
+        parent.contactPeerId != request.contactPeerId ||
+        parent.status == 'sending' ||
+        parent.status == 'failed' ||
+        parent.privateMediaPolicy != _privateMediaOutboxPolicy(request) ||
+        parent.wireEnvelope == null ||
+        parent.wireEnvelope!.isEmpty ||
+        attachment.downloadStatus != 'done' ||
+        attachment.localPath == null ||
+        !attachment.localPath!.startsWith('media/')) {
+      return false;
+    }
+    final resolved = await mediaFileManager.resolveStoredPath(
+      attachment.localPath!,
+    );
+    return File(resolved).existsSync();
+  }
+
+  Future<bool> _isPrivateMediaOutboxE2EReceiverDelivered(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    final attachment = await _loadPrivateMediaOutboxE2EAttachment(request);
+    final parent = await widget.messageRepo.getMessage(request.messageId);
+    return parent != null &&
+        attachment != null &&
+        parent.isIncoming &&
+        !parent.isDeleted &&
+        parent.status != 'failed' &&
+        parent.contactPeerId == request.contactPeerId &&
+        parent.privateMediaPolicy == _privateMediaOutboxPolicy(request) &&
+        parent.privateMediaState == PrivateMediaLifecycleState.available &&
+        attachment.messageId == request.messageId &&
+        attachment.mime == 'image/jpeg' &&
+        attachment.contentHash?.isNotEmpty == true &&
+        attachment.encryptionKeyBase64?.isNotEmpty == true &&
+        attachment.encryptionNonce?.isNotEmpty == true;
+  }
+
+  Future<MediaAttachment?> _loadPrivateMediaOutboxE2EAttachment(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    final mediaRepository = widget.mediaAttachmentRepo;
+    if (mediaRepository == null) return null;
+    final attachments = await mediaRepository.getAttachmentsForMessage(
+      request.messageId,
+      owner: MediaOwnerLane.direct,
+    );
+    final exact = attachments
+        .where((attachment) => attachment.id == request.attachmentId)
+        .toList(growable: false);
+    return exact.length == 1 ? exact.single : null;
+  }
+
+  Future<void> _waitForPrivateMediaOutboxE2EOfflinePauseResume(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    final baseline = _privateMediaOutboxE2ELifecycleBaseline;
+    if (baseline == null) {
+      throw StateError('private-media outbox lifecycle baseline is missing');
+    }
+    await waitForPrivateMediaOutboxE2ECondition(
+      label: privateMediaOutboxOfflineLifecycleCondition,
+      timeout: request.timeout,
+      check: () async =>
+          mounted &&
+          _appLifecycleState == AppLifecycleState.resumed &&
+          _appLifecycleGeneration >= baseline + 2,
+    );
+  }
+
+  PrivateMediaPolicy _privateMediaOutboxPolicy(
+    PrivateMediaOutboxE2ERequest request,
+  ) => request.phase == 1
+      ? const PrivateMediaPolicy.protected()
+      : const PrivateMediaPolicy.viewOnce();
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    final outboxEndpointToken = _privateMediaOutboxE2EEndpointToken;
+    _privateMediaOutboxE2EEndpointToken = null;
+    if (outboxEndpointToken != null) {
+      widget.privateMediaOutboxE2EController?.unregisterEndpoint(
+        outboxEndpointToken,
+      );
+    }
     widget.conversationTracker?.clearIfActive(widget.contact.peerId);
     widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
@@ -5571,6 +6134,11 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_appLifecycleState != state) {
+      _appLifecycleState = state;
+      _appLifecycleGeneration++;
+      if (mounted) setState(() {});
+    }
     // 131: on resume, a message that arrived while backgrounded lands via the
     // async app-resume drain AFTER this screen's one-shot DB read and may miss
     // the no-replay live stream. Re-fetch (without yanking the scroll position).
@@ -5645,6 +6213,8 @@ class _ConversationWiredState extends State<ConversationWired>
           undeliveredCount: _undeliveredAttentionCount,
           onRetryUndelivered: () => unawaited(_onRetryUndelivered()),
           uploadProgress: _uploadProgressViewState,
+          messageUploadProgress: _messageUploadProgressViewStates,
+          p2pService: widget.p2pService,
           onCancelUpload:
               _activeAttachmentUpload == null ||
                   _activeAttachmentUpload!.cancelRequested
@@ -5673,10 +6243,14 @@ class _ConversationWiredState extends State<ConversationWired>
               ? null
               : _loadDirectPictureInPictureAuthorization,
           mediaViewerResumeStore: _mediaViewerResumeStore,
-          onOpenPrivateMedia: _privateMediaViewerController != null
+          onOpenPrivateMediaResult: _privateMediaViewerController != null
               ? _openDirectPrivateMedia
               : null,
           onLoadPrivateParentDecision: _loadPrivateParentDecision,
+          appLifecycleState: _appLifecycleState,
+          appLifecycleGeneration: _appLifecycleGeneration,
+          appLifecycleSnapshotProvider: () =>
+              (state: _appLifecycleState, generation: _appLifecycleGeneration),
           onForwardMedia:
               widget.mediaAttachmentRepo != null &&
                   (widget.receivedMediaForwardLauncher != null ||

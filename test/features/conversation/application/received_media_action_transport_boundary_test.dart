@@ -127,18 +127,25 @@ void main() {
     // ── 3. Frozen wired transport call-site inventory. ──────────────────
     // Plan 232 adds one reviewed forwarding route. Plan 249 adds one
     // separately reviewed direct-only Batch Forward route that composes the
-    // existing ordinary coordinator after atomic source qualification.
+    // existing ordinary coordinator after atomic source qualification. Plan
+    // 260 adds one state-observation-only injection into ConversationScreen
+    // for OfflineMessageBanner; that widget reads currentState/stateStream and
+    // owns no send or egress method. It also adds one E2E-gated bridge
+    // availability check before its production-path outbox fixture runs; the
+    // added reference is a null check, not a transport invocation. Plan 260's
+    // typed upload-outcome adapter also wraps the former direct
+    // widget.uploadMediaFn invocation without adding another upload route.
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
-    // keep both exceptions bounded and prevent an unreviewed delivery seam.
+    // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
-      'widget.p2pService': 18,
-      'widget.bridge': 29,
+      'widget.p2pService': 19,
+      'widget.bridge': 30,
       'widget.sendChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,
       'widget.deleteMessageForEveryoneFn(': 1,
       'widget.sendVoiceMessageFn(': 1,
-      'widget.uploadMediaFn(': 1,
+      'widget.uploadMediaFn(': 0,
       'widget.downloadMediaFn(': 2,
       'prepareEncryptedMediaArtifactFn': 4,
       '.sendMessageWithReply(': 0,

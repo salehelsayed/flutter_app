@@ -18,7 +18,28 @@ class UploadProgressViewState {
     return clamped / totalBytes;
   }
 
-  String get progressLabel => '${(progress * 100).round()}%';
+  int get percent => (progress * 100).round();
+
+  String get progressLabel => '$percent%';
+}
+
+/// Upload progress projected onto one exact conversation message.
+///
+/// The bridge upload id is the stable attachment/blob id. Keeping that id in
+/// the view state lets the wired layer reject progress from another message
+/// and discard a late event after the attachment or parent has settled.
+class MessageUploadProgressViewState extends UploadProgressViewState {
+  final String messageId;
+  final String attachmentId;
+
+  const MessageUploadProgressViewState({
+    required this.messageId,
+    required this.attachmentId,
+    required super.sentBytes,
+    required super.totalBytes,
+  });
+
+  bool get hasKnownTotal => totalBytes > 0;
 }
 
 class UploadProgressBanner extends StatelessWidget {

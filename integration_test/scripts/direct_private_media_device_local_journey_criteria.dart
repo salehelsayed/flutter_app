@@ -1,6 +1,6 @@
 const String directPrivateMediaDeviceLocalJourneySchema =
     'plan234.direct-private-media-device-local-journey';
-const int directPrivateMediaDeviceLocalJourneyVersion = 1;
+const int directPrivateMediaDeviceLocalJourneyVersion = 2;
 
 class DirectPrivateMediaDeviceLocalJourneyValidation {
   DirectPrivateMediaDeviceLocalJourneyValidation(List<String> failures)
@@ -225,6 +225,11 @@ validateDirectPrivateMediaDeviceLocalJourneyArtifact(Object? artifact) {
         r'$.sender.observations',
         failures,
       );
+      _validateProductionConversationObservations(
+        observations,
+        r'$.sender.observations',
+        failures,
+      );
     }
   }
 
@@ -423,6 +428,36 @@ void _validateRecipientObservations(
     failures,
   );
   _expectInt(observations, 'consumeReceiptCount', 0, path, failures);
+  _validateProductionConversationObservations(observations, path, failures);
+}
+
+void _validateProductionConversationObservations(
+  Map<String, Object?> observations,
+  String path,
+  List<String> failures,
+) {
+  _expectBool(
+    observations,
+    'productionConversationMounted',
+    true,
+    path,
+    failures,
+  );
+  _expectInt(observations, 'productionLetterCardCount', 3, path, failures);
+  _expectInt(observations, 'privateSlotCount', 3, path, failures);
+  _expectInt(observations, 'slotsInsideDecoratedBodies', 3, path, failures);
+  _expectInt(observations, 'nonZeroPrivateSlotCount', 3, path, failures);
+  _expectInt(observations, 'slotImageWidgetCount', 0, path, failures);
+  _expectInt(observations, 'slotDecorationImageCount', 0, path, failures);
+  _expectBool(observations, 'outgoingActionVisible', true, path, failures);
+  _expectBool(observations, 'incomingActionVisible', true, path, failures);
+  _expectBool(
+    observations,
+    'terminalActionVisibleAfterRepump',
+    true,
+    path,
+    failures,
+  );
 }
 
 Map<String, Object?>? _asStringMap(
@@ -716,6 +751,7 @@ const Set<String> _senderObservationKeys = <String>{
   'outerPrivateMediaPresent',
   'innerPrivateMediaPresent',
   'ordinarySendPreserved',
+  ..._productionConversationObservationKeys,
 };
 
 const Set<String> _recipientObservationKeys = <String>{
@@ -746,4 +782,18 @@ const Set<String> _recipientObservationKeys = <String>{
   'ordinaryPreviewSucceeded',
   'ordinaryManualDownloadSucceeded',
   'consumeReceiptCount',
+  ..._productionConversationObservationKeys,
+};
+
+const Set<String> _productionConversationObservationKeys = <String>{
+  'productionConversationMounted',
+  'productionLetterCardCount',
+  'privateSlotCount',
+  'slotsInsideDecoratedBodies',
+  'nonZeroPrivateSlotCount',
+  'slotImageWidgetCount',
+  'slotDecorationImageCount',
+  'outgoingActionVisible',
+  'incomingActionVisible',
+  'terminalActionVisibleAfterRepump',
 };

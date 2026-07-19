@@ -1,7 +1,12 @@
 import 'dart:io';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -78,6 +83,29 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
+}
+
+class _RecordingVoiceUploadProjection
+    implements DirectUploadRetryProjectionRepository {
+  int callCount = 0;
+  String? messageId;
+  String? attachmentId;
+  UploadMediaFailed? failure;
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    callCount++;
+    this.messageId = messageId;
+    this.attachmentId = attachmentId;
+    this.failure = failure;
+    return const UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.retryPending,
+    );
+  }
 }
 
 void main() {
@@ -373,6 +401,64 @@ void main() {
 
         expect(result, SendVoiceMessageResult.uploadFailed);
       });
+
+      test(
+        'connectivity failure stages pending media and projects exactly once into queued result',
+        () async {
+          final recording = createRecording();
+          final projection = _RecordingVoiceUploadProjection();
+          Future<UploadMediaOutcome> connectivityFailure({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+            bool deleteSourceWhenDone = false,
+            EncryptedMediaArtifact? preparedArtifact,
+          }) async => const UploadMediaFailed(
+            stage: UploadMediaStage.transport,
+            disposition: UploadMediaDisposition.connectivityRetryable,
+            errorCode: 'NOT_INITIALIZED',
+          );
+
+          final (result, _) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            messageId: 'voice-message-1',
+            blobId: 'voice-attachment-1',
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            uploadMediaFn: connectivityFailure,
+            uploadRetryProjectionRepo: projection,
+          );
+
+          expect(result, SendVoiceMessageResult.uploadQueued);
+          expect(projection.callCount, 1);
+          expect(projection.messageId, 'voice-message-1');
+          expect(projection.attachmentId, 'voice-attachment-1');
+          expect(
+            projection.failure?.disposition,
+            UploadMediaDisposition.connectivityRetryable,
+          );
+          expect(mediaAttachmentRepo.saved, hasLength(1));
+          expect(
+            mediaAttachmentRepo.saved.single.downloadStatus,
+            'upload_pending',
+          );
+        },
+      );
 
       test(
         'returns sendFailed when upload succeeds but message send fails',

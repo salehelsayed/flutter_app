@@ -112,10 +112,10 @@ void main() {
       () async {
         // 117 Session 4 / finding #3c: when the relay upload fails (e.g. a
         // LAN-only delivery), the sender's own voice note must remain playable.
-        // The persisted attachment row must point at a durable owned copy
-        // (media/<peer>/<blobId>.m4a), NOT the recorder temp, so it survives
-        // OS temp eviction and never triggers a relay download for a blob that
-        // was never uploaded.
+        // The persisted attachment row must point at retry staging
+        // (pending_uploads/<message>/<blobId>.m4a), NOT the recorder temp, so
+        // it survives OS temp eviction without pretending that a relay-backed
+        // media copy already exists.
         bridge.responses['media:upload'] = {
           'ok': false,
           'errorMessage': 'relay unreachable',
@@ -152,14 +152,18 @@ void main() {
         expect(saved.mediaType, 'audio');
         expect(saved.messageId, 'msg-durable-1');
         expect(saved.localPath, isNotNull);
-        // Durable owned copy under the media dir — NOT the recorder temp.
+        // Container-safe retry staging — NOT the recorder temp and not a
+        // forged successful `media/` copy.
         expect(saved.localPath, isNot(recording.filePath));
-        expect(saved.localPath, contains('/media/'));
+        expect(saved.localPath, 'pending_uploads/msg-durable-1/$blobId.m4a');
         expect(saved.localPath, endsWith('.m4a'));
 
-        // The durable copy is a real on-disk file the retry path can re-upload
-        // (retry checks File(localPath).existsSync() on the raw stored path).
-        expect(File(saved.localPath!).existsSync(), isTrue);
+        // Stored paths are resolved through MediaFileManager so the row stays
+        // valid when the application container moves.
+        final resolvedPath = await mediaFileManager.resolveStoredPath(
+          saved.localPath!,
+        );
+        expect(File(resolvedPath).existsSync(), isTrue);
       },
     );
 
@@ -187,7 +191,9 @@ void main() {
       );
 
       final saved = mediaAttachmentRepo.saved.firstWhere((a) => a.id == blobId);
-      final durablePath = saved.localPath!;
+      final durablePath = await mediaFileManager.resolveStoredPath(
+        saved.localPath!,
+      );
 
       // Simulate OS temp eviction.
       final temp = File(recording.filePath);
@@ -196,6 +202,7 @@ void main() {
       // The durable copy is an independent owned file — untouched.
       expect(File(durablePath).existsSync(), isTrue);
       expect(durablePath, isNot(recording.filePath));
+      expect(saved.localPath, 'pending_uploads/msg-survives-1/$blobId.m4a');
     });
 
     test(

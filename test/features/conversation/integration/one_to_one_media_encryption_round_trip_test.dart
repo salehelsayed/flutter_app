@@ -23,7 +23,6 @@ import 'package:flutter_app/features/conversation/application/handle_incoming_ch
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -232,12 +231,12 @@ void main() {
     await photo.writeAsBytes(plaintextBytes, flush: true);
 
     // 1. Upload (sender).
-    final uploaded = await uploadMedia(
+    final uploaded = (await uploadMedia(
       bridge: aliceBridge,
       localFilePath: photo.path,
       mime: 'image/jpeg',
       recipientPeerId: _bobPeerId,
-    );
+    )).attachmentOrNull;
     expect(uploaded, isNotNull);
     // THE flip assertion: what the relay stores is ciphertext.
     expect(relayStore[uploaded!.id], isNotNull);
@@ -383,14 +382,14 @@ void main() {
     final recordingFile = File('${tempDir.path}/voice.m4a');
     await recordingFile.writeAsBytes(voiceBytes, flush: true);
 
-    final uploaded = await uploadMedia(
+    final uploaded = (await uploadMedia(
       bridge: aliceBridge,
       localFilePath: recordingFile.path,
       mime: 'audio/mp4',
       recipientPeerId: _bobPeerId,
       durationMs: 4200,
       waveform: const [0.2, 0.7, 0.4],
-    );
+    )).attachmentOrNull;
     expect(uploaded, isNotNull);
     expect(relayStore[uploaded!.id], isNot(equals(voiceBytes)));
 
@@ -433,12 +432,12 @@ void main() {
       final sharedFile = File('${tempDir.path}/shared.pdf');
       await sharedFile.writeAsBytes(sharedBytes, flush: true);
 
-      final uploaded = await uploadMedia(
+      final uploaded = (await uploadMedia(
         bridge: aliceBridge,
         localFilePath: sharedFile.path,
         mime: 'application/pdf',
         recipientPeerId: _bobPeerId,
-      );
+      )).attachmentOrNull;
       expect(uploaded, isNotNull);
       expect(uploaded!.mediaType, 'file');
       expect(relayStore[uploaded.id], isNot(equals(sharedBytes)));

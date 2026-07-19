@@ -130,6 +130,42 @@ void main() {
   });
 
   test(
+    'device and device-control names serialize the same resolved target',
+    () {
+      final ordinary = _task(
+        'ordinary-device',
+        resources: const <ResourceLock>[
+          ResourceLock(
+            name: 'device:21071FDF600CSC',
+            access: ResourceAccess.exclusive,
+          ),
+        ],
+      );
+      final controlledSame = _task(
+        'controlled-same-device',
+        resources: const <ResourceLock>[
+          ResourceLock(
+            name: 'device-control:21071FDF600CSC',
+            access: ResourceAccess.exclusive,
+          ),
+        ],
+      );
+      final controlledOther = _task(
+        'controlled-other-device',
+        resources: const <ResourceLock>[
+          ResourceLock(
+            name: 'device-control:emulator-5554',
+            access: ResourceAccess.exclusive,
+          ),
+        ],
+      );
+
+      expect(resourcesAreCompatible(ordinary, controlledSame), isFalse);
+      expect(resourcesAreCompatible(ordinary, controlledOther), isTrue);
+    },
+  );
+
+  test(
     'ready rows with disjoint host and device resources overlap within cap',
     () async {
       final rows = <CapabilitySpec>[

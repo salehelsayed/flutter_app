@@ -123,7 +123,7 @@ final class SimsDevicePlanBinding {
         preflightIssues.addAll(
           _iosNotificationPreflightIssues(processEnvironment),
         );
-      } else if (row.targetCapabilities.contains('relay.staging') &&
+      } else if (_requiresStagingRelayConfiguration(row) &&
           (processEnvironment['MKNOON_RELAY_ADDRESSES']?.trim().isEmpty ??
               true)) {
         preflightIssues.add(
@@ -366,6 +366,10 @@ String _assignmentsJson(Map<String, String> assignments) {
 
 bool _isBuildRow(CapabilitySpec row) =>
     row.command.isNotEmpty && row.command.first == '@prepare-build';
+
+bool _requiresStagingRelayConfiguration(CapabilitySpec row) =>
+    row.targetCapabilities.contains('relay.staging') ||
+    row.resources.any((resource) => resource.name == 'relay-mutation:staging');
 
 final class _PreflightIssue {
   const _PreflightIssue(this.blocker, this.detail);

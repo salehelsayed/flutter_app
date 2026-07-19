@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
@@ -13,12 +16,14 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
@@ -37,6 +42,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/private_media_policy_picker_sheet.dart';
 
 /// Privacy-safe quoted-parent projection shared by persisted reply bubbles and
 /// the wired/restored composer quote preview. A private or unsupported parent
@@ -69,7 +75,9 @@ class GroupConversationScreen extends StatelessWidget {
   final bool canWrite;
   final bool isSending;
   final UploadProgressViewState? uploadProgress;
+  final Map<String, MessageUploadProgressViewState> messageUploadProgress;
   final VoidCallback? onCancelUpload;
+  final P2PService? p2pService;
   final bool initialLoadDone;
   final ScrollController? scrollController;
   final String? highlightedMessageId;
@@ -167,7 +175,9 @@ class GroupConversationScreen extends StatelessWidget {
     this.canWrite = true,
     this.isSending = false,
     this.uploadProgress,
+    this.messageUploadProgress = const {},
     this.onCancelUpload,
+    this.p2pService,
     this.initialLoadDone = false,
     this.scrollController,
     this.highlightedMessageId,
@@ -267,6 +277,8 @@ class GroupConversationScreen extends StatelessWidget {
                     context,
                     historyGapRepairNotice!,
                   ),
+                if (p2pService != null)
+                  OfflineMessageBanner(p2pService: p2pService!),
                 if (uploadProgress != null)
                   UploadProgressBanner(
                     state: uploadProgress!,
@@ -677,12 +689,11 @@ class GroupConversationScreen extends StatelessWidget {
         final quotedText = redactsPrivateMedia ? null : resolvedQuotedText;
         final isQuoteUnavailable =
             !redactsPrivateMedia && resolvedQuoteUnavailable;
+        final loadedMessageMedia = mediaMap[message.id] ?? message.media;
         final messageMedia = redactsPrivateMedia
             ? const <MediaAttachment>[]
-            : (mediaMap[message.id] ?? message.media);
-        final displayText = redactsPrivateMedia
-            ? _groupPrivateMediaPlaceholderText(context, message)
-            : message.text;
+            : loadedMessageMedia;
+        final displayText = redactsPrivateMedia ? '' : message.text;
         final messageReactions = redactsPrivateMedia
             ? const <MessageReaction>[]
             : (reactions[message.id] ?? const <MessageReaction>[]);
@@ -705,13 +716,27 @@ class GroupConversationScreen extends StatelessWidget {
             (message.wireEnvelope?.isNotEmpty ?? false) ||
             (message.inboxRetryPayload?.isNotEmpty ?? false);
         final showFailedMediaActions =
-            canWrite && isSent && isFailedSend && messageMedia.isNotEmpty;
+            canWrite && isSent && isFailedSend && loadedMessageMedia.isNotEmpty;
+        final hasUnfinishedFailedMedia = loadedMessageMedia.any(
+          (attachment) => attachment.downloadStatus != 'done',
+        );
+        final showFailedMediaRetry =
+            showFailedMediaActions &&
+            (hasUnfinishedFailedMedia
+                ? message.status == 'failed'
+                : (!isRetryExhaustedSend || hasRetryPayload)) &&
+            isManualUploadRetryAttachmentSetEligible(
+              loadedMessageMedia,
+              sourceExists: (storedPath) => File(
+                MediaFileManager.resolveStoredPathSync(storedPath),
+              ).existsSync(),
+            );
         final showFailedTextRetry =
             !redactsPrivateMedia &&
             canWrite &&
             isSent &&
             isFailedSend &&
-            messageMedia.isEmpty &&
+            loadedMessageMedia.isEmpty &&
             message.text.trim().isNotEmpty &&
             onRetryFailedMessage != null &&
             (!isRetryExhaustedSend || hasRetryPayload);
@@ -731,7 +756,9 @@ class GroupConversationScreen extends StatelessWidget {
         // goes null) and even while no terminal reason is latched.
         final showTerminalDelete =
             showTerminalSendFailed ||
-            (isTerminalSendFailed && messageMedia.isEmpty && !hasRetryPayload);
+            (isTerminalSendFailed &&
+                loadedMessageMedia.isEmpty &&
+                !hasRetryPayload);
         final isRetryingFailedText = retryingFailedMessageIds.contains(
           message.id,
         );
@@ -770,6 +797,30 @@ class GroupConversationScreen extends StatelessWidget {
         final visualMedia = messageMedia
             .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
             .toList();
+        Widget Function()? privateContentSlotFactory;
+        if (redactsPrivateMedia) {
+          final privateVisual = loadedMessageMedia
+              .where(
+                (attachment) =>
+                    attachment.mediaType == 'image' ||
+                    attachment.mediaType == 'gif' ||
+                    attachment.mediaType == 'video',
+              )
+              .toList(growable: false);
+          final isVideo =
+              privateVisual.length == 1 &&
+              (privateVisual.single.mediaType == 'video' ||
+                  privateVisual.single.mime.startsWith('video/'));
+          privateContentSlotFactory = () => Container(
+            key: ValueKey('group-private-media-slot-${message.id}'),
+            child: _buildGroupPrivateMediaCard(
+              context,
+              message: message,
+              isVideo: isVideo,
+              canOpen: canOpenPrivateMedia,
+            ),
+          );
+        }
 
         LetterCard buildLetterCard({
           VoidCallback? onLongPress,
@@ -804,7 +855,11 @@ class GroupConversationScreen extends StatelessWidget {
           status: isSent ? message.status : null,
           quotedText: quotedText,
           isQuoteUnavailable: isQuoteUnavailable,
-          media: messageMedia,
+          media: loadedMessageMedia,
+          decoratedBodyKey: redactsPrivateMedia
+              ? ValueKey('group-private-media-decorated-body-${message.id}')
+              : null,
+          privateContentSlot: privateContentSlotFactory?.call(),
           requireVerifiedContentHash: true,
           // 128 (round 5): render-boundary fallback to the durable owned copy.
           // Group durable media is keyed under media/<groupId>/<blob> (see
@@ -830,8 +885,7 @@ class GroupConversationScreen extends StatelessWidget {
               : null,
           isRetryFailedMessageEnabled: isFailedTextRetryEnabled,
           failedMessageActionKeySuffix: message.id,
-          onRetryFailedMedia:
-              showFailedMediaActions && onRetryFailedMedia != null
+          onRetryFailedMedia: showFailedMediaRetry && onRetryFailedMedia != null
               ? () => onRetryFailedMedia!(message.id)
               : null,
           onDeleteFailedMedia:
@@ -850,6 +904,7 @@ class GroupConversationScreen extends StatelessWidget {
                     onRetryUnavailableMedia!(message.id, attachmentId)
               : null,
           failedMediaActionKeySuffix: message.id,
+          messageUploadProgress: messageUploadProgress[message.id],
         );
 
         Widget bubble = Padding(
@@ -983,6 +1038,75 @@ class GroupConversationScreen extends StatelessWidget {
     if (message.mediaConsumedAt != null) return l10n.private_media_consumed;
     if (message.mediaExpiredAt != null) return l10n.private_media_expired;
     return l10n.group_private_media_notification_body;
+  }
+
+  Widget _buildGroupPrivateMediaCard(
+    BuildContext context, {
+    required GroupMessage message,
+    required bool isVideo,
+    required bool canOpen,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    final policy = message.privateMediaPolicy;
+    final title = switch (policy.lifecycle) {
+      GroupMediaLifecycle.viewOnce =>
+        isVideo
+            ? l10n.private_media_card_title_view_once_video
+            : l10n.private_media_card_title_view_once_photo,
+      GroupMediaLifecycle.disappearing =>
+        isVideo
+            ? l10n.private_media_card_title_expiry_video(
+                privateMediaDurationLabel(l10n, policy.durationSeconds),
+              )
+            : l10n.private_media_card_title_expiry_photo(
+                privateMediaDurationLabel(l10n, policy.durationSeconds),
+              ),
+      _ =>
+        isVideo
+            ? l10n.private_media_card_title_protected_video
+            : l10n.private_media_card_title_protected_photo,
+    };
+    final body = _groupPrivateMediaPlaceholderText(context, message);
+    final icon = switch (policy.lifecycle) {
+      GroupMediaLifecycle.viewOnce => Icons.looks_one_outlined,
+      GroupMediaLifecycle.disappearing => Icons.timer_outlined,
+      GroupMediaLifecycle.unsupported => Icons.system_update_alt_rounded,
+      _
+          when message.mediaConsumedAt != null ||
+              message.mediaExpiredAt != null =>
+        Icons.visibility_off_outlined,
+      _ => Icons.lock_outline_rounded,
+    };
+    final actionLabel = policy.lifecycle == GroupMediaLifecycle.viewOnce
+        ? (isVideo
+              ? l10n.private_media_view_video
+              : l10n.private_media_view_photo)
+        : (isVideo
+              ? l10n.private_media_open_video
+              : l10n.private_media_open_photo);
+    final showAction =
+        canOpen &&
+        privateMediaEnabled &&
+        !policy.isUnsupported &&
+        message.mediaConsumedAt == null &&
+        message.mediaExpiredAt == null;
+
+    return Semantics(
+      label: body,
+      child: PrivateMediaVisualCard(
+        title: title,
+        body: body,
+        icon: icon,
+        action: showAction
+            ? FilledButton.tonalIcon(
+                key: ValueKey('group-private-card-action-${message.id}'),
+                onPressed: () => onOpenPrivateMedia?.call(message.id),
+                icon: const Icon(Icons.lock_open_outlined),
+                label: Text(actionLabel),
+              )
+            : null,
+      ),
+    );
   }
 
   /// Flattens [messages] into display items, inserting a WhatsApp-style date
@@ -1327,60 +1451,69 @@ class _GroupPrivateMediaSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final label = switch (policy.lifecycle) {
-      GroupMediaLifecycle.standard when policy.protected =>
-        l10n.private_media_protected,
-      GroupMediaLifecycle.viewOnce => l10n.private_media_view_once,
-      GroupMediaLifecycle.disappearing when policy.durationSeconds == 3600 =>
-        l10n.private_media_disappearing_1h,
-      GroupMediaLifecycle.disappearing when policy.durationSeconds == 86400 =>
-        l10n.private_media_disappearing_1d,
-      GroupMediaLifecycle.disappearing => l10n.private_media_disappearing_7d,
-      _ => l10n.private_media_ordinary,
-    };
+    final selection = _pickerSelectionForGroupPolicy(policy);
+    final recipientName = l10n.group_members_title;
     return Align(
       alignment: AlignmentDirectional.centerStart,
       child: Padding(
         padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 12, 0),
-        child: PopupMenuButton<GroupPrivateMediaPolicy>(
+        child: PrivateMediaSummaryChip(
           key: const ValueKey('group-private-media-selector'),
-          tooltip: l10n.private_media_selector_label,
-          onSelected: onChanged,
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              value: const GroupPrivateMediaPolicy.ordinary(),
-              child: Text(l10n.private_media_ordinary),
-            ),
-            PopupMenuItem(
-              value: const GroupPrivateMediaPolicy.protected(),
-              child: Text(l10n.private_media_protected),
-            ),
-            PopupMenuItem(
-              value: const GroupPrivateMediaPolicy.viewOnce(),
-              child: Text(l10n.private_media_view_once),
-            ),
-            PopupMenuItem(
-              value: GroupPrivateMediaPolicy.disappearing(3600),
-              child: Text(l10n.private_media_disappearing_1h),
-            ),
-            PopupMenuItem(
-              value: GroupPrivateMediaPolicy.disappearing(86400),
-              child: Text(l10n.private_media_disappearing_1d),
-            ),
-            PopupMenuItem(
-              value: GroupPrivateMediaPolicy.disappearing(604800),
-              child: Text(l10n.private_media_disappearing_7d),
-            ),
-          ],
-          child: Chip(
-            avatar: const Icon(Icons.shield_outlined, size: 18),
-            label: Text(label),
-          ),
+          selection: selection,
+          recipientName: recipientName,
+          onTap: () async {
+            final picked = await showPrivateMediaPolicyPickerSheet(
+              context: context,
+              initialSelection: selection,
+              title: l10n.group_private_media_sheet_title,
+              recipientName: recipientName,
+              targetPlatform: defaultTargetPlatform,
+              optionKeyPrefix: 'group-private-media-option',
+            );
+            if (picked == null || !context.mounted) return;
+            onChanged(_groupPolicyForPickerSelection(picked));
+          },
         ),
       ),
     );
   }
 }
+
+PrivateMediaPickerSelection _pickerSelectionForGroupPolicy(
+  GroupPrivateMediaPolicy policy,
+) => switch (policy.lifecycle) {
+  GroupMediaLifecycle.standard => PrivateMediaPickerSelection(
+    mode: policy.protected
+        ? PrivateMediaPickerMode.protected
+        : PrivateMediaPickerMode.ordinary,
+  ),
+  GroupMediaLifecycle.viewOnce => const PrivateMediaPickerSelection(
+    mode: PrivateMediaPickerMode.viewOnce,
+  ),
+  GroupMediaLifecycle.disappearing => PrivateMediaPickerSelection(
+    mode: PrivateMediaPickerMode.disappearing,
+    durationSeconds:
+        GroupPrivateMediaPolicy.allowedDurationsSeconds.contains(
+          policy.durationSeconds,
+        )
+        ? policy.durationSeconds
+        : 86400,
+  ),
+  GroupMediaLifecycle.unsupported => const PrivateMediaPickerSelection(
+    mode: PrivateMediaPickerMode.ordinary,
+  ),
+};
+
+GroupPrivateMediaPolicy _groupPolicyForPickerSelection(
+  PrivateMediaPickerSelection selection,
+) => switch (selection.mode) {
+  PrivateMediaPickerMode.ordinary => const GroupPrivateMediaPolicy.ordinary(),
+  PrivateMediaPickerMode.protected => const GroupPrivateMediaPolicy.protected(),
+  PrivateMediaPickerMode.viewOnce => const GroupPrivateMediaPolicy.viewOnce(),
+  PrivateMediaPickerMode.disappearing => GroupPrivateMediaPolicy.disappearing(
+    selection.durationSeconds ?? 86400,
+  ),
+};
 
 class _GroupConversationLoadingShell extends StatelessWidget {
   const _GroupConversationLoadingShell();

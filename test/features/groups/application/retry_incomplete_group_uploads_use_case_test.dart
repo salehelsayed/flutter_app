@@ -10,7 +10,10 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -161,6 +164,97 @@ List<Map<String, dynamic>> _publishedGroupPayloads(FakeBridge bridge) {
       .toList(growable: false);
 }
 
+class _RecordingGroupUploadRetryProjection
+    implements GroupUploadRetryProjectionRepository {
+  int callCount = 0;
+  String? messageId;
+  String? attachmentId;
+  UploadMediaFailed? failure;
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    callCount++;
+    this.messageId = messageId;
+    this.attachmentId = attachmentId;
+    this.failure = failure;
+    return const UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.terminal,
+    );
+  }
+}
+
+class _RecordingGroupManualUploadRetryRearm
+    implements GroupManualUploadRetryRearmRepository {
+  _RecordingGroupManualUploadRetryRearm({
+    required this.groupMsgRepo,
+    required this.mediaRepo,
+  });
+
+  final InMemoryGroupMessageRepository groupMsgRepo;
+  final InMemoryMediaAttachmentRepository mediaRepo;
+  int callCount = 0;
+  bool willApply = true;
+  List<ManualUploadRetryAttachmentExpectation>? lastExpectations;
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    callCount++;
+    lastExpectations = List.unmodifiable(attachments);
+    if (!willApply) return false;
+    final parent = await groupMsgRepo.getMessage(messageId);
+    if (parent == null || parent.isIncoming || parent.status != 'failed') {
+      return false;
+    }
+    final persisted = await mediaRepo.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    );
+    final unfinished = persisted
+        .where((attachment) => attachment.downloadStatus != 'done')
+        .toList(growable: false);
+    if (unfinished.length != attachments.length) return false;
+    for (final expected in attachments) {
+      final matches = unfinished.where(
+        (attachment) =>
+            attachment.id == expected.attachmentId &&
+            attachment.localPath == expected.storedLocalPath &&
+            attachment.downloadStatus == expected.downloadStatus &&
+            (attachment.uploadRetryCount ?? 0) == expected.uploadRetryCount,
+      );
+      if (matches.length != 1) return false;
+    }
+
+    await groupMsgRepo.saveMessage(
+      parent.copyWith(
+        status: 'queued_offline',
+        wireEnvelope: null,
+        inboxRetryPayload: null,
+        inboxStored: false,
+        retryAttemptCount: 0,
+        nextEligibleAt: null,
+      ),
+    );
+    for (final expected in attachments) {
+      if (expected.downloadStatus != 'upload_failed') continue;
+      final current = unfinished.singleWhere(
+        (attachment) => attachment.id == expected.attachmentId,
+      );
+      await mediaRepo.saveAttachment(
+        current.copyWith(downloadStatus: 'upload_pending', uploadRetryCount: 0),
+        owner: MediaOwnerLane.group,
+      );
+    }
+    return true;
+  }
+}
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository groupMsgRepo;
@@ -242,6 +336,59 @@ void main() {
   });
 
   group('retryIncompleteGroupUploads', () {
+    test(
+      'automatic pass with no OS connectivity issues no upload and leaves queued rows untouched',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-offline-gate',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Offline upload',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'queued_offline',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-offline-gate',
+            messageId: 'msg-offline-gate',
+            localPath: 'pending_uploads/msg-offline-gate/photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          requireOsConnectivity: true,
+          connectivityProbe: () async => false,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          'msg-offline-gate',
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows.single.downloadStatus, 'upload_pending');
+        expect(rows.single.uploadRetryCount, isNull);
+        expect(
+          (await groupMsgRepo.getMessage('msg-offline-gate'))?.status,
+          'queued_offline',
+        );
+      },
+    );
+
     test('returns 0 when no upload_pending attachments exist', () async {
       final count = await retryIncompleteGroupUploads(
         groupRepo: groupRepo,
@@ -256,6 +403,495 @@ void main() {
 
       expect(count, 0);
     });
+
+    test(
+      'manual Retry claims the complete unfinished set and rearms only at-ceiling rows',
+      () async {
+        const messageId = 'msg-manual-rearm';
+        final parent = GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Manual media retry',
+          timestamp: DateTime.utc(2026, 1, 1),
+          status: 'failed',
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 1, 1),
+          wireEnvelope: 'stale-envelope',
+          inboxStored: true,
+          inboxRetryPayload: 'stale-payload',
+          retryAttemptCount: 4,
+          nextEligibleAt: DateTime.utc(2026, 1, 2),
+        );
+        final terminal =
+            _pendingAttachment(
+              id: 'manual-terminal',
+              messageId: messageId,
+              localPath: 'pending_uploads/$messageId/terminal.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            );
+        final pending = _pendingAttachment(
+          id: 'manual-pending',
+          messageId: messageId,
+          localPath: 'pending_uploads/$messageId/pending.jpg',
+          uploadRetryCount: 1,
+        );
+        final done = _doneAttachment(id: 'manual-done', messageId: messageId);
+        await groupMsgRepo.saveMessage(parent);
+        for (final attachment in [terminal, pending, done]) {
+          await mediaRepo.saveAttachment(
+            attachment,
+            owner: MediaOwnerLane.group,
+          );
+        }
+        uploadFn.willReturnForPath(
+          _retryFixturePath(terminal.localPath!),
+          _doneAttachment(id: terminal.id, messageId: messageId),
+        );
+        uploadFn.willReturnForPath(
+          _retryFixturePath(pending.localPath!),
+          _doneAttachment(id: pending.id, messageId: messageId),
+        );
+        final tracker = MediaUploadInFlightTracker();
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.manual,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(count, 1);
+        expect(rearm.callCount, 1);
+        expect(rearm.lastExpectations, hasLength(2));
+        expect(
+          rearm.lastExpectations!.map((item) => item.attachmentId).toSet(),
+          {terminal.id, pending.id},
+        );
+        expect(uploadFn.callCount, 2);
+        expect(tracker.inFlightCount, 0);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows, hasLength(3));
+        expect(
+          rows.every((attachment) => attachment.downloadStatus == 'done'),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'manual Retry proves identity and group authority before claim or rearm',
+      () async {
+        const noIdentityMessageId = 'msg-manual-no-identity';
+        const missingGroupMessageId = 'msg-manual-missing-group';
+        final parents = [
+          for (final messageId in [noIdentityMessageId, missingGroupMessageId])
+            GroupMessage(
+              id: messageId,
+              groupId: 'group-1',
+              senderPeerId: 'peer-admin',
+              senderUsername: 'Admin',
+              text: 'Manual authority precheck',
+              timestamp: DateTime.utc(2026, 1, 1),
+              status: 'failed',
+              isIncoming: false,
+              createdAt: DateTime.utc(2026, 1, 1),
+              wireEnvelope: 'stale-envelope',
+            ),
+        ];
+        final attachments = [
+          for (final messageId in [noIdentityMessageId, missingGroupMessageId])
+            _pendingAttachment(
+              id: '$messageId-terminal',
+              messageId: messageId,
+              localPath: 'pending_uploads/$messageId/terminal.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            ),
+        ];
+        for (final parent in parents) {
+          await groupMsgRepo.saveMessage(parent);
+        }
+        for (final attachment in attachments) {
+          await mediaRepo.saveAttachment(
+            attachment,
+            owner: MediaOwnerLane.group,
+          );
+        }
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+        final tracker = MediaUploadInFlightTracker();
+        var claimCount = 0;
+        MediaUploadLease? claim(Iterable<String> attachmentIds) {
+          claimCount++;
+          return tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.manual,
+          );
+        }
+
+        final noIdentityCount = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: FakeIdentityRepository(),
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: noIdentityMessageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: claim,
+          releaseUploadLease: tracker.release,
+        );
+
+        await groupRepo.deleteGroup('group-1');
+        final missingGroupCount = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: missingGroupMessageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: claim,
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(noIdentityCount, 0);
+        expect(missingGroupCount, 0);
+        expect(claimCount, 0);
+        expect(rearm.callCount, 0);
+        expect(uploadFn.callCount, 0);
+        expect(tracker.inFlightCount, 0);
+        for (var i = 0; i < parents.length; i++) {
+          expect(
+            (await groupMsgRepo.getMessage(parents[i].id))!.toMap(),
+            parents[i].toMap(),
+          );
+          expect(
+            (await mediaRepo.getAttachmentById(attachments[i].id))!.toMap(),
+            attachments[i].copyWith(ownerLane: MediaOwnerLane.group).toMap(),
+          );
+        }
+      },
+    );
+
+    test(
+      'over-limit group manual set is refused before claim or terminal rearm',
+      () async {
+        const messageId = 'msg-group-manual-over-limit';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Over limit',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        for (var i = 0; i < kReuploadMaxAttachmentsPerMessage + 1; i++) {
+          await mediaRepo.saveAttachment(
+            _pendingAttachment(
+              id: 'group-over-limit-$i',
+              messageId: messageId,
+              localPath: 'pending_uploads/$messageId/$i.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+        final tracker = MediaUploadInFlightTracker();
+        var claimCount = 0;
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: (attachmentIds) {
+            claimCount++;
+            return tracker.tryClaimAll(
+              attachmentIds,
+              source: MediaUploadTriggerSource.manual,
+            );
+          },
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(count, 0);
+        expect(claimCount, 0);
+        expect(rearm.callCount, 0);
+        expect(uploadFn.callCount, 0);
+        expect(tracker.inFlightCount, 0);
+      },
+    );
+
+    test(
+      'group manual Retry loses to a held competitor before terminal mutation',
+      () async {
+        const messageId = 'msg-manual-held';
+        final parent = GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Held retry',
+          timestamp: DateTime.utc(2026, 1, 1),
+          status: 'failed',
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 1, 1),
+          wireEnvelope: 'stale-envelope',
+        );
+        final terminal =
+            _pendingAttachment(
+              id: 'manual-held-terminal',
+              messageId: messageId,
+              localPath: 'pending_uploads/$messageId/terminal.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            );
+        await groupMsgRepo.saveMessage(parent);
+        await mediaRepo.saveAttachment(terminal, owner: MediaOwnerLane.group);
+        final tracker = MediaUploadInFlightTracker();
+        final competitor = tracker.tryClaimAll([
+          terminal.id,
+        ], source: MediaUploadTriggerSource.foreground)!;
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+        final parentBefore = (await groupMsgRepo.getMessage(
+          messageId,
+        ))!.toMap();
+        final attachmentBefore = (await mediaRepo.getAttachmentById(
+          terminal.id,
+        ))!.toMap();
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.manual,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(count, 0);
+        expect(rearm.callCount, 0);
+        expect(uploadFn.callCount, 0);
+        expect(
+          (await groupMsgRepo.getMessage(messageId))!.toMap(),
+          parentBefore,
+        );
+        expect(
+          (await mediaRepo.getAttachmentById(terminal.id))!.toMap(),
+          attachmentBefore,
+        );
+        expect(tracker.release(competitor), isTrue);
+      },
+    );
+
+    test(
+      'one cancelled group sibling prevents claim and partial terminal rearm',
+      () async {
+        const messageId = 'msg-manual-cancelled';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Cancelled sibling',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final terminal =
+            _pendingAttachment(
+              id: 'manual-qualified-terminal',
+              messageId: messageId,
+              localPath: 'pending_uploads/$messageId/terminal.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            );
+        final cancelled = _pendingAttachment(
+          id: 'manual-cancelled',
+          messageId: messageId,
+          localPath: 'pending_uploads/$messageId/cancelled.jpg',
+        ).copyWith(downloadStatus: 'upload_cancelled');
+        await mediaRepo.saveAttachment(terminal, owner: MediaOwnerLane.group);
+        await mediaRepo.saveAttachment(cancelled, owner: MediaOwnerLane.group);
+        final tracker = MediaUploadInFlightTracker();
+        var claimCount = 0;
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: (attachmentIds) {
+            claimCount++;
+            return tracker.tryClaimAll(
+              attachmentIds,
+              source: MediaUploadTriggerSource.manual,
+            );
+          },
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(count, 0);
+        expect(claimCount, 0);
+        expect(rearm.callCount, 0);
+        expect(uploadFn.callCount, 0);
+        expect(
+          (await mediaRepo.getAttachmentById(terminal.id))!.downloadStatus,
+          'upload_failed',
+        );
+        expect(
+          (await mediaRepo.getAttachmentById(terminal.id))!.uploadRetryCount,
+          kMaxUploadRetries,
+        );
+      },
+    );
+
+    test(
+      'queued-offline typed failure invokes projection exactly once without sequential writes',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-projection',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Queued upload',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'queued_offline',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-projection',
+            messageId: 'msg-projection',
+            localPath: 'pending_uploads/msg-projection/photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        final projection = _RecordingGroupUploadRetryProjection();
+        var probeCalls = 0;
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          uploadRetryProjectionRepo: projection,
+          connectivityProbe: () async {
+            probeCalls++;
+            return false;
+          },
+        );
+
+        expect(count, 0);
+        expect(probeCalls, 0);
+        expect(uploadFn.callCount, 1);
+        expect(projection.callCount, 1);
+        expect(projection.messageId, 'msg-projection');
+        expect(projection.attachmentId, 'pending-projection');
+        expect(
+          projection.failure?.disposition,
+          UploadMediaDisposition.terminal,
+        );
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          'msg-projection',
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows.single.downloadStatus, 'upload_pending');
+        expect(rows.single.uploadRetryCount, isNull);
+        expect(
+          (await groupMsgRepo.getMessage('msg-projection'))?.status,
+          'queued_offline',
+        );
+      },
+    );
 
     test(
       'returns 0 for overlapping same-isolate retry while first upload is in flight',
@@ -278,13 +914,14 @@ void main() {
             id: 'pending-concurrent-retry',
             messageId: 'msg-concurrent-retry',
             localPath: 'pending_uploads/msg-concurrent-retry/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final uploadStarted = Completer<void>();
         final allowUpload = Completer<void>();
         var uploadCallCount = 0;
-        Future<MediaAttachment?> blockingUpload({
+        Future<UploadMediaOutcome> blockingUpload({
           required Bridge bridge,
           required String localFilePath,
           required String mime,
@@ -304,9 +941,11 @@ void main() {
             uploadStarted.complete();
           }
           await allowUpload.future;
-          return _doneAttachment(
-            id: blobId ?? 'pending-concurrent-retry',
-            messageId: 'msg-concurrent-retry',
+          return UploadMediaSucceeded(
+            _doneAttachment(
+              id: blobId ?? 'pending-concurrent-retry',
+              messageId: 'msg-concurrent-retry',
+            ),
           );
         }
 
@@ -352,6 +991,203 @@ void main() {
     );
 
     test(
+      'manual retry for another message bypasses the automatic pass coalescer',
+      () async {
+        const automaticMessageId = 'msg-auto-coalescer-owner';
+        const manualMessageId = 'msg-manual-coalescer-bypass';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: automaticMessageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Automatic owner',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'queued_offline',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: manualMessageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Manual bypass',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final automaticAttachment = _pendingAttachment(
+          id: 'auto-coalescer-att',
+          messageId: automaticMessageId,
+          localPath: 'pending_uploads/$automaticMessageId/photo.jpg',
+        );
+        final manualAttachment =
+            _pendingAttachment(
+              id: 'manual-coalescer-att',
+              messageId: manualMessageId,
+              localPath: 'pending_uploads/$manualMessageId/photo.jpg',
+            ).copyWith(
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            );
+        await mediaRepo.saveAttachment(
+          automaticAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        await mediaRepo.saveAttachment(
+          manualAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        final automaticStarted = Completer<void>();
+        final allowAutomatic = Completer<void>();
+        Future<UploadMediaOutcome> blockingAutomaticUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          preparedArtifact,
+        }) async {
+          if (!automaticStarted.isCompleted) automaticStarted.complete();
+          await allowAutomatic.future;
+          return UploadMediaSucceeded(
+            _doneAttachment(id: blobId!, messageId: automaticMessageId),
+          );
+        }
+
+        uploadFn.willReturn(
+          _doneAttachment(id: manualAttachment.id, messageId: manualMessageId),
+        );
+        final automaticRetry = retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: blockingAutomaticUpload,
+          mediaFileManager: mediaFileManager,
+        );
+        await automaticStarted.future;
+        final tracker = MediaUploadInFlightTracker();
+        final rearm = _RecordingGroupManualUploadRetryRearm(
+          groupMsgRepo: groupMsgRepo,
+          mediaRepo: mediaRepo,
+        );
+
+        final manualCount = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: manualMessageId,
+          manualRetry: true,
+          uploadRetryRearmRepo: rearm,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.manual,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+        final overlappingAutomatic = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: blockingAutomaticUpload,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(manualCount, 1);
+        expect(rearm.callCount, 1);
+        expect(uploadFn.callCount, 1);
+        expect(overlappingAutomatic, 0);
+        allowAutomatic.complete();
+        expect(await automaticRetry, 1);
+      },
+    );
+
+    test(
+      'TC-15 group foreground lease defeats a full retry and the later winner '
+      'releases after envelope settlement',
+      () async {
+        const messageId = 'msg-group-token-owned';
+        const attachmentId = 'pending-group-token-owned';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Token owned retry',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        uploadFn.willReturn(
+          _doneAttachment(id: attachmentId, messageId: messageId),
+        );
+        final tracker = MediaUploadInFlightTracker();
+        final foregroundLease = tracker.tryClaimAll(const [
+          attachmentId,
+        ], source: MediaUploadTriggerSource.foreground)!;
+
+        Future<int> runFullRetry() => retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.full,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(await runFullRetry(), 0);
+        expect(uploadFn.callCount, 0);
+        expect(tracker.isInFlight(attachmentId), isTrue);
+
+        expect(tracker.release(foregroundLease), isTrue);
+        expect(await runFullRetry(), 1);
+        expect(uploadFn.callCount, 1);
+        expect(tracker.isInFlight(attachmentId), isFalse);
+      },
+    );
+
+    test(
       'skips fresh outgoing sending parent before upload or publish',
       () async {
         await groupMsgRepo.saveMessage(
@@ -372,7 +1208,8 @@ void main() {
             id: 'pending-fresh-sending-parent',
             messageId: 'msg-fresh-sending-parent',
             localPath: 'pending_uploads/msg-fresh-sending-parent/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -398,7 +1235,8 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:inboxStore')));
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-            'msg-fresh-sending-parent', owner: MediaOwnerLane.group,
+            'msg-fresh-sending-parent',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_pending',
         );
@@ -461,13 +1299,19 @@ void main() {
           await mediaFileManager.resolveStoredPath(
             'pending_uploads/msg-fwd-upload/blob.jpg',
           ),
-          _doneAttachment(id: 'upload-pending-fwd', messageId: 'msg-fwd-upload'),
+          _doneAttachment(
+            id: 'upload-pending-fwd',
+            messageId: 'msg-fwd-upload',
+          ),
         );
         uploadFn.willReturnForPath(
           await mediaFileManager.resolveStoredPath(
             'pending_uploads/msg-ord-upload/blob.jpg',
           ),
-          _doneAttachment(id: 'upload-pending-ord', messageId: 'msg-ord-upload'),
+          _doneAttachment(
+            id: 'upload-pending-ord',
+            messageId: 'msg-ord-upload',
+          ),
         );
 
         final count = await retryIncompleteGroupUploads(
@@ -502,10 +1346,10 @@ void main() {
 
         // In-place identity: no duplicate rows, markers preserved.
         final rows = await groupMsgRepo.getMessagesPage('group-1', limit: 50);
-        expect(
-          rows.map((row) => row.id).toSet(),
-          {'msg-fwd-upload', 'msg-ord-upload'},
-        );
+        expect(rows.map((row) => row.id).toSet(), {
+          'msg-fwd-upload',
+          'msg-ord-upload',
+        });
         final forwardedRow = await groupMsgRepo.getMessage('msg-fwd-upload');
         expect(forwardedRow!.isForwarded, isTrue);
         expect(forwardedRow.logicalDeliveryId, 'fwd-upload-logical-1');
@@ -547,20 +1391,23 @@ void main() {
           _doneAttachment(
             id: 'download-integrity-failed',
             messageId: 'msg-md012-download-only',
-          ).copyWith(downloadStatus: kMediaDownloadStatusIntegrityFailed), owner: MediaOwnerLane.group,
+          ).copyWith(downloadStatus: kMediaDownloadStatusIntegrityFailed),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _doneAttachment(
             id: 'download-transient-failed',
             messageId: 'msg-md012-download-only',
-          ).copyWith(downloadStatus: 'failed'), owner: MediaOwnerLane.group,
+          ).copyWith(downloadStatus: 'failed'),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _pendingAttachment(
             id: 'upload-pending-md012',
             messageId: 'msg-md012-upload-owner',
             localPath: 'pending_uploads/msg-md012-upload-owner/blob.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -584,7 +1431,8 @@ void main() {
         expect(uploadFn.callCount, 1);
         expect(uploadFn.lastBlobId, 'upload-pending-md012');
         final downloadOnly = await mediaRepo.getAttachmentsForMessage(
-          'msg-md012-download-only', owner: MediaOwnerLane.group,
+          'msg-md012-download-only',
+          owner: MediaOwnerLane.group,
         );
         expect(
           downloadOnly.map((attachment) => attachment.id),
@@ -622,10 +1470,12 @@ void main() {
           ),
         );
         await mediaRepo.saveAttachment(
-          _doneAttachment(id: 'done-1', messageId: 'msg-1'), owner: MediaOwnerLane.group,
+          _doneAttachment(id: 'done-1', messageId: 'msg-1'),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
-          _pendingAttachment(id: 'pending-1', messageId: 'msg-1'), owner: MediaOwnerLane.group,
+          _pendingAttachment(id: 'pending-1', messageId: 'msg-1'),
+          owner: MediaOwnerLane.group,
         );
         // 228: the 1:1 row lives in the DIRECT lane; the group retrier's
         // lane-scoped query must never see it.
@@ -634,7 +1484,7 @@ void main() {
           owner: MediaOwnerLane.direct,
         );
         uploadFn.willReturn(
-          _doneAttachment(id: 'pending-1', messageId: 'msg-1'),
+          _doneAttachment(id: 'server-reassigned-id', messageId: 'msg-1'),
         );
 
         final count = await retryIncompleteGroupUploads(
@@ -669,11 +1519,15 @@ void main() {
         );
         expect(publishMsg, contains('"contentHash":"$_validContentHash"'));
         expect(deletedDirs, contains('msg-1'));
+        final completed = await mediaRepo.getAttachmentsForMessage(
+          'msg-1',
+          owner: MediaOwnerLane.group,
+        );
+        expect(completed.every((a) => a.downloadStatus == 'done'), isTrue);
+        expect(completed.map((a) => a.id), contains('pending-1'));
         expect(
-          (await mediaRepo.getAttachmentsForMessage(
-            'msg-1', owner: MediaOwnerLane.group,
-          )).every((a) => a.downloadStatus == 'done'),
-          isTrue,
+          completed.map((a) => a.id),
+          isNot(contains('server-reassigned-id')),
         );
         expect(
           (await mediaRepo.getUploadPendingAttachments(
@@ -689,84 +1543,81 @@ void main() {
     // across the lanes. The group retrier's lane-scoped pending query must
     // never surface — let alone consume — a DIRECT-lane upload_pending row
     // that shares its parent message id with a group row.
-    test(
-      'group retrier never consumes same id direct pending media',
-      () async {
-        const collidingMessageId = 'msg-collide-1';
-        await groupMsgRepo.saveMessage(
-          GroupMessage(
-            id: collidingMessageId,
-            groupId: 'group-1',
-            senderPeerId: 'peer-admin',
-            senderUsername: 'Admin',
-            text: 'Colliding message id',
-            timestamp: DateTime.utc(2026, 1, 1),
-            status: 'failed',
-            isIncoming: false,
-            createdAt: DateTime.utc(2026, 1, 1),
-          ),
-        );
-        // SAME message_id in BOTH lanes, distinct attachment ids.
-        await mediaRepo.saveAttachment(
-          _pendingAttachment(
-            id: 'pending-group-collide',
-            messageId: collidingMessageId,
-            localPath: 'pending_uploads/msg-collide-1/group-blob.jpg',
-          ),
-          owner: MediaOwnerLane.group,
-        );
-        await mediaRepo.saveAttachment(
-          _pendingAttachment(
-            id: 'pending-direct-collide',
-            messageId: collidingMessageId,
-            localPath: 'pending_uploads/msg-collide-1/direct-blob.jpg',
-          ),
-          owner: MediaOwnerLane.direct,
-        );
-        uploadFn.willReturn(
-          _doneAttachment(
-            id: 'pending-group-collide',
-            messageId: collidingMessageId,
-          ),
-        );
+    test('group retrier never consumes same id direct pending media', () async {
+      const collidingMessageId = 'msg-collide-1';
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: collidingMessageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Colliding message id',
+          timestamp: DateTime.utc(2026, 1, 1),
+          status: 'failed',
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      // SAME message_id in BOTH lanes, distinct attachment ids.
+      await mediaRepo.saveAttachment(
+        _pendingAttachment(
+          id: 'pending-group-collide',
+          messageId: collidingMessageId,
+          localPath: 'pending_uploads/msg-collide-1/group-blob.jpg',
+        ),
+        owner: MediaOwnerLane.group,
+      );
+      await mediaRepo.saveAttachment(
+        _pendingAttachment(
+          id: 'pending-direct-collide',
+          messageId: collidingMessageId,
+          localPath: 'pending_uploads/msg-collide-1/direct-blob.jpg',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      uploadFn.willReturn(
+        _doneAttachment(
+          id: 'pending-group-collide',
+          messageId: collidingMessageId,
+        ),
+      );
 
-        final count = await retryIncompleteGroupUploads(
-          groupRepo: groupRepo,
-          groupMsgRepo: groupMsgRepo,
-          mediaAttachmentRepo: mediaRepo,
-          bridge: bridge,
-          p2pService: p2pService,
-          identityRepo: identityRepo,
-          uploadMediaFn: uploadFn.call,
-          mediaFileManager: mediaFileManager,
-        );
+      final count = await retryIncompleteGroupUploads(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        mediaAttachmentRepo: mediaRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        uploadMediaFn: uploadFn.call,
+        mediaFileManager: mediaFileManager,
+      );
 
-        // Only the GROUP row was re-read and re-uploaded.
-        expect(count, 1);
-        expect(uploadFn.callCount, 1);
-        expect(uploadFn.lastBlobId, 'pending-group-collide');
-        expect(
-          (await mediaRepo.getAttachmentsForMessage(
-            collidingMessageId,
-            owner: MediaOwnerLane.group,
-          )).every((a) => a.downloadStatus == 'done'),
-          isTrue,
-          reason: 'the group pending row must be consumed by the retry',
-        );
-        // The direct-lane row is untouched: still upload_pending, same path.
-        final directRows = await mediaRepo.getAttachmentsForMessage(
+      // Only the GROUP row was re-read and re-uploaded.
+      expect(count, 1);
+      expect(uploadFn.callCount, 1);
+      expect(uploadFn.lastBlobId, 'pending-group-collide');
+      expect(
+        (await mediaRepo.getAttachmentsForMessage(
           collidingMessageId,
-          owner: MediaOwnerLane.direct,
-        );
-        expect(directRows, hasLength(1));
-        expect(directRows.single.id, 'pending-direct-collide');
-        expect(directRows.single.downloadStatus, 'upload_pending');
-        expect(
-          directRows.single.localPath,
-          'pending_uploads/msg-collide-1/direct-blob.jpg',
-        );
-      },
-    );
+          owner: MediaOwnerLane.group,
+        )).every((a) => a.downloadStatus == 'done'),
+        isTrue,
+        reason: 'the group pending row must be consumed by the retry',
+      );
+      // The direct-lane row is untouched: still upload_pending, same path.
+      final directRows = await mediaRepo.getAttachmentsForMessage(
+        collidingMessageId,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(directRows, hasLength(1));
+      expect(directRows.single.id, 'pending-direct-collide');
+      expect(directRows.single.downloadStatus, 'upload_pending');
+      expect(
+        directRows.single.localPath,
+        'pending_uploads/msg-collide-1/direct-blob.jpg',
+      );
+    });
 
     test(
       'logical delivery id is reused when retrying an incomplete group upload',
@@ -790,7 +1641,8 @@ void main() {
             id: 'pending-logical-upload',
             messageId: 'msg-logical-upload-retry',
             localPath: 'pending_uploads/msg-logical-upload-retry/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -860,14 +1712,16 @@ void main() {
             localPath: 'pending_uploads/msg-voice-targeted/voice.m4a',
             mime: 'audio/mp4',
             size: _retryMp4Bytes.length,
-          ).copyWith(durationMs: 4200, waveform: const [0.1, 0.5, 0.2]), owner: MediaOwnerLane.group,
+          ).copyWith(durationMs: 4200, waveform: const [0.1, 0.5, 0.2]),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _pendingAttachment(
             id: 'image-pending-unrelated',
             messageId: 'msg-unrelated-pending',
             localPath: 'pending_uploads/msg-unrelated-pending/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -910,7 +1764,8 @@ void main() {
         );
 
         final targetAttachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-voice-targeted', owner: MediaOwnerLane.group,
+          'msg-voice-targeted',
+          owner: MediaOwnerLane.group,
         );
         expect(targetAttachments, hasLength(1));
         expect(targetAttachments.single.id, 'voice-pending-target');
@@ -920,7 +1775,8 @@ void main() {
         expect(targetAttachments.single.waveform, [0.1, 0.5, 0.2]);
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-            'msg-unrelated-pending', owner: MediaOwnerLane.group,
+            'msg-unrelated-pending',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_pending',
         );
@@ -972,7 +1828,8 @@ void main() {
             id: 'pending-pl005-retry',
             messageId: 'msg-pl005-retry',
             localPath: 'pending_uploads/msg-pl005-retry/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1024,7 +1881,8 @@ void main() {
             messageId: 'msg-dangerous-mime',
             localPath: 'pending_uploads/msg-dangerous-mime/payload.pdf',
             mime: 'application/pdf',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1050,7 +1908,8 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:inboxStore')));
 
         final attachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-dangerous-mime', owner: MediaOwnerLane.group,
+          'msg-dangerous-mime',
+          owner: MediaOwnerLane.group,
         );
         expect(attachments.single.downloadStatus, 'upload_failed');
       },
@@ -1078,7 +1937,8 @@ void main() {
             messageId: 'msg-octet-mime',
             localPath: 'pending_uploads/msg-octet-mime/payload.bin',
             mime: 'application/octet-stream',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(id: 'pending-octet', messageId: 'msg-octet-mime'),
@@ -1100,7 +1960,8 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:publish')));
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-            'msg-octet-mime', owner: MediaOwnerLane.group,
+            'msg-octet-mime',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_failed',
         );
@@ -1128,7 +1989,8 @@ void main() {
           messageId: 'msg-spoofed-retry',
           localPath: localPath,
           mime: 'image/jpeg',
-        ), owner: MediaOwnerLane.group,
+        ),
+        owner: MediaOwnerLane.group,
       );
       _writeRetryFixtureFile(
         localPath: localPath,
@@ -1158,7 +2020,8 @@ void main() {
       expect(bridge.commandLog, isNot(contains('group:publish')));
       expect(
         (await mediaRepo.getAttachmentsForMessage(
-          'msg-spoofed-retry', owner: MediaOwnerLane.group,
+          'msg-spoofed-retry',
+          owner: MediaOwnerLane.group,
         )).single.downloadStatus,
         'upload_failed',
       );
@@ -1203,7 +2066,8 @@ void main() {
             id: 'pending-md011-retry',
             messageId: 'msg-md011-retry',
             localPath: 'pending_uploads/msg-md011-retry/photo.jpg',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1277,7 +2141,8 @@ void main() {
             messageId: 'msg-oversized-pending',
             localPath: 'pending_uploads/msg-oversized-pending/photo.jpg',
             size: kGroupMediaPerAttachmentLimitBytes + 1,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1303,7 +2168,8 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:inboxStore')));
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-            'msg-oversized-pending', owner: MediaOwnerLane.group,
+            'msg-oversized-pending',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_failed',
         );
@@ -1331,14 +2197,16 @@ void main() {
             id: 'done-total-boundary',
             messageId: 'msg-total-oversized-retry',
             size: kGroupMediaTotalMessageLimitBytes,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _pendingAttachment(
             id: 'pending-total-extra',
             messageId: 'msg-total-oversized-retry',
             size: 1,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1365,7 +2233,8 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:inboxStore')));
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-                'msg-total-oversized-retry', owner: MediaOwnerLane.group,
+                'msg-total-oversized-retry',
+                owner: MediaOwnerLane.group,
               ))
               .where((attachment) => attachment.id == 'pending-total-extra')
               .single
@@ -1392,7 +2261,8 @@ void main() {
           ),
         );
         await mediaRepo.saveAttachment(
-          _doneAttachment(id: 'done-jpeg', messageId: 'msg-gif-1'), owner: MediaOwnerLane.group,
+          _doneAttachment(id: 'done-jpeg', messageId: 'msg-gif-1'),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _pendingAttachment(
@@ -1400,7 +2270,8 @@ void main() {
             messageId: 'msg-gif-1',
             localPath: 'pending_uploads/msg-gif-1/funny.gif',
             mime: 'image/gif',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(
@@ -1451,10 +2322,12 @@ void main() {
           ),
         );
         await mediaRepo.saveAttachment(
-          _doneAttachment(id: 'done-1', messageId: 'msg-1'), owner: MediaOwnerLane.group,
+          _doneAttachment(id: 'done-1', messageId: 'msg-1'),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
-          _pendingAttachment(id: 'pending-1', messageId: 'msg-1'), owner: MediaOwnerLane.group,
+          _pendingAttachment(id: 'pending-1', messageId: 'msg-1'),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(
           _doneAttachment(id: 'pending-1', messageId: 'msg-1'),
@@ -1501,7 +2374,8 @@ void main() {
           ),
         );
         await mediaRepo.saveAttachment(
-          _pendingAttachment(id: 'pending-2', messageId: 'msg-2'), owner: MediaOwnerLane.group,
+          _pendingAttachment(id: 'pending-2', messageId: 'msg-2'),
+          owner: MediaOwnerLane.group,
         );
         uploadFn.willReturn(null);
 
@@ -1517,9 +2391,9 @@ void main() {
         );
         expect(first, 0);
         expect(
-          (await mediaRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group))
-              .single
-              .uploadRetryCount,
+          (await mediaRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          )).single.uploadRetryCount,
           1,
         );
 
@@ -1528,7 +2402,8 @@ void main() {
             id: 'pending-2',
             messageId: 'msg-2',
             uploadRetryCount: kMaxUploadRetries - 1,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final second = await retryIncompleteGroupUploads(
@@ -1545,7 +2420,8 @@ void main() {
         expect(second, 0);
         expect(
           (await mediaRepo.getAttachmentsForMessage(
-            'msg-2', owner: MediaOwnerLane.group,
+            'msg-2',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_failed',
         );
@@ -1559,7 +2435,8 @@ void main() {
           _pendingAttachment(
             id: 'pending-missing-parent',
             messageId: 'msg-404',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryIncompleteGroupUploads(
@@ -1578,7 +2455,9 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:publish')));
         expect(bridge.commandLog, isNot(contains('group:inboxStore')));
 
-        final pending = await mediaRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group);
+        final pending = await mediaRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
         expect(pending, hasLength(1));
         expect(pending.single.id, 'pending-missing-parent');
         expect(pending.single.messageId, 'msg-404');
@@ -1606,7 +2485,8 @@ void main() {
           _pendingAttachment(
             id: 'pending-late-delete',
             messageId: 'msg-late-delete',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         mediaRepo.onSaveAttachment = (attachment) {
           if (attachment.messageId == 'msg-late-delete' &&
@@ -1643,6 +2523,95 @@ void main() {
     );
 
     test(
+      'late extra pending sibling blocks group send and staging cleanup',
+      () async {
+        const messageId = 'msg-group-late-extra';
+        const originalId = 'group-original-stable';
+        const extraId = 'group-late-extra';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Late sibling guard',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: originalId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/original.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        var insertedExtraSibling = false;
+        mediaRepo.onSaveAttachment = (attachment) {
+          if (!insertedExtraSibling &&
+              attachment.id == originalId &&
+              attachment.downloadStatus == 'done') {
+            insertedExtraSibling = true;
+            unawaited(
+              mediaRepo.saveAttachment(
+                _pendingAttachment(
+                  id: extraId,
+                  messageId: messageId,
+                  localPath: 'pending_uploads/$messageId/extra.jpg',
+                ),
+                owner: MediaOwnerLane.group,
+              ),
+            );
+          }
+        };
+        addTearDown(() {
+          mediaRepo.onSaveAttachment = null;
+        });
+        uploadFn.willReturn(
+          _doneAttachment(id: 'server-reassigned-id', messageId: messageId),
+        );
+        var cleanupCalled = false;
+        mediaFileManager.onDeletePendingUploadDir = (_) => cleanupCalled = true;
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(cleanupCalled, isFalse);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          rows.map((row) => row.id),
+          unorderedEquals([originalId, extraId]),
+        );
+        expect(
+          rows.singleWhere((row) => row.id == originalId).downloadStatus,
+          'done',
+        );
+        expect(
+          rows.singleWhere((row) => row.id == extraId).downloadStatus,
+          'upload_pending',
+        );
+        expect(rows.any((row) => row.id == 'server-reassigned-id'), isFalse);
+      },
+    );
+
+    test(
       'GIRD-002 incomplete-upload retry aborts final send when another owner settled the row',
       () async {
         await groupMsgRepo.saveMessage(
@@ -1662,7 +2631,8 @@ void main() {
           _pendingAttachment(
             id: 'pending-gird002-settled',
             messageId: 'msg-gird002-settled',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         mediaRepo.onSaveAttachment = (attachment) {
           if (attachment.messageId == 'msg-gird002-settled' &&

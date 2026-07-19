@@ -12,6 +12,7 @@ import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/debug/group_reaction_e2e_probe.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
+import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -790,6 +791,7 @@ void startIntroE2EPoller({
   required RegisterWakeTokensForE2E registerWakeTokens,
   required DetailedInboxStore detailedInboxStore,
   required WakeTokenAcceptedAttachmentObserver wakeTokenAttachmentObserver,
+  PrivateMediaOutboxE2EController? privateMediaOutboxE2EController,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
@@ -819,6 +821,44 @@ void startIntroE2EPoller({
           config: config,
           messageRepo: messageRepo,
         );
+        return;
+      }
+
+      // This production-conversation action must also run before the generic
+      // health-check/inbox-drain preamble. Its sender endpoint captures the
+      // genuine offline upload and the restored-edge retry; a generic drain or
+      // health check would erase that causal boundary.
+      if (config['transport_action'] == privateMediaOutboxE2EAction) {
+        // Consume this request before publishing progress or a terminal
+        // receipt. A host may stage the next phase as soon as it observes
+        // completion, so terminal cleanup could otherwise delete that phase.
+        await _deleteConfigIfPresent();
+        try {
+          requirePrivateMediaOutboxE2EBuildProfile();
+          final controller = privateMediaOutboxE2EController;
+          if (controller == null) {
+            throw StateError('private-media outbox controller is not wired');
+          }
+          final request = PrivateMediaOutboxE2ERequest.fromConfig(config);
+          await ensurePrivateMediaOutboxE2EEndpoint(
+            controller: controller,
+            request: request,
+            openConversationByPeerId: openConversationByPeerId,
+          );
+          final result = await controller.run(
+            request,
+            (progress) =>
+                _writeIntroE2EResult(Map<String, dynamic>.from(progress)),
+            _waitForPrivateMediaOutboxE2EHostRelease,
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              privateMediaOutboxE2EFailureReceipt(config: config, error: error),
+            ),
+          );
+        }
         return;
       }
 
@@ -1033,6 +1073,39 @@ Future<void> _deleteConfigIfPresent() async {
   if (await file.exists()) {
     await file.delete();
   }
+}
+
+Future<void> _waitForPrivateMediaOutboxE2EHostRelease(
+  PrivateMediaOutboxE2ERequest request,
+) async {
+  final deadline = DateTime.now().add(request.timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final file = await _privateMediaOutboxE2EHostReleaseFile();
+    if (!await file.exists()) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      continue;
+    }
+    final decoded = jsonDecode(await file.readAsString());
+    if (decoded is! Map) {
+      throw const FormatException(
+        'private-media outbox host release is not an object',
+      );
+    }
+    validatePrivateMediaOutboxE2EHostRelease(
+      request,
+      Map<String, dynamic>.from(decoded),
+    );
+    await file.delete();
+    return;
+  }
+  throw TimeoutException(
+    'private-media outbox timed out waiting for host release',
+  );
+}
+
+Future<File> _privateMediaOutboxE2EHostReleaseFile() async {
+  final dir = await getApplicationDocumentsDirectory();
+  return File('${dir.path}/$privateMediaOutboxE2EHostReleaseFileName');
 }
 
 Future<File> _configFile() async {

@@ -55,6 +55,9 @@ void main() {
     required PrivateMediaEligibility eligibility,
     required ValueChanged<PrivateMediaPolicy> onPolicyChanged,
     PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+    String recipientName = 'Lina',
+    TargetPlatform targetPlatform = TargetPlatform.android,
+    bool senderReopenEnabled = false,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -74,6 +77,9 @@ void main() {
             privateMediaEligibility: eligibility,
             privateMediaPolicy: policy,
             onPrivateMediaPolicyChanged: onPolicyChanged,
+            privateMediaRecipientName: recipientName,
+            privateMediaTargetPlatform: targetPlatform,
+            privateMediaSenderReopenEnabled: senderReopenEnabled,
           ),
         ),
       ),
@@ -146,7 +152,9 @@ void main() {
     }
   });
 
-  testWidgets('protected selection emits the typed policy', (tester) async {
+  testWidgets('sheet keeps selection provisional until CTA commits it', (
+    tester,
+  ) async {
     PrivateMediaPolicy? selected;
     await tester.pumpWidget(
       buildComposer(
@@ -163,13 +171,19 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('private-media-option-protected')),
     );
+    await tester.pump();
+
+    expect(selected, isNull);
+    expect(find.text('Use Protected view'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
     await tester.pumpAndSettle();
 
     expect(selected?.mode, PrivateMediaMode.protected);
     expect(selected?.durationSeconds, isNull);
   });
 
-  testWidgets('private media menu uses consequence-led labels and details', (
+  testWidgets('sheet uses consequence-led labels, title, and duration chips', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -185,6 +199,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('private-media-selector')));
     await tester.pumpAndSettle();
 
+    expect(find.text('How should Lina see this photo?'), findsOneWidget);
     expect(find.text('Keep in chat'), findsNWidgets(2));
     expect(find.text('Protected view'), findsOneWidget);
     expect(find.text('They can save or share it.'), findsOneWidget);
@@ -192,14 +207,19 @@ void main() {
       find.text('They can view it again, but not save or share it.'),
       findsOneWidget,
     );
+    expect(find.text('Disappears after they open it once.'), findsOneWidget);
     expect(
-      find.text('Disappears after they open it once.'),
+      find.text("Disappears from Lina's phone after a time you choose."),
       findsOneWidget,
     );
-    expect(
-      find.text('Deleted from their device after this time.'),
-      findsNWidgets(3),
-    );
+    expect(find.text('Set an expiry'), findsOneWidget);
+    expect(find.text('1 hour'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('private-media-option-expiry')));
+    await tester.pump();
+    expect(find.text('1 hour'), findsOneWidget);
+    expect(find.text('1 day'), findsOneWidget);
+    expect(find.text('7 days'), findsOneWidget);
     expect(find.text('Ordinary'), findsNothing);
   });
 
@@ -228,6 +248,7 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('private-media-option-protected')),
     );
+    await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
     await tester.pumpAndSettle();
 
     expect(selectedPolicy, const PrivateMediaPolicy.protected());
@@ -243,24 +264,29 @@ void main() {
   testWidgets('view-once and exact disappearing durations emit typed policy', (
     tester,
   ) async {
-    final cases = <({Key key, PrivateMediaPolicy expected})>[
-      (
-        key: const ValueKey('private-media-option-view-once'),
-        expected: const PrivateMediaPolicy.viewOnce(),
-      ),
-      (
-        key: const ValueKey('private-media-option-disappearing-1h'),
-        expected: PrivateMediaPolicy.disappearing(3600),
-      ),
-      (
-        key: const ValueKey('private-media-option-disappearing-1d'),
-        expected: PrivateMediaPolicy.disappearing(86400),
-      ),
-      (
-        key: const ValueKey('private-media-option-disappearing-7d'),
-        expected: PrivateMediaPolicy.disappearing(604800),
-      ),
-    ];
+    final cases =
+        <({Key? modeKey, Key? durationKey, PrivateMediaPolicy expected})>[
+          (
+            modeKey: const ValueKey('private-media-option-view-once'),
+            durationKey: null,
+            expected: const PrivateMediaPolicy.viewOnce(),
+          ),
+          (
+            modeKey: const ValueKey('private-media-option-expiry'),
+            durationKey: const ValueKey('private-media-option-disappearing-1h'),
+            expected: PrivateMediaPolicy.disappearing(3600),
+          ),
+          (
+            modeKey: const ValueKey('private-media-option-expiry'),
+            durationKey: const ValueKey('private-media-option-disappearing-1d'),
+            expected: PrivateMediaPolicy.disappearing(86400),
+          ),
+          (
+            modeKey: const ValueKey('private-media-option-expiry'),
+            durationKey: const ValueKey('private-media-option-disappearing-7d'),
+            expected: PrivateMediaPolicy.disappearing(604800),
+          ),
+        ];
 
     for (final testCase in cases) {
       PrivateMediaPolicy? selected;
@@ -275,10 +301,148 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('private-media-selector')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(testCase.key));
+      await tester.tap(find.byKey(testCase.modeKey!));
+      await tester.pump();
+      if (testCase.durationKey != null) {
+        await tester.tap(find.byKey(testCase.durationKey!));
+        await tester.pump();
+      }
+      expect(selected, isNull);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
       await tester.pumpAndSettle();
-      expect(selected, testCase.expected, reason: testCase.key.toString());
+      expect(
+        selected,
+        testCase.expected,
+        reason: testCase.durationKey?.toString() ?? testCase.modeKey.toString(),
+      );
     }
+  });
+
+  testWidgets('dismissing the sheet does not commit provisional state', (
+    tester,
+  ) async {
+    PrivateMediaPolicy? selected;
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.image,
+        ),
+        onPolicyChanged: (policy) => selected = policy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('private-media-option-protected')),
+    );
+    await tester.pump();
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+
+    expect(selected, isNull);
+  });
+
+  testWidgets('summary is derived from externally supplied policy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.image,
+        ),
+        policy: const PrivateMediaPolicy.protected(),
+        onPolicyChanged: (_) {},
+      ),
+    );
+
+    expect(find.text('Protected view'), findsOneWidget);
+    expect(find.text('Viewable again · no saving or sharing'), findsOneWidget);
+    expect(find.text('Change'), findsOneWidget);
+
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.image,
+        ),
+        policy: const PrivateMediaPolicy.ordinary(),
+        onPolicyChanged: (_) {},
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Keep in chat'), findsOneWidget);
+    expect(find.text('Normal photo · can be saved or shared'), findsOneWidget);
+  });
+
+  testWidgets('disclosure is platform-true and sender reopen is gated', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.video,
+        ),
+        recipientName: 'Lina',
+        targetPlatform: TargetPlatform.iOS,
+        onPolicyChanged: (_) {},
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+    await tester.pumpAndSettle();
+    expect(find.text('How should Lina see this video?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('private-media-option-protected')),
+    );
+    await tester.pump();
+
+    final disclosure = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-disclosure')),
+        matching: find.byType(Text),
+      ),
+    );
+    expect(
+      disclosure.data,
+      contains('iOS cannot reliably prevent screenshots'),
+    );
+    expect(
+      disclosure.data,
+      isNot(contains('You can reopen it once here after sending.')),
+    );
+
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.gif,
+        ),
+        senderReopenEnabled: true,
+        onPolicyChanged: (_) {},
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+    await tester.pumpAndSettle();
+    expect(find.text('How should Lina see this GIF?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('private-media-option-view-once')),
+    );
+    await tester.pump();
+    expect(
+      find.textContaining('You can reopen it once here after sending.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('typing text resets a selected private policy', (tester) async {

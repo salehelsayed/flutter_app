@@ -1515,14 +1515,14 @@ Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl006PostRemovalMedia({
     _pngFixtureBytes(<int>[6, 0, 0, 6, 42, 43, 44, 45]),
   );
   final blobId = 'pl006-post-removal-media-$_runId';
-  final uploaded = await uploadMedia(
+  final uploaded = (await uploadMedia(
     bridge: stack.bridge,
     localFilePath: localFile.path,
     mime: 'image/png',
     recipientPeerId: groupId,
     allowedPeers: allowedPeers,
     blobId: blobId,
-  );
+  )).attachmentOrNull;
   if (uploaded == null) {
     throw StateError('PL-006 Alice media upload failed');
   }
@@ -1555,14 +1555,14 @@ Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl007ReaddMedia({
   final localFile = File('${tempDir.path}/pl007-$window.png');
   await localFile.writeAsBytes(_pngFixtureBytes(bytes));
   final blobId = 'pl007-$window-media-$_runId';
-  final uploaded = await uploadMedia(
+  final uploaded = (await uploadMedia(
     bridge: stack.bridge,
     localFilePath: localFile.path,
     mime: 'image/png',
     recipientPeerId: groupId,
     allowedPeers: allowedPeers,
     blobId: blobId,
-  );
+  )).attachmentOrNull;
   if (uploaded == null) {
     throw StateError('PL-007 Alice $window media upload failed');
   }

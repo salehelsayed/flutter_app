@@ -174,6 +174,90 @@ void main() {
           ),
       isTrue,
     );
+
+    final controlledPhysical = manifest.capabilityById(
+      'android.connectivity_restore_media_outbox',
+    )!;
+    expect(
+      controlledPhysical.resources.any(
+        (resource) =>
+            resource.name == 'device-control:android-physical' &&
+            resource.access == ResourceAccess.exclusive,
+      ),
+      isTrue,
+    );
+    expect(
+      manifest.validate(),
+      isEmpty,
+      reason: 'an exclusive physical network-control lock owns that target',
+    );
+    final withoutPhysicalControl = controlledPhysical.copyWith(
+      resources: controlledPhysical.resources
+          .where(
+            (resource) => resource.name != 'device-control:android-physical',
+          )
+          .toList(growable: false),
+    );
+    expect(
+      manifest
+          .copyWith(
+            capabilities: manifest.capabilities
+                .map(
+                  (entry) => entry.id == withoutPhysicalControl.id
+                      ? withoutPhysicalControl
+                      : entry,
+                )
+                .toList(growable: false),
+          )
+          .validate()
+          .any(
+            (error) =>
+                error.contains('android.physical') &&
+                error.contains('without a matching device resource'),
+          ),
+      isTrue,
+    );
+  });
+
+  test('private media outbox capability is production-driving and exact', () {
+    final capability = manifest.capabilityById(
+      'android.connectivity_restore_media_outbox',
+    );
+    expect(capability, isNotNull);
+    expect(capability!.owner, 'conversation');
+    expect(capability.lane, 'reliability');
+    expect(capability.required, isTrue);
+    expect(
+      capability.proofBoundaryId,
+      'android.os-network.private-media-outbox.relay-delivery',
+    );
+    expect(capability.buildProfileId, 'android.e2e.main');
+    expect(capability.dependencies, <String>['build.android.e2e.main']);
+    expect(capability.artifactRequired, isTrue);
+    expect(capability.artifactValidators, <String>[
+      'validatePrivateMediaOutboxRestoreArtifact',
+    ]);
+    expect(capability.automationReady, isTrue);
+    expect(capability.active, isTrue);
+    expect(capability.allowedNaReason, 'target_unavailable_by_project_policy');
+    expect(capability.command, <String>[
+      'dart',
+      'run',
+      'integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart',
+    ]);
+    expect(
+      capability.assertionIds,
+      containsAll(<String>{
+        'network_restored_claim_is_causal',
+        'restore_retry_latency_recorded',
+        'pause_resume_remained_queued',
+        'zero_offline_resume_attempts',
+        'one_post_restore_retry',
+        'expected_attempt_counts',
+        'zero_post_restore_ui_actions',
+        'receiver_exact_media_delivered',
+      }),
+    );
   });
 
   test('major plan has every required lane once and complete typed rows', () {

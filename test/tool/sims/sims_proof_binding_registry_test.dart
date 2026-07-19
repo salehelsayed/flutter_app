@@ -241,6 +241,49 @@ void main() {
       );
     },
   );
+
+  test(
+    'private-media outbox restore proof is manifest-owned and discoverable',
+    () {
+      const capabilityId = 'android.connectivity_restore_media_outbox';
+      const runner =
+          'integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart';
+      final capability = manifest.capabilityById(capabilityId);
+
+      expect(capability, isNotNull);
+      expect(capability!.active, isTrue);
+      expect(capability.required, isTrue);
+      expect(capability.participatesIn(SimsMode.major), isTrue);
+      expect(capability.command, <String>['dart', 'run', runner]);
+      expect(capability.artifactValidators, <String>[
+        'validatePrivateMediaOutboxRestoreArtifact',
+      ]);
+      expect(
+        discovery.where(
+          (record) =>
+              record.path == runner &&
+              record.category == 'support' &&
+              record.kind == 'support' &&
+              record.note.contains('production private-media outbox restore'),
+        ),
+        hasLength(1),
+      );
+      expect(
+        discovery.where(
+          (record) =>
+              record.path == _manualProofRegistry &&
+              record.category == 'implemented' &&
+              record.kind == 'capability' &&
+              record.note.startsWith('id=$capabilityId '),
+        ),
+        hasLength(1),
+      );
+
+      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+      expect(major.selectedIds, contains(capabilityId));
+      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+    },
+  );
 }
 
 List<_DiscoveryRecord> _readDiscoveryRecords() {

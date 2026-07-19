@@ -40,7 +40,7 @@ class FakeUploadMediaFn {
   EncryptedMediaArtifact? get lastPreparedArtifact => _lastPreparedArtifact;
 
   /// The callable to pass as `uploadMediaFn`.
-  Future<MediaAttachment?> call({
+  Future<UploadMediaOutcome> call({
     required Bridge bridge,
     required String localFilePath,
     required String mime,
@@ -67,8 +67,17 @@ class FakeUploadMediaFn {
         : List<String>.from(allowedPeers);
 
     if (_resultsByPath.containsKey(localFilePath)) {
-      return _resultsByPath[localFilePath];
+      return _outcomeFor(_resultsByPath[localFilePath]);
     }
-    return _defaultResult;
+    return _outcomeFor(_defaultResult);
   }
+
+  UploadMediaOutcome _outcomeFor(MediaAttachment? attachment) =>
+      attachment == null
+      ? const UploadMediaFailed(
+          stage: UploadMediaStage.consumerBoundary,
+          disposition: UploadMediaDisposition.terminal,
+          errorCode: 'FAKE_UPLOAD_FAILED',
+        )
+      : UploadMediaSucceeded(attachment);
 }

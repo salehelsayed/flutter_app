@@ -28,7 +28,10 @@ class _ProofLane implements PrivateMediaLifecycleLaneAdapter {
       target.messageId == messageId ? target : null;
 
   @override
-  Future<bool> claimOpening(String messageId, {required int nowMs}) async {
+  Future<bool> claimOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) async {
     if (target.mode != PrivateMediaMode.viewOnce ||
         target.state != PrivateMediaLifecycleState.available) {
       return false;
@@ -38,7 +41,10 @@ class _ProofLane implements PrivateMediaLifecycleLaneAdapter {
   }
 
   @override
-  Future<bool> markViewing(String messageId, {required int nowMs}) async {
+  Future<bool> markViewing(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) async {
     if (target.state != PrivateMediaLifecycleState.opening) return false;
     firstFrames++;
     target = target.copyWith(
@@ -49,7 +55,9 @@ class _ProofLane implements PrivateMediaLifecycleLaneAdapter {
   }
 
   @override
-  Future<bool> rollbackOpening(String messageId) async {
+  Future<bool> rollbackOpening(
+    PrivateMediaOpeningLeaseIdentity identity,
+  ) async {
     if (target.state != PrivateMediaLifecycleState.opening) return false;
     rollbacks++;
     target = target.copyWith(state: PrivateMediaLifecycleState.available);
@@ -66,6 +74,12 @@ class _ProofLane implements PrivateMediaLifecycleLaneAdapter {
     );
     return true;
   }
+
+  @override
+  Future<bool> consumeOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) => consume(identity.messageId, nowMs: nowMs);
 
   @override
   Future<bool> advanceClock(String messageId, {required int nowMs}) async {

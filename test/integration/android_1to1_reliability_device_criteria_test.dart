@@ -50,6 +50,136 @@ void main() {
     );
 
     test(
+      'private media outbox requires causal restored ownership and exact per-phase attempts',
+      () {
+        final artifact = <String, Object?>{
+          'schemaVersion': 1,
+          'scenario': 'android.connectivity_restore_media_outbox',
+          'status': 'passed',
+          'physicalSenderTargetSha256': privateMediaOutboxTargetSha256(
+            role: privateMediaOutboxPhysicalSenderTargetRole,
+            adbTargetId: 'physical-android',
+          ),
+          'emulatorReceiverTargetSha256': privateMediaOutboxTargetSha256(
+            role: privateMediaOutboxEmulatorReceiverTargetRole,
+            adbTargetId: 'android-emulator',
+          ),
+          'phases': <Map<String, Object?>>[
+            _privateMediaOutboxPhase(1),
+            _privateMediaOutboxPhase(2, pauseResume: true),
+          ],
+        };
+
+        expect(validatePrivateMediaOutboxRestoreArtifact(artifact).ok, isTrue);
+
+        final phases = artifact['phases']! as List<Map<String, Object?>>;
+        phases[1]['offlineResumeAttemptCount'] = 1;
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'an automatic resume attempt while offline must fail closed',
+        );
+
+        phases[1]['offlineResumeAttemptCount'] = 0;
+        phases[0]['restoreRetryLatencyMs'] = null;
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'latency is informational but remains artifact-required',
+        );
+
+        phases[0]['restoreRetryLatencyMs'] = 240;
+        final events = phases[0]['events']! as List<Map<String, Object?>>;
+        final claim = events.removeAt(1);
+        events.insert(0, claim);
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'the restored claim must follow the restored trigger',
+        );
+
+        events.removeAt(0);
+        events.insert(1, claim);
+        claim['source'] = 'full';
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'an ordered full retry cannot impersonate the causal winner',
+        );
+      },
+    );
+
+    test(
+      'private media outbox target evidence is role-salted and never raw',
+      () {
+        final artifact = <String, Object?>{
+          'schemaVersion': 1,
+          'scenario': 'android.connectivity_restore_media_outbox',
+          'status': 'passed',
+          'physicalSenderTargetSha256': privateMediaOutboxTargetSha256(
+            role: privateMediaOutboxPhysicalSenderTargetRole,
+            adbTargetId: 'physical-android',
+          ),
+          'emulatorReceiverTargetSha256': privateMediaOutboxTargetSha256(
+            role: privateMediaOutboxEmulatorReceiverTargetRole,
+            adbTargetId: 'android-emulator',
+          ),
+          'phases': <Map<String, Object?>>[
+            _privateMediaOutboxPhase(1),
+            _privateMediaOutboxPhase(2, pauseResume: true),
+          ],
+        };
+
+        expect(
+          privateMediaOutboxTargetSha256(
+            role: privateMediaOutboxPhysicalSenderTargetRole,
+            adbTargetId: 'same-adb-target',
+          ),
+          isNot(
+            privateMediaOutboxTargetSha256(
+              role: privateMediaOutboxEmulatorReceiverTargetRole,
+              adbTargetId: 'same-adb-target',
+            ),
+          ),
+          reason: 'the role is part of the digest domain',
+        );
+        expect(
+          () => privateMediaOutboxTargetSha256(
+            role: 'unscoped',
+            adbTargetId: 'same-adb-target',
+          ),
+          throwsArgumentError,
+          reason: 'an unscoped caller cannot mint plausible target evidence',
+        );
+        expect(validatePrivateMediaOutboxRestoreArtifact(artifact).ok, isTrue);
+
+        artifact['deviceIds'] = <String>['raw-physical', 'raw-emulator'];
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'raw ADB IDs are outside the exact durable schema',
+        );
+
+        artifact.remove('deviceIds');
+        final physicalHash = artifact['physicalSenderTargetSha256'];
+        artifact['physicalSenderTargetSha256'] = 'raw-physical';
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'a raw target ID cannot occupy a digest field',
+        );
+
+        artifact['physicalSenderTargetSha256'] = physicalHash;
+        artifact['emulatorReceiverTargetSha256'] = physicalHash;
+        expect(
+          validatePrivateMediaOutboxRestoreArtifact(artifact).ok,
+          isFalse,
+          reason: 'the two retained role identities must remain distinct',
+        );
+      },
+    );
+
+    test(
       'keepalive requires drop/skip, no direct attempt, bounded custody, recovery, and re-arm',
       () {
         final artifact = <String, Object?>{
@@ -236,4 +366,64 @@ void main() {
       expect(validateTopologyNotApplicable(artifact).ok, isFalse);
     });
   });
+}
+
+Map<String, Object?> _privateMediaOutboxPhase(
+  int phase, {
+  bool pauseResume = false,
+}) {
+  const runHash =
+      '2f2f6f843fbc325789d687c6e4f3f39af1147ed91ab3300f092e3a051a1fd3c4';
+  const attachmentHash =
+      'ac5f03f3d848aa6f9e0cb7f864b8b8611ea4d6b6b01a880b946249364a67a214';
+  return <String, Object?>{
+    'phase': phase,
+    'runCorrelationSha256': runHash,
+    'attachmentSha256': attachmentHash,
+    'queuedNoRed': true,
+    'pauseResumeRemainedQueued': pauseResume,
+    'offlineResumeAttemptCount': 0,
+    'zeroPostRestoreUiActions': true,
+    'receiverExactMediaDelivered': true,
+    'encryptionPreparedCount': 2,
+    'uploadRequestCount': 2,
+    'envelopeCount': 1,
+    'receiveCount': 1,
+    'networkRestoredClaimCount': 1,
+    'postRestoreEncryptionCount': 1,
+    'postRestoreUploadCount': 1,
+    'restoreRetryLatencyMs': 240,
+    'events': <Map<String, Object?>>[
+      <String, Object?>{
+        'event': 'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER',
+        'runCorrelationSha256': runHash,
+      },
+      <String, Object?>{
+        'event': 'MEDIA_UPLOAD_LEASE_CLAIMED',
+        'source': 'network_restored',
+        'runCorrelationSha256': runHash,
+        'attachmentSha256': attachmentHash,
+      },
+      <String, Object?>{
+        'event': 'MEDIA_ENCRYPTION_PREPARED',
+        'runCorrelationSha256': runHash,
+        'attachmentSha256': attachmentHash,
+      },
+      <String, Object?>{
+        'event': 'MEDIA_UPLOAD_START',
+        'runCorrelationSha256': runHash,
+        'attachmentSha256': attachmentHash,
+      },
+      <String, Object?>{
+        'event': 'CHAT_MSG_SEND_SUCCESS',
+        'runCorrelationSha256': runHash,
+        'attachmentSha256': attachmentHash,
+      },
+      <String, Object?>{
+        'event': 'PRIVATE_MEDIA_OUTBOX_E2E_RECEIVED',
+        'runCorrelationSha256': runHash,
+        'attachmentSha256': attachmentHash,
+      },
+    ],
+  };
 }

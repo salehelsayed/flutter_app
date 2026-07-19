@@ -548,14 +548,84 @@ MessageRepositoryImpl _buildMessageRepository(Database db) {
             ),
     dbMarkInboxCustodyChecked: (id, {relayExpiresAtMs}) =>
         dbMarkInboxCustodyChecked(db, id, relayExpiresAtMs: relayExpiresAtMs),
-    dbClaimDirectPrivateMediaOpening: (id, {required nowMs}) =>
-        dbClaimDirectPrivateMediaOpening(db, id, nowMs: nowMs),
-    dbMarkDirectPrivateMediaViewing: (id, {required nowMs}) =>
-        dbMarkDirectPrivateMediaViewing(db, id, nowMs: nowMs),
-    dbRollbackDirectPrivateMediaOpening: (id) =>
-        dbRollbackDirectPrivateMediaOpening(db, id),
-    dbConsumeDirectPrivateMedia: (id, {required nowMs}) =>
-        dbConsumeDirectPrivateMedia(db, id, nowMs: nowMs),
+    dbClaimDirectPrivateMediaOpening:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbClaimDirectPrivateMediaOpening(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
+    dbMarkDirectPrivateMediaViewing:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbMarkDirectPrivateMediaViewing(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
+    dbRollbackDirectPrivateMediaOpening:
+        (id, {isIncoming, mode, attachmentId, storedLocalPath}) =>
+            dbRollbackDirectPrivateMediaOpening(
+              db,
+              id,
+              isIncoming: isIncoming,
+              mode: mode,
+              attachmentId: attachmentId,
+              storedLocalPath: storedLocalPath,
+            ),
+    dbQuarantineIndeterminateDirectPrivateMediaAvailable:
+        (
+          id, {
+          required isIncoming,
+          required mode,
+          required attachmentId,
+          required storedLocalPath,
+          required nowMs,
+        }) => dbQuarantineIndeterminateDirectPrivateMediaAvailable(
+          db,
+          id,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+          nowMs: nowMs,
+        ),
+    dbConsumeDirectPrivateMedia:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbConsumeDirectPrivateMedia(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
     dbAdvanceDirectPrivateMediaClock: (id, {required nowMs}) =>
         dbAdvanceDirectPrivateMediaClock(db, id, nowMs: nowMs),
     dbFailClosedCorruptDirectPrivateMediaState: (id, {required nowMs}) =>

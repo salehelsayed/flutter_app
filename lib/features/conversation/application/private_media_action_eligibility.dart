@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -138,7 +139,8 @@ abstract final class DirectPrivateMediaActionEligibility {
     required String expectedMessageId,
     String? expectedAttachmentId,
     bool attachmentRequired = true,
-    bool requireIncoming = true,
+    PrivateMediaDirection? requiredDirection = PrivateMediaDirection.incoming,
+    bool? requireIncoming,
   }) {
     DirectPrivateMediaActionDecision denied(
       DirectPrivateMediaEligibilityReason reason,
@@ -161,7 +163,15 @@ abstract final class DirectPrivateMediaActionEligibility {
     if (parent.isHidden) {
       return denied(DirectPrivateMediaEligibilityReason.parentHidden);
     }
-    if (requireIncoming && !parent.isIncoming) {
+    final effectiveDirection = requireIncoming == null
+        ? requiredDirection
+        : requireIncoming
+        ? PrivateMediaDirection.incoming
+        : null;
+    final parentDirection = parent.isIncoming
+        ? PrivateMediaDirection.incoming
+        : PrivateMediaDirection.outgoing;
+    if (effectiveDirection != null && parentDirection != effectiveDirection) {
       return denied(DirectPrivateMediaEligibilityReason.parentNotIncoming);
     }
 

@@ -429,6 +429,27 @@
       "declaredBuildException": false
     },
     {
+      "id": "android.connectivity_restore_media_outbox",
+      "owner": "conversation",
+      "proofBoundary": "android.os-network.private-media-outbox.relay-delivery",
+      "assertions": ["network_restored_claim_is_causal", "restore_retry_latency_recorded", "pause_resume_remained_queued", "zero_offline_resume_attempts", "one_post_restore_retry", "expected_attempt_counts", "zero_post_restore_ui_actions", "receiver_exact_media_delivered"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["1to1", "media", "transport"],
+      "required": true,
+      "command": ["dart", "run", "integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart"],
+      "buildProfile": "android.e2e.main",
+      "dependencies": ["build.android.e2e.main"],
+      "resources": [{"name": "build:android.e2e.main", "access": "read"}, {"name": "device-control:android-physical", "access": "exclusive"}, {"name": "device:android-emulator", "access": "exclusive"}, {"name": "relay-mutation:staging", "access": "exclusive"}, {"name": "artifact:private-media-outbox", "access": "write"}],
+      "targetCapabilities": ["android.physical", "android.emulator", "adb.network-control"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validatePrivateMediaOutboxRestoreArtifact",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
       "id": "android.keepalive_drop_skip_direct",
       "owner": "conversation",
       "proofBoundary": "android.bridge.keepalive-drop-relay-recovery",

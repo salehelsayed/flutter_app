@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -11,13 +13,19 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+
+export 'package:flutter_app/core/media/upload_media_outcome.dart';
 
 const _uuid = Uuid();
 
 String _uploadMediaShortId(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
+
+String _uploadMediaSafeHash(String value) =>
+    sha256.convert(utf8.encode(value)).toString();
 
 String _uploadMediaPathKind(String? path) {
   if (path == null || path.isEmpty) {
@@ -198,7 +206,7 @@ Future<EncryptedMediaArtifact> prepareEncryptedMediaArtifact({
 }
 
 typedef UploadMediaFn =
-    Future<MediaAttachment?> Function({
+    Future<UploadMediaOutcome> Function({
       required Bridge bridge,
       required String localFilePath,
       required String mime,
@@ -214,6 +222,175 @@ typedef UploadMediaFn =
       EncryptedMediaArtifact? preparedArtifact,
     });
 
+const _consumerBoundaryUploadFailure = UploadMediaFailed(
+  stage: UploadMediaStage.consumerBoundary,
+  disposition: UploadMediaDisposition.terminal,
+  errorCode: 'UNEXPECTED_CONSUMER_THROW',
+);
+
+/// The sole invocation boundary for an injected [UploadMediaFn].
+///
+/// Besides making upload success/failure exhaustive, this normalizes throws
+/// from test seams and from the small pre-classification window in
+/// [uploadMedia]. Callers intentionally project [UploadMediaOutcome] back to
+/// their existing success/null behavior until the retry UX consumes the typed
+/// failure in a later slice.
+Future<UploadMediaOutcome> runUploadMedia({
+  required UploadMediaFn uploadMediaFn,
+  required Bridge bridge,
+  required String localFilePath,
+  required String mime,
+  required String recipientPeerId,
+  MediaFileManager? mediaFileManager,
+  int? width,
+  int? height,
+  int? durationMs,
+  List<double>? waveform,
+  List<String>? allowedPeers,
+  String? blobId,
+  bool deleteSourceWhenDone = false,
+  EncryptedMediaArtifact? preparedArtifact,
+}) async {
+  try {
+    return await uploadMediaFn(
+      bridge: bridge,
+      localFilePath: localFilePath,
+      mime: mime,
+      recipientPeerId: recipientPeerId,
+      mediaFileManager: mediaFileManager,
+      width: width,
+      height: height,
+      durationMs: durationMs,
+      waveform: waveform,
+      allowedPeers: allowedPeers,
+      blobId: blobId,
+      deleteSourceWhenDone: deleteSourceWhenDone,
+      preparedArtifact: preparedArtifact,
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_UPLOAD_CONSUMER_BOUNDARY_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return _consumerBoundaryUploadFailure;
+  }
+}
+
+String _normalizeUploadErrorCode(Object? rawCode) {
+  final normalized = rawCode?.toString().trim().toUpperCase() ?? '';
+  return normalized.isEmpty ? 'UNKNOWN_TRANSPORT_ERROR' : normalized;
+}
+
+bool _isTerminalMediaErrorMessage(String message) {
+  final normalized = message.toLowerCase();
+  return normalized.contains('exceeds max') ||
+      normalized.contains('open file') ||
+      normalized.contains('stat file');
+}
+
+bool _isConnectivityMediaErrorMessage(String message) {
+  final normalized = message.toLowerCase();
+  return normalized.contains('relay unreachable') ||
+      normalized.contains('relay unavailable') ||
+      normalized.contains('network is unreachable') ||
+      normalized.contains('no route to host') ||
+      normalized.contains('connection refused') ||
+      normalized.contains('connection reset') ||
+      normalized.contains('broken pipe') ||
+      normalized.contains('dial ') ||
+      normalized.startsWith('dial') ||
+      normalized.contains('stream reset') ||
+      normalized.contains('open stream') ||
+      normalized.contains('failed to open stream') ||
+      normalized.contains('protocol stream');
+}
+
+bool _isSyntacticallyValidMime(String mime) =>
+    RegExp(r'^[^/\s]+/[^/\s]+$').hasMatch(mime.trim());
+
+/// Classifies a bridge-returned upload failure without consulting relay
+/// readiness. `MEDIA_ERROR` is message-shaped by the native bridge, so its
+/// known connectivity and permanent forms are deliberately distinguished.
+@visibleForTesting
+UploadMediaFailed classifyUploadMediaTransportFailure({
+  required Object? errorCode,
+  Object? errorMessage,
+}) {
+  final normalizedCode = _normalizeUploadErrorCode(errorCode);
+  final message = errorMessage?.toString() ?? '';
+
+  final disposition = switch (normalizedCode) {
+    'MEDIA_ERROR' when _isTerminalMediaErrorMessage(message) =>
+      UploadMediaDisposition.terminal,
+    'MEDIA_ERROR' when _isConnectivityMediaErrorMessage(message) =>
+      UploadMediaDisposition.connectivityRetryable,
+    'MEDIA_ERROR' => UploadMediaDisposition.boundedRetryable,
+    'NOT_INITIALIZED' ||
+    'NULL_RESPONSE' => UploadMediaDisposition.connectivityRetryable,
+    'INVALID_INPUT' ||
+    'UNKNOWN_COMMAND' ||
+    'MISSING_PLUGIN' ||
+    'MALFORMED_RESPONSE' => UploadMediaDisposition.terminal,
+    'PLATFORM_ERROR' ||
+    'INTERNAL_ERROR' => UploadMediaDisposition.boundedRetryable,
+    _ => UploadMediaDisposition.boundedRetryable,
+  };
+
+  return UploadMediaFailed(
+    stage: UploadMediaStage.transport,
+    disposition: disposition,
+    errorCode: normalizedCode,
+  );
+}
+
+UploadMediaFailed _classifyThrownUploadFailure({
+  required UploadMediaStage stage,
+  required Object error,
+  required bool transportRequestIssued,
+}) {
+  if (stage == UploadMediaStage.transport && error is TimeoutException) {
+    return const UploadMediaFailed(
+      stage: UploadMediaStage.transport,
+      disposition: UploadMediaDisposition.connectivityRetryable,
+      errorCode: 'TIMEOUT_EXCEPTION',
+    );
+  }
+
+  return switch (stage) {
+    UploadMediaStage.validation => const UploadMediaFailed(
+      stage: UploadMediaStage.validation,
+      disposition: UploadMediaDisposition.terminal,
+      errorCode: 'INVALID_MEDIA_INPUT',
+    ),
+    UploadMediaStage.localSource => const UploadMediaFailed(
+      stage: UploadMediaStage.localSource,
+      disposition: UploadMediaDisposition.terminal,
+      errorCode: 'LOCAL_SOURCE_UNREADABLE',
+    ),
+    UploadMediaStage.encryption => const UploadMediaFailed(
+      stage: UploadMediaStage.encryption,
+      disposition: UploadMediaDisposition.boundedRetryable,
+      errorCode: 'MEDIA_ENCRYPTION_FAILED',
+    ),
+    UploadMediaStage.transport => UploadMediaFailed(
+      stage: UploadMediaStage.transport,
+      disposition: transportRequestIssued
+          ? UploadMediaDisposition.boundedRetryable
+          : UploadMediaDisposition.terminal,
+      errorCode: transportRequestIssued
+          ? 'UNEXPECTED_TRANSPORT_THROW'
+          : 'PRE_REQUEST_TRANSPORT_THROW',
+    ),
+    UploadMediaStage.durableCopy => const UploadMediaFailed(
+      stage: UploadMediaStage.durableCopy,
+      disposition: UploadMediaDisposition.boundedRetryable,
+      errorCode: 'DURABLE_COPY_FAILED',
+    ),
+    UploadMediaStage.consumerBoundary => _consumerBoundaryUploadFailure,
+  };
+}
+
 /// Uploads a local file to the relay and returns a MediaAttachment on success.
 ///
 /// Called BEFORE sendChatMessage — the send use case receives
@@ -221,7 +398,7 @@ typedef UploadMediaFn =
 ///
 /// When [mediaFileManager] is provided, copies the file to the persistent
 /// media directory so it survives app restarts.
-Future<MediaAttachment?> uploadMedia({
+Future<UploadMediaOutcome> uploadMedia({
   required Bridge bridge,
   required String localFilePath,
   required String mime,
@@ -267,29 +444,61 @@ Future<MediaAttachment?> uploadMedia({
       details: {
         'elapsedMs': uploadStopwatch.elapsedMilliseconds,
         'outcome': outcome,
-        'blobId': effectiveBlobId.substring(0, 8),
+        'blobId': _uploadMediaShortId(effectiveBlobId),
         'mime': effectiveMime,
-        if (fileSize != null) 'sizeBytes': fileSize,
+        'sizeBytes': ?fileSize,
         ...details,
       },
     );
   }
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'MEDIA_UPLOAD_START',
-    details: {
-      'blobId': effectiveBlobId.substring(0, 8),
-      'mime': effectiveMime,
-      'recipientPeerId': recipientPeerId.length > 10
-          ? recipientPeerId.substring(0, 10)
-          : recipientPeerId,
-    },
-  );
-
   String? encryptedUploadPath;
+  var stage = UploadMediaStage.validation;
+  var transportRequestIssued = false;
   try {
+    if (localFilePath.trim().isEmpty ||
+        effectiveMime.trim().isEmpty ||
+        !_isSyntacticallyValidMime(effectiveMime) ||
+        recipientPeerId.trim().isEmpty ||
+        effectiveBlobId.trim().isEmpty) {
+      emitUploadTiming(
+        outcome: 'rejected',
+        details: {'reason': 'invalid_input'},
+      );
+      return const UploadMediaFailed(
+        stage: UploadMediaStage.validation,
+        disposition: UploadMediaDisposition.terminal,
+        errorCode: 'INVALID_INPUT',
+      );
+    }
+
     if (isGroupUpload) {
+      final descriptorValidation = GroupMediaMimePolicy.validateDescriptor(
+        mime: mime,
+        mediaType: GroupMediaMimePolicy.mediaTypeForMime(mime),
+      );
+      if (!descriptorValidation.isValid) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_UPLOAD_REJECTED_INVALID_GROUP_MEDIA',
+          details: {
+            'blobId': _uploadMediaShortId(effectiveBlobId),
+            'mime': mime,
+            'reason': descriptorValidation.reason,
+          },
+        );
+        emitUploadTiming(
+          outcome: 'rejected',
+          details: {'reason': descriptorValidation.reason},
+        );
+        return const UploadMediaFailed(
+          stage: UploadMediaStage.validation,
+          disposition: UploadMediaDisposition.terminal,
+          errorCode: 'INVALID_MIME',
+        );
+      }
+
+      stage = UploadMediaStage.localSource;
       final validation = await GroupMediaMimePolicy.validateFile(
         path: localFilePath,
         mime: mime,
@@ -300,7 +509,7 @@ Future<MediaAttachment?> uploadMedia({
           layer: 'FL',
           event: 'MEDIA_UPLOAD_REJECTED_INVALID_GROUP_MEDIA',
           details: {
-            'blobId': effectiveBlobId.substring(0, 8),
+            'blobId': _uploadMediaShortId(effectiveBlobId),
             'mime': mime,
             'reason': validation.reason,
           },
@@ -309,10 +518,24 @@ Future<MediaAttachment?> uploadMedia({
           outcome: 'rejected',
           details: {'reason': validation.reason},
         );
-        return null;
+        final isLocalSourceFailure =
+            validation.reason == 'missing_file' ||
+            validation.reason == 'unreadable_file';
+        return isLocalSourceFailure
+            ? const UploadMediaFailed(
+                stage: UploadMediaStage.localSource,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'LOCAL_SOURCE_UNREADABLE',
+              )
+            : const UploadMediaFailed(
+                stage: UploadMediaStage.validation,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'INVALID_MIME',
+              );
       }
     }
 
+    stage = UploadMediaStage.localSource;
     final file = File(localFilePath);
     fileSize = await file.length();
     if (isGroupUpload) {
@@ -326,7 +549,7 @@ Future<MediaAttachment?> uploadMedia({
           layer: 'FL',
           event: 'MEDIA_UPLOAD_REJECTED_INVALID_GROUP_MEDIA',
           details: {
-            'blobId': effectiveBlobId.substring(0, 8),
+            'blobId': _uploadMediaShortId(effectiveBlobId),
             'mime': effectiveMime,
             'reason': sizeValidation.reason,
           },
@@ -335,7 +558,11 @@ Future<MediaAttachment?> uploadMedia({
           outcome: 'rejected',
           details: {'reason': sizeValidation.reason},
         );
-        return null;
+        return const UploadMediaFailed(
+          stage: UploadMediaStage.validation,
+          disposition: UploadMediaDisposition.terminal,
+          errorCode: 'INVALID_MEDIA_SIZE',
+        );
       }
     }
 
@@ -344,6 +571,7 @@ Future<MediaAttachment?> uploadMedia({
     // per-blob key. contentHash is ALWAYS the hash of the ENCRYPTED bytes
     // (relay_blob scope — the MIG-012 lesson). A keygen/encrypt failure
     // throws into the catch below: fail closed, no plaintext fallback.
+    stage = UploadMediaStage.encryption;
     final artifact =
         preparedArtifact ??
         await prepareEncryptedMediaArtifact(
@@ -356,6 +584,34 @@ Future<MediaAttachment?> uploadMedia({
     final encryptionScheme = artifact.scheme;
     final contentHash = artifact.contentHash;
 
+    // Privacy-safe correlation for the production outbox proof: the stable
+    // attachment id is one-way hashed. No raw/truncated identifier, path,
+    // recipient, content hash, key, or nonce leaves this boundary.
+    final attachmentSha256 = _uploadMediaSafeHash(effectiveBlobId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_ENCRYPTION_PREPARED',
+      details: {
+        'recipientClass': isGroupUpload ? 'group' : 'direct',
+        'mime': effectiveMime,
+        'attachmentSha256': attachmentSha256,
+      },
+    );
+
+    stage = UploadMediaStage.transport;
+    // This event means an actual transport request is about to be issued. It
+    // intentionally follows encryption/validation and contains no raw or
+    // truncated correlation identifiers.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_UPLOAD_START',
+      details: {
+        'recipientClass': isGroupUpload ? 'group' : 'direct',
+        'mime': effectiveMime,
+        'attachmentSha256': attachmentSha256,
+      },
+    );
+    transportRequestIssued = true;
     final result = await callP2PMediaUpload(
       bridge,
       id: effectiveBlobId,
@@ -377,36 +633,44 @@ Future<MediaAttachment?> uploadMedia({
       maxTimeout: transferMaxTimeout,
     );
 
-    if (encryptedUploadPath != null) {
-      await deleteAppOwnedMediaFileIfExists(
-        file: File(encryptedUploadPath),
-        caller: 'uploadMedia.cleanupEncryptedUpload',
-        reason: 'upload_encrypted_temp_cleanup_after_upload',
-        details: {
-          'blobId': _uploadMediaShortId(effectiveBlobId),
-          'mime': effectiveMime,
-          'recipientClass': isGroupUpload ? 'group' : 'direct',
-        },
-        swallowErrors: true,
-      );
-    }
+    await deleteAppOwnedMediaFileIfExists(
+      file: File(encryptedUploadPath),
+      caller: 'uploadMedia.cleanupEncryptedUpload',
+      reason: 'upload_encrypted_temp_cleanup_after_upload',
+      details: {
+        'blobId': _uploadMediaShortId(effectiveBlobId),
+        'mime': effectiveMime,
+        'recipientClass': isGroupUpload ? 'group' : 'direct',
+      },
+      swallowErrors: true,
+    );
+    encryptedUploadPath = null;
 
     if (result['ok'] != true) {
+      final failure = classifyUploadMediaTransportFailure(
+        errorCode: result['errorCode'],
+        errorMessage: result['errorMessage'],
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'MEDIA_UPLOAD_FAILED',
         details: {
-          'blobId': effectiveBlobId.substring(0, 8),
-          'error': result['errorMessage'],
+          'blobId': _uploadMediaShortId(effectiveBlobId),
+          'errorCode': failure.errorCode,
+          'disposition': failure.disposition.name,
         },
       );
       emitUploadTiming(
         outcome: 'failed',
-        details: {'error': result['errorMessage']},
+        details: {
+          'errorCode': failure.errorCode,
+          'disposition': failure.disposition.name,
+        },
       );
-      return null;
+      return failure;
     }
 
+    stage = UploadMediaStage.durableCopy;
     final now = DateTime.now().toUtc().toIso8601String();
     final mediaType = isGroupUpload
         ? GroupMediaMimePolicy.mediaTypeForMime(effectiveMime)!
@@ -460,7 +724,7 @@ Future<MediaAttachment?> uploadMedia({
           storedPath: storedPath,
           blobId: effectiveBlobId,
           mime: effectiveMime,
-          expectedBytes: fileSize!,
+          expectedBytes: fileSize,
         );
       }
       if (!copyResult.exists ||
@@ -504,34 +768,39 @@ Future<MediaAttachment?> uploadMedia({
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_UPLOAD_SUCCESS',
-      details: {'blobId': effectiveBlobId.substring(0, 8), 'size': fileSize},
+      details: {
+        'blobId': _uploadMediaShortId(effectiveBlobId),
+        'size': fileSize,
+      },
     );
     emitUploadTiming(
       outcome: 'success',
       details: {
         'storedPersistently': mediaFileManager != null,
-        if (durableCopyBytes != null) 'durableFileBytes': durableCopyBytes,
+        'durableFileBytes': ?durableCopyBytes,
         'recipientClass': allowedPeers == null ? 'direct' : 'group',
       },
     );
 
-    return MediaAttachment(
-      id: effectiveBlobId,
-      messageId: '', // set by caller after message ID is known
-      mime: effectiveMime,
-      size: fileSize,
-      mediaType: mediaType,
-      width: width,
-      height: height,
-      durationMs: durationMs,
-      localPath: storedPath,
-      downloadStatus: 'done',
-      createdAt: now,
-      waveform: waveform,
-      contentHash: contentHash,
-      encryptionKeyBase64: encryptionKeyBase64,
-      encryptionNonce: encryptionNonce,
-      encryptionScheme: encryptionScheme,
+    return UploadMediaSucceeded(
+      MediaAttachment(
+        id: effectiveBlobId,
+        messageId: '', // set by caller after message ID is known
+        mime: effectiveMime,
+        size: fileSize,
+        mediaType: mediaType,
+        width: width,
+        height: height,
+        durationMs: durationMs,
+        localPath: storedPath,
+        downloadStatus: 'done',
+        createdAt: now,
+        waveform: waveform,
+        contentHash: contentHash,
+        encryptionKeyBase64: encryptionKeyBase64,
+        encryptionNonce: encryptionNonce,
+        encryptionScheme: encryptionScheme,
+      ),
     );
   } catch (e) {
     if (encryptedUploadPath != null) {
@@ -543,7 +812,7 @@ Future<MediaAttachment?> uploadMedia({
           'blobId': _uploadMediaShortId(effectiveBlobId),
           'mime': effectiveMime,
           'recipientClass': isGroupUpload ? 'group' : 'direct',
-          'error': e.toString(),
+          'errorType': e.runtimeType.toString(),
         },
         swallowErrors: true,
       );
@@ -552,11 +821,16 @@ Future<MediaAttachment?> uploadMedia({
       layer: 'FL',
       event: 'MEDIA_UPLOAD_ERROR',
       details: {
-        'blobId': effectiveBlobId.substring(0, 8),
-        'error': e.toString(),
+        'blobId': _uploadMediaShortId(effectiveBlobId),
+        'stage': stage.name,
+        'errorType': e.runtimeType.toString(),
       },
     );
     emitUploadTiming(outcome: 'error');
-    return null;
+    return _classifyThrownUploadFailure(
+      stage: stage,
+      error: e,
+      transportRequestIssued: transportRequestIssued,
+    );
   }
 }

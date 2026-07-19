@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -16,6 +18,7 @@ enum SendVoiceMessageResult {
   success,
   invalidRecording,
   uploadFailed,
+  uploadQueued,
   sendFailed,
 }
 
@@ -47,6 +50,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   // 112 Phase 4 "encrypt once": the composer's LAN leg already streamed
   // this artifact; the relay upload must reuse the same key/ciphertext.
   EncryptedMediaArtifact? preparedArtifact,
+  UploadMediaFn uploadMediaFn = uploadMedia,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   void emitVoiceTiming({
@@ -112,7 +117,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
   final uploadStopwatch = Stopwatch()..start();
-  final uploaded = await uploadMedia(
+  final uploadOutcome = await runUploadMedia(
+    uploadMediaFn: uploadMediaFn,
     bridge: bridge,
     localFilePath: recording.filePath,
     mime: recording.mime,
@@ -127,6 +133,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     deleteSourceWhenDone: true,
     preparedArtifact: preparedArtifact,
   );
+  final uploaded = uploadOutcome.attachmentOrNull;
   uploadStopwatch.stop();
   final uploadMs = uploadStopwatch.elapsedMilliseconds;
 
@@ -150,6 +157,26 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       mediaFileManager: mediaFileManager,
       mediaAttachmentRepo: mediaAttachmentRepo,
     );
+    final projection =
+        uploadRetryProjectionRepo ??
+        (messageRepo is DirectUploadRetryProjectionRepository
+            ? messageRepo as DirectUploadRetryProjectionRepository
+            : null);
+    if (projection != null && messageId != null && blobId != null) {
+      final projected = await projection.projectUploadFailure(
+        messageId: messageId,
+        attachmentId: blobId,
+        failure: uploadOutcome as UploadMediaFailed,
+      );
+      if (projected.applied && !projected.isTerminal) {
+        emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_QUEUED', details: {});
+        emitVoiceTiming(
+          outcome: 'upload_queued',
+          details: {'uploadMs': uploadMs},
+        );
+        return (SendVoiceMessageResult.uploadQueued, null);
+      }
+    }
     emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_FAILED', details: {});
     emitVoiceTiming(outcome: 'upload_failed', details: {'uploadMs': uploadMs});
     return (SendVoiceMessageResult.uploadFailed, null);
@@ -221,6 +248,7 @@ Future<void> _persistDurableVoiceCopyOnUploadFailure({
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   if (blobId == null ||
+      messageId == null ||
       mediaFileManager == null ||
       mediaAttachmentRepo == null) {
     return;
@@ -229,15 +257,22 @@ Future<void> _persistDurableVoiceCopyOnUploadFailure({
     final source = File(recording.filePath);
     if (!source.existsSync()) return;
 
-    // Copy into the canonical owned media path (the same path uploadMedia
-    // would use on success, keyed on the stable blobId).
-    final durableAbsolute = await mediaFileManager.localPathForAttachment(
-      contactPeerId: targetPeerId,
-      blobId: blobId,
-      mime: recording.mime,
+    final durableRelative =
+        MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: messageId,
+          attachmentId: blobId,
+          mime: recording.mime,
+        );
+    final durableAbsolute = await mediaFileManager.resolveStoredPath(
+      durableRelative,
     );
     if (durableAbsolute != recording.filePath) {
-      await source.copy(durableAbsolute);
+      await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: recording.filePath,
+        messageId: messageId,
+        attachmentId: blobId,
+        mime: recording.mime,
+      );
     }
 
     // Persist as 'upload_pending' — NOT 'done'. 'done' is the
@@ -254,12 +289,12 @@ Future<void> _persistDurableVoiceCopyOnUploadFailure({
     await mediaAttachmentRepo.saveAttachment(
       MediaAttachment(
         id: blobId,
-        messageId: messageId ?? '',
+        messageId: messageId,
         mime: recording.mime,
         size: recording.sizeBytes,
         mediaType: 'audio',
         durationMs: recording.durationMs,
-        localPath: durableAbsolute,
+        localPath: durableRelative,
         downloadStatus: 'upload_pending',
         createdAt: DateTime.now().toUtc().toIso8601String(),
         waveform: waveform,

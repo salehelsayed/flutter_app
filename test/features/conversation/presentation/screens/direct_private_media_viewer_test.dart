@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -14,7 +15,17 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _MutableContinuityGuard implements DirectPrivateMediaContinuityGuard {
+  _MutableContinuityGuard([
+    this.state = DirectPrivateMediaContinuityState.valid,
+  ]);
+
+  @override
+  DirectPrivateMediaContinuityState state;
+}
 
 class _Lane implements PrivateMediaLifecycleLaneAdapter {
   _Lane(this.target, {this.beforeLoadTarget, this.throwCleanup = false});
@@ -37,9 +48,16 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
   }
 
   @override
-  Future<bool> claimOpening(String messageId, {required int nowMs}) async {
+  Future<bool> claimOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) async {
     if (target.state != PrivateMediaLifecycleState.available ||
-        target.mode != PrivateMediaMode.viewOnce ||
+        !((target.direction == PrivateMediaDirection.incoming &&
+                target.mode == PrivateMediaMode.viewOnce) ||
+            (target.direction == PrivateMediaDirection.outgoing &&
+                (target.mode == PrivateMediaMode.protected ||
+                    target.mode == PrivateMediaMode.viewOnce))) ||
         target.hidden) {
       return false;
     }
@@ -49,7 +67,10 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
   }
 
   @override
-  Future<bool> markViewing(String messageId, {required int nowMs}) async {
+  Future<bool> markViewing(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) async {
     if (target.state != PrivateMediaLifecycleState.opening || target.hidden) {
       return false;
     }
@@ -62,7 +83,9 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
   }
 
   @override
-  Future<bool> rollbackOpening(String messageId) async {
+  Future<bool> rollbackOpening(
+    PrivateMediaOpeningLeaseIdentity identity,
+  ) async {
     if (target.state != PrivateMediaLifecycleState.opening || target.hidden) {
       return false;
     }
@@ -73,7 +96,13 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
 
   @override
   Future<bool> consume(String messageId, {required int nowMs}) async {
-    if (target.mode != PrivateMediaMode.viewOnce || target.state.isTerminal) {
+    final qualified =
+        (target.direction == PrivateMediaDirection.incoming &&
+            target.mode == PrivateMediaMode.viewOnce) ||
+        (target.direction == PrivateMediaDirection.outgoing &&
+            (target.mode == PrivateMediaMode.protected ||
+                target.mode == PrivateMediaMode.viewOnce));
+    if (!qualified || target.state.isTerminal) {
       return false;
     }
     consumeCount++;
@@ -83,6 +112,12 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
     );
     return true;
   }
+
+  @override
+  Future<bool> consumeOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) => consume(identity.messageId, nowMs: nowMs);
 
   @override
   Future<bool> advanceClock(String messageId, {required int nowMs}) async {
@@ -137,6 +172,7 @@ ConversationMessage _parent({
   PrivateMediaMode mode = PrivateMediaMode.viewOnce,
   PrivateMediaLifecycleState state = PrivateMediaLifecycleState.available,
   int? expiresAtMs,
+  PrivateMediaDirection direction = PrivateMediaDirection.incoming,
 }) {
   final policy = switch (mode) {
     PrivateMediaMode.protected => const PrivateMediaPolicy.protected(),
@@ -154,7 +190,7 @@ ConversationMessage _parent({
     text: 'SECRET caption and file name',
     timestamp: '2026-07-11T10:00:00.000Z',
     status: 'delivered',
-    isIncoming: true,
+    isIncoming: direction == PrivateMediaDirection.incoming,
     createdAt: '2026-07-11T10:00:00.000Z',
     privateMediaPolicy: policy,
     privateMediaState: state,
@@ -173,6 +209,8 @@ MediaAttachment _attachment(
   String mediaType = 'image',
   String? mime,
   int? size,
+  String downloadStatus = 'done',
+  int? downloadRetryCount,
 }) => MediaAttachment(
   id: id,
   messageId: 'message-1',
@@ -180,7 +218,8 @@ MediaAttachment _attachment(
   size: size ?? (File(path).existsSync() ? File(path).lengthSync() : 99),
   mediaType: mediaType,
   localPath: path,
-  downloadStatus: 'done',
+  downloadStatus: downloadStatus,
+  downloadRetryCount: downloadRetryCount,
   createdAt: '2026-07-11T10:00:00.000Z',
   encryptionKeyBase64: 'SECRET-key',
   encryptionNonce: 'SECRET-nonce',
@@ -194,9 +233,12 @@ PrivateMediaLifecycleTarget _target(
   int? expiresAtMs,
   String attachmentId = 'attachment-1',
   String mime = 'image/SECRET',
+  PrivateMediaDirection direction = PrivateMediaDirection.incoming,
+  bool openablePath = true,
 }) => PrivateMediaLifecycleTarget(
   messageId: 'message-1',
   scopeId: 'contact-1',
+  direction: direction,
   mode: mode,
   state: state,
   expiresAtMs: expiresAtMs,
@@ -206,7 +248,7 @@ PrivateMediaLifecycleTarget _target(
       id: attachmentId,
       messageId: 'message-1',
       storedLocalPath: path,
-      localPath: path,
+      localPath: openablePath ? path : null,
       mime: mime,
       size: File(path).existsSync() ? File(path).lengthSync() : 99,
       isDownloadComplete: true,
@@ -225,6 +267,7 @@ PrivateMediaLifecycleTarget _target(
 _fixture({
   PrivateMediaMode mode = PrivateMediaMode.viewOnce,
   PrivateMediaLifecycleState state = PrivateMediaLifecycleState.available,
+  PrivateMediaDirection direction = PrivateMediaDirection.incoming,
   int nowMs = 200,
   int? expiresAtMs,
   Future<void> Function(_Lane lane)? onNativeEnter,
@@ -237,6 +280,11 @@ _fixture({
   currentAttachmentForLoad,
   void Function(_Lane lane, int loadCount)? beforeLifecycleLoad,
   bool throwCleanup = false,
+  String mediaType = 'image',
+  String? mime,
+  bool openablePath = true,
+  String downloadStatus = 'done',
+  int? downloadRetryCount,
 }) {
   final effectivePath =
       path ??
@@ -250,7 +298,15 @@ _fixture({
     });
   }
   final lane = _Lane(
-    _target(effectivePath, mode: mode, state: state, expiresAtMs: expiresAtMs),
+    _target(
+      effectivePath,
+      mode: mode,
+      state: state,
+      expiresAtMs: expiresAtMs,
+      direction: direction,
+      mime: mime ?? (mediaType == 'video' ? 'video/SECRET' : 'image/SECRET'),
+      openablePath: openablePath,
+    ),
     beforeLoadTarget: beforeLifecycleLoad,
     throwCleanup: throwCleanup,
   );
@@ -290,11 +346,18 @@ _fixture({
           mode: mode,
           state: lane.target.state,
           expiresAtMs: expiresAtMs,
+          direction: direction,
         ),
         attachment: lane.target.attachments.isEmpty
             ? null
             : currentAttachmentForLoad?.call(loadCount, lane, effectivePath) ??
-                  _attachment(effectivePath),
+                  _attachment(
+                    effectivePath,
+                    mediaType: mediaType,
+                    mime: mime,
+                    downloadStatus: downloadStatus,
+                    downloadRetryCount: downloadRetryCount,
+                  ),
       );
     },
     lifecycleEngine: engine,
@@ -317,6 +380,384 @@ void main() {
   const identity = DirectPrivateMediaViewerIdentity(
     messageId: 'message-1',
     attachmentId: 'attachment-1',
+  );
+
+  test(
+    'typed prepare and settle distinguish success from lifecycle disposition',
+    () async {
+      final guard = _MutableContinuityGuard();
+      final protected = _fixture(mode: PrivateMediaMode.protected);
+      final prepared = await protected.controller.prepareResult(
+        identity,
+        guard,
+      );
+      expect(prepared.isGranted, isTrue);
+      expect(prepared.failureReason, isNull);
+      final grant = prepared.grant!;
+      expect(await protected.controller.markFirstFrame(grant), isTrue);
+
+      final first = await protected.controller.settle(
+        grant,
+        DirectPrivateMediaExitReason.close,
+        releaseProtection: false,
+      );
+      expect(first.disposition, DirectPrivateMediaSettleDisposition.noLease);
+      expect(first.exitReason, DirectPrivateMediaExitReason.close);
+      expect(first.firstFrameRecorded, isTrue);
+      expect(protected.nativeCalls, <String>['enter']);
+
+      final repeated = await protected.controller.settle(
+        grant,
+        DirectPrivateMediaExitReason.dispose,
+      );
+      expect(identical(repeated, first), isTrue);
+      expect(protected.nativeCalls, <String>['enter', 'exit']);
+      await protected.controller.releaseProtectionOwner(grant);
+      expect(protected.nativeCalls, <String>['enter', 'exit']);
+
+      final displayed = DirectPrivateMediaOpenResult.displayed(first);
+      expect(displayed.wasDisplayed, isTrue);
+      expect(displayed.settleResult, first);
+      expect(displayed.canRetry, isFalse);
+    },
+  );
+
+  test(
+    'retry qualification re-reads status budget path and authority',
+    () async {
+      const rolledBack = DirectPrivateMediaSettleResult(
+        disposition: DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+        exitReason: DirectPrivateMediaExitReason.routePushFailure,
+        firstFrameRecorded: false,
+      );
+      const noLease = DirectPrivateMediaSettleResult(
+        disposition: DirectPrivateMediaSettleDisposition.noLease,
+        exitReason: DirectPrivateMediaExitReason.protectionEnterFailure,
+        firstFrameRecorded: false,
+      );
+
+      final transient = _fixture(
+        downloadStatus: 'failed',
+        downloadRetryCount: kMaxDownloadRetries - 1,
+      );
+      expect(
+        await transient.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.authorityLost,
+        ),
+        isTrue,
+      );
+
+      final exhausted = _fixture(
+        downloadStatus: 'failed',
+        downloadRetryCount: kMaxDownloadRetries,
+      );
+      expect(
+        await exhausted.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.preFrameFailure,
+          settleResult: rolledBack,
+        ),
+        isFalse,
+      );
+
+      for (final terminalStatus in <String>[
+        'download_failed',
+        'integrity_failed',
+      ]) {
+        final fixture = _fixture(downloadStatus: terminalStatus);
+        expect(
+          await fixture.controller.canRetryAfterPrepareFailure(
+            identity,
+            DirectPrivateMediaPrepareFailureReason.revalidationFailed,
+            settleResult: rolledBack,
+          ),
+          isFalse,
+          reason: terminalStatus,
+        );
+      }
+
+      final exactDone = _fixture();
+      expect(
+        await exactDone.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.routePushFailure,
+          settleResult: rolledBack,
+        ),
+        isTrue,
+      );
+      final protected = _fixture(mode: PrivateMediaMode.protected);
+      expect(
+        await protected.controller.canRetryAfterPrepareFailure(
+          identity,
+          DirectPrivateMediaPrepareFailureReason.protectionEnterFailed,
+          settleResult: noLease,
+        ),
+        isTrue,
+      );
+
+      for (final disposition in <DirectPrivateMediaSettleDisposition>[
+        DirectPrivateMediaSettleDisposition.terminalized,
+        DirectPrivateMediaSettleDisposition.lostRollbackRace,
+        DirectPrivateMediaSettleDisposition.indeterminateFailClosed,
+      ]) {
+        final result = DirectPrivateMediaSettleResult(
+          disposition: disposition,
+          exitReason: DirectPrivateMediaExitReason.routePushFailure,
+          firstFrameRecorded: false,
+        );
+        expect(
+          await exactDone.controller.canRetryAfterOpenFailure(
+            identity,
+            DirectPrivateMediaOpenFailureReason.routePushFailure,
+            settleResult: result,
+          ),
+          isFalse,
+          reason: disposition.name,
+        );
+      }
+      expect(
+        await exactDone.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.lifecycleInterrupted,
+          settleResult: rolledBack,
+        ),
+        isFalse,
+      );
+
+      final missingPath = _fixture(openablePath: false);
+      expect(
+        await missingPath.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.preFrameFailure,
+          settleResult: rolledBack,
+        ),
+        isFalse,
+      );
+      final mismatched = _fixture(
+        currentAttachmentForLoad: (loadCount, lane, path) =>
+            _attachment(path, id: 'replacement-attachment'),
+      );
+      expect(
+        await mismatched.controller.canRetryAfterOpenFailure(
+          identity,
+          DirectPrivateMediaOpenFailureReason.preFrameFailure,
+          settleResult: rolledBack,
+        ),
+        isFalse,
+      );
+      final senderExpiry = _fixture(
+        direction: PrivateMediaDirection.outgoing,
+        mode: PrivateMediaMode.disappearing,
+        downloadStatus: 'failed',
+        downloadRetryCount: 0,
+      );
+      expect(
+        await senderExpiry.controller.canRetryAfterPrepareFailure(
+          identity,
+          DirectPrivateMediaPrepareFailureReason.revalidationFailed,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'prepare continuity rolls route-only races back and app lifecycle races fail closed',
+    () async {
+      for (final scenario
+          in <
+            ({
+              DirectPrivateMediaContinuityState state,
+              DirectPrivateMediaPrepareFailureReason reason,
+              DirectPrivateMediaSettleDisposition disposition,
+            })
+          >[
+            (
+              state: DirectPrivateMediaContinuityState.routeInvalidated,
+              reason:
+                  DirectPrivateMediaPrepareFailureReason.routeContinuityLost,
+              disposition:
+                  DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+            ),
+            (
+              state: DirectPrivateMediaContinuityState.appLifecycleInvalidated,
+              reason: DirectPrivateMediaPrepareFailureReason
+                  .appLifecycleContinuityLost,
+              disposition: DirectPrivateMediaSettleDisposition.terminalized,
+            ),
+          ]) {
+        final gate = Completer<Object?>();
+        final guard = _MutableContinuityGuard();
+        final fixture = _fixture(nativeEnterGate: gate);
+        final preparing = fixture.controller.prepareResult(identity, guard);
+        for (
+          var spin = 0;
+          spin < 20 && !fixture.nativeCalls.contains('enter');
+          spin++
+        ) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(fixture.lane.claimCount, 1);
+        guard.state = scenario.state;
+        gate.complete(<String, Object?>{'ok': true, 'protectionActive': true});
+
+        final result = await preparing;
+        expect(result.isGranted, isFalse);
+        expect(result.failureReason, scenario.reason);
+        expect(result.settleResult?.disposition, scenario.disposition);
+        expect(
+          fixture.lane.target.state,
+          scenario.disposition ==
+                  DirectPrivateMediaSettleDisposition.rolledBackAvailable
+              ? PrivateMediaLifecycleState.available
+              : PrivateMediaLifecycleState.consumed,
+        );
+        expect(fixture.nativeCalls, <String>['enter', 'exit']);
+      }
+
+      final invalidBeforeAcquire = _fixture();
+      final denied = await invalidBeforeAcquire.controller.prepareResult(
+        identity,
+        _MutableContinuityGuard(
+          DirectPrivateMediaContinuityState.appLifecycleInvalidated,
+        ),
+      );
+      expect(denied.isGranted, isFalse);
+      expect(invalidBeforeAcquire.lane.claimCount, 0);
+      expect(invalidBeforeAcquire.nativeCalls, isEmpty);
+    },
+  );
+
+  test(
+    'direction mode and GIF qualification are exact before path publication',
+    () async {
+      for (final mode in <PrivateMediaMode>[
+        PrivateMediaMode.protected,
+        PrivateMediaMode.viewOnce,
+      ]) {
+        final outgoing = _fixture(
+          direction: PrivateMediaDirection.outgoing,
+          mode: mode,
+        );
+        final prepared = await outgoing.controller.prepareResult(
+          identity,
+          _MutableContinuityGuard(),
+        );
+        expect(prepared.isGranted, isTrue, reason: mode.name);
+        expect(outgoing.lane.claimCount, 1, reason: mode.name);
+        expect(
+          await outgoing.controller.markFirstFrame(prepared.grant!),
+          isTrue,
+        );
+        final settled = await outgoing.controller.settle(
+          prepared.grant!,
+          DirectPrivateMediaExitReason.close,
+        );
+        expect(
+          settled.disposition,
+          DirectPrivateMediaSettleDisposition.terminalized,
+        );
+      }
+
+      for (final direction in PrivateMediaDirection.values) {
+        final gif = _fixture(
+          direction: direction,
+          mode: direction == PrivateMediaDirection.incoming
+              ? PrivateMediaMode.protected
+              : PrivateMediaMode.viewOnce,
+          mediaType: 'gif',
+          mime: 'image/gif',
+        );
+        final result = await gif.controller.prepareResult(
+          identity,
+          _MutableContinuityGuard(),
+        );
+        expect(result.grant?.kind, MediaViewerKind.gif, reason: direction.name);
+        await gif.controller.settle(
+          result.grant!,
+          DirectPrivateMediaExitReason.close,
+        );
+      }
+
+      final mismatchedGif = _fixture(mediaType: 'gif', mime: 'image/png');
+      final gifFailure = await mismatchedGif.controller.prepareResult(
+        identity,
+        _MutableContinuityGuard(),
+      );
+      expect(gifFailure.isGranted, isFalse);
+      expect(
+        gifFailure.failureReason,
+        DirectPrivateMediaPrepareFailureReason.unsupportedMediaKind,
+      );
+
+      final danglingSender = _fixture(
+        direction: PrivateMediaDirection.outgoing,
+        mode: PrivateMediaMode.protected,
+        openablePath: false,
+      );
+      final missing = await danglingSender.controller.prepareResult(
+        identity,
+        _MutableContinuityGuard(),
+      );
+      expect(missing.isGranted, isFalse);
+      expect(
+        missing.failureReason,
+        DirectPrivateMediaPrepareFailureReason.localAuthorityMissing,
+      );
+      expect(danglingSender.lane.claimCount, 0);
+      expect(danglingSender.nativeCalls, isEmpty);
+    },
+  );
+
+  test(
+    'pre-frame route and decode exits roll back while background fails closed',
+    () async {
+      for (final reason in <DirectPrivateMediaExitReason>[
+        DirectPrivateMediaExitReason.routePushFailure,
+        DirectPrivateMediaExitReason.preFrameDecodeFailure,
+        DirectPrivateMediaExitReason.routeContinuityLoss,
+        DirectPrivateMediaExitReason.protectionEnterFailure,
+        DirectPrivateMediaExitReason.revalidationFailure,
+      ]) {
+        final fixture = _fixture();
+        final prepared = await fixture.controller.prepareResult(
+          identity,
+          _MutableContinuityGuard(),
+        );
+        final settled = await fixture.controller.settle(
+          prepared.grant!,
+          reason,
+        );
+        expect(
+          settled.disposition,
+          DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+          reason: reason.name,
+        );
+      }
+
+      for (final reason in <DirectPrivateMediaExitReason>[
+        DirectPrivateMediaExitReason.background,
+        DirectPrivateMediaExitReason.capture,
+        DirectPrivateMediaExitReason.dispose,
+        DirectPrivateMediaExitReason.appLifecycleLoss,
+      ]) {
+        final fixture = _fixture();
+        final prepared = await fixture.controller.prepareResult(
+          identity,
+          _MutableContinuityGuard(),
+        );
+        final settled = await fixture.controller.settle(
+          prepared.grant!,
+          reason,
+        );
+        expect(
+          settled.disposition,
+          DirectPrivateMediaSettleDisposition.terminalized,
+          reason: reason.name,
+        );
+      }
+    },
   );
 
   test(
@@ -777,7 +1218,7 @@ void main() {
   );
 
   test(
-    'lease identity mismatch and thrown post-enter reload terminalize view once and release protection',
+    'pre-frame lease mismatch and thrown post-enter reload roll back and release protection',
     () async {
       final wrongLease = _fixture(
         beforeLifecycleLoad: (lane, loadCount) {
@@ -800,15 +1241,20 @@ void main() {
         },
       );
       expect(await wrongLease.controller.prepare(identity), isNull);
-      expect(wrongLease.lane.consumeCount, 1);
-      expect(wrongLease.lane.cleanupCount, 1);
-      expect(wrongLease.lane.target.state, PrivateMediaLifecycleState.consumed);
+      expect(wrongLease.lane.rollbackCount, 1);
+      expect(wrongLease.lane.consumeCount, 0);
+      expect(wrongLease.lane.cleanupCount, 0);
+      expect(
+        wrongLease.lane.target.state,
+        PrivateMediaLifecycleState.available,
+      );
 
       final reloadThrow = _fixture(throwCurrentRowsOnLoad: 2);
       expect(await reloadThrow.controller.prepare(identity), isNull);
       expect(reloadThrow.currentRowLoads, [1, 2]);
-      expect(reloadThrow.lane.consumeCount, 1);
-      expect(reloadThrow.lane.cleanupCount, 1);
+      expect(reloadThrow.lane.rollbackCount, 1);
+      expect(reloadThrow.lane.consumeCount, 0);
+      expect(reloadThrow.lane.cleanupCount, 0);
       expect(reloadThrow.nativeCalls, ['enter', 'exit']);
     },
   );
@@ -867,7 +1313,7 @@ void main() {
   );
 
   test(
-    'post-enter terminal delete expiry or lease loss builds no route and view once terminalizes',
+    'post-enter authority loss builds no route and never claims safe rollback',
     () async {
       final fixture = _fixture(
         onNativeEnter: (lane) async {
@@ -875,7 +1321,9 @@ void main() {
         },
       );
       expect(await fixture.controller.prepare(identity), isNull);
-      expect(fixture.lane.consumeCount, 1);
+      expect(fixture.lane.rollbackCount, 0);
+      expect(fixture.lane.consumeCount, 0);
+      expect(fixture.lane.target.state, PrivateMediaLifecycleState.opening);
       expect(fixture.nativeCalls, ['enter', 'exit']);
 
       final replacedPath = _fixture(
@@ -898,7 +1346,12 @@ void main() {
         },
       );
       expect(await replacedPath.controller.prepare(identity), isNull);
-      expect(replacedPath.lane.consumeCount, 1);
+      expect(replacedPath.lane.rollbackCount, 0);
+      expect(replacedPath.lane.consumeCount, 0);
+      expect(
+        replacedPath.lane.target.state,
+        PrivateMediaLifecycleState.opening,
+      );
       expect(replacedPath.nativeCalls, ['enter', 'exit']);
     },
   );
@@ -927,7 +1380,9 @@ void main() {
     );
   });
 
-  testWidgets('mode caption renders Protected view', (tester) async {
+  testWidgets('private card title renders the protected media kind', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const MaterialApp(
         locale: Locale('en'),
@@ -946,7 +1401,168 @@ void main() {
 
     final modeLabel = find.byKey(const ValueKey('private-media-mode-label'));
     expect(modeLabel, findsOneWidget);
-    expect(tester.widget<Text>(modeLabel).data, 'Protected view');
+    expect(tester.widget<Text>(modeLabel).data, 'Protected photo');
+  });
+
+  testWidgets(
+    'sender protected and view-once expose one-more-look while disappearing and missing local media do not',
+    (tester) async {
+      var opens = 0;
+      Future<void> pump(
+        PrivateMediaPolicy policy, {
+        bool localMediaAvailable = true,
+      }) => tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: DirectPrivateMediaOutgoingPlaceholder(
+              policy: policy,
+              contactDisplayName: 'Layla',
+              localMediaAvailable: localMediaAvailable,
+              onOpen: () => opens++,
+            ),
+          ),
+        ),
+      );
+
+      for (final policy in <PrivateMediaPolicy>[
+        const PrivateMediaPolicy.protected(),
+        const PrivateMediaPolicy.viewOnce(),
+      ]) {
+        await pump(policy);
+        expect(
+          find.byKey(const ValueKey('private-media-open')),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('You can reopen it once here after sending.'),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('private-media-open')));
+        expect(opens, greaterThan(0));
+      }
+
+      await pump(PrivateMediaPolicy.disappearing(3600));
+      expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+
+      await pump(
+        const PrivateMediaPolicy.protected(),
+        localMediaAvailable: false,
+      );
+      expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+      expect(
+        find.text("Your sent media can't be reopened on this phone."),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Choose'), findsNothing);
+    },
+  );
+
+  testWidgets('typed open failure copy claims safety only for exact rollback', (
+    tester,
+  ) async {
+    const rolledBack = DirectPrivateMediaSettleResult(
+      disposition: DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+      exitReason: DirectPrivateMediaExitReason.routePushFailure,
+      firstFrameRecorded: false,
+    );
+    const terminalized = DirectPrivateMediaSettleResult(
+      disposition: DirectPrivateMediaSettleDisposition.terminalized,
+      exitReason: DirectPrivateMediaExitReason.background,
+      firstFrameRecorded: false,
+    );
+    var retries = 0;
+    Future<void> pump({
+      required PrivateMediaDirection direction,
+      required DirectPrivateMediaSettleResult settleResult,
+      bool canRetry = true,
+      bool localMediaMissing = false,
+      PrivateMediaAttachmentKind kind = PrivateMediaAttachmentKind.image,
+    }) => tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: DirectPrivateMediaOpenFailurePlaceholder(
+            direction: direction,
+            kind: kind,
+            settleResult: settleResult,
+            canRetry: canRetry,
+            localMediaMissing: localMediaMissing,
+            onRetry: () => retries++,
+          ),
+        ),
+      ),
+    );
+
+    await pump(
+      direction: PrivateMediaDirection.incoming,
+      settleResult: rolledBack,
+    );
+    expect(find.text('Your one view is still available.'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('private-media-try-again')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('private-media-try-again')));
+    expect(retries, 1);
+
+    await pump(
+      direction: PrivateMediaDirection.outgoing,
+      settleResult: rolledBack,
+    );
+    expect(find.text('Your one more look is still available.'), findsOneWidget);
+
+    await pump(
+      direction: PrivateMediaDirection.outgoing,
+      settleResult: terminalized,
+      canRetry: false,
+      kind: PrivateMediaAttachmentKind.video,
+    );
+    expect(find.text("Couldn't open this video"), findsOneWidget);
+    expect(find.textContaining('still available'), findsNothing);
+    expect(find.byKey(const ValueKey('private-media-try-again')), findsNothing);
+
+    await pump(
+      direction: PrivateMediaDirection.outgoing,
+      settleResult: rolledBack,
+      localMediaMissing: true,
+    );
+    expect(
+      find.text("Your sent media can't be reopened on this phone."),
+      findsOneWidget,
+    );
+    expect(find.textContaining('still available'), findsNothing);
+    expect(find.byKey(const ValueKey('private-media-try-again')), findsNothing);
+  });
+
+  testWidgets('sender-consumed terminal is generic after attachment cleanup', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: DirectPrivateMediaTerminalPlaceholder(
+            state: PrivateMediaLifecycleState.consumed,
+            direction: PrivateMediaDirection.outgoing,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Private media'), findsOneWidget);
+    expect(find.text("You've used your one more look"), findsOneWidget);
+    expect(find.textContaining('photo'), findsNothing);
+    expect(find.textContaining('video'), findsNothing);
+    expect(find.textContaining('GIF'), findsNothing);
+    expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
   });
 
   testWidgets(

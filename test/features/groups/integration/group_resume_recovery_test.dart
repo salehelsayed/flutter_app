@@ -1345,13 +1345,15 @@ Future<void> _section10WidgetMediaLifecycleProof(
         }) async {
           senderBridge.operationLog.add('uploadMediaFn');
           uploadedBlobId = blobId;
-          return _uploadedMedia(
-            id: 'server-att-widget-media',
-            messageId: '',
-            mime: mime,
-            localPath: localFilePath,
-            width: 1080,
-            height: 720,
+          return UploadMediaSucceeded(
+            _uploadedMedia(
+              id: 'server-att-widget-media',
+              messageId: '',
+              mime: mime,
+              localPath: localFilePath,
+              width: 1080,
+              height: 720,
+            ),
           );
         },
   );
@@ -1530,17 +1532,19 @@ Future<void> _section10WidgetVoiceLifecycleProof(
           preparedArtifact,
         }) async {
           senderBridge.operationLog.add('uploadMediaFn');
-          return _uploadedMedia(
-            id: blobId ?? 'att-widget-voice',
-            messageId: '',
-            mime: mime,
-            localPath: mediaFileManager!.relativePathForAttachment(
-              contactPeerId: recipientPeerId,
-              blobId: blobId ?? 'att-widget-voice',
+          return UploadMediaSucceeded(
+            _uploadedMedia(
+              id: blobId ?? 'att-widget-voice',
+              messageId: '',
               mime: mime,
+              localPath: mediaFileManager!.relativePathForAttachment(
+                contactPeerId: recipientPeerId,
+                blobId: blobId ?? 'att-widget-voice',
+                mime: mime,
+              ),
+              durationMs: durationMs,
+              waveform: waveform,
             ),
-            durationMs: durationMs,
-            waveform: waveform,
           );
         },
   );

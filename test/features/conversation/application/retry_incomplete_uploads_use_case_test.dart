@@ -1,16 +1,22 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
+    as p2p;
 
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
@@ -18,7 +24,21 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import 'helpers/fake_upload_media_fn.dart';
+
+Future<void> _waitUntilAsync(
+  Future<bool> Function() predicate, {
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!await predicate()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for asynchronous retry state');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -125,6 +145,29 @@ ContactModel _contactWithMlKem(String peerId) {
   );
 }
 
+class _RecordingDirectUploadRetryProjection
+    implements DirectUploadRetryProjectionRepository {
+  int callCount = 0;
+  String? messageId;
+  String? attachmentId;
+  UploadMediaFailed? failure;
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    callCount++;
+    this.messageId = messageId;
+    this.attachmentId = attachmentId;
+    this.failure = failure;
+    return const UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.terminal,
+    );
+  }
+}
+
 void main() {
   late FakeMediaAttachmentRepository mediaRepo;
   late FakeMessageRepository messageRepo;
@@ -156,6 +199,105 @@ void main() {
   });
 
   group('retryIncompleteUploads', () {
+    test(
+      'automatic pass with no OS connectivity issues zero uploads and leaves rows untouched',
+      () async {
+        mediaRepo.seed([_pendingAtt()]);
+        messageRepo.seed([_makeMsg('msg-00001', status: 'sending')]);
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          requireOsConnectivity: true,
+          connectivityProbe: () async => false,
+        );
+
+        expect(count, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(identityRepo.loadIdentityCallCount, 0);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+          owner: MediaOwnerLane.direct,
+        );
+        expect(rows.single.downloadStatus, 'upload_pending');
+        expect(rows.single.uploadRetryCount, isNull);
+        expect((await messageRepo.getMessage('msg-00001'))!.status, 'sending');
+      },
+    );
+
+    test(
+      'explicit/manual invocation bypasses the OS connectivity probe',
+      () async {
+        final source = File(
+          '${Directory.systemTemp.path}/manual-upload-${DateTime.now().microsecondsSinceEpoch}.jpg',
+        );
+        await source.writeAsBytes([1, 2, 3]);
+        addTearDown(() async {
+          if (await source.exists()) await source.delete();
+        });
+        mediaRepo.seed([
+          _pendingAtt(localPath: source.path, mime: 'image/jpeg'),
+        ]);
+        messageRepo.seed([_makeMsg('msg-00001', status: 'sending')]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        var probeCalls = 0;
+
+        await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          connectivityProbe: () async {
+            probeCalls++;
+            return false;
+          },
+        );
+
+        expect(probeCalls, 0);
+        expect(fakeUploadFn.callCount, 1);
+      },
+    );
+
+    test(
+      'typed failure invokes the atomic projection exactly once with no sequential child write',
+      () async {
+        mediaRepo.seed([_pendingAtt()]);
+        messageRepo.seed([_makeMsg('msg-00001', status: 'sending')]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        final projection = _RecordingDirectUploadRetryProjection();
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          uploadRetryProjectionRepo: projection,
+        );
+
+        expect(count, 0);
+        expect(fakeUploadFn.callCount, 1);
+        expect(projection.callCount, 1);
+        expect(projection.messageId, 'msg-00001');
+        expect(projection.attachmentId, 'att-00001');
+        expect(
+          projection.failure?.disposition,
+          UploadMediaDisposition.terminal,
+        );
+        expect(mediaRepo.allSavedAttachments, isEmpty);
+      },
+    );
+
     test('returns 0 when no upload_pending attachments exist', () async {
       final count = await retryIncompleteUploads(
         mediaAttachmentRepo: mediaRepo,
@@ -349,7 +491,11 @@ void main() {
                   owner: MediaOwnerLane.direct,
                   pending.copyWith(downloadStatus: 'done'),
                 );
-                return null;
+                return const UploadMediaFailed(
+                  stage: UploadMediaStage.consumerBoundary,
+                  disposition: UploadMediaDisposition.terminal,
+                  errorCode: 'TEST_UPLOAD_FAILED',
+                );
               },
         );
 
@@ -418,7 +564,9 @@ void main() {
                   owner: MediaOwnerLane.direct,
                   pending.copyWith(downloadStatus: 'upload_cancelled'),
                 );
-                return _doneAttachment('att-00001', 'msg-00001');
+                return UploadMediaSucceeded(
+                  _doneAttachment('att-00001', 'msg-00001'),
+                );
               },
         );
 
@@ -563,71 +711,65 @@ void main() {
     // across the direct and group lanes. The direct retrier's lane-scoped
     // pending query must never surface — let alone consume — a group-lane
     // upload_pending row that shares its parent message id.
-    test(
-      'direct retrier never consumes same id group pending media',
-      () async {
-        const collidingMessageId = 'msg-collide-00001';
-        final msg = _makeMsg(
-          collidingMessageId,
-          status: 'failed',
-          contactPeerId: 'peer-bob',
-        );
-        messageRepo.seed([msg]);
-        identityRepo.seed(FakeIdentityRepository.makeIdentity());
-        // SAME messageId in BOTH lanes, distinct attachment ids.
-        mediaRepo.seed([
-          _pendingAtt(
-            id: 'att-direct-collide',
-            messageId: collidingMessageId,
-            localPath: '/tmp/direct-collide.m4a',
-          ),
-          _pendingAtt(
-            id: 'att-group-collide',
-            messageId: collidingMessageId,
-            localPath: '/tmp/group-collide.m4a',
-          ).copyWith(ownerLane: MediaOwnerLane.group),
-        ]);
-        fakeUploadFn.willReturn(
-          _doneAttachment('blob-uploaded', collidingMessageId),
-        );
+    test('direct retrier never consumes same id group pending media', () async {
+      const collidingMessageId = 'msg-collide-00001';
+      final msg = _makeMsg(
+        collidingMessageId,
+        status: 'failed',
+        contactPeerId: 'peer-bob',
+      );
+      messageRepo.seed([msg]);
+      identityRepo.seed(FakeIdentityRepository.makeIdentity());
+      // SAME messageId in BOTH lanes, distinct attachment ids.
+      mediaRepo.seed([
+        _pendingAtt(
+          id: 'att-direct-collide',
+          messageId: collidingMessageId,
+          localPath: '/tmp/direct-collide.m4a',
+        ),
+        _pendingAtt(
+          id: 'att-group-collide',
+          messageId: collidingMessageId,
+          localPath: '/tmp/group-collide.m4a',
+        ).copyWith(ownerLane: MediaOwnerLane.group),
+      ]);
+      fakeUploadFn.willReturn(
+        _doneAttachment('blob-uploaded', collidingMessageId),
+      );
 
-        final count = await retryIncompleteUploads(
-          mediaAttachmentRepo: mediaRepo,
-          messageRepo: messageRepo,
-          bridge: bridge,
-          p2pService: p2pService,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          uploadMediaFn: fakeUploadFn.call,
-        );
+      final count = await retryIncompleteUploads(
+        mediaAttachmentRepo: mediaRepo,
+        messageRepo: messageRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        uploadMediaFn: fakeUploadFn.call,
+      );
 
-        // Only the DIRECT row was re-read and re-uploaded.
-        expect(count, 1);
-        expect(fakeUploadFn.callCount, 1);
-        expect(fakeUploadFn.lastLocalPath, '/tmp/direct-collide.m4a');
-        expect(
-          await mediaRepo.getUploadPendingAttachments(
-            owner: MediaOwnerLane.direct,
-          ),
-          isEmpty,
-          reason: 'the direct pending row must be consumed by the retry',
-        );
-        // Every save the retrier performed used the direct lane.
-        expect(
-          mediaRepo.savedOwnerLanes,
-          everyElement(MediaOwnerLane.direct),
-        );
-        // The group-lane row is untouched: still upload_pending, same path.
-        final groupRows = await mediaRepo.getAttachmentsForMessage(
-          collidingMessageId,
-          owner: MediaOwnerLane.group,
-        );
-        expect(groupRows, hasLength(1));
-        expect(groupRows.single.id, 'att-group-collide');
-        expect(groupRows.single.downloadStatus, 'upload_pending');
-        expect(groupRows.single.localPath, '/tmp/group-collide.m4a');
-      },
-    );
+      // Only the DIRECT row was re-read and re-uploaded.
+      expect(count, 1);
+      expect(fakeUploadFn.callCount, 1);
+      expect(fakeUploadFn.lastLocalPath, '/tmp/direct-collide.m4a');
+      expect(
+        await mediaRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+        reason: 'the direct pending row must be consumed by the retry',
+      );
+      // Every save the retrier performed used the direct lane.
+      expect(mediaRepo.savedOwnerLanes, everyElement(MediaOwnerLane.direct));
+      // The group-lane row is untouched: still upload_pending, same path.
+      final groupRows = await mediaRepo.getAttachmentsForMessage(
+        collidingMessageId,
+        owner: MediaOwnerLane.group,
+      );
+      expect(groupRows, hasLength(1));
+      expect(groupRows.single.id, 'att-group-collide');
+      expect(groupRows.single.downloadStatus, 'upload_pending');
+      expect(groupRows.single.localPath, '/tmp/group-collide.m4a');
+    });
 
     test(
       'emits RETRY_INCOMPLETE_UPLOADS_TIMING with attachment and message counts',
@@ -705,6 +847,53 @@ void main() {
       },
     );
 
+    test(
+      'TC-15 token ownership defers to a foreground winner and releases after '
+      'the full retry settles',
+      () async {
+        const attachmentId = 'blob-token-owned';
+        final tracker = MediaUploadInFlightTracker();
+        final foregroundLease = tracker.tryClaimAll(const [
+          attachmentId,
+        ], source: MediaUploadTriggerSource.foreground)!;
+        messageRepo.seed([
+          _makeMsg('msg-00001', status: 'sending', contactPeerId: 'peer-bob'),
+        ]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        mediaRepo.seed([_pendingAtt(id: attachmentId, messageId: 'msg-00001')]);
+        fakeUploadFn.willReturn(_doneAttachment(attachmentId, 'msg-00001'));
+
+        Future<int> runFullRetry() => retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.full,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+
+        expect(await runFullRetry(), 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(tracker.isInFlight(attachmentId), isTrue);
+
+        expect(tracker.release(foregroundLease), isTrue);
+        expect(await runFullRetry(), 1);
+        expect(fakeUploadFn.callCount, 1);
+        expect(
+          tracker.isInFlight(attachmentId),
+          isFalse,
+          reason:
+              'the retry lease must cover settlement and release in finally',
+        );
+      },
+    );
+
     test('also retries when message is still in sending status', () async {
       final msg = _makeMsg(
         'msg-00001',
@@ -767,6 +956,103 @@ void main() {
           0,
           reason: 'late-send guard must suppress sendChatMessage',
         );
+      },
+    );
+
+    test(
+      'late extra pending sibling blocks send and cleanup while preserving the stable blob id',
+      () async {
+        const messageId = 'msg-late-extra-sibling';
+        const originalId = 'att-original-stable';
+        const extraId = 'att-late-extra';
+        final tempDir = Directory.systemTemp.createTempSync(
+          'direct_retry_late_extra_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final originalPath = '${tempDir.path}/original.jpg';
+        final extraPath = '${tempDir.path}/extra.jpg';
+        await File(originalPath).writeAsBytes([0xFF, 0xD8, 0xFF]);
+        await File(extraPath).writeAsBytes([0xFF, 0xD8, 0xFE]);
+
+        messageRepo.seed([
+          _makeMsg(messageId, status: 'failed', contactPeerId: 'peer-bob'),
+        ]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        mediaRepo.seed([
+          _pendingAtt(
+            id: originalId,
+            messageId: messageId,
+            localPath: originalPath,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+            durationMs: null,
+          ),
+        ]);
+        var insertedExtraSibling = false;
+        mediaRepo.onSaveAttachment = (attachment) {
+          if (!insertedExtraSibling &&
+              attachment.id == originalId &&
+              attachment.downloadStatus == 'done') {
+            insertedExtraSibling = true;
+            mediaRepo.seedAttachments(
+              messageId: messageId,
+              attachments: [
+                _pendingAtt(
+                  id: extraId,
+                  messageId: messageId,
+                  localPath: extraPath,
+                  mime: 'image/jpeg',
+                  mediaType: 'image',
+                  durationMs: null,
+                ),
+              ],
+            );
+          }
+        };
+        fakeUploadFn.willReturn(
+          _doneAttachment(
+            'server-reassigned-id',
+            messageId,
+            mime: 'image/jpeg',
+          ),
+        );
+        final manager = FakeMediaFileManager();
+        var cleanupCalled = false;
+        manager.onDeletePendingUploadDir = (_) => cleanupCalled = true;
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: manager,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(cleanupCalled, isFalse);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          rows.map((row) => row.id),
+          unorderedEquals([originalId, extraId]),
+        );
+        expect(
+          rows.singleWhere((row) => row.id == originalId).downloadStatus,
+          'done',
+        );
+        expect(
+          rows.singleWhere((row) => row.id == extraId).downloadStatus,
+          'upload_pending',
+        );
+        expect(rows.any((row) => row.id == 'server-reassigned-id'), isFalse);
       },
     );
 
@@ -834,16 +1120,17 @@ void main() {
         expect(fakeUploadFn.callCount, 3);
         // sendChatMessage called ONCE (inbox path)
         expect(p2pService.storeInInboxCallCount, 1);
-        // The wire payload should contain ALL 3 blob IDs
+        // The wire payload preserves all three logical attachment IDs even if
+        // the uploader returns different physical identifiers.
         final payload = p2pService.lastStoreInInboxMessage!;
-        expect(payload, contains('blob-a'));
-        expect(payload, contains('blob-b'));
-        expect(payload, contains('blob-c'));
+        expect(payload, contains('att-0000a'));
+        expect(payload, contains('att-0000b'));
+        expect(payload, contains('att-0000c'));
       },
     );
 
     test(
-      'multi-attachment: second upload fails -> ALL stay upload_pending (transient), sendChatMessage NOT called',
+      'multi-attachment: successful sibling stays done when second upload fails and send is suppressed',
       () async {
         final msg = _makeMsg(
           'msg-multi-001',
@@ -891,12 +1178,24 @@ void main() {
           0,
           reason: 'must NOT send partial attachment list',
         );
-        // Both original attachments for the message should stay upload_pending
+        // Preserve committed work; only the failed pending sibling consumes a
+        // retry attempt. The complete-set final gate still suppresses send.
         final pending = await mediaRepo.getUploadPendingAttachments(
           owner: MediaOwnerLane.direct,
         );
-        expect(pending.length, 2, reason: 'Both rows must stay upload_pending');
-        expect(pending.every((a) => a.uploadRetryCount == 1), isTrue);
+        expect(pending, hasLength(1));
+        expect(pending.single.id, 'att-0000b');
+        expect(pending.single.uploadRetryCount, 1);
+        final rows = await mediaRepo.getAttachmentsForMessage(
+          msg.id,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          rows
+              .singleWhere((attachment) => attachment.id == 'att-0000a')
+              .downloadStatus,
+          'done',
+        );
       },
     );
 
@@ -1253,6 +1552,178 @@ void main() {
       },
     );
 
+    test(
+      'promotes to canonical storage before envelope settlement and cleans staging only after success',
+      () async {
+        final suffix = DateTime.now().microsecondsSinceEpoch;
+        final messageId = 'msg-promote-$suffix';
+        final attachmentId = 'att-promote-$suffix';
+        final storedStagingPath =
+            'pending_uploads/$messageId/$attachmentId.jpg';
+        final manager = FakeMediaFileManager();
+        final stagingPath = await manager.resolveStoredPath(storedStagingPath);
+        final stagingFile = File(stagingPath);
+        await stagingFile.create(recursive: true);
+        await stagingFile.writeAsBytes(List<int>.filled(512, 0x42));
+        final stagingDir = stagingFile.parent;
+        var cleanupCalled = false;
+        manager.onDeletePendingUploadDir = (deletedMessageId) {
+          expect(deletedMessageId, messageId);
+          cleanupCalled = true;
+          if (stagingDir.existsSync()) {
+            stagingDir.deleteSync(recursive: true);
+          }
+        };
+        addTearDown(() async {
+          if (await stagingDir.exists()) {
+            await stagingDir.delete(recursive: true);
+          }
+          final canonical = await manager.resolveStoredPath(
+            'media/peer-bob/$attachmentId.jpg',
+          );
+          if (await File(canonical).exists()) await File(canonical).delete();
+        });
+
+        messageRepo.seed([
+          _makeMsg(messageId, status: 'failed', contactPeerId: 'peer-bob'),
+        ]);
+        mediaRepo.seed([
+          _pendingAtt(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: storedStagingPath,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+            durationMs: null,
+          ),
+        ]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        final sendGate = Completer<void>();
+        p2pService.sendMessageWithReplyResult = const p2p.SendMessageResult(
+          sent: false,
+        );
+        p2pService.onStoreInInbox = (_, _, {timeoutMs}) async {
+          await sendGate.future;
+          return true;
+        };
+        final tracker = MediaUploadInFlightTracker();
+        final realBridge = PassthroughCryptoBridge();
+
+        final retryFuture = retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: realBridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          mediaFileManager: manager,
+          tryClaimUploadLease: (attachmentIds) => tracker.tryClaimAll(
+            attachmentIds,
+            source: MediaUploadTriggerSource.full,
+          ),
+          releaseUploadLease: tracker.release,
+        );
+
+        await _waitUntilAsync(() async {
+          final rows = await mediaRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          );
+          return rows.single.downloadStatus == 'done' &&
+              p2pService.storeInInboxCallCount > 0;
+        });
+
+        final committed = (await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(committed.downloadStatus, 'done');
+        expect(committed.localPath, startsWith('media/'));
+        expect(committed.localPath, isNot(contains('pending_uploads')));
+        final canonicalPath = await manager.resolveStoredPath(
+          committed.localPath!,
+        );
+        expect(await File(canonicalPath).exists(), isTrue);
+        expect(await stagingFile.exists(), isTrue);
+        expect(cleanupCalled, isFalse);
+        expect(tracker.isInFlight(attachmentId), isTrue);
+
+        sendGate.complete();
+        expect(await retryFuture, 1);
+        expect(cleanupCalled, isTrue);
+        expect(await stagingDir.exists(), isFalse);
+        expect(await File(canonicalPath).exists(), isTrue);
+        expect(tracker.isInFlight(attachmentId), isFalse);
+      },
+    );
+
+    test('failed envelope settlement preserves retry staging', () async {
+      final suffix = DateTime.now().microsecondsSinceEpoch;
+      final messageId = 'msg-send-fail-$suffix';
+      final attachmentId = 'att-send-fail-$suffix';
+      final storedStagingPath = 'pending_uploads/$messageId/$attachmentId.jpg';
+      final manager = FakeMediaFileManager();
+      final stagingPath = await manager.resolveStoredPath(storedStagingPath);
+      final stagingFile = File(stagingPath);
+      await stagingFile.create(recursive: true);
+      await stagingFile.writeAsBytes(List<int>.filled(512, 0x17));
+      final stagingDir = stagingFile.parent;
+      var cleanupCalled = false;
+      manager.onDeletePendingUploadDir = (_) => cleanupCalled = true;
+      addTearDown(() async {
+        if (await stagingDir.exists()) {
+          await stagingDir.delete(recursive: true);
+        }
+        final canonical = await manager.resolveStoredPath(
+          'media/peer-bob/$attachmentId.jpg',
+        );
+        if (await File(canonical).exists()) await File(canonical).delete();
+      });
+
+      messageRepo.seed([
+        _makeMsg(messageId, status: 'failed', contactPeerId: 'peer-bob'),
+      ]);
+      mediaRepo.seed([
+        _pendingAtt(
+          id: attachmentId,
+          messageId: messageId,
+          localPath: storedStagingPath,
+          mime: 'image/jpeg',
+          mediaType: 'image',
+          durationMs: null,
+        ),
+      ]);
+      identityRepo.seed(FakeIdentityRepository.makeIdentity());
+      p2pService.storeInInboxResult = false;
+      p2pService.sendMessageWithReplyResult = const p2p.SendMessageResult(
+        sent: false,
+      );
+
+      final count = await retryIncompleteUploads(
+        mediaAttachmentRepo: mediaRepo,
+        messageRepo: messageRepo,
+        bridge: PassthroughCryptoBridge(),
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        mediaFileManager: manager,
+      );
+
+      expect(count, 0);
+      final committed = (await mediaRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      )).single;
+      expect(committed.downloadStatus, 'done');
+      expect(committed.localPath, startsWith('media/'));
+      final canonicalPath = await manager.resolveStoredPath(
+        committed.localPath!,
+      );
+      expect(await File(canonicalPath).exists(), isTrue);
+      expect(await stagingFile.exists(), isTrue);
+      expect(cleanupCalled, isFalse);
+    });
+
     // G.10.1.1
     test(
       'retry after interrupted sendLocalMedia uses relay, not local WiFi',
@@ -1434,6 +1905,20 @@ void main() {
         seedOldKeyPending(),
         owner: MediaOwnerLane.direct,
       );
+      var observedSafeCommitOrder = false;
+      mediaRepo.onSaveAttachment = (attachment) {
+        if (attachment.downloadStatus == 'done' &&
+            attachment.encryptionKeyBase64 != 'old-key') {
+          observedSafeCommitOrder = true;
+          expect(
+            messageRepo.lastSavedMessage?.wireEnvelope,
+            isNull,
+            reason:
+                'the stale envelope must be cleared before new attachment '
+                'keys become durable',
+          );
+        }
+      };
       p2pService.emitState(NodeState.stopped);
 
       final realBridge = PassthroughCryptoBridge();
@@ -1451,6 +1936,7 @@ void main() {
         'msg-00001',
       )).single;
       expect(row.encryptionKeyBase64, isNot('old-key'));
+      expect(observedSafeCommitOrder, isTrue);
       final message = await messageRepo.getMessage('msg-00001');
       expect(
         message!.wireEnvelope,

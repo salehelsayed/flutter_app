@@ -3,6 +3,21 @@ import 'private_media_policy.dart';
 
 const Object _privateMediaUnset = Object();
 
+/// Durable direction is part of private-media lifecycle authority.
+///
+/// Incoming View Once and outgoing sender one-more-look rows use different
+/// policy lanes even when their persisted mode is the same.
+enum PrivateMediaDirection { incoming, outgoing }
+
+enum PrivateMediaLifecycleSettlementIntent { rollbackPreFrame, terminalize }
+
+enum PrivateMediaLifecycleSettlementDisposition {
+  rolledBackAvailable,
+  terminalized,
+  lostRollbackRace,
+  indeterminateFailClosed,
+}
+
 class PrivateMediaLifecycleAttachment {
   const PrivateMediaLifecycleAttachment({
     required this.id,
@@ -37,6 +52,7 @@ class PrivateMediaLifecycleTarget {
   const PrivateMediaLifecycleTarget({
     required this.messageId,
     required this.scopeId,
+    this.direction = PrivateMediaDirection.incoming,
     required this.mode,
     required this.state,
     this.receivedAtMs,
@@ -52,6 +68,7 @@ class PrivateMediaLifecycleTarget {
 
   /// Lane-defined owner/scope identity (direct contact id, group id, etc.).
   final String scopeId;
+  final PrivateMediaDirection direction;
   final PrivateMediaMode mode;
   final PrivateMediaLifecycleState state;
   final int? receivedAtMs;
@@ -67,6 +84,7 @@ class PrivateMediaLifecycleTarget {
       attachments.any((attachment) => attachment.isDownloadInProgress);
 
   PrivateMediaLifecycleTarget copyWith({
+    PrivateMediaDirection? direction,
     PrivateMediaMode? mode,
     PrivateMediaLifecycleState? state,
     Object? receivedAtMs = _privateMediaUnset,
@@ -80,6 +98,7 @@ class PrivateMediaLifecycleTarget {
     return PrivateMediaLifecycleTarget(
       messageId: messageId,
       scopeId: scopeId,
+      direction: direction ?? this.direction,
       mode: mode ?? this.mode,
       state: state ?? this.state,
       receivedAtMs: receivedAtMs == _privateMediaUnset
@@ -109,11 +128,24 @@ class PrivateMediaLifecycleTarget {
 abstract class PrivateMediaLifecycleLaneAdapter {
   Future<PrivateMediaLifecycleTarget?> loadTarget(String messageId);
 
-  Future<bool> claimOpening(String messageId, {required int nowMs});
+  Future<bool> claimOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  });
 
-  Future<bool> markViewing(String messageId, {required int nowMs});
+  Future<bool> markViewing(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  });
 
-  Future<bool> rollbackOpening(String messageId);
+  Future<bool> rollbackOpening(PrivateMediaOpeningLeaseIdentity identity);
+
+  /// Exact active-lease terminal transition. Recovery uses [consume] because
+  /// no same-process lease survives a restart.
+  Future<bool> consumeOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  });
 
   Future<bool> consume(String messageId, {required int nowMs});
 
@@ -138,6 +170,18 @@ abstract class PrivateMediaLifecycleLaneAdapter {
   Future<void> cleanupTerminalWithinLock(PrivateMediaLifecycleTarget current);
 }
 
+/// Optional exact-CAS capability used only when terminalization throws after
+/// an authoritative reread still proves the original row `available`.
+///
+/// Implementations must qualify every field, including the stored path, and
+/// are called while the engine already owns the attachment lifecycle lock.
+abstract class PrivateMediaIndeterminateQuarantineAdapter {
+  Future<bool> quarantineIndeterminateAvailable(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  });
+}
+
 /// Optional lane capability for crash-stale download ownership recovery.
 abstract class PrivateMediaInterruptedDownloadRecoveryAdapter {
   Future<int> recoverInterruptedDownloadsWithinLock(
@@ -146,19 +190,38 @@ abstract class PrivateMediaInterruptedDownloadRecoveryAdapter {
   });
 }
 
-class PrivateMediaOpeningLease {
-  PrivateMediaOpeningLease._({
+class PrivateMediaOpeningLeaseIdentity {
+  const PrivateMediaOpeningLeaseIdentity({
     required this.messageId,
+    required this.direction,
+    required this.mode,
     required this.attachmentId,
+    required this.storedLocalPath,
     required this.localPath,
   });
 
   final String messageId;
+  final PrivateMediaDirection direction;
+  final PrivateMediaMode mode;
   final String attachmentId;
+  final String storedLocalPath;
   final String localPath;
+}
+
+class PrivateMediaOpeningLease {
+  PrivateMediaOpeningLease._({required this.identity});
+
+  final PrivateMediaOpeningLeaseIdentity identity;
+  String get messageId => identity.messageId;
+  PrivateMediaDirection get direction => identity.direction;
+  PrivateMediaMode get mode => identity.mode;
+  String get attachmentId => identity.attachmentId;
+  String get storedLocalPath => identity.storedLocalPath;
+  String get localPath => identity.localPath;
   final Object _token = Object();
   bool _firstFrameRecorded = false;
   bool _closed = false;
+  PrivateMediaLifecycleSettlementDisposition? _settlementDisposition;
 }
 
 class PrivateMediaLifecycleReconcileResult {
@@ -180,13 +243,18 @@ class PrivateMediaLifecycleEngine {
   final int Function() nowMs;
   final Map<String, PrivateMediaOpeningLease> _activeLeases = {};
 
-  Future<PrivateMediaOpeningLease?> openViewOnce(String messageId) async {
+  /// Claims the one-shot lifecycle lane for either incoming View Once or the
+  /// sender-only one-more-look contract (outgoing protected/View Once).
+  Future<PrivateMediaOpeningLease?> openOneShot(String messageId) async {
     final initial = await adapter.loadTarget(messageId);
-    if (!_isOpenableViewOnce(initial)) return null;
+    if (!_isOpenableOneShot(initial)) return null;
     final attachment = initial!.attachments.single;
     final localPath = attachment.localPath;
+    final storedLocalPath = attachment.storedLocalPath;
     if (!attachment.isDownloadComplete ||
         !attachment.isIntegrityEligible ||
+        storedLocalPath == null ||
+        storedLocalPath.isEmpty ||
         localPath == null ||
         localPath.isEmpty) {
       return null;
@@ -194,26 +262,40 @@ class PrivateMediaLifecycleEngine {
 
     return lifecycleLock.synchronized(attachment.id, () async {
       final current = await adapter.loadTarget(messageId);
-      if (!_isOpenableViewOnce(current)) return null;
+      if (!_isOpenableOneShot(current)) return null;
       final currentAttachment = current!.attachments.single;
       final currentPath = currentAttachment.localPath;
+      final currentStoredPath = currentAttachment.storedLocalPath;
       if (currentAttachment.id != attachment.id ||
+          current.direction != initial.direction ||
+          current.mode != initial.mode ||
           !currentAttachment.isDownloadComplete ||
           !currentAttachment.isIntegrityEligible ||
+          currentStoredPath == null ||
+          currentStoredPath != storedLocalPath ||
           currentPath == null ||
           currentPath.isEmpty) {
         return null;
       }
-      if (!await adapter.claimOpening(messageId, nowMs: nowMs())) return null;
-      final lease = PrivateMediaOpeningLease._(
+      final identity = PrivateMediaOpeningLeaseIdentity(
         messageId: messageId,
+        direction: current.direction,
+        mode: current.mode,
         attachmentId: attachment.id,
+        storedLocalPath: currentStoredPath,
         localPath: currentPath,
       );
+      if (!await adapter.claimOpening(identity, nowMs: nowMs())) return null;
+      final lease = PrivateMediaOpeningLease._(identity: identity);
       _activeLeases[messageId] = lease;
       return lease;
     });
   }
+
+  /// Compatibility name retained for existing engine-tier callers. Direction
+  /// and mode are still requalified by [openOneShot].
+  Future<PrivateMediaOpeningLease?> openViewOnce(String messageId) =>
+      openOneShot(messageId);
 
   Future<bool> markFirstFrame(PrivateMediaOpeningLease lease) {
     return lifecycleLock.synchronized(lease.attachmentId, () async {
@@ -223,17 +305,17 @@ class PrivateMediaLifecycleEngine {
         return false;
       }
       final current = await adapter.loadTarget(lease.messageId);
-      if (current == null ||
-          current.hidden ||
-          current.mode != PrivateMediaMode.viewOnce ||
-          current.state != PrivateMediaLifecycleState.opening) {
+      if (!_matchesLease(
+        current,
+        lease,
+        expectedStates: const <PrivateMediaLifecycleState>{
+          PrivateMediaLifecycleState.opening,
+        },
+      )) {
         _invalidateLease(lease.messageId);
         return false;
       }
-      final updated = await adapter.markViewing(
-        lease.messageId,
-        nowMs: nowMs(),
-      );
+      final updated = await adapter.markViewing(lease.identity, nowMs: nowMs());
       if (updated) lease._firstFrameRecorded = true;
       return updated;
     });
@@ -246,18 +328,13 @@ class PrivateMediaLifecycleEngine {
     return lifecycleLock.synchronized(lease.attachmentId, () async {
       if (!_ownsActiveLease(lease) || lease._closed) return null;
       final current = await adapter.loadTarget(lease.messageId);
-      if (current == null ||
-          current.hidden ||
-          current.mode != PrivateMediaMode.viewOnce ||
-          current.state != PrivateMediaLifecycleState.opening ||
-          current.attachments.length != 1) {
-        return null;
-      }
-      final attachment = current.attachments.single;
-      if (attachment.id != lease.attachmentId ||
-          !attachment.isDownloadComplete ||
-          !attachment.isIntegrityEligible ||
-          attachment.localPath != lease.localPath) {
+      if (!_matchesLease(
+        current,
+        lease,
+        expectedStates: const <PrivateMediaLifecycleState>{
+          PrivateMediaLifecycleState.opening,
+        },
+      )) {
         return null;
       }
       return lease.localPath;
@@ -271,7 +348,7 @@ class PrivateMediaLifecycleEngine {
           lease._firstFrameRecorded) {
         return false;
       }
-      final rolledBack = await adapter.rollbackOpening(lease.messageId);
+      final rolledBack = await adapter.rollbackOpening(lease.identity);
       if (rolledBack) {
         lease._closed = true;
         _activeLeases.remove(lease.messageId);
@@ -281,16 +358,40 @@ class PrivateMediaLifecycleEngine {
   }
 
   Future<bool> terminalizeViewOnce(PrivateMediaOpeningLease lease) {
+    return settleOpeningLease(
+      lease,
+      intent: PrivateMediaLifecycleSettlementIntent.terminalize,
+    ).then(
+      (disposition) =>
+          disposition ==
+          PrivateMediaLifecycleSettlementDisposition.terminalized,
+    );
+  }
+
+  /// Performs the complete rollback/terminalize decision, operation-aware
+  /// reread, exact quarantine, terminal retry, and cleanup while holding one
+  /// attachment lifecycle lock. The lease caches the result so a repeated
+  /// settlement cannot perform another durable transition.
+  Future<PrivateMediaLifecycleSettlementDisposition> settleOpeningLease(
+    PrivateMediaOpeningLease lease, {
+    required PrivateMediaLifecycleSettlementIntent intent,
+  }) {
+    final cached = lease._settlementDisposition;
+    if (cached != null) return Future.value(cached);
     return lifecycleLock.synchronized(lease.attachmentId, () async {
-      if (!_ownsActiveLease(lease) || lease._closed) return false;
-      final claimed = await adapter.consume(lease.messageId, nowMs: nowMs());
-      lease._closed = true;
-      _activeLeases.remove(lease.messageId);
-      final current = await adapter.loadTarget(lease.messageId);
-      if (current != null && current.cleanupTerminal) {
-        await adapter.cleanupTerminalWithinLock(current);
+      final insideCached = lease._settlementDisposition;
+      if (insideCached != null) return insideCached;
+      if (!_ownsActiveLease(lease) || lease._closed) {
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+        );
       }
-      return claimed;
+      if (intent == PrivateMediaLifecycleSettlementIntent.rollbackPreFrame &&
+          !lease._firstFrameRecorded) {
+        return _rollbackWithinLock(lease);
+      }
+      return _terminalizeWithinLock(lease);
     });
   }
 
@@ -356,7 +457,7 @@ class PrivateMediaLifecycleEngine {
             return;
           }
           final bool claimed;
-          if (current.mode == PrivateMediaMode.viewOnce) {
+          if (_requiresOpeningLease(current)) {
             claimed = await adapter.consume(current.messageId, nowMs: nowMs());
           } else {
             claimed = await adapter.failClosedCorruptState(
@@ -462,12 +563,266 @@ class PrivateMediaLifecycleEngine {
     if (lease != null) lease._closed = true;
   }
 
-  bool _isOpenableViewOnce(PrivateMediaLifecycleTarget? target) {
+  bool _isOpenableOneShot(PrivateMediaLifecycleTarget? target) {
     return target != null &&
         !target.hidden &&
-        target.mode == PrivateMediaMode.viewOnce &&
+        _requiresOpeningLease(target) &&
         target.state == PrivateMediaLifecycleState.available &&
         target.attachments.length == 1;
+  }
+
+  bool _requiresOpeningLease(PrivateMediaLifecycleTarget target) {
+    return switch (target.direction) {
+      PrivateMediaDirection.incoming =>
+        target.mode == PrivateMediaMode.viewOnce,
+      PrivateMediaDirection.outgoing =>
+        target.mode == PrivateMediaMode.protected ||
+            target.mode == PrivateMediaMode.viewOnce,
+    };
+  }
+
+  bool _matchesLease(
+    PrivateMediaLifecycleTarget? target,
+    PrivateMediaOpeningLease lease, {
+    required Set<PrivateMediaLifecycleState> expectedStates,
+    bool allowCleanedTerminal = false,
+  }) {
+    if (target == null ||
+        target.hidden ||
+        target.messageId != lease.messageId ||
+        target.direction != lease.direction ||
+        target.mode != lease.mode ||
+        !expectedStates.contains(target.state)) {
+      return false;
+    }
+    if (allowCleanedTerminal &&
+        target.state.isTerminal &&
+        target.attachments.isEmpty) {
+      return true;
+    }
+    if (target.attachments.length != 1) return false;
+    final attachment = target.attachments.single;
+    return attachment.id == lease.attachmentId &&
+        attachment.messageId == lease.messageId &&
+        attachment.storedLocalPath == lease.storedLocalPath &&
+        attachment.localPath == lease.localPath &&
+        attachment.isDownloadComplete &&
+        attachment.isIntegrityEligible;
+  }
+
+  Future<PrivateMediaLifecycleSettlementDisposition> _rollbackWithinLock(
+    PrivateMediaOpeningLease lease,
+  ) async {
+    final before = await _loadTargetSafely(lease.messageId);
+    if (!_matchesLease(
+      before,
+      lease,
+      expectedStates: const <PrivateMediaLifecycleState>{
+        PrivateMediaLifecycleState.opening,
+      },
+    )) {
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.lostRollbackRace,
+      );
+    }
+    try {
+      final rolledBack = await adapter.rollbackOpening(lease.identity);
+      if (rolledBack) {
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.rolledBackAvailable,
+        );
+      }
+    } catch (_) {
+      // The operation-aware reread below is authoritative. In particular, an
+      // exact available row is safe only after rollback intent, never after a
+      // failed terminalization attempt.
+    }
+    final current = await _loadTargetSafely(lease.messageId);
+    if (_matchesLease(
+      current,
+      lease,
+      expectedStates: const <PrivateMediaLifecycleState>{
+        PrivateMediaLifecycleState.available,
+      },
+    )) {
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.rolledBackAvailable,
+      );
+    }
+    return _cacheSettlement(
+      lease,
+      PrivateMediaLifecycleSettlementDisposition.lostRollbackRace,
+    );
+  }
+
+  Future<PrivateMediaLifecycleSettlementDisposition> _terminalizeWithinLock(
+    PrivateMediaOpeningLease lease,
+  ) async {
+    final before = await _loadTargetSafely(lease.messageId);
+    if (_isExactTerminal(before, lease)) {
+      await _cleanupTerminalBestEffort(before!);
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.terminalized,
+      );
+    }
+    if (!_matchesLease(
+      before,
+      lease,
+      expectedStates: const <PrivateMediaLifecycleState>{
+        PrivateMediaLifecycleState.opening,
+        PrivateMediaLifecycleState.viewing,
+      },
+    )) {
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+      );
+    }
+    try {
+      await adapter.consumeOpening(lease.identity, nowMs: nowMs());
+    } catch (_) {}
+
+    var current = await _loadTargetSafely(lease.messageId);
+    if (_isExactTerminal(current, lease)) {
+      await _cleanupTerminalBestEffort(current!);
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.terminalized,
+      );
+    }
+
+    final exactAvailable = _matchesLease(
+      current,
+      lease,
+      expectedStates: const <PrivateMediaLifecycleState>{
+        PrivateMediaLifecycleState.available,
+      },
+    );
+    if (exactAvailable) {
+      final quarantine = adapter is PrivateMediaIndeterminateQuarantineAdapter
+          ? adapter as PrivateMediaIndeterminateQuarantineAdapter
+          : null;
+      if (quarantine == null) {
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+        );
+      }
+      var quarantined = false;
+      try {
+        quarantined = await quarantine.quarantineIndeterminateAvailable(
+          lease.identity,
+          nowMs: nowMs(),
+        );
+      } catch (_) {
+        quarantined = false;
+      }
+      current = await _loadTargetSafely(lease.messageId);
+      if (_isExactTerminal(current, lease)) {
+        await _cleanupTerminalBestEffort(current!);
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.terminalized,
+        );
+      }
+      final alreadyQuarantined = _matchesLease(
+        current,
+        lease,
+        expectedStates: const <PrivateMediaLifecycleState>{
+          PrivateMediaLifecycleState.opening,
+        },
+      );
+      if (!quarantined && !alreadyQuarantined) {
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+        );
+      }
+    } else {
+      final exactQuarantined = _matchesLease(
+        current,
+        lease,
+        expectedStates: const <PrivateMediaLifecycleState>{
+          PrivateMediaLifecycleState.opening,
+          PrivateMediaLifecycleState.viewing,
+        },
+      );
+      if (!exactQuarantined) {
+        return _cacheSettlement(
+          lease,
+          PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+        );
+      }
+    }
+
+    // A terminalization throw/false result that left an exact available row
+    // has now been quarantined back to `opening`. Retry once under the same
+    // lifecycle lock. If persistence remains uncertain, retain that opening
+    // row for the existing startup/resume reconciler.
+    try {
+      await adapter.consumeOpening(lease.identity, nowMs: nowMs());
+    } catch (_) {}
+    current = await _loadTargetSafely(lease.messageId);
+    if (_isExactTerminal(current, lease)) {
+      await _cleanupTerminalBestEffort(current!);
+      return _cacheSettlement(
+        lease,
+        PrivateMediaLifecycleSettlementDisposition.terminalized,
+      );
+    }
+    return _cacheSettlement(
+      lease,
+      PrivateMediaLifecycleSettlementDisposition.indeterminateFailClosed,
+    );
+  }
+
+  bool _isExactTerminal(
+    PrivateMediaLifecycleTarget? current,
+    PrivateMediaOpeningLease lease,
+  ) {
+    if (current == null || !current.state.isTerminal) return false;
+    return _matchesLease(
+      current,
+      lease,
+      expectedStates: <PrivateMediaLifecycleState>{current.state},
+      allowCleanedTerminal: true,
+    );
+  }
+
+  Future<PrivateMediaLifecycleTarget?> _loadTargetSafely(
+    String messageId,
+  ) async {
+    try {
+      return await adapter.loadTarget(messageId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _cleanupTerminalBestEffort(
+    PrivateMediaLifecycleTarget current,
+  ) async {
+    if (!current.cleanupTerminal || current.attachments.isEmpty) return;
+    try {
+      await adapter.cleanupTerminalWithinLock(current);
+    } catch (_) {
+      // The durable terminal row remains authoritative and the ordinary
+      // reconciler retains responsibility for residual cleanup.
+    }
+  }
+
+  PrivateMediaLifecycleSettlementDisposition _cacheSettlement(
+    PrivateMediaOpeningLease lease,
+    PrivateMediaLifecycleSettlementDisposition disposition,
+  ) {
+    lease._settlementDisposition ??= disposition;
+    lease._closed = true;
+    _activeLeases.remove(lease.messageId);
+    return lease._settlementDisposition!;
   }
 
   Future<T> _withAttachmentLocks<T>(

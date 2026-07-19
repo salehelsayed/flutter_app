@@ -15,6 +15,7 @@ import 'package:path/path.dart' as p;
 class DirectPrivateMediaLifecycle
     implements
         PrivateMediaLifecycleLaneAdapter,
+        PrivateMediaIndeterminateQuarantineAdapter,
         PrivateMediaInterruptedDownloadRecoveryAdapter {
   DirectPrivateMediaLifecycle({
     required this.messageRepository,
@@ -44,6 +45,16 @@ class DirectPrivateMediaLifecycle
       );
     }
     return repository as DirectPrivateMediaDownloadStateRepository;
+  }
+
+  DirectPrivateMediaExactOpeningLeaseRepository get _exactLeaseRepository {
+    final repository = messageRepository;
+    if (repository is! DirectPrivateMediaExactOpeningLeaseRepository) {
+      throw StateError(
+        'Direct private-media reveal requires exact durable lease CAS',
+      );
+    }
+    return repository as DirectPrivateMediaExactOpeningLeaseRepository;
   }
 
   @override
@@ -87,6 +98,9 @@ class DirectPrivateMediaLifecycle
     return PrivateMediaLifecycleTarget(
       messageId: message.id,
       scopeId: message.contactPeerId,
+      direction: message.isIncoming
+          ? PrivateMediaDirection.incoming
+          : PrivateMediaDirection.outgoing,
       mode: message.privateMediaMode,
       state: message.privateMediaState,
       receivedAtMs: message.privateMediaReceivedAtMs,
@@ -146,20 +160,78 @@ class DirectPrivateMediaLifecycle
   }
 
   @override
-  Future<bool> claimOpening(String messageId, {required int nowMs}) =>
-      messageRepository.claimPrivateMediaOpening(messageId, nowMs: nowMs);
+  Future<bool> claimOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) => _exactLeaseRepository.claimExactPrivateMediaOpening(
+    identity.messageId,
+    isIncoming: identity.direction == PrivateMediaDirection.incoming,
+    mode: identity.mode,
+    attachmentId: identity.attachmentId,
+    storedLocalPath: identity.storedLocalPath,
+    nowMs: nowMs,
+  );
 
   @override
-  Future<bool> markViewing(String messageId, {required int nowMs}) =>
-      messageRepository.markPrivateMediaViewing(messageId, nowMs: nowMs);
+  Future<bool> markViewing(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) => _exactLeaseRepository.markExactPrivateMediaViewing(
+    identity.messageId,
+    isIncoming: identity.direction == PrivateMediaDirection.incoming,
+    mode: identity.mode,
+    attachmentId: identity.attachmentId,
+    storedLocalPath: identity.storedLocalPath,
+    nowMs: nowMs,
+  );
 
   @override
-  Future<bool> rollbackOpening(String messageId) =>
-      messageRepository.rollbackPrivateMediaOpening(messageId);
+  Future<bool> rollbackOpening(PrivateMediaOpeningLeaseIdentity identity) =>
+      _exactLeaseRepository.rollbackExactPrivateMediaOpening(
+        identity.messageId,
+        isIncoming: identity.direction == PrivateMediaDirection.incoming,
+        mode: identity.mode,
+        attachmentId: identity.attachmentId,
+        storedLocalPath: identity.storedLocalPath,
+      );
+
+  @override
+  Future<bool> quarantineIndeterminateAvailable(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) {
+    final repository = messageRepository;
+    if (repository is! DirectPrivateMediaIndeterminateQuarantineRepository) {
+      return Future<bool>.value(false);
+    }
+    final quarantineRepository =
+        repository as DirectPrivateMediaIndeterminateQuarantineRepository;
+    return quarantineRepository.quarantineIndeterminatePrivateMediaAvailable(
+      identity.messageId,
+      isIncoming: identity.direction == PrivateMediaDirection.incoming,
+      mode: identity.mode,
+      attachmentId: identity.attachmentId,
+      storedLocalPath: identity.storedLocalPath,
+      nowMs: nowMs,
+    );
+  }
 
   @override
   Future<bool> consume(String messageId, {required int nowMs}) =>
       messageRepository.consumePrivateMedia(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> consumeOpening(
+    PrivateMediaOpeningLeaseIdentity identity, {
+    required int nowMs,
+  }) => _exactLeaseRepository.consumeExactPrivateMedia(
+    identity.messageId,
+    isIncoming: identity.direction == PrivateMediaDirection.incoming,
+    mode: identity.mode,
+    attachmentId: identity.attachmentId,
+    storedLocalPath: identity.storedLocalPath,
+    nowMs: nowMs,
+  );
 
   @override
   Future<bool> advanceClock(String messageId, {required int nowMs}) =>

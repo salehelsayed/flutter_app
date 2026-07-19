@@ -3,6 +3,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -119,6 +120,21 @@ class LetterCard extends StatelessWidget {
   /// ✓✓ stays retired in both paths.
   final bool transportStatusGlyph;
 
+  /// Privacy-safe presentation mounted inside the decorated message body.
+  /// When present, ordinary media/audio renderers are suppressed so private
+  /// bytes can never be projected into the conversation scroll.
+  final Widget? privateContentSlot;
+
+  /// Stable key for the clipped/decorated body that owns [privateContentSlot].
+  /// Conversation tests use this to prove the private panel is inside the one
+  /// real bubble rather than a visually detached sibling.
+  final Key? decoratedBodyKey;
+
+  /// Progress for an upload whose stable attachment id belongs to this exact
+  /// message. Unlike the conversation-wide upload banner, this state is also
+  /// populated by automatic retry uploads.
+  final MessageUploadProgressViewState? messageUploadProgress;
+
   const LetterCard({
     super.key,
     required this.senderPeerId,
@@ -158,6 +174,9 @@ class LetterCard extends StatelessWidget {
     this.showSenderName = true,
     this.avatarOutsideBubble = false,
     this.transportStatusGlyph = false,
+    this.privateContentSlot,
+    this.decoratedBodyKey,
+    this.messageUploadProgress,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -205,6 +224,7 @@ class LetterCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: Container(
+          key: decoratedBodyKey,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
             color: isIncoming
@@ -405,8 +425,9 @@ class LetterCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: _buildQuoteBar(readableColors),
         ),
+      ?privateContentSlot,
       // Media grid (images/videos)
-      if (_imageVideoMedia.isNotEmpty)
+      if (privateContentSlot == null && _imageVideoMedia.isNotEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
           child: MediaGrid(
@@ -421,7 +442,10 @@ class LetterCard extends StatelessWidget {
           ),
         ),
       // Audio players
-      for (final audio in _audioMedia)
+      for (final audio
+          in privateContentSlot == null
+              ? _audioMedia
+              : const <MediaAttachment>[])
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
           child: AudioPlayerWidget(
@@ -482,9 +506,10 @@ class LetterCard extends StatelessWidget {
             ),
           ),
         )
-      else if (media.isNotEmpty)
+      else if (privateContentSlot == null && media.isNotEmpty)
         const SizedBox(height: 12),
-      if (_showsOutgoingMediaPendingNote)
+      if (messageUploadProgress != null ||
+          (privateContentSlot == null && _showsOutgoingMediaPendingNote))
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
           child: _buildOutgoingMediaPendingNote(context, readableColors),
@@ -738,6 +763,7 @@ class LetterCard extends StatelessWidget {
     final bubble = ClipRRect(
       borderRadius: radius,
       child: Container(
+        key: decoratedBodyKey,
         decoration: BoxDecoration(
           borderRadius: radius,
           color: isIncoming
@@ -909,12 +935,22 @@ class LetterCard extends StatelessWidget {
     BackgroundReadableColors readableColors,
   ) {
     final l10n = AppLocalizations.of(context)!;
+    final progress = messageUploadProgress;
+    final title = progress == null
+        ? l10n.upload_progress_title
+        : l10n.media_sending_automatically;
+    final detail = progress == null
+        ? l10n.post_media_pending_upload_desc
+        : progress.hasKnownTotal
+        ? l10n.media_uploading_percent(progress.percent)
+        : l10n.media_uploading;
     return Semantics(
       liveRegion: true,
-      label:
-          '${l10n.upload_progress_title}. '
-          '${l10n.post_media_pending_upload_desc}',
+      label: '$title. $detail',
       child: Row(
+        key: progress == null
+            ? null
+            : ValueKey('message-upload-progress-${progress.messageId}'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(
@@ -931,7 +967,7 @@ class LetterCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  l10n.upload_progress_title,
+                  title,
                   style: TextStyle(
                     color: readableColors.textSecondary,
                     fontSize: 12,
@@ -940,7 +976,7 @@ class LetterCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  l10n.post_media_pending_upload_desc,
+                  detail,
                   style: TextStyle(
                     color: readableColors.textMuted,
                     fontSize: 11,

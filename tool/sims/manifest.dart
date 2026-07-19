@@ -505,6 +505,7 @@ List<String> _targetResourceErrors(CapabilitySpec capability) {
 
   requireTargetLock('android.physical', const <String>{
     'device:android-physical',
+    'device-control:android-physical',
   });
   requireTargetLock('android.emulator', const <String>{
     'device:android-emulator',

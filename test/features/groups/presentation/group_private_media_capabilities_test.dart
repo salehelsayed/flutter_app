@@ -237,6 +237,13 @@ void main() {
   testWidgets(
     'GPL-09 consumed expired unsupported cleanup and disabled rows stay terminal',
     (tester) async {
+      // Plan 260 replaces compact terminal text with full in-bubble visual
+      // cards. Give the four-row matrix enough viewport to keep every lazy
+      // ListView child mounted while asserting all terminal copies together.
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final opens = <String>[];
       final rows = <GroupMessage>[
         _privateMessage(id: 'consumed', consumedAt: 300),

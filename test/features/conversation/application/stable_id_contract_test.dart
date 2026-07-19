@@ -286,7 +286,7 @@ void main() {
         );
 
         // Simulate the upload call with blobId (as sendVoiceMessage would do)
-        final uploaded = await fakeUploadFn.call(
+        final uploaded = (await fakeUploadFn.call(
           bridge: FakeBridge(),
           localFilePath: '/tmp/voice.m4a',
           mime: 'audio/mp4',
@@ -294,7 +294,7 @@ void main() {
           durationMs: 5000,
           waveform: [0.1, 0.5, 0.9],
           blobId: voiceAttId, // Stable-ID contract
-        );
+        )).attachmentOrNull;
 
         // Verify blobId was forwarded
         expect(

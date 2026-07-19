@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
@@ -355,12 +356,14 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
   const DirectPrivateMediaTerminalPlaceholder({
     super.key,
     required this.state,
+    this.direction = PrivateMediaDirection.incoming,
     this.onReply,
     this.onInfo,
     this.onDelete,
   });
 
   final PrivateMediaLifecycleState state;
+  final PrivateMediaDirection direction;
   final VoidCallback? onReply;
   final VoidCallback? onInfo;
   final VoidCallback? onDelete;
@@ -368,24 +371,34 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final senderConsumed =
+        direction == PrivateMediaDirection.outgoing &&
+        state == PrivateMediaLifecycleState.consumed;
     final copy = state == PrivateMediaLifecycleState.consumed
-        ? l10n.private_media_consumed
+        ? senderConsumed
+              ? l10n.private_media_sender_consumed
+              : l10n.private_media_consumed
         : l10n.private_media_expired;
     return Semantics(
       label: copy,
       child: Container(
         key: ValueKey('private-terminal-${state.name}'),
-        constraints: const BoxConstraints(minWidth: 180, maxWidth: 280),
+        width: double.infinity,
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.visibility_off_outlined),
             const SizedBox(height: 6),
+            if (senderConsumed) ...[
+              Text(
+                l10n.private_media_notification_body,
+                key: const ValueKey('private-media-terminal-generic-title'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+            ],
             Text(copy, textAlign: TextAlign.center),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -432,6 +445,118 @@ String privateMediaModeLabel(AppLocalizations l10n, PrivateMediaPolicy policy) {
   };
 }
 
+/// Privacy-safe card chrome shared by direct and group private-media slots.
+/// The visual is intentionally icon/gradient-only: private pixels never enter
+/// this widget through a path, provider, attachment, or byte payload.
+class PrivateMediaVisualCard extends StatelessWidget {
+  const PrivateMediaVisualCard({
+    super.key,
+    required this.title,
+    required this.body,
+    required this.icon,
+    this.titleKey,
+    this.action,
+  });
+
+  final String title;
+  final String body;
+  final IconData icon;
+  final Key? titleKey;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            key: const ValueKey('private-media-card-visual'),
+            height: 88,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  colors.primary.withValues(alpha: 0.30),
+                  colors.tertiary.withValues(alpha: 0.14),
+                  colors.surfaceContainerHighest.withValues(alpha: 0.78),
+                ],
+              ),
+              border: Border.all(
+                color: colors.outlineVariant.withValues(alpha: 0.55),
+              ),
+            ),
+            child: Center(
+              child: Icon(icon, size: 38, color: colors.onSurfaceVariant),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            key: titleKey,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(body, style: Theme.of(context).textTheme.bodySmall),
+          if (action != null) ...[const SizedBox(height: 10), action!],
+        ],
+      ),
+    );
+  }
+}
+
+bool privateMediaCardUsesVideoCopy(PrivateMediaAttachmentKind kind) =>
+    kind == PrivateMediaAttachmentKind.video;
+
+String privateMediaDurationLabel(AppLocalizations l10n, int? durationSeconds) {
+  return switch (durationSeconds) {
+    3600 => l10n.private_media_duration_1h,
+    86400 => l10n.private_media_duration_1d,
+    _ => l10n.private_media_duration_7d,
+  };
+}
+
+String privateMediaCardTitle(
+  AppLocalizations l10n,
+  PrivateMediaPolicy policy,
+  PrivateMediaAttachmentKind kind,
+) {
+  final video = privateMediaCardUsesVideoCopy(kind);
+  return switch (policy.mode) {
+    PrivateMediaMode.viewOnce =>
+      video
+          ? l10n.private_media_card_title_view_once_video
+          : l10n.private_media_card_title_view_once_photo,
+    PrivateMediaMode.disappearing =>
+      video
+          ? l10n.private_media_card_title_expiry_video(
+              privateMediaDurationLabel(l10n, policy.durationSeconds),
+            )
+          : l10n.private_media_card_title_expiry_photo(
+              privateMediaDurationLabel(l10n, policy.durationSeconds),
+            ),
+    _ =>
+      video
+          ? l10n.private_media_card_title_protected_video
+          : l10n.private_media_card_title_protected_photo,
+  };
+}
+
+IconData privateMediaCardIcon(PrivateMediaPolicy policy) {
+  return switch (policy.mode) {
+    PrivateMediaMode.viewOnce => Icons.looks_one_outlined,
+    PrivateMediaMode.disappearing => Icons.timer_outlined,
+    _ => Icons.lock_outline_rounded,
+  };
+}
+
 class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
   const DirectPrivateMediaOpenPlaceholder({
     super.key,
@@ -439,16 +564,26 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
     required this.contactDisplayName,
     this.opening = false,
     this.policy,
+    this.kind = PrivateMediaAttachmentKind.image,
   });
 
   final VoidCallback? onOpen;
   final String contactDisplayName;
   final bool opening;
   final PrivateMediaPolicy? policy;
+  final PrivateMediaAttachmentKind kind;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final labeledPolicy = policy;
+    final actionLabel = labeledPolicy?.mode == PrivateMediaMode.viewOnce
+        ? (privateMediaCardUsesVideoCopy(kind)
+              ? l10n.private_media_view_video
+              : l10n.private_media_view_photo)
+        : (privateMediaCardUsesVideoCopy(kind)
+              ? l10n.private_media_open_video
+              : l10n.private_media_open_photo);
     final button = FilledButton.tonalIcon(
       key: const ValueKey('private-media-open'),
       onPressed: opening ? null : onOpen,
@@ -459,10 +594,13 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
             )
           : const Icon(Icons.lock_outline_rounded),
       label: Text(
-        opening ? l10n.private_media_opening : l10n.private_media_open,
+        opening
+            ? l10n.private_media_opening
+            : labeledPolicy == null
+            ? l10n.private_media_open
+            : actionLabel,
       ),
     );
-    final labeledPolicy = policy;
     if (labeledPolicy == null || !labeledPolicy.isPrivate) {
       return button;
     }
@@ -472,22 +610,15 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
       PrivateMediaMode.viewOnce => l10n.private_media_view_once_body_received,
       _ => null,
     };
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        button,
-        const SizedBox(height: 2),
-        Text(
-          privateMediaModeLabel(l10n, labeledPolicy),
-          key: const ValueKey('private-media-mode-label'),
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (body != null) ...[
-          const SizedBox(height: 2),
-          Text(body, style: Theme.of(context).textTheme.bodySmall),
-        ],
-      ],
+    return Semantics(
+      label: privateMediaCardTitle(l10n, labeledPolicy, kind),
+      child: PrivateMediaVisualCard(
+        title: privateMediaCardTitle(l10n, labeledPolicy, kind),
+        titleKey: const ValueKey('private-media-mode-label'),
+        body: body ?? privateMediaModeLabel(l10n, labeledPolicy),
+        icon: privateMediaCardIcon(labeledPolicy),
+        action: button,
+      ),
     );
   }
 }
@@ -501,42 +632,116 @@ class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
     super.key,
     required this.policy,
     required this.contactDisplayName,
+    this.kind = PrivateMediaAttachmentKind.image,
+    this.onOpen,
+    this.opening = false,
+    this.localMediaAvailable = true,
   });
 
   final PrivateMediaPolicy policy;
   final String contactDisplayName;
+  final PrivateMediaAttachmentKind kind;
+  final VoidCallback? onOpen;
+  final bool opening;
+  final bool localMediaAvailable;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final label = privateMediaModeLabel(l10n, policy);
-    final body = l10n.private_media_outgoing_body(contactDisplayName);
+    final label = privateMediaCardTitle(l10n, policy, kind);
+    final supportsOneMoreLook =
+        policy.mode == PrivateMediaMode.protected ||
+        policy.mode == PrivateMediaMode.viewOnce;
+    final body = !localMediaAvailable
+        ? l10n.private_media_sender_local_missing_body
+        : supportsOneMoreLook
+        ? '${l10n.private_media_outgoing_body(contactDisplayName)}\n'
+              '${l10n.private_media_disclosure_reopen}'
+        : l10n.private_media_outgoing_body(contactDisplayName);
+    final action = supportsOneMoreLook && localMediaAvailable && onOpen != null
+        ? FilledButton.tonalIcon(
+            key: const ValueKey('private-media-open'),
+            onPressed: opening ? null : onOpen,
+            icon: opening
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.visibility_outlined),
+            label: Text(
+              opening ? l10n.private_media_opening : l10n.private_media_open,
+            ),
+          )
+        : null;
     return Semantics(
       label: label,
-      child: Container(
+      child: KeyedSubtree(
         key: const ValueKey('private-media-outgoing'),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.lock_outline_rounded, size: 16),
-                const SizedBox(width: 6),
-                Text(label, style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(body, style: Theme.of(context).textTheme.bodySmall),
-          ],
+        child: PrivateMediaVisualCard(
+          title: label,
+          titleKey: const ValueKey('private-media-mode-label'),
+          body: body,
+          icon: privateMediaCardIcon(policy),
+          action: action,
         ),
       ),
+    );
+  }
+}
+
+/// Typed private-open failure presentation. Safe availability copy is shown
+/// only when settlement proved the exact row rolled back; every other
+/// disposition remains deliberately non-committal.
+class DirectPrivateMediaOpenFailurePlaceholder extends StatelessWidget {
+  const DirectPrivateMediaOpenFailurePlaceholder({
+    super.key,
+    required this.direction,
+    required this.kind,
+    required this.settleResult,
+    required this.canRetry,
+    this.localMediaMissing = false,
+    this.onRetry,
+  });
+
+  final PrivateMediaDirection direction;
+  final PrivateMediaAttachmentKind kind;
+  final DirectPrivateMediaSettleResult? settleResult;
+  final bool canRetry;
+  final bool localMediaMissing;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final title = privateMediaCardUsesVideoCopy(kind)
+        ? l10n.private_media_open_failed_title_video
+        : l10n.private_media_open_failed_title_photo;
+    final rolledBack =
+        settleResult?.disposition ==
+        DirectPrivateMediaSettleDisposition.rolledBackAvailable;
+    final String body;
+    if (localMediaMissing && direction == PrivateMediaDirection.outgoing) {
+      body = l10n.private_media_sender_local_missing_body;
+    } else if (rolledBack) {
+      body = direction == PrivateMediaDirection.incoming
+          ? l10n.private_media_open_failed_view_safe
+          : l10n.private_media_open_failed_reopen_safe;
+    } else {
+      body = l10n.private_media_notification_body;
+    }
+    final retryEnabled = canRetry && onRetry != null && !localMediaMissing;
+    return PrivateMediaVisualCard(
+      key: const ValueKey('private-media-open-failure'),
+      title: title,
+      body: body,
+      icon: Icons.warning_amber_rounded,
+      action: retryEnabled
+          ? FilledButton.tonal(
+              key: const ValueKey('private-media-try-again'),
+              onPressed: onRetry,
+              child: Text(l10n.private_media_try_again),
+            )
+          : null,
     );
   }
 }
@@ -558,7 +763,7 @@ class DirectPrivateMediaUnsupportedPlaceholder extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return Container(
       key: const ValueKey('private-media-unsupported'),
-      constraints: const BoxConstraints(minWidth: 180, maxWidth: 300),
+      width: double.infinity,
       padding: const EdgeInsets.all(12),
       child: Column(
         mainAxisSize: MainAxisSize.min,

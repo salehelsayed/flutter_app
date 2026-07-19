@@ -2,6 +2,9 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_connectivity_probe.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -48,6 +51,11 @@ Future<int> retryIncompleteUploads({
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
   bool Function(String blobId) isUploadInFlight = _uploadNeverInFlight,
+  TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
+  ReleaseMediaUploadLease? releaseUploadLease,
+  bool requireOsConnectivity = false,
+  MediaUploadConnectivityProbe connectivityProbe = probeMediaUploadConnectivity,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -74,6 +82,27 @@ Future<int> retryIncompleteUploads({
     event: 'RETRY_INCOMPLETE_UPLOADS_START',
     details: {},
   );
+
+  if (requireOsConnectivity && !await connectivityProbe()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_INCOMPLETE_UPLOADS_SKIPPED_NO_CONNECTIVITY',
+      details: {},
+    );
+    emitRetryTiming(
+      outcome: 'no_connectivity',
+      attachmentCount: 0,
+      messageCount: 0,
+      succeeded: 0,
+    );
+    return 0;
+  }
+
+  final DirectUploadRetryProjectionRepository? projection =
+      uploadRetryProjectionRepo ??
+      (messageRepo is DirectUploadRetryProjectionRepository
+          ? messageRepo as DirectUploadRetryProjectionRepository
+          : null);
 
   final pendingAttachments = await mediaAttachmentRepo
       .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
@@ -130,15 +159,25 @@ Future<int> retryIncompleteUploads({
     final messageId = entry.key;
     final pendingAttsForMessage = entry.value;
 
-    // 127-Bug-B: never race a foreground send. If ANY pending blob for this
-    // message is currently being uploaded by the live send path, defer the
-    // whole message untouched — re-encrypting here would diverge the relay
-    // bytes from the already-advertised contentHash.
+    // E11: production callers atomically claim the complete attachment set.
+    // The legacy predicate remains only for lightweight callers/tests that do
+    // not yet provide the token-owned seam. A failed all-or-none claim leaves
+    // every row untouched.
+    MediaUploadLease? uploadLease;
     String? inFlightBlob;
-    for (final att in pendingAttsForMessage) {
-      if (isUploadInFlight(att.id)) {
-        inFlightBlob = att.id;
-        break;
+    if (tryClaimUploadLease != null) {
+      uploadLease = tryClaimUploadLease(
+        pendingAttsForMessage.map((attachment) => attachment.id),
+      );
+      if (uploadLease == null) {
+        inFlightBlob = pendingAttsForMessage.first.id;
+      }
+    } else {
+      for (final att in pendingAttsForMessage) {
+        if (isUploadInFlight(att.id)) {
+          inFlightBlob = att.id;
+          break;
+        }
       }
     }
     if (inFlightBlob != null) {
@@ -194,6 +233,8 @@ Future<int> retryIncompleteUploads({
       //    sendChatMessage is NOT called (no partial sends).
       var allUploadsSucceeded = true;
       var isNonRetryable = false;
+      UploadMediaFailed? uploadFailure;
+      MediaAttachment? failedAttachment;
 
       for (final attachment in pendingAttsForMessage) {
         var localPath = attachment.localPath;
@@ -209,6 +250,12 @@ Future<int> retryIncompleteUploads({
           );
           allUploadsSucceeded = false;
           isNonRetryable = true;
+          failedAttachment = attachment;
+          uploadFailure = const UploadMediaFailed(
+            stage: UploadMediaStage.localSource,
+            disposition: UploadMediaDisposition.terminal,
+            errorCode: 'MISSING_LOCAL_SOURCE',
+          );
           break;
         }
 
@@ -223,17 +270,20 @@ Future<int> retryIncompleteUploads({
           details: {'mime': attachment.mime},
         );
 
-        final uploaded = await uploadMediaFn(
+        final uploadOutcome = await runUploadMedia(
+          uploadMediaFn: uploadMediaFn,
           bridge: bridge,
           localFilePath: localPath,
           mime: attachment.mime,
           recipientPeerId: msg.contactPeerId,
+          mediaFileManager: mediaFileManager,
           durationMs: attachment.durationMs,
           waveform: attachment.waveform,
           width: attachment.width,
           height: attachment.height,
           blobId: attachment.id, // Stable-ID contract (F.7.1)
         );
+        final uploaded = uploadOutcome.attachmentOrNull;
 
         if (uploaded == null) {
           emitFlowEvent(
@@ -246,6 +296,8 @@ Future<int> retryIncompleteUploads({
             },
           );
           allUploadsSucceeded = false;
+          failedAttachment = attachment;
+          uploadFailure = uploadOutcome as UploadMediaFailed;
           break;
         }
 
@@ -270,6 +322,12 @@ Future<int> retryIncompleteUploads({
           }
           allUploadsSucceeded = false;
           isNonRetryable = true;
+          failedAttachment = attachment;
+          uploadFailure = const UploadMediaFailed(
+            stage: UploadMediaStage.consumerBoundary,
+            disposition: UploadMediaDisposition.terminal,
+            errorCode: 'STALE_ATTACHMENT_STATE',
+          );
           emitFlowEvent(
             layer: 'FL',
             event: 'RETRY_INCOMPLETE_UPLOAD_ABORT_STALE_ATTACHMENT',
@@ -284,21 +342,20 @@ Future<int> retryIncompleteUploads({
         }
 
         final completedAttachment = uploaded.copyWith(
+          id: attachment.id,
           messageId: msg.id,
           downloadStatus: 'done',
-        );
-        await mediaAttachmentRepo.saveAttachment(
-          completedAttachment,
-          owner: MediaOwnerLane.direct,
         );
 
         // KC-2 (112 Phase 3): the re-upload minted a fresh key/nonce, so a
         // persisted wire envelope (the Section-4 crash-replay contract,
         // replayed verbatim without re-encrypting) would reference the DEAD
         // key — receivers could download the new blob but never decrypt it.
-        // Invalidate it; the send below (or any later retry path) rebuilds
-        // the envelope from the current attachment rows. KC-1 holds because
-        // this runs BEFORE the sendChatMessage call below.
+        // Invalidate it BEFORE committing the new attachment keys. This gives
+        // a crash a safe direction: null envelope + pending attachment simply
+        // re-uploads, while done + new keys + old envelope would be an
+        // undecryptable durable replay. The send below (or any later retry
+        // path) rebuilds the envelope from the current attachment rows.
         final keyChanged =
             uploaded.encryptionKeyBase64 != attachment.encryptionKeyBase64 ||
             uploaded.encryptionNonce != attachment.encryptionNonce;
@@ -322,47 +379,53 @@ Future<int> retryIncompleteUploads({
             );
           }
         }
+        await mediaAttachmentRepo.saveAttachment(
+          completedAttachment,
+          owner: MediaOwnerLane.direct,
+        );
       }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable
       if (!allUploadsSucceeded) {
-        for (final att in pendingAttsForMessage) {
-          final latest = await _latestAttachmentForMessage(
-            mediaAttachmentRepo: mediaAttachmentRepo,
+        if (projection != null &&
+            failedAttachment != null &&
+            uploadFailure != null) {
+          await projection.projectUploadFailure(
             messageId: messageId,
-            attachmentId: att.id,
+            attachmentId: failedAttachment.id,
+            failure: uploadFailure,
           );
-          final current = latest ?? att;
-          if (current.downloadStatus != 'upload_pending') {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_STALE_FAILURE_UPDATE',
-              details: {
-                'attachmentId': att.id.length > 8
-                    ? att.id.substring(0, 8)
-                    : att.id,
-                'status': current.downloadStatus,
-              },
+        } else {
+          // Compatibility for lightweight repository doubles that predate the
+          // atomic capability. Production always takes the branch above.
+          for (final att in pendingAttsForMessage) {
+            final latest = await _latestAttachmentForMessage(
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              messageId: messageId,
+              attachmentId: att.id,
             );
-            continue;
-          }
+            final current = latest ?? att;
+            if (current.downloadStatus != 'upload_pending') {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_STALE_FAILURE_UPDATE',
+                details: {
+                  'attachmentId': att.id.length > 8
+                      ? att.id.substring(0, 8)
+                      : att.id,
+                  'status': current.downloadStatus,
+                },
+              );
+              continue;
+            }
 
-          final newRetryCount = (current.uploadRetryCount ?? 0) + 1;
-
-          if (isNonRetryable || newRetryCount >= kMaxUploadRetries) {
-            // Terminal: mark as permanently failed
+            final newRetryCount = (current.uploadRetryCount ?? 0) + 1;
             await mediaAttachmentRepo.saveAttachment(
               current.copyWith(
-                downloadStatus: 'upload_failed',
-                uploadRetryCount: newRetryCount,
-              ),
-              owner: MediaOwnerLane.direct,
-            );
-          } else {
-            // Transient: keep as upload_pending for next retry cycle
-            await mediaAttachmentRepo.saveAttachment(
-              current.copyWith(
-                downloadStatus: 'upload_pending', // Still retryable
+                downloadStatus:
+                    isNonRetryable || newRetryCount >= kMaxUploadRetries
+                    ? 'upload_failed'
+                    : 'upload_pending',
                 uploadRetryCount: newRetryCount,
               ),
               owner: MediaOwnerLane.direct,
@@ -393,7 +456,9 @@ Future<int> retryIncompleteUploads({
       final abortReason = _lateSendAbortReason(
         message: refreshedMsg,
         attachments: refreshedAttachments,
-        expectedAttachmentCount: allAttachments.length,
+        expectedAttachmentIds: {
+          for (final attachment in allAttachments) attachment.id,
+        },
       );
       if (abortReason != null) {
         emitFlowEvent(
@@ -467,6 +532,10 @@ Future<int> retryIncompleteUploads({
         event: 'RETRY_INCOMPLETE_UPLOAD_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      if (uploadLease != null) {
+        releaseUploadLease?.call(uploadLease);
+      }
     }
   }
 
@@ -513,7 +582,7 @@ Future<MediaAttachment?> _latestAttachmentForMessage({
 String? _lateSendAbortReason({
   required ConversationMessage? message,
   required List<MediaAttachment> attachments,
-  required int expectedAttachmentCount,
+  required Set<String> expectedAttachmentIds,
 }) {
   if (message == null) {
     return 'message_missing';
@@ -522,15 +591,13 @@ String? _lateSendAbortReason({
     return 'message_status_${message.status}';
   }
 
-  if (attachments.any(
-    (attachment) => attachment.downloadStatus == 'upload_failed',
-  )) {
-    return 'attachments_terminalized';
+  if (attachments.length != expectedAttachmentIds.length ||
+      attachments.any(
+        (attachment) => !expectedAttachmentIds.contains(attachment.id),
+      )) {
+    return 'attachment_set_changed';
   }
-  final doneCount = attachments
-      .where((attachment) => attachment.downloadStatus == 'done')
-      .length;
-  if (doneCount < expectedAttachmentCount) {
+  if (attachments.any((attachment) => attachment.downloadStatus != 'done')) {
     return 'attachments_not_done';
   }
   return null;

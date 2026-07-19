@@ -116,6 +116,46 @@ void main() {
   );
 
   test(
+    'TC-17 main wires mediaFileManager through background and app-resume failed-message retry paths',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+      final retrierStart = mainSource.indexOf(
+        'final pendingMessageRetrier = PendingMessageRetrier(',
+      );
+      final retrierEnd = mainSource.indexOf(
+        'rejoinGroupTopicsWithRecoveryAckEligibilityFn:',
+        retrierStart,
+      );
+      expect(retrierStart, isNonNegative);
+      expect(retrierEnd, greaterThan(retrierStart));
+      expect(
+        mainSource.substring(retrierStart, retrierEnd),
+        contains('mediaFileManager: mediaFileManager'),
+        reason:
+            'the default PendingMessageRetrier failed-message path must receive the resolver',
+      );
+
+      final resumeStart = mainSource.lastIndexOf(
+        'retryFailedMessagesFn: () => retryFailedMessages(',
+      );
+      final resumeEnd = mainSource.indexOf(
+        'retryUnackedMessagesFn:',
+        resumeStart,
+      );
+      expect(resumeStart, isNonNegative);
+      expect(resumeEnd, greaterThan(resumeStart));
+      expect(
+        mainSource.substring(resumeStart, resumeEnd),
+        contains('mediaFileManager: widget.mediaFileManager'),
+        reason:
+            'the explicit app-resume failed-message path must receive the resolver',
+      );
+    },
+  );
+
+  test(
     'main.dart passes mediaFileManager into retryIncompleteGroupUploads on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);

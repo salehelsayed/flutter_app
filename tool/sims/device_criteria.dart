@@ -5,6 +5,39 @@
 /// post-capture CLIs, and the aggregate sims report verifier.
 library;
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
+const String privateMediaOutboxPhysicalSenderTargetRole =
+    'physical_android_sender';
+const String privateMediaOutboxEmulatorReceiverTargetRole =
+    'android_emulator_receiver';
+
+/// Returns a domain- and role-separated digest suitable for durable evidence.
+///
+/// The ADB target ID stays in the local orchestration boundary. Only this
+/// one-way value is permitted in the retained private-media outbox artifact.
+String privateMediaOutboxTargetSha256({
+  required String role,
+  required String adbTargetId,
+}) {
+  if (role != privateMediaOutboxPhysicalSenderTargetRole &&
+      role != privateMediaOutboxEmulatorReceiverTargetRole) {
+    throw ArgumentError.value(role, 'role', 'unsupported target role');
+  }
+  if (adbTargetId.trim().isEmpty) {
+    throw ArgumentError.value(adbTargetId, 'adbTargetId', 'must be nonempty');
+  }
+  return sha256
+      .convert(
+        utf8.encode(
+          'android.connectivity_restore_media_outbox|target|$role|$adbTargetId',
+        ),
+      )
+      .toString();
+}
+
 final class DeviceCriteriaResult {
   const DeviceCriteriaResult._(this.ok, this.detail);
 
@@ -66,6 +99,210 @@ DeviceCriteriaResult validateConnectivityRestoreArtifact(
   }
   return const DeviceCriteriaResult.pass(
     'network-change drain, no-resume delivery, and peer rewarm proven',
+  );
+}
+
+/// Strict Plan 260 proof for the production private-media offline outbox.
+///
+/// Latency is retained as an informational trend value. PASS is determined by
+/// source-qualified causality, exact issuance counts, and receiver delivery.
+DeviceCriteriaResult validatePrivateMediaOutboxRestoreArtifact(
+  Map<String, Object?> artifact,
+) {
+  final common = _passedScenario(
+    artifact,
+    'android.connectivity_restore_media_outbox',
+  );
+  if (!common.ok) return common;
+  const topLevelKeys = <String>{
+    'schemaVersion',
+    'scenario',
+    'status',
+    'physicalSenderTargetSha256',
+    'emulatorReceiverTargetSha256',
+    'phases',
+  };
+  if (artifact.keys.toSet().difference(topLevelKeys).isNotEmpty ||
+      topLevelKeys.difference(artifact.keys.toSet()).isNotEmpty) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox artifact must use the exact safe top-level schema',
+    );
+  }
+  if (artifact['schemaVersion'] != 1) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox artifact requires schemaVersion 1',
+    );
+  }
+  final physicalSenderTargetSha256 = artifact['physicalSenderTargetSha256'];
+  final emulatorReceiverTargetSha256 = artifact['emulatorReceiverTargetSha256'];
+  if (!_isLowercaseSha256(physicalSenderTargetSha256) ||
+      !_isLowercaseSha256(emulatorReceiverTargetSha256) ||
+      physicalSenderTargetSha256 == emulatorReceiverTargetSha256) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox proof requires distinct role-salted Android '
+      'target hashes',
+    );
+  }
+  final rawPhases = artifact['phases'];
+  if (rawPhases is! List || rawPhases.length != 2) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox proof requires exactly two phases',
+    );
+  }
+  for (var index = 0; index < rawPhases.length; index++) {
+    final rawPhase = rawPhases[index];
+    if (rawPhase is! Map) {
+      return DeviceCriteriaResult.fail(
+        'private-media outbox phase ${index + 1} is not an object',
+      );
+    }
+    final phase = rawPhase.cast<String, Object?>();
+    final validation = _validatePrivateMediaOutboxPhase(
+      phase,
+      expectedPhase: index + 1,
+    );
+    if (!validation.ok) return validation;
+  }
+  return const DeviceCriteriaResult.pass(
+    'private-media outbox causality, exact attempts, and delivery proven',
+  );
+}
+
+DeviceCriteriaResult _validatePrivateMediaOutboxPhase(
+  Map<String, Object?> phase, {
+  required int expectedPhase,
+}) {
+  const keys = <String>{
+    'phase',
+    'runCorrelationSha256',
+    'attachmentSha256',
+    'queuedNoRed',
+    'pauseResumeRemainedQueued',
+    'offlineResumeAttemptCount',
+    'zeroPostRestoreUiActions',
+    'receiverExactMediaDelivered',
+    'encryptionPreparedCount',
+    'uploadRequestCount',
+    'envelopeCount',
+    'receiveCount',
+    'networkRestoredClaimCount',
+    'postRestoreEncryptionCount',
+    'postRestoreUploadCount',
+    'restoreRetryLatencyMs',
+    'events',
+  };
+  if (phase.keys.toSet().difference(keys).isNotEmpty ||
+      keys.difference(phase.keys.toSet()).isNotEmpty) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase must use the exact safe schema',
+    );
+  }
+  if (phase['phase'] != expectedPhase ||
+      !_isLowercaseSha256(phase['runCorrelationSha256']) ||
+      !_isLowercaseSha256(phase['attachmentSha256'])) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase has invalid identity hashes',
+    );
+  }
+  if (phase['queuedNoRed'] != true ||
+      phase['zeroPostRestoreUiActions'] != true ||
+      phase['receiverExactMediaDelivered'] != true) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase did not remain honest or deliver',
+    );
+  }
+  if (expectedPhase == 2 && phase['pauseResumeRemainedQueued'] != true) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox phase 2 must remain queued across pause/resume',
+    );
+  }
+  if (expectedPhase == 1 && phase['pauseResumeRemainedQueued'] != false) {
+    return const DeviceCriteriaResult.fail(
+      'private-media outbox phase 1 must not forge pause/resume evidence',
+    );
+  }
+  if (phase['offlineResumeAttemptCount'] != 0) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase issued an offline resume attempt',
+    );
+  }
+  const exactCounts = <String, int>{
+    'encryptionPreparedCount': 2,
+    'uploadRequestCount': 2,
+    'envelopeCount': 1,
+    'receiveCount': 1,
+    'networkRestoredClaimCount': 1,
+    'postRestoreEncryptionCount': 1,
+    'postRestoreUploadCount': 1,
+  };
+  for (final entry in exactCounts.entries) {
+    if (phase[entry.key] != entry.value) {
+      return DeviceCriteriaResult.fail(
+        'private-media outbox phase $expectedPhase requires '
+        '${entry.key}=${entry.value}',
+      );
+    }
+  }
+  final latency = phase['restoreRetryLatencyMs'];
+  if (latency is! int || latency < 0) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase must record nonnegative '
+      'restoreRetryLatencyMs informationally',
+    );
+  }
+
+  final rawEvents = phase['events'];
+  if (rawEvents is! List || rawEvents.length != 6) {
+    return DeviceCriteriaResult.fail(
+      'private-media outbox phase $expectedPhase requires the exact causal chain',
+    );
+  }
+  const expectedEvents = <String>[
+    'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER',
+    'MEDIA_UPLOAD_LEASE_CLAIMED',
+    'MEDIA_ENCRYPTION_PREPARED',
+    'MEDIA_UPLOAD_START',
+    'CHAT_MSG_SEND_SUCCESS',
+    'PRIVATE_MEDIA_OUTBOX_E2E_RECEIVED',
+  ];
+  final runHash = phase['runCorrelationSha256'];
+  final attachmentHash = phase['attachmentSha256'];
+  for (var index = 0; index < rawEvents.length; index++) {
+    final rawEvent = rawEvents[index];
+    if (rawEvent is! Map) {
+      return DeviceCriteriaResult.fail(
+        'private-media outbox phase $expectedPhase event $index is not an object',
+      );
+    }
+    final event = rawEvent.cast<String, Object?>();
+    final expectedKeys = index == 0
+        ? const <String>{'event', 'runCorrelationSha256'}
+        : index == 1
+        ? const <String>{
+            'event',
+            'source',
+            'runCorrelationSha256',
+            'attachmentSha256',
+          }
+        : const <String>{'event', 'runCorrelationSha256', 'attachmentSha256'};
+    if (event.keys.toSet().difference(expectedKeys).isNotEmpty ||
+        expectedKeys.difference(event.keys.toSet()).isNotEmpty ||
+        event['event'] != expectedEvents[index] ||
+        event['runCorrelationSha256'] != runHash ||
+        (index > 0 && event['attachmentSha256'] != attachmentHash)) {
+      return DeviceCriteriaResult.fail(
+        'private-media outbox phase $expectedPhase causal event $index is invalid',
+      );
+    }
+    if (index == 1 && event['source'] != 'network_restored') {
+      return DeviceCriteriaResult.fail(
+        'private-media outbox phase $expectedPhase causal claim is not '
+        'source=network_restored',
+      );
+    }
+  }
+  return DeviceCriteriaResult.pass(
+    'private-media outbox phase $expectedPhase accepted',
   );
 }
 

@@ -648,15 +648,17 @@ void main() {
               }) async {
                 uploadCalled = true;
                 operationLog.add('uploadMediaFn');
-                return MediaAttachment(
-                  id: 'media-1',
-                  messageId: '',
-                  mime: mime,
-                  size: 100,
-                  mediaType: 'image',
-                  localPath: localFilePath,
-                  downloadStatus: 'done',
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                return UploadMediaSucceeded(
+                  MediaAttachment(
+                    id: 'media-1',
+                    messageId: '',
+                    mime: mime,
+                    size: 100,
+                    mediaType: 'image',
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  ),
                 );
               },
           sendFn:

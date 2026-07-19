@@ -8,6 +8,25 @@ bool flowEventLoggingEnabled = kDebugMode;
 typedef FlowEventSink = void Function(Map<String, dynamic> payload);
 
 FlowEventSink? _flowEventTestSink;
+
+/// Owner-scoped E2E observer installation. Releasing restores the observer
+/// that was present before this lease, but only if no newer owner replaced it.
+final class E2EFlowEventSinkLease {
+  E2EFlowEventSinkLease._(this._installed, this._previous);
+
+  final FlowEventSink _installed;
+  final FlowEventSink? _previous;
+  bool _released = false;
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    if (identical(_flowEventTestSink, _installed)) {
+      _flowEventTestSink = _previous;
+    }
+  }
+}
+
 const _redacted = '[redacted]';
 const _sensitiveDiagnosticKeys = [
   'privateKeyHex',
@@ -46,6 +65,12 @@ void debugSetFlowEventSink(FlowEventSink? sink) {
 /// message plaintext, peer identities, tokens, addresses, or key material.
 void setE2EFlowEventSink(FlowEventSink? sink) {
   _flowEventTestSink = sink;
+}
+
+E2EFlowEventSinkLease installScopedE2EFlowEventSink(FlowEventSink sink) {
+  final previous = _flowEventTestSink;
+  _flowEventTestSink = sink;
+  return E2EFlowEventSinkLease._(sink, previous);
 }
 
 Map<String, dynamic> sanitizeFlowEventDetails(Map<String, dynamic> details) {

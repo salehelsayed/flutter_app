@@ -1095,12 +1095,23 @@ Future<int> dbTransitionGroupSendingToFailed(
   DatabaseExecutor db, {
   DateTime? olderThan,
 }) async {
+  final hasMediaAttachments = (await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'media_attachments' LIMIT 1",
+  )).isNotEmpty;
+  final pendingUploadExclusion = hasMediaAttachments
+      ? 'AND NOT EXISTS (SELECT 1 FROM media_attachments attachment '
+            'WHERE attachment.message_id = group_messages.id '
+            "AND attachment.owner_lane = 'group' "
+            "AND attachment.download_status = 'upload_pending')"
+      : '';
   if (olderThan == null) {
     return db.rawUpdate(
       "UPDATE group_messages SET status = 'failed' "
       "WHERE (status = 'sending' "
       "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL)) "
-      'AND is_incoming = 0',
+      'AND is_incoming = 0 '
+      '$pendingUploadExclusion',
     );
   }
 
@@ -1110,7 +1121,8 @@ Future<int> dbTransitionGroupSendingToFailed(
     'WHERE is_incoming = 0 '
     "AND ((status = 'sending' "
     'AND COALESCE(last_send_attempt_at, timestamp) < ?) '
-    "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL))",
+    "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL)) "
+    '$pendingUploadExclusion',
     [threshold],
   );
 }

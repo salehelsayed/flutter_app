@@ -822,8 +822,8 @@ Future<void> main(List<String> args) async {
       'post-run Flutter and adb discovery retained the pinned USB topology',
     );
     final combined = <String, Object?>{
-      'schema': 'plan234.direct-private-media-device-local-journey',
-      'version': 1,
+      'schema': directPrivateMediaDeviceLocalJourneySchema,
+      'version': directPrivateMediaDeviceLocalJourneyVersion,
       'generatedBy': 'automated_instrumented_harness',
       'topology': <String, Object?>{
         'platform': 'android',

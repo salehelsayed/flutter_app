@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import 'android_app_package.dart';
 import 'build_cache.dart';
 import 'manifest.dart';
 import 'planner.dart';
@@ -540,7 +541,7 @@ final class SimsBuildOrchestrator {
     }
     return _BuildInvocation.success(
       artifactPath,
-      command.map(_redactArgument).toList(growable: false),
+      redactSimsBuildCommandForAttestation(command),
     );
   }
 
@@ -670,10 +671,13 @@ final class SimsBuildOrchestrator {
       '${jsonEncode(<String, Object?>{'schema': 'mknoon.sims.ios-device-production-bundle.v1', 'profileId': profile.id, 'applicationApp': 'TestProducts/$relativeApplication', 'xctestrun': 'RunnerUITests.xctestrun', 'testProducts': 'TestProducts', 'centralCompileCommands': 1, 'logicalBuildCount': 1, 'childBuildCount': 0})}\n',
       flush: true,
     );
-    return _BuildInvocation.success(bundle.path, <String>[
-      'xcodebuild',
-      ...xcodeArguments.map(_redactArgument),
-    ]);
+    return _BuildInvocation.success(
+      bundle.path,
+      redactSimsBuildCommandForAttestation(<String>[
+        'xcodebuild',
+        ...xcodeArguments,
+      ]),
+    );
   }
 
   List<String> _buildArguments(BuildProfileSpec profile) {
@@ -792,12 +796,14 @@ Map<String, String> effectiveSimsCompileDefines(
   } else {
     defines.remove('SIMS_BUILD_PROFILE_ID');
   }
-  if (profile.id == 'ios.simulator.e2e') {
+  if (profile.platform == 'android' || profile.id == 'ios.simulator.e2e') {
     final relayAddresses = effectiveEnvironment['MKNOON_RELAY_ADDRESSES']
         ?.trim();
     if (relayAddresses != null && relayAddresses.isNotEmpty) {
       defines['MKNOON_RELAY_ADDRESSES'] = relayAddresses;
     }
+  }
+  if (profile.id == 'ios.simulator.e2e') {
     defines['MKNOON_KEY_ROTATION_GRACE_PERIOD_MS'] = '1500';
   }
   return Map<String, String>.unmodifiable(defines);
@@ -811,18 +817,23 @@ String effectiveSimsApplicationId(
   Directory? projectDirectory,
 }) {
   final effectiveEnvironment = environment ?? Platform.environment;
-  final explicit = effectiveEnvironment['SIMS_APP_ID']?.trim();
-  if (explicit != null && explicit.isNotEmpty) return explicit;
-  if (profile.platform != 'android') return 'com.mknoon.app';
-  final gradle = effectiveEnvironment['ORG_GRADLE_PROJECT_androidApplicationId']
-      ?.trim();
-  if (gradle != null && gradle.isNotEmpty) return gradle;
+  if (profile.platform != 'android') {
+    final explicit = effectiveEnvironment['SIMS_APP_ID']?.trim();
+    return explicit == null || explicit.isEmpty
+        ? defaultAndroidAppPackage
+        : explicit;
+  }
   final projectRoot = (projectDirectory ?? Directory.current).absolute;
-  final local = _javaProperty(
-    File('${projectRoot.path}/android/local.properties'),
-    'android.applicationId',
-  )?.trim();
-  return local == null || local.isEmpty ? 'com.mknoon.app' : local;
+  final localProperties = File('${projectRoot.path}/android/local.properties');
+  return resolveAndroidAppPackageFromSources(
+    environmentValue: effectiveEnvironment['ANDROID_APP_PACKAGE'],
+    simsApplicationId: effectiveEnvironment['SIMS_APP_ID'],
+    gradleApplicationId:
+        effectiveEnvironment['ORG_GRADLE_PROJECT_androidApplicationId'],
+    localPropertyLines: localProperties.existsSync()
+        ? const LineSplitter().convert(localProperties.readAsStringSync())
+        : null,
+  );
 }
 
 /// Canonical, content-safe identities for the two NDK selections that can
@@ -1711,17 +1722,47 @@ String _architectureFor(BuildProfileSpec profile) {
   return 'device';
 }
 
+/// Removes inline compile-time values before a central build command is
+/// persisted in an artifact attestation.
+///
+/// Every dart-define is treated as private by default. Keeping its key and a
+/// deterministic value digest preserves useful build provenance without
+/// allowing a newly introduced endpoint, credential, or other define to leak
+/// merely because its name was not added to a sensitive-key allowlist.
+List<String> redactSimsBuildCommandForAttestation(Iterable<String> command) =>
+    List<String>.unmodifiable(command.map(_redactArgument));
+
 String _redactArgument(String argument) {
   final lower = argument.toLowerCase();
+  const dartDefinePrefix = '--dart-define=';
+  if (lower.startsWith(dartDefinePrefix)) {
+    final definition = argument.substring(dartDefinePrefix.length);
+    final separator = definition.indexOf('=');
+    if (separator < 0) {
+      return '$dartDefinePrefix${_hashedRedaction(definition)}';
+    }
+    final key = definition.substring(0, separator);
+    final value = definition.substring(separator + 1);
+    return '$dartDefinePrefix$key=${_hashedRedaction(value)}';
+  }
+  const encodedDartDefinesPrefix = 'dart_defines=';
+  if (lower.startsWith(encodedDartDefinesPrefix)) {
+    final prefix = argument.substring(0, encodedDartDefinesPrefix.length);
+    final value = argument.substring(encodedDartDefinesPrefix.length);
+    return '$prefix${_hashedRedaction(value)}';
+  }
   if (lower.contains('token=') ||
       lower.contains('secret=') ||
       lower.contains('password=')) {
     final key = argument.substring(0, argument.indexOf('=') + 1);
     final value = argument.substring(argument.indexOf('=') + 1);
-    return '$key<sha256:${sha256.convert(utf8.encode(value))}>';
+    return '$key${_hashedRedaction(value)}';
   }
   return argument;
 }
+
+String _hashedRedaction(String value) =>
+    '<sha256:${sha256.convert(utf8.encode(value))}>';
 
 String _bounded(String value) {
   final normalized = value.trim();

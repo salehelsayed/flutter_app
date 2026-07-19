@@ -118,9 +118,8 @@ void main() {
           isTrue,
           reason: '$path opener must await the existing route through pop',
         );
-        for (final forbiddenSeed in <String>[
+        final forbiddenSeeds = <String>[
           'initialMessages:',
-          'initialText:',
           'initialAttachments:',
           'initialPendingMedia:',
           'quotedMessageId:',
@@ -133,7 +132,18 @@ void main() {
           'encryptionNonce',
           'wireEnvelope:',
           'payload:',
-        ]) {
+        ];
+        if (path == orbitPath) {
+          // Plan 260's Ask-for-a-new-invite action reuses Orbit's complete
+          // opener with an optional localized draft. The announcement callback
+          // is still typed to one ContactModel argument, so this named value is
+          // null on the announcement path and cannot seed group content.
+          expect(opener, contains('String? initialText'));
+          expect(directBuilder, contains('initialText: initialText'));
+        } else {
+          forbiddenSeeds.add('initialText:');
+        }
+        for (final forbiddenSeed in forbiddenSeeds) {
           expect(
             directBuilder,
             isNot(contains(forbiddenSeed)),
@@ -210,7 +220,12 @@ String _extractFunction(String source, String signatureAnchor) {
   if (start < 0) {
     throw TestFailure('Missing function signature: $signatureAnchor');
   }
-  final open = source.indexOf('{', start + signatureAnchor.length);
+  final parameterOpen = source.indexOf('(', start);
+  if (parameterOpen < 0) {
+    throw TestFailure('Missing function parameters: $signatureAnchor');
+  }
+  final parameterClose = _matchingDelimiter(source, parameterOpen, '(', ')');
+  final open = source.indexOf('{', parameterClose + 1);
   if (open < 0) {
     throw TestFailure('Missing function body: $signatureAnchor');
   }

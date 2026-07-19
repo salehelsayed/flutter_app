@@ -11,6 +11,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -77,6 +78,7 @@ import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -520,7 +522,9 @@ class _ThrowingMembersGroupRepository extends InMemoryGroupRepository {
   }
 }
 
-class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
+class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
+    implements GroupManualUploadRetryRearmRepository {
+  InMemoryMediaAttachmentRepository? manualRearmMediaRepo;
   int getMessagesPageCalls = 0;
   int getMessageCalls = 0;
   int markAsReadCalls = 0;
@@ -545,6 +549,61 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   Future<void> markAsRead(String groupId) async {
     markAsReadCalls++;
     return super.markAsRead(groupId);
+  }
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    final mediaRepo = manualRearmMediaRepo;
+    final parent = await super.getMessage(messageId);
+    if (mediaRepo == null ||
+        parent == null ||
+        parent.isIncoming ||
+        parent.status != 'failed') {
+      return false;
+    }
+    final persisted = await mediaRepo.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    );
+    final unfinished = persisted
+        .where((attachment) => attachment.downloadStatus != 'done')
+        .toList(growable: false);
+    if (unfinished.length != attachments.length) return false;
+    for (final expected in attachments) {
+      final matches = unfinished.where(
+        (attachment) =>
+            attachment.id == expected.attachmentId &&
+            attachment.localPath == expected.storedLocalPath &&
+            attachment.downloadStatus == expected.downloadStatus &&
+            (attachment.uploadRetryCount ?? 0) == expected.uploadRetryCount,
+      );
+      if (matches.length != 1) return false;
+    }
+
+    await super.saveMessage(
+      parent.copyWith(
+        status: 'queued_offline',
+        wireEnvelope: null,
+        inboxRetryPayload: null,
+        inboxStored: false,
+        retryAttemptCount: 0,
+        nextEligibleAt: null,
+      ),
+    );
+    for (final expected in attachments) {
+      if (expected.downloadStatus != 'upload_failed') continue;
+      final current = unfinished.singleWhere(
+        (attachment) => attachment.id == expected.attachmentId,
+      );
+      await mediaRepo.saveAttachment(
+        current.copyWith(downloadStatus: 'upload_pending', uploadRetryCount: 0),
+        owner: MediaOwnerLane.group,
+      );
+    }
+    return true;
   }
 }
 
@@ -1276,6 +1335,7 @@ void main() {
       groupRepo = InMemoryGroupRepository();
       msgRepo = CountingGroupMessageRepository();
       mediaAttachmentRepo = CountingMediaAttachmentRepository();
+      msgRepo.manualRearmMediaRepo = mediaAttachmentRepo;
       contactRepo = InMemoryContactRepository();
       bridge = FakeBridge(
         initialResponses: {
@@ -1323,7 +1383,7 @@ void main() {
       MicPermissionGateway? micPermissionGateway,
       MediaPicker? mediaPicker,
       MediaFileManager? mediaFileManager,
-      UploadMediaFn? uploadMediaFn,
+      LegacyTestUploadMediaFn? uploadMediaFn,
       List<File>? initialAttachments,
       List<PendingComposerMedia>? initialPendingMedia,
       String? initialText,
@@ -1381,7 +1441,9 @@ void main() {
           mediaPicker: mediaPicker,
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
-          uploadMediaFn: uploadMediaFn ?? uploadMedia,
+          uploadMediaFn: uploadMediaFn == null
+              ? uploadMedia
+              : adaptLegacyTestUploadMediaFn(uploadMediaFn),
           privateMediaPolicy: privateMediaPolicy,
           privateMediaAvailability: privateMediaAvailability,
           initialAttachments: initialAttachments,
@@ -3582,7 +3644,7 @@ void main() {
       },
     );
 
-    testWidgets('group private media menu uses consequence-led labels', (
+    testWidgets('group private media sheet commits through real wired action', (
       tester,
     ) async {
       final tempDir = Directory.systemTemp.createTempSync(
@@ -3619,10 +3681,53 @@ void main() {
       await tester.tap(selector);
       await pumpFrames(tester, count: 6);
 
+      expect(find.text('How should members see this photo?'), findsOneWidget);
       expect(find.text('Keep in chat'), findsWidgets);
-      expect(find.text('Protected view'), findsWidgets);
+      expect(find.text('Protected view'), findsOneWidget);
       expect(find.text('Ordinary'), findsNothing);
-      expect(find.text('They can save or share it.'), findsNothing);
+      expect(find.text('They can save or share it.'), findsOneWidget);
+
+      final sheetScrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-private-media-option-protected')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('group-private-media-option-protected')),
+      );
+      await tester.pump();
+      var screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(
+        screen.privateMediaPolicy,
+        const GroupPrivateMediaPolicy.ordinary(),
+      );
+
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await pumpFrames(tester, count: 8);
+
+      screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(
+        screen.privateMediaPolicy,
+        const GroupPrivateMediaPolicy.protected(),
+      );
+      expect(
+        find.descendant(of: selector, matching: find.text('Protected view')),
+        findsOneWidget,
+      );
     });
 
     testWidgets(
@@ -6261,6 +6366,7 @@ void main() {
             mediaFileManager: mediaFileManager,
           ),
         );
+        await tester.pump();
         await tester.pump();
         await pumpUntil(
           tester,
@@ -10426,6 +10532,210 @@ void main() {
       },
     );
 
+    testWidgets(
+      'offline banner seeds current state and follows both service edges',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        p2pService = FakeP2PService(initialState: NodeState.stopped);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsOneWidget,
+        );
+        expect(find.text("You're offline"), findsOneWidget);
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'me',
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsNothing,
+        );
+
+        p2pService.emitState(NodeState.stopped);
+        await tester.pump();
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'retry progress is message-keyed, attachment-correlated, and cleaned on settle',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final queuedA = makeMessage(
+          id: 'retry-progress-a',
+          text: '',
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: GroupMessage.statusQueuedOffline,
+        );
+        final queuedB = makeMessage(
+          id: 'retry-progress-b',
+          text: '',
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: GroupMessage.statusQueuedOffline,
+        );
+        await msgRepo.saveMessage(queuedA);
+        await msgRepo.saveMessage(queuedB);
+        for (final entry in const [
+          ('retry-progress-a', 'retry-blob-a'),
+          ('retry-progress-b', 'retry-blob-b'),
+        ]) {
+          await mediaAttachmentRepo.saveAttachment(
+            MediaAttachment(
+              id: entry.$2,
+              messageId: entry.$1,
+              mime: 'image/jpeg',
+              size: 10,
+              mediaType: 'image',
+              downloadStatus: 'upload_pending',
+              contentHash: _validContentHash,
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester, count: 20);
+        final initialScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          initialScreen.messages
+              .where(
+                (message) =>
+                    message.id == 'retry-progress-a' ||
+                    message.id == 'retry-progress-b',
+              )
+              .map((message) => message.status),
+          everyElement(GroupMessage.statusQueuedOffline),
+        );
+        expect(
+          initialScreen.mediaMap['retry-progress-a']?.single.id,
+          'retry-blob-a',
+        );
+        expect(
+          initialScreen.mediaMap['retry-progress-b']?.single.id,
+          'retry-blob-b',
+        );
+        expect(
+          initialScreen.precomputedDisplayItems
+              ?.where(
+                (item) =>
+                    item.message?.id == 'retry-progress-a' ||
+                    item.message?.id == 'retry-progress-b',
+              )
+              .length,
+          2,
+        );
+        emitMediaUploadProgressEvent({
+          'id': 'wrong-blob',
+          'sentBytes': 5,
+          'totalBytes': 10,
+          'toPeerId': group.id,
+        });
+        await tester.pump();
+        var projectedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(projectedScreen.messageUploadProgress, isEmpty);
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 5,
+          'totalBytes': 10,
+          'toPeerId': group.id,
+        });
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-b',
+          'sentBytes': 2,
+          'totalBytes': 10,
+          'toPeerId': group.id,
+        });
+        await tester.pump();
+        await tester.pump();
+        final progressScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          progressScreen.messageUploadProgress['retry-progress-a']?.percent,
+          50,
+        );
+        expect(
+          progressScreen.messageUploadProgress['retry-progress-b']?.percent,
+          20,
+        );
+
+        // A regressive event for the same attachment is stale and cannot move
+        // the message backward.
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 1,
+          'totalBytes': 10,
+          'toPeerId': group.id,
+        });
+        await tester.pump();
+        projectedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress['retry-progress-a']?.percent,
+          50,
+        );
+
+        await msgRepo.saveMessage(queuedA.copyWith(status: 'sent'));
+        await pumpFrames(tester);
+        projectedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-a'),
+          isFalse,
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-b'),
+          isTrue,
+        );
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 9,
+          'totalBytes': 10,
+          'toPeerId': group.id,
+        });
+        await tester.pump();
+        await tester.pump();
+        projectedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-a'),
+          isFalse,
+        );
+      },
+    );
+
     testWidgets('shows relay upload progress and blocks leaving mid-upload', (
       tester,
     ) async {
@@ -10512,6 +10822,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('50%'), findsOneWidget);
+      expect(find.text('Sending automatically…'), findsOneWidget);
+      expect(find.text('Uploading photo · 50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,
@@ -10549,6 +10861,7 @@ void main() {
       );
 
       expect(UploadWakeLockController.debugActiveHolds, 0);
+      expect(find.text('Sending automatically…'), findsNothing);
     });
 
     testWidgets(
@@ -11714,12 +12027,21 @@ void main() {
         );
         expect(retryScreen.onRetryFailedMedia, isNotNull);
         retryScreen.onRetryFailedMedia!('msg-voice-upload-pending');
-        await pumpUntilAsync(tester, () async {
-          return (await msgRepo.getMessage(
-                'msg-voice-upload-pending',
-              ))?.status ==
-              'sent';
-        }, maxPumps: 160);
+        // E12 source qualification performs real async file I/O before the
+        // manual lease/CAS. Let that work run outside the fake-async widget
+        // clock, then render the committed result.
+        await tester.runAsync(() async {
+          for (var attempt = 0; attempt < 160; attempt++) {
+            if ((await msgRepo.getMessage(
+                  'msg-voice-upload-pending',
+                ))?.status ==
+                'sent') {
+              return;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        });
+        await tester.pump();
 
         expect(uploadCallCount, 1);
         expect(uploadBlobId, 'att-voice-upload-pending');
@@ -14342,7 +14664,7 @@ void main() {
               .widgetList<LetterCard>(find.byType(LetterCard))
               .toList(growable: false);
           final unavailableCards = cards
-              .where((card) => card.text == 'Media unavailable')
+              .where((card) => card.privateContentSlot != null)
               .toList(growable: false);
           expect(unavailableCards, hasLength(2));
           for (final card in unavailableCards) {
@@ -14926,7 +15248,7 @@ void main() {
       }
 
       testWidgets(
-        'group mic denial shows the rationale dialog instead of the snackbar (permanentlyDenied)',
+        'group mic denial shows the rationale sheet instead of the snackbar (permanentlyDenied)',
         (tester) async {
           final l10n = await AppLocalizations.delegate.load(const Locale('en'));
           final recorder = FakeAudioRecorderService()
@@ -14944,7 +15266,7 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
 
-          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
           expect(
             find.byKey(const ValueKey('mic-perm-open-settings')),
             findsOneWidget,
@@ -14953,16 +15275,13 @@ void main() {
           expect(recorder.startCallCount, 0);
 
           await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
-          // Assert the LIVE rendered composer (internal ValueListenableBuilder),
-          // not the stale `recordingState` widget prop.
-          for (
-            var i = 0;
-            i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
-            i++
-          ) {
-            await tester.pump(const Duration(milliseconds: 50));
-          }
+          // Wait for the sheet route to leave first so its decorative mic
+          // cannot satisfy the live composer check.
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
           await pending;
+          await tester.pump();
+          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
           expect(find.byIcon(Icons.stop_rounded), findsNothing);
           expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
         },
@@ -14985,7 +15304,7 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
 
-          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
           await tester.tap(
             find.byKey(const ValueKey('mic-perm-open-settings')),
           );
@@ -14994,7 +15313,7 @@ void main() {
           await pending;
 
           expect(gateway.openAppSettingsCallCount, 1);
-          expect(find.byType(AlertDialog), findsNothing);
+          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
         },
       );
 
@@ -15002,7 +15321,7 @@ void main() {
       // forcing the Settings dialog (the OS prompt already showed via
       // request()). Locks the denied-vs-permanentlyDenied axis on the group side.
       testWidgets(
-        'group first plain denied resets to idle with no dialog/snackbar',
+        'group first plain denied resets to idle with no sheet/snackbar',
         (tester) async {
           final l10n = await AppLocalizations.delegate.load(const Locale('en'));
           final recorder = FakeAudioRecorderService();
@@ -15018,7 +15337,7 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
 
-          expect(find.byType(AlertDialog), findsNothing);
+          expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
           expect(find.text(l10n.perm_microphone_record), findsNothing);
           expect(recorder.startCallCount, 0);
           // Live rendered composer is back to idle (mic shown, not recording).

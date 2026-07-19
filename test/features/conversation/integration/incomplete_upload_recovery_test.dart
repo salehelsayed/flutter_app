@@ -3,6 +3,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -140,7 +141,16 @@ void main() {
                 String? blobId,
                 bool deleteSourceWhenDone = false,
                 preparedArtifact,
-              }) async => outerBridge.consumeUploadMediaResult(),
+              }) async {
+                final attachment = outerBridge.consumeUploadMediaResult();
+                return attachment == null
+                    ? const UploadMediaFailed(
+                        stage: UploadMediaStage.consumerBoundary,
+                        disposition: UploadMediaDisposition.terminal,
+                        errorCode: 'TEST_UPLOAD_FAILED',
+                      )
+                    : UploadMediaSucceeded(attachment);
+              },
         );
 
         // ---- Assert ----
@@ -236,7 +246,16 @@ void main() {
                 String? blobId,
                 bool deleteSourceWhenDone = false,
                 preparedArtifact,
-              }) async => outerBridge2.consumeUploadMediaResult(),
+              }) async {
+                final attachment = outerBridge2.consumeUploadMediaResult();
+                return attachment == null
+                    ? const UploadMediaFailed(
+                        stage: UploadMediaStage.consumerBoundary,
+                        disposition: UploadMediaDisposition.terminal,
+                        errorCode: 'TEST_UPLOAD_FAILED',
+                      )
+                    : UploadMediaSucceeded(attachment);
+              },
         );
 
         final lastSaved = mediaRepo.lastSavedAttachment;

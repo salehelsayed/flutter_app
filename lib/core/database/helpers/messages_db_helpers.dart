@@ -995,9 +995,20 @@ Future<int> dbRecoverStuckSendingMessages(
   );
 
   try {
+    final hasMediaAttachments = (await db.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    final pendingUploadExclusion = hasMediaAttachments
+        ? 'AND NOT EXISTS (SELECT 1 FROM media_attachments attachment '
+              'WHERE attachment.message_id = messages.id '
+              "AND attachment.owner_lane = 'direct' "
+              "AND attachment.download_status = 'upload_pending')"
+        : '';
     final count = await db.rawUpdate(
       "UPDATE messages SET status = 'failed' "
-      "WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ?",
+      "WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ? "
+      '$pendingUploadExclusion',
       [olderThan.toUtc().toIso8601String()],
     );
 
@@ -1060,60 +1071,187 @@ Future<void> dbUpdateWireEnvelope(
 // Direct private-media lifecycle (Plan 234 / Session 03)
 // ---------------------------------------------------------------------------
 
-/// CAS: only one visible incoming View Once parent may claim `available` as
-/// `opening`. The persisted clock high-water is monotonic even though View Once
-/// itself has no timer.
+({bool valid, String sql, List<Object?> args})
+_directPrivateMediaLeaseIdentityPredicate({
+  required bool? isIncoming,
+  required String? mode,
+  required String? attachmentId,
+  required String? storedLocalPath,
+}) {
+  final fields = <Object?>[isIncoming, mode, attachmentId, storedLocalPath];
+  if (fields.every((field) => field == null)) {
+    return (valid: true, sql: '', args: const <Object?>[]);
+  }
+  final modeAllowed = isIncoming == true
+      ? mode == 'view_once'
+      : isIncoming == false
+      ? mode == 'protected' || mode == 'view_once'
+      : false;
+  if (!modeAllowed ||
+      attachmentId == null ||
+      attachmentId.isEmpty ||
+      storedLocalPath == null ||
+      storedLocalPath.isEmpty) {
+    return (valid: false, sql: '', args: const <Object?>[]);
+  }
+  return (
+    valid: true,
+    sql:
+        'AND is_incoming = ? AND private_media_mode = ? '
+        'AND EXISTS (SELECT 1 FROM media_attachments lease_attachment '
+        'WHERE lease_attachment.message_id = messages.id '
+        'AND lease_attachment.id = ? '
+        "AND lease_attachment.owner_lane = 'direct' "
+        "AND lease_attachment.download_status = 'done' "
+        'AND lease_attachment.local_path = ?) ',
+    args: <Object?>[isIncoming! ? 1 : 0, mode, attachmentId, storedLocalPath],
+  );
+}
+
+/// CAS: only one qualified direct private parent may claim `available` as
+/// `opening`. Incoming authority is View Once only; outgoing authority is the
+/// sender's single one-more-look for protected or View Once media.
 Future<int> dbClaimDirectPrivateMediaOpening(
   Database db,
   String id, {
   required int nowMs,
+  bool? isIncoming,
+  String? mode,
+  String? attachmentId,
+  String? storedLocalPath,
 }) {
+  final identity = _directPrivateMediaLeaseIdentityPredicate(
+    isIncoming: isIncoming,
+    mode: mode,
+    attachmentId: attachmentId,
+    storedLocalPath: storedLocalPath,
+  );
+  if (!identity.valid) return Future<int>.value(0);
   return db.rawUpdate(
     "UPDATE messages SET private_media_state = 'opening', "
     'private_media_clock_high_water_ms = '
     'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
-    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "WHERE id = ? AND hidden_at IS NULL "
     "AND deleted_at IS NULL AND private_media_policy_version = 1 "
-    "AND private_media_mode = 'view_once' "
+    "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
+    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+    '${identity.sql}'
     "AND private_media_state = 'available' "
     'AND private_media_terminal_at_ms IS NULL',
-    [nowMs, id],
+    <Object?>[nowMs, id, ...identity.args],
   );
 }
 
-/// CAS: records the first rendered frame exactly once for View Once.
+/// CAS: records the first rendered frame exactly once for a qualified lease.
 Future<int> dbMarkDirectPrivateMediaViewing(
   Database db,
   String id, {
   required int nowMs,
+  bool? isIncoming,
+  String? mode,
+  String? attachmentId,
+  String? storedLocalPath,
 }) {
+  final identity = _directPrivateMediaLeaseIdentityPredicate(
+    isIncoming: isIncoming,
+    mode: mode,
+    attachmentId: attachmentId,
+    storedLocalPath: storedLocalPath,
+  );
+  if (!identity.valid) return Future<int>.value(0);
   return db.rawUpdate(
     "UPDATE messages SET private_media_state = 'viewing', "
     'private_media_revealed_at_ms = '
     'COALESCE(private_media_revealed_at_ms, ?), '
     'private_media_clock_high_water_ms = '
     'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
-    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "WHERE id = ? AND hidden_at IS NULL "
     "AND deleted_at IS NULL AND private_media_policy_version = 1 "
-    "AND private_media_mode = 'view_once' "
+    "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
+    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+    '${identity.sql}'
     "AND private_media_state = 'opening' "
     'AND private_media_terminal_at_ms IS NULL',
-    [nowMs, nowMs, id],
+    <Object?>[nowMs, nowMs, id, ...identity.args],
   );
 }
 
 /// CAS used only after the engine proves ownership of the same-process,
 /// pre-first-frame lease. Persisted state alone never grants rollback.
-Future<int> dbRollbackDirectPrivateMediaOpening(Database db, String id) {
+Future<int> dbRollbackDirectPrivateMediaOpening(
+  Database db,
+  String id, {
+  bool? isIncoming,
+  String? mode,
+  String? attachmentId,
+  String? storedLocalPath,
+}) {
+  final identity = _directPrivateMediaLeaseIdentityPredicate(
+    isIncoming: isIncoming,
+    mode: mode,
+    attachmentId: attachmentId,
+    storedLocalPath: storedLocalPath,
+  );
+  if (!identity.valid) return Future<int>.value(0);
   return db.rawUpdate(
     "UPDATE messages SET private_media_state = 'available' "
-    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "WHERE id = ? AND hidden_at IS NULL "
     "AND deleted_at IS NULL AND private_media_policy_version = 1 "
-    "AND private_media_mode = 'view_once' "
+    "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
+    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+    '${identity.sql}'
     "AND private_media_state = 'opening' "
     'AND private_media_revealed_at_ms IS NULL '
     'AND private_media_terminal_at_ms IS NULL',
-    [id],
+    <Object?>[id, ...identity.args],
+  );
+}
+
+/// Exact fail-closed quarantine used only after terminalization persistence
+/// failed and an authoritative reread still proved the original row available.
+/// Every durable authority dimension is included in the same CAS.
+Future<int> dbQuarantineIndeterminateDirectPrivateMediaAvailable(
+  Database db,
+  String id, {
+  required bool isIncoming,
+  required String mode,
+  required String attachmentId,
+  required String storedLocalPath,
+  required int nowMs,
+}) {
+  final modeAllowed = isIncoming
+      ? mode == 'view_once'
+      : mode == 'protected' || mode == 'view_once';
+  if (!modeAllowed ||
+      id.isEmpty ||
+      attachmentId.isEmpty ||
+      storedLocalPath.isEmpty) {
+    return Future<int>.value(0);
+  }
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'opening', "
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    'WHERE id = ? AND is_incoming = ? AND hidden_at IS NULL '
+    'AND deleted_at IS NULL AND private_media_policy_version = 1 '
+    'AND private_media_mode = ? '
+    "AND private_media_state = 'available' "
+    'AND private_media_revealed_at_ms IS NULL '
+    'AND private_media_terminal_at_ms IS NULL '
+    'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+    'WHERE attachment.message_id = messages.id '
+    'AND attachment.id = ? '
+    "AND attachment.owner_lane = 'direct' "
+    "AND attachment.download_status = 'done' "
+    'AND attachment.local_path = ?)',
+    <Object?>[
+      nowMs,
+      id,
+      isIncoming ? 1 : 0,
+      mode,
+      attachmentId,
+      storedLocalPath,
+    ],
   );
 }
 
@@ -1123,19 +1261,32 @@ Future<int> dbConsumeDirectPrivateMedia(
   Database db,
   String id, {
   required int nowMs,
+  bool? isIncoming,
+  String? mode,
+  String? attachmentId,
+  String? storedLocalPath,
 }) {
+  final identity = _directPrivateMediaLeaseIdentityPredicate(
+    isIncoming: isIncoming,
+    mode: mode,
+    attachmentId: attachmentId,
+    storedLocalPath: storedLocalPath,
+  );
+  if (!identity.valid) return Future<int>.value(0);
   return db.rawUpdate(
     "UPDATE messages SET private_media_state = 'consumed', "
     'private_media_terminal_at_ms = '
     'COALESCE(private_media_terminal_at_ms, ?), '
     'private_media_clock_high_water_ms = '
     'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
-    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "WHERE id = ? AND hidden_at IS NULL "
     "AND deleted_at IS NULL AND private_media_policy_version = 1 "
-    "AND private_media_mode = 'view_once' "
+    "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
+    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+    '${identity.sql}'
     "AND private_media_state IN ('opening', 'viewing') "
     'AND private_media_terminal_at_ms IS NULL',
-    [nowMs, nowMs, id],
+    <Object?>[nowMs, nowMs, id, ...identity.args],
   );
 }
 
@@ -1392,7 +1543,9 @@ Future<List<Map<String, Object?>>> dbLoadDirectPrivateMediaRecoveryCandidates(
     'messages',
     where:
         "private_media_mode IN ('protected','view_once','disappearing','unsupported') "
-        'AND ((is_incoming = 1 AND private_media_policy_version = 1 '
+        'AND ((((is_incoming = 1 AND private_media_mode = \'view_once\') '
+        "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+        'AND private_media_policy_version = 1 '
         "AND private_media_state IN ('opening','viewing')) "
         'OR (is_incoming = 1 AND hidden_at IS NULL AND deleted_at IS NULL '
         'AND private_media_policy_version = 1 '
@@ -1427,7 +1580,9 @@ Future<int> dbRotateDirectPrivateMediaRecoveryCandidate(
     'COALESCE(private_media_clock_high_water_ms, 0) + 1, ?) '
     'WHERE id = ? '
     "AND private_media_mode IN ('protected','view_once','disappearing','unsupported') "
-    'AND ((is_incoming = 1 AND private_media_policy_version = 1 '
+    'AND ((((is_incoming = 1 AND private_media_mode = \'view_once\') '
+    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
+    'AND private_media_policy_version = 1 '
     "AND private_media_state IN ('opening','viewing')) "
     'OR (is_incoming = 1 AND hidden_at IS NULL AND deleted_at IS NULL '
     'AND private_media_policy_version = 1 '

@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -16,7 +19,11 @@ class MessageRepositoryImpl
     implements
         MessageRepository,
         DirectPrivateMediaLifecycleRepository,
+        DirectPrivateMediaExactOpeningLeaseRepository,
+        DirectPrivateMediaIndeterminateQuarantineRepository,
         ConversationThreadSummaryRepository,
+        DirectUploadRetryProjectionRepository,
+        DirectManualUploadRetryRearmRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
         ConversationReadEventSource {
@@ -81,6 +88,12 @@ class MessageRepositoryImpl
     required String toStatus,
   })
   dbConditionalTransitionStatus;
+  final Future<UploadRetryProjectionResult> Function({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaDisposition disposition,
+  })?
+  dbProjectDirectUploadFailure;
   final Future<List<Map<String, Object?>>> Function({
     required Duration recheckOlderThan,
     int limit,
@@ -88,12 +101,49 @@ class MessageRepositoryImpl
   dbLoadInboxCustodyOutgoingMessages;
   final Future<void> Function(String id, {int? relayExpiresAtMs})?
   dbMarkInboxCustodyChecked;
-  final Future<int> Function(String id, {required int nowMs})?
+  final Future<int> Function(
+    String id, {
+    required int nowMs,
+    bool? isIncoming,
+    String? mode,
+    String? attachmentId,
+    String? storedLocalPath,
+  })?
   dbClaimDirectPrivateMediaOpening;
-  final Future<int> Function(String id, {required int nowMs})?
+  final Future<int> Function(
+    String id, {
+    required int nowMs,
+    bool? isIncoming,
+    String? mode,
+    String? attachmentId,
+    String? storedLocalPath,
+  })?
   dbMarkDirectPrivateMediaViewing;
-  final Future<int> Function(String id)? dbRollbackDirectPrivateMediaOpening;
-  final Future<int> Function(String id, {required int nowMs})?
+  final Future<int> Function(
+    String id, {
+    bool? isIncoming,
+    String? mode,
+    String? attachmentId,
+    String? storedLocalPath,
+  })?
+  dbRollbackDirectPrivateMediaOpening;
+  final Future<int> Function(
+    String id, {
+    required bool isIncoming,
+    required String mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  })?
+  dbQuarantineIndeterminateDirectPrivateMediaAvailable;
+  final Future<int> Function(
+    String id, {
+    required int nowMs,
+    bool? isIncoming,
+    String? mode,
+    String? attachmentId,
+    String? storedLocalPath,
+  })?
   dbConsumeDirectPrivateMedia;
   final Future<int> Function(String id, {required int nowMs})?
   dbAdvanceDirectPrivateMediaClock;
@@ -115,6 +165,11 @@ class MessageRepositoryImpl
   final DirectReactionNotificationProjection? directReactionProjection;
   final Future<List<Map<String, Object?>>> Function()?
   dbLoadLocallyAuthoredMessagesForProjection;
+  final Future<bool> Function({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  })?
+  dbRearmDirectUploadRetryForManualRetry;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   final StreamController<DirectMessageRemoval> _messageRemovalController =
@@ -149,11 +204,13 @@ class MessageRepositoryImpl
     required this.dbLoadStuckSendingOutgoingMessages,
     required this.dbLoadSendingOutgoingMessages,
     required this.dbConditionalTransitionStatus,
+    this.dbProjectDirectUploadFailure,
     this.dbLoadInboxCustodyOutgoingMessages,
     this.dbMarkInboxCustodyChecked,
     this.dbClaimDirectPrivateMediaOpening,
     this.dbMarkDirectPrivateMediaViewing,
     this.dbRollbackDirectPrivateMediaOpening,
+    this.dbQuarantineIndeterminateDirectPrivateMediaAvailable,
     this.dbConsumeDirectPrivateMedia,
     this.dbAdvanceDirectPrivateMediaClock,
     this.dbFailClosedCorruptDirectPrivateMediaState,
@@ -164,6 +221,7 @@ class MessageRepositoryImpl
     this.dbLoadNextDirectPrivateMediaExpiryAtMs,
     this.directReactionProjection,
     this.dbLoadLocallyAuthoredMessagesForProjection,
+    this.dbRearmDirectUploadRetryForManualRetry,
   });
 
   @override
@@ -506,6 +564,47 @@ class MessageRepositoryImpl
   }
 
   @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    final project = dbProjectDirectUploadFailure;
+    if (project == null) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+    final result = await project(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      disposition: failure.disposition,
+    );
+    if (result.applied) {
+      final updated = await _loadAndRememberMessage(messageId);
+      if (updated != null) {
+        _messageChangeController.add(updated);
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    final rearm = dbRearmDirectUploadRetryForManualRetry;
+    if (rearm == null) return false;
+    final applied = await rearm(messageId: messageId, attachments: attachments);
+    if (applied) {
+      final updated = await _loadAndRememberMessage(messageId);
+      if (updated != null) {
+        _messageChangeController.add(updated);
+      }
+    }
+    return applied;
+  }
+
+  @override
   Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
     required Duration olderThan,
   }) async {
@@ -698,6 +797,29 @@ class MessageRepositoryImpl
   );
 
   @override
+  Future<bool> claimExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbClaimDirectPrivateMediaOpening,
+      'claimExactOpening',
+    )(
+      messageId,
+      nowMs: nowMs,
+      isIncoming: isIncoming,
+      mode: mode.wireValue,
+      attachmentId: attachmentId,
+      storedLocalPath: storedLocalPath,
+    ),
+  );
+
+  @override
   Future<bool> markPrivateMediaViewing(
     String messageId, {
     required int nowMs,
@@ -707,6 +829,29 @@ class MessageRepositoryImpl
       dbMarkDirectPrivateMediaViewing,
       'markViewing',
     )(messageId, nowMs: nowMs),
+  );
+
+  @override
+  Future<bool> markExactPrivateMediaViewing(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbMarkDirectPrivateMediaViewing,
+      'markExactViewing',
+    )(
+      messageId,
+      nowMs: nowMs,
+      isIncoming: isIncoming,
+      mode: mode.wireValue,
+      attachmentId: attachmentId,
+      storedLocalPath: storedLocalPath,
+    ),
   );
 
   @override
@@ -720,6 +865,50 @@ class MessageRepositoryImpl
       );
 
   @override
+  Future<bool> rollbackExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbRollbackDirectPrivateMediaOpening,
+      'rollbackExactOpening',
+    )(
+      messageId,
+      isIncoming: isIncoming,
+      mode: mode.wireValue,
+      attachmentId: attachmentId,
+      storedLocalPath: storedLocalPath,
+    ),
+  );
+
+  @override
+  Future<bool> quarantineIndeterminatePrivateMediaAvailable(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbQuarantineIndeterminateDirectPrivateMediaAvailable,
+      'quarantineIndeterminateAvailable',
+    )(
+      messageId,
+      isIncoming: isIncoming,
+      mode: mode.wireValue,
+      attachmentId: attachmentId,
+      storedLocalPath: storedLocalPath,
+      nowMs: nowMs,
+    ),
+  );
+
+  @override
   Future<bool> consumePrivateMedia(String messageId, {required int nowMs}) =>
       _runPrivateLifecycleMutation(
         messageId,
@@ -728,6 +917,29 @@ class MessageRepositoryImpl
           nowMs: nowMs,
         ),
       );
+
+  @override
+  Future<bool> consumeExactPrivateMedia(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbConsumeDirectPrivateMedia,
+      'consumeExact',
+    )(
+      messageId,
+      nowMs: nowMs,
+      isIncoming: isIncoming,
+      mode: mode.wireValue,
+      attachmentId: attachmentId,
+      storedLocalPath: storedLocalPath,
+    ),
+  );
 
   @override
   Future<bool> advancePrivateMediaClock(

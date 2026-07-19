@@ -110,6 +110,67 @@ void main() {
     });
 
     test(
+      'requires production private-card render evidence from both roles',
+      () {
+        final accepted = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          _validArtifact(),
+        );
+        expect(accepted.ok, isTrue, reason: accepted.detail);
+
+        for (final role in const <String>['sender', 'recipient']) {
+          final artifact = _validArtifact();
+          final observations =
+              (artifact[role] as Map<String, dynamic>)['observations']
+                  as Map<String, dynamic>;
+          observations['productionConversationMounted'] = false;
+
+          final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+            artifact,
+          );
+
+          expect(result.ok, isFalse, reason: '$role mutation was accepted');
+          expect(
+            result.failures,
+            contains(
+              r'$.'
+              '$role'
+              r'.observations.productionConversationMounted must equal true',
+            ),
+            reason: result.detail,
+          );
+        }
+      },
+    );
+
+    test('rejects vacuous or pixel-bearing production card measurements', () {
+      final mutations = <String, Object?>{
+        'productionLetterCardCount': 2,
+        'privateSlotCount': 2,
+        'slotsInsideDecoratedBodies': 2,
+        'nonZeroPrivateSlotCount': 2,
+        'slotImageWidgetCount': 1,
+        'slotDecorationImageCount': 1,
+        'outgoingActionVisible': false,
+        'incomingActionVisible': false,
+        'terminalActionVisibleAfterRepump': false,
+      };
+      for (final entry in mutations.entries) {
+        final artifact = _validArtifact();
+        _recipientObservations(artifact)[entry.key] = entry.value;
+
+        final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          artifact,
+        );
+
+        expect(
+          result.ok,
+          isFalse,
+          reason: '${entry.key} mutation was accepted',
+        );
+      }
+    });
+
+    test(
       'rejects a fixture digest that is not exactly 64 hexadecimal digits',
       () {
         final artifact = _validArtifact();
@@ -281,7 +342,8 @@ void main() {
       'unexpected root field': (artifact) => artifact['verdict'] = 'passed',
       'wrong schema': (artifact) => artifact['schema'] = 'plan234.demo',
       'non-integer version': (artifact) => artifact['version'] = 1.0,
-      'future version': (artifact) => artifact['version'] = 2,
+      'legacy version': (artifact) => artifact['version'] = 1,
+      'future version': (artifact) => artifact['version'] = 3,
       'manual generator': (artifact) => artifact['generatedBy'] = 'operator',
       'non-Android platform': (artifact) =>
           _topology(artifact)['platform'] = 'ios',
@@ -464,8 +526,8 @@ Map<String, dynamic> _recipientObservations(Map<String, dynamic> artifact) {
 }
 
 const Map<String, Object?> _validArtifactFixture = <String, Object?>{
-  'schema': 'plan234.direct-private-media-device-local-journey',
-  'version': 1,
+  'schema': directPrivateMediaDeviceLocalJourneySchema,
+  'version': directPrivateMediaDeviceLocalJourneyVersion,
   'generatedBy': 'automated_instrumented_harness',
   'topology': <String, Object?>{
     'platform': 'android',
@@ -491,6 +553,16 @@ const Map<String, Object?> _validArtifactFixture = <String, Object?>{
       'outerPrivateMediaPresent': false,
       'innerPrivateMediaPresent': true,
       'ordinarySendPreserved': true,
+      'productionConversationMounted': true,
+      'productionLetterCardCount': 3,
+      'privateSlotCount': 3,
+      'slotsInsideDecoratedBodies': 3,
+      'nonZeroPrivateSlotCount': 3,
+      'slotImageWidgetCount': 0,
+      'slotDecorationImageCount': 0,
+      'outgoingActionVisible': true,
+      'incomingActionVisible': true,
+      'terminalActionVisibleAfterRepump': true,
     },
   },
   'recipient': <String, Object?>{
@@ -525,6 +597,16 @@ const Map<String, Object?> _validArtifactFixture = <String, Object?>{
       'ordinaryPreviewSucceeded': true,
       'ordinaryManualDownloadSucceeded': true,
       'consumeReceiptCount': 0,
+      'productionConversationMounted': true,
+      'productionLetterCardCount': 3,
+      'privateSlotCount': 3,
+      'slotsInsideDecoratedBodies': 3,
+      'nonZeroPrivateSlotCount': 3,
+      'slotImageWidgetCount': 0,
+      'slotDecorationImageCount': 0,
+      'outgoingActionVisible': true,
+      'incomingActionVisible': true,
+      'terminalActionVisibleAfterRepump': true,
     },
   },
 };

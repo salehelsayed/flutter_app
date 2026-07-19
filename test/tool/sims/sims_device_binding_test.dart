@@ -273,6 +273,54 @@ void main() {
     },
   );
 
+  test(
+    'staging relay mutation blocks private media outbox without relay define',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      final plan = SimsPlanner(manifest).compile(
+        mode: SimsMode.major,
+        onlyId: 'android.connectivity_restore_media_outbox',
+      );
+      final capability = plan.rows.singleWhere(
+        (row) => row.id == 'android.connectivity_restore_media_outbox',
+      );
+
+      expect(capability.targetCapabilities, isNot(contains('relay.staging')));
+      expect(
+        capability.resources.map((resource) => resource.name),
+        contains('relay-mutation:staging'),
+      );
+
+      final binding = SimsDevicePlanBinding.bind(
+        plan,
+        _inventory(<SimsLiveDeviceTarget>[
+          _androidTarget('pixel-usb', SimsLiveDeviceKind.physical),
+          _androidTarget('emulator-5554', SimsLiveDeviceKind.emulator),
+        ]),
+      );
+
+      expect(
+        binding.preflightVerdicts[capability.id]?.status,
+        SimsVerdictStatus.blocked,
+      );
+      expect(
+        binding.preflightVerdicts[capability.id]?.blocker,
+        SimsBlockerKind.environment,
+      );
+      expect(
+        binding.preflightVerdicts[capability.id]?.detail,
+        contains('MKNOON_RELAY_ADDRESSES'),
+      );
+      expect(
+        binding.preflightVerdicts['build.android.e2e.main']?.status,
+        SimsVerdictStatus.blocked,
+      );
+      expect(binding.skippedBuildProfiles, <String>{'android.e2e.main'});
+    },
+  );
+
   test('missing FCM credentials block before preparing its APK', () {
     final build = _buildRow();
     final consumer = _consumer(

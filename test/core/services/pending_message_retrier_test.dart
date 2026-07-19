@@ -2,16 +2,20 @@ import 'dart:async';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'fake_p2p_service.dart';
 import '../../features/conversation/domain/repositories/fake_message_repository.dart';
 import '../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../../features/conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../../core/bridge/fake_bridge.dart';
+import '../../shared/fakes/fake_media_file_manager.dart';
 
 void main() {
   late FakeP2PService p2pService;
@@ -47,57 +51,126 @@ void main() {
   });
 
   group('PendingMessageRetrier', () {
+    test(
+      'TC-17 default failed-message path leaves upload-pending media to the incomplete retry lane',
+      () async {
+        const messageId = 'pending-default-partition-msg';
+        const attachmentId = 'pending-default-partition-att';
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final passCompleted = Completer<void>();
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: 'pending media',
+          timestamp: '2026-07-19T12:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-07-19T12:00:00.000Z',
+          wireEnvelope: '{"stale":true}',
+        );
+        const pending = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 42,
+          mediaType: 'image',
+          localPath: 'pending_uploads/pending-default-partition-msg/photo.jpg',
+          downloadStatus: 'upload_pending',
+          uploadRetryCount: 1,
+          createdAt: '2026-07-19T12:00:00.000Z',
+        );
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        messageRepo.seed([parent]);
+        mediaAttachmentRepo.seed([pending]);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          retryDebounce: Duration.zero,
+          retryUnackedMessagesOverride: () async {
+            if (!passCompleted.isCompleted) passCompleted.complete();
+            return 0;
+          },
+        );
+        retrier.start();
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id',
+            circuitAddresses: ['/relay'],
+          ),
+        );
+
+        await passCompleted.future.timeout(const Duration(seconds: 2));
+
+        expect(messageRepo.getFailedOutgoingCallCount, 1);
+        expect(messageRepo.lastSavedMessage, isNull);
+        expect(mediaFileManager.resolveStoredPathCount, 0);
+        expect(mediaAttachmentRepo.allSavedAttachments, isEmpty);
+        expect(await messageRepo.getMessage(messageId), same(parent));
+        final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(persisted.single.downloadStatus, 'upload_pending');
+        expect(persisted.single.uploadRetryCount, 1);
+      },
+    );
+
     // 186 — reconnect self-heal latency tightening (FU-185-A). The first
     // post-online retry (debounced, so flappy transitions still coalesce) drops
     // the 60s unacked age gate so a freshly-queued offline message converges on
     // reconnect instead of after the 5-min periodic; the periodic pass keeps 60s.
-    test(
-      'TC-186-02 the reconnect (debounced) retry drops the unacked age gate '
-      '(olderThan=0); the periodic pass keeps 60s',
-      () {
-        fakeAsync((async) {
-          // No override -> the real retryUnackedMessages hits the fake repo,
-          // which records the olderThan it was queried with.
-          retrier = PendingMessageRetrier(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            identityRepo: identityRepo,
-            contactRepo: contactRepo,
-            bridge: bridge,
-          );
-          retrier.start(); // default FakeP2PService = stopped (offline)
+    test('TC-186-02 the reconnect (debounced) retry drops the unacked age gate '
+        '(olderThan=0); the periodic pass keeps 60s', () {
+      fakeAsync((async) {
+        // No override -> the real retryUnackedMessages hits the fake repo,
+        // which records the olderThan it was queried with.
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+        retrier.start(); // default FakeP2PService = stopped (offline)
 
-          // Genuine offline -> online reconnect (relay reserved).
-          p2pService.emitState(
-            const NodeState(
-              isStarted: true,
-              peerId: 'my-peer',
-              circuitAddresses: ['/addr'],
-            ),
-          );
-          // The reconnect retry fires after the debounce, with the gate dropped.
-          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
-          async.flushMicrotasks();
-          expect(
-            messageRepo.lastUnackedOlderThan,
-            Duration.zero,
-            reason:
-                'the reconnect pass must not skip freshly-queued offline rows '
-                '(RED on HEAD: hardcoded 60s)',
-          );
+        // Genuine offline -> online reconnect (relay reserved).
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+          ),
+        );
+        // The reconnect retry fires after the debounce, with the gate dropped.
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+        expect(
+          messageRepo.lastUnackedOlderThan,
+          Duration.zero,
+          reason:
+              'the reconnect pass must not skip freshly-queued offline rows '
+              '(RED on HEAD: hardcoded 60s)',
+        );
 
-          // The periodic pass keeps the 60s anti-race window.
-          messageRepo.lastUnackedOlderThan = null;
-          async.elapse(PendingMessageRetrier.defaultPeriodicRetryInterval);
-          async.flushMicrotasks();
-          expect(
-            messageRepo.lastUnackedOlderThan,
-            const Duration(seconds: 60),
-            reason: 'the periodic pass keeps the anti-race window',
-          );
-        });
-      },
-    );
+        // The periodic pass keeps the 60s anti-race window.
+        messageRepo.lastUnackedOlderThan = null;
+        async.elapse(PendingMessageRetrier.defaultPeriodicRetryInterval);
+        async.flushMicrotasks();
+        expect(
+          messageRepo.lastUnackedOlderThan,
+          const Duration(seconds: 60),
+          reason: 'the periodic pass keeps the anti-race window',
+        );
+      });
+    });
 
     test('start subscribes to stateStream', () {
       retrier.start();
@@ -1586,81 +1659,75 @@ void main() {
       },
     );
 
-    test(
-      'TC-195-02 rapid restored edges coalesce into one debounced pass',
-      () {
-        fakeAsync((async) {
-          final restored = StreamController<void>.broadcast(sync: true);
-          retrier = PendingMessageRetrier(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            identityRepo: identityRepo,
-            contactRepo: contactRepo,
-            bridge: bridge,
-            networkRestoredSignal: restored.stream,
-          );
-          retrier.start();
+    test('TC-195-02 rapid restored edges coalesce into one debounced pass', () {
+      fakeAsync((async) {
+        final restored = StreamController<void>.broadcast(sync: true);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          networkRestoredSignal: restored.stream,
+        );
+        retrier.start();
 
-          restored.add(null);
-          async.elapse(const Duration(milliseconds: 300));
-          restored.add(null);
-          async.elapse(const Duration(milliseconds: 300));
-          restored.add(null);
-          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
-          async.flushMicrotasks();
+        restored.add(null);
+        async.elapse(const Duration(milliseconds: 300));
+        restored.add(null);
+        async.elapse(const Duration(milliseconds: 300));
+        restored.add(null);
+        async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+        async.flushMicrotasks();
 
-          // Exactly one flush ran (one unacked query) — the flap guard.
-          expect(messageRepo.unackedQueryCount, 1);
-          restored.close();
-        });
-      },
-    );
+        // Exactly one flush ran (one unacked query) — the flap guard.
+        expect(messageRepo.unackedQueryCount, 1);
+        restored.close();
+      });
+    });
 
-    test(
-      'TC-195-05 the flush runs INSIDE the post-restore recovery window '
-      '(external recovery in progress) and skips group/failed steps — the '
-      'field-hit gap: the full pass is guard-skipped exactly when the OS edge '
-      'fires',
-      () {
-        fakeAsync((async) {
-          final restored = StreamController<void>.broadcast(sync: true);
-          var rejoinCalled = false;
-          retrier = PendingMessageRetrier(
-            p2pService: p2pService, // node still offline — the normal case
-            messageRepo: messageRepo,
-            identityRepo: identityRepo,
-            contactRepo: contactRepo,
-            bridge: bridge,
-            rejoinGroupTopicsFn: () async => rejoinCalled = true,
-            networkRestoredSignal: restored.stream,
-            // Device-verified 2026-07-02 (Pixel): at OS-restore time the
-            // recovery machinery holds this guard, and the full pass was
-            // skipped (PENDING_RETRIER_SKIPPED_EXTERNAL_RECOVERY) — the flush
-            // fell back to the node-edge pass (~7.3s). The light flush must
-            // NOT defer to this guard: the unacked inbox re-store touches no
-            // group state and dials the relay directly.
-            isExternalRecoveryInProgressFn: () => true,
-          );
-          retrier.start();
+    test('TC-195-05 the flush runs INSIDE the post-restore recovery window '
+        '(external recovery in progress) and skips group/failed steps — the '
+        'field-hit gap: the full pass is guard-skipped exactly when the OS edge '
+        'fires', () {
+      fakeAsync((async) {
+        final restored = StreamController<void>.broadcast(sync: true);
+        var rejoinCalled = false;
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService, // node still offline — the normal case
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          rejoinGroupTopicsFn: () async => rejoinCalled = true,
+          networkRestoredSignal: restored.stream,
+          // Device-verified 2026-07-02 (Pixel): at OS-restore time the
+          // recovery machinery holds this guard, and the full pass was
+          // skipped (PENDING_RETRIER_SKIPPED_EXTERNAL_RECOVERY) — the flush
+          // fell back to the node-edge pass (~7.3s). The light flush must
+          // NOT defer to this guard: the unacked inbox re-store touches no
+          // group state and dials the relay directly.
+          isExternalRecoveryInProgressFn: () => true,
+        );
+        retrier.start();
 
-          restored.add(null);
-          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
-          async.flushMicrotasks();
+        restored.add(null);
+        async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+        async.flushMicrotasks();
 
-          expect(
-            messageRepo.lastUnackedOlderThan,
-            Duration.zero,
-            reason:
-                'the network-restored flush must run inside the recovery '
-                'window (RED on HEAD: full pass -> guard-skipped, no flush)',
-          );
-          // Light pass: no group steps, no failed-row re-dials.
-          expect(rejoinCalled, isFalse);
-          expect(identityRepo.loadIdentityCallCount, 0);
-          restored.close();
-        });
-      },
-    );
+        expect(
+          messageRepo.lastUnackedOlderThan,
+          Duration.zero,
+          reason:
+              'the network-restored flush must run inside the recovery '
+              'window (RED on HEAD: full pass -> guard-skipped, no flush)',
+        );
+        // Light pass: no group steps, no failed-row re-dials.
+        expect(rejoinCalled, isFalse);
+        expect(identityRepo.loadIdentityCallCount, 0);
+        restored.close();
+      });
+    });
 
     test(
       'TC-195-03 dispose cancels the network-restored subscription and timer',
@@ -1692,12 +1759,90 @@ void main() {
       },
     );
 
+    test('TC-195-04 PRESERVE the node online edge still runs its own debounced '
+        'zero-gate pass when the signal is wired', () {
+      fakeAsync((async) {
+        final restored = StreamController<void>.broadcast(sync: true);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          networkRestoredSignal: restored.stream,
+        );
+        retrier.start();
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+          ),
+        );
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+
+        expect(messageRepo.lastUnackedOlderThan, Duration.zero);
+        restored.close();
+      });
+    });
+
+    test('TC-15 restored unacked failure cannot skip direct/group media and a '
+        'later restored edge runs again', () {
+      fakeAsync((async) {
+        final restored = StreamController<void>.broadcast(sync: true);
+        final callOrder = <String>[];
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          networkRestoredSignal: restored.stream,
+          retryUnackedMessagesOverride: () async {
+            callOrder.add('unacked');
+            throw StateError('forced unacked failure');
+          },
+          retryIncompleteUploadsNetworkRestoredFn: () async {
+            callOrder.add('direct');
+            return 0;
+          },
+          retryIncompleteGroupUploadsNetworkRestoredFn: () async {
+            callOrder.add('group');
+            return 0;
+          },
+        );
+        retrier.start();
+
+        void fireRestored() {
+          restored.add(null);
+          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+          async.flushMicrotasks();
+        }
+
+        fireRestored();
+        expect(callOrder, <String>['unacked', 'direct', 'group']);
+
+        fireRestored();
+        expect(callOrder, <String>[
+          'unacked',
+          'direct',
+          'group',
+          'unacked',
+          'direct',
+          'group',
+        ]);
+        restored.close();
+      });
+    });
+
     test(
-      'TC-195-04 PRESERVE the node online edge still runs its own debounced '
-      'zero-gate pass when the signal is wired',
+      'TC-15 restored direct-media failure cannot skip the group media leg',
       () {
         fakeAsync((async) {
           final restored = StreamController<void>.broadcast(sync: true);
+          final callOrder = <String>[];
           retrier = PendingMessageRetrier(
             p2pService: p2pService,
             messageRepo: messageRepo,
@@ -1705,20 +1850,26 @@ void main() {
             contactRepo: contactRepo,
             bridge: bridge,
             networkRestoredSignal: restored.stream,
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('unacked');
+              return 0;
+            },
+            retryIncompleteUploadsNetworkRestoredFn: () async {
+              callOrder.add('direct');
+              throw StateError('forced direct failure');
+            },
+            retryIncompleteGroupUploadsNetworkRestoredFn: () async {
+              callOrder.add('group');
+              return 0;
+            },
           );
           retrier.start();
 
-          p2pService.emitState(
-            const NodeState(
-              isStarted: true,
-              peerId: 'my-peer',
-              circuitAddresses: ['/addr'],
-            ),
-          );
-          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          restored.add(null);
+          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
           async.flushMicrotasks();
 
-          expect(messageRepo.lastUnackedOlderThan, Duration.zero);
+          expect(callOrder, <String>['unacked', 'direct', 'group']);
           restored.close();
         });
       },

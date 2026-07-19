@@ -4,10 +4,297 @@ import '../../constants/retry_constants.dart';
 import '../../media/group_media_integrity_policy.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
+import '../../media/upload_media_outcome.dart';
+import '../../media/upload_retry_projection.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'group_messages_db_helpers.dart';
 import 'messages_db_helpers.dart';
+
+/// Atomically projects one direct attachment upload failure and its parent.
+///
+/// Parent qualification happens before any attachment write. Only outgoing
+/// `sending|failed` parents and the exact direct-owned `upload_pending` row are
+/// eligible. A parent update failure therefore rolls the attachment mutation
+/// back with the same transaction.
+Future<UploadRetryProjectionResult> dbProjectDirectUploadFailure(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required UploadMediaDisposition disposition,
+}) {
+  return _dbProjectUploadFailure(
+    db,
+    parentTable: 'messages',
+    parentAllowedStatuses: const {'sending', 'failed'},
+    retryableParentStatus: 'sending',
+    ownerLane: MediaOwnerLane.direct,
+    messageId: messageId,
+    attachmentId: attachmentId,
+    disposition: disposition,
+  );
+}
+
+/// Atomically projects one group attachment upload failure and its parent.
+///
+/// Group retryable parents use the existing `queued_offline` status; no new
+/// status or migration is introduced.
+Future<UploadRetryProjectionResult> dbProjectGroupUploadFailure(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required UploadMediaDisposition disposition,
+}) {
+  return _dbProjectUploadFailure(
+    db,
+    parentTable: 'group_messages',
+    parentAllowedStatuses: const {'sending', 'queued_offline', 'failed'},
+    retryableParentStatus: 'queued_offline',
+    ownerLane: MediaOwnerLane.group,
+    messageId: messageId,
+    attachmentId: attachmentId,
+    disposition: disposition,
+  );
+}
+
+Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
+  Database db, {
+  required String parentTable,
+  required Set<String> parentAllowedStatuses,
+  required String retryableParentStatus,
+  required MediaOwnerLane ownerLane,
+  required String messageId,
+  required String attachmentId,
+  required UploadMediaDisposition disposition,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final parentRows = await txn.rawQuery(
+      'SELECT status, is_incoming FROM $parentTable WHERE id = ? LIMIT 1',
+      [messageId],
+    );
+    if (parentRows.isEmpty) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+    final parent = parentRows.single;
+    final parentStatus = parent['status'] as String?;
+    final isIncoming = ((parent['is_incoming'] as num?)?.toInt() ?? 0) != 0;
+    if (isIncoming || !parentAllowedStatuses.contains(parentStatus)) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final attachmentRows = await txn.rawQuery(
+      'SELECT upload_retry_count FROM media_attachments '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      "AND download_status = 'upload_pending' LIMIT 1",
+      [attachmentId, messageId, ownerLane.dbValue],
+    );
+    if (attachmentRows.isEmpty) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final currentCount =
+        (attachmentRows.single['upload_retry_count'] as num?)?.toInt() ?? 0;
+    late final String attachmentStatus;
+    late final int projectedCount;
+    switch (disposition) {
+      case UploadMediaDisposition.connectivityRetryable:
+        attachmentStatus = 'upload_pending';
+        projectedCount = currentCount;
+        break;
+      case UploadMediaDisposition.boundedRetryable:
+        final incrementedCount = currentCount + 1;
+        projectedCount = incrementedCount > kMaxUploadRetries
+            ? kMaxUploadRetries
+            : incrementedCount;
+        attachmentStatus = projectedCount >= kMaxUploadRetries
+            ? 'upload_failed'
+            : 'upload_pending';
+        break;
+      case UploadMediaDisposition.terminal:
+        attachmentStatus = 'upload_failed';
+        projectedCount = currentCount;
+        break;
+    }
+
+    final attachmentCount = await txn.rawUpdate(
+      'UPDATE media_attachments SET download_status = ?, '
+      'upload_retry_count = ? WHERE id = ? AND message_id = ? '
+      "AND owner_lane = ? AND download_status = 'upload_pending'",
+      [
+        attachmentStatus,
+        projectedCount,
+        attachmentId,
+        messageId,
+        ownerLane.dbValue,
+      ],
+    );
+    if (attachmentCount != 1) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final terminalRows = await txn.rawQuery(
+      'SELECT 1 FROM media_attachments WHERE message_id = ? '
+      "AND owner_lane = ? AND download_status = 'upload_failed' LIMIT 1",
+      [messageId, ownerLane.dbValue],
+    );
+    final terminal = terminalRows.isNotEmpty;
+    final allowedStatusPlaceholders = List.filled(
+      parentAllowedStatuses.length,
+      '?',
+    ).join(', ');
+    final parentCount = await txn.rawUpdate(
+      'UPDATE $parentTable SET status = ? WHERE id = ? '
+      'AND COALESCE(is_incoming, 0) = 0 '
+      'AND status IN ($allowedStatusPlaceholders)',
+      [
+        terminal ? 'failed' : retryableParentStatus,
+        messageId,
+        ...parentAllowedStatuses,
+      ],
+    );
+    if (parentCount != 1) {
+      throw StateError('Upload retry parent qualification changed');
+    }
+
+    return UploadRetryProjectionResult(
+      state: terminal
+          ? UploadRetryProjectionState.terminal
+          : UploadRetryProjectionState.retryPending,
+      uploadRetryCount: projectedCount,
+    );
+  });
+}
+
+/// Atomically rearms a fully-qualified direct manual media retry.
+Future<bool> dbRearmDirectUploadRetryForManualRetry(
+  Database db, {
+  required String messageId,
+  required List<ManualUploadRetryAttachmentExpectation> attachments,
+}) {
+  return _dbRearmUploadRetryForManualRetry(
+    db,
+    parentTable: 'messages',
+    retryableParentStatus: 'sending',
+    ownerLane: MediaOwnerLane.direct,
+    messageId: messageId,
+    attachments: attachments,
+  );
+}
+
+/// Atomically rearms a fully-qualified group manual media retry.
+Future<bool> dbRearmGroupUploadRetryForManualRetry(
+  Database db, {
+  required String messageId,
+  required List<ManualUploadRetryAttachmentExpectation> attachments,
+}) {
+  return _dbRearmUploadRetryForManualRetry(
+    db,
+    parentTable: 'group_messages',
+    retryableParentStatus: 'queued_offline',
+    ownerLane: MediaOwnerLane.group,
+    messageId: messageId,
+    attachments: attachments,
+  );
+}
+
+Future<bool> _dbRearmUploadRetryForManualRetry(
+  Database db, {
+  required String parentTable,
+  required String retryableParentStatus,
+  required MediaOwnerLane ownerLane,
+  required String messageId,
+  required List<ManualUploadRetryAttachmentExpectation> attachments,
+}) {
+  final expectedIds = attachments
+      .map((attachment) => attachment.attachmentId)
+      .toSet();
+  if (attachments.isEmpty || expectedIds.length != attachments.length) {
+    return Future<bool>.value(false);
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final parentRows = await txn.rawQuery(
+      'SELECT status, is_incoming FROM $parentTable WHERE id = ? LIMIT 1',
+      [messageId],
+    );
+    if (parentRows.isEmpty ||
+        parentRows.single['status'] != 'failed' ||
+        ((parentRows.single['is_incoming'] as num?)?.toInt() ?? 0) != 0) {
+      return false;
+    }
+
+    final rows = await txn.rawQuery(
+      'SELECT id, local_path, download_status, upload_retry_count '
+      'FROM media_attachments WHERE message_id = ? AND owner_lane = ?',
+      [messageId, ownerLane.dbValue],
+    );
+    final unfinishedRows = rows
+        .where((row) => row['download_status'] != 'done')
+        .toList(growable: false);
+    if (unfinishedRows.length != attachments.length ||
+        unfinishedRows.any((row) => !expectedIds.contains(row['id']))) {
+      return false;
+    }
+
+    final rowsById = <String, Map<String, Object?>>{
+      for (final row in unfinishedRows) row['id']! as String: row,
+    };
+    for (final expected in attachments) {
+      final row = rowsById[expected.attachmentId];
+      if (row == null) return false;
+      final currentCount = (row['upload_retry_count'] as num?)?.toInt() ?? 0;
+      if (row['local_path'] != expected.storedLocalPath ||
+          row['download_status'] != expected.downloadStatus ||
+          currentCount != expected.uploadRetryCount) {
+        return false;
+      }
+      if (expected.downloadStatus == 'upload_pending') {
+        continue;
+      }
+      if (expected.downloadStatus != 'upload_failed' ||
+          currentCount < kMaxUploadRetries) {
+        return false;
+      }
+    }
+
+    final parentColumns = parentTable == 'group_messages'
+        ? 'status = ?, wire_envelope = NULL, inbox_retry_payload = NULL, '
+              'inbox_stored = 0, retry_attempt_count = 0, '
+              'next_eligible_at = NULL'
+        : 'status = ?, wire_envelope = NULL';
+    final parentCount = await txn.rawUpdate(
+      'UPDATE $parentTable SET $parentColumns WHERE id = ? '
+      "AND COALESCE(is_incoming, 0) = 0 AND status = 'failed'",
+      [retryableParentStatus, messageId],
+    );
+    if (parentCount != 1) {
+      throw StateError('Manual upload retry parent qualification changed');
+    }
+
+    for (final expected in attachments) {
+      if (expected.downloadStatus != 'upload_failed') continue;
+      final count = await txn.rawUpdate(
+        "UPDATE media_attachments SET download_status = 'upload_pending', "
+        'upload_retry_count = 0 WHERE id = ? AND message_id = ? '
+        'AND owner_lane = ? AND local_path = ? '
+        "AND download_status = 'upload_failed' AND upload_retry_count = ?",
+        [
+          expected.attachmentId,
+          messageId,
+          ownerLane.dbValue,
+          expected.storedLocalPath,
+          expected.uploadRetryCount,
+        ],
+      );
+      if (count != 1) {
+        throw StateError(
+          'Manual upload retry attachment qualification changed',
+        );
+      }
+    }
+    return true;
+  });
+}
 
 /// Inserts a media attachment row verbatim (no merge, REPLACE on conflict).
 ///

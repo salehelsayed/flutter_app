@@ -25,11 +25,13 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -293,6 +295,7 @@ class GroupConversationWired extends StatefulWidget {
   groupReactionReplayOutboxRepository;
   final GroupHistoryGapRepairRepository? historyGapRepairRepo;
   final UploadMediaFn uploadMediaFn;
+  final GroupUploadRetryProjectionRepository? uploadRetryProjectionRepo;
   final GroupPrivateMediaPolicy privateMediaPolicy;
   final GroupPrivateMediaAvailability privateMediaAvailability;
   final int maxAttachmentBudgetBytes;
@@ -368,6 +371,7 @@ class GroupConversationWired extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.historyGapRepairRepo,
     this.uploadMediaFn = uploadMedia,
+    this.uploadRetryProjectionRepo,
     this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
     this.privateMediaAvailability = productionGroupPrivateMediaAvailability,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
@@ -486,6 +490,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   List<PendingComposerMedia> _pendingAttachments = [];
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   Map<String, List<MediaAttachment>> _mediaMap = {};
+  bool _lastUploadProjectionTerminal = false;
 
   // 235: received-media action seams. The controller requalifies the reloaded
   // row before every egress call; the delete coordinator is UI-injected only
@@ -572,6 +577,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   int _trackedUploadCompletedBytes = 0;
   int _trackedCurrentUploadBytes = 0;
   String? _trackedCurrentUploadId;
+  final Map<String, MessageUploadProgressViewState> _messageUploadProgress =
+      <String, MessageUploadProgressViewState>{};
   bool _allowPopDuringActiveUpload = false;
   _GroupActiveAttachmentUpload? _activeAttachmentUpload;
   _RestoredGroupMediaContinuation? _restoredMediaContinuation;
@@ -637,6 +644,37 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           .clamp(0, _trackedUploadTotalBytes)
           .toInt(),
       totalBytes: _trackedUploadTotalBytes,
+    );
+  }
+
+  Map<String, String> _activeVisualUploadOwnersByAttachmentId() {
+    final result = <String, String>{};
+    for (final message in _messages) {
+      if (message.isIncoming ||
+          (message.status != 'sending' &&
+              message.status != GroupMessage.statusQueuedOffline)) {
+        continue;
+      }
+      final attachments = _mediaMap[message.id] ?? message.media;
+      for (final attachment in attachments) {
+        if (attachment.mediaType == 'image' ||
+            attachment.mediaType == 'video' ||
+            attachment.mime == 'image/gif') {
+          result[attachment.id] = message.id;
+        }
+      }
+    }
+    return result;
+  }
+
+  Map<String, MessageUploadProgressViewState>
+  get _messageUploadProgressViewStates {
+    final activeOwners = _activeVisualUploadOwnersByAttachmentId();
+    _messageUploadProgress.removeWhere(
+      (messageId, state) => activeOwners[state.attachmentId] != messageId,
+    );
+    return Map<String, MessageUploadProgressViewState>.unmodifiable(
+      _messageUploadProgress,
     );
   }
 
@@ -789,25 +827,79 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _handleMediaUploadProgress(Map<String, dynamic> event) {
-    if (!_isTrackingRelayUpload) return;
     final id = event['id'] as String?;
     final sentBytes = event['sentBytes'];
-    if (id == null || sentBytes is! num) return;
-    if (_trackedCurrentUploadId != null && _trackedCurrentUploadId != id) {
+    final recipient = event['toPeerId'];
+    if (id == null || id.isEmpty || sentBytes is! num) return;
+    if (recipient is String &&
+        recipient.isNotEmpty &&
+        recipient != widget.group.id) {
       return;
     }
-    final nextBytes = sentBytes
-        .toInt()
-        .clamp(0, _trackedUploadTotalBytes)
-        .toInt();
-    if (mounted) {
-      setState(() {
+
+    final activeOwners = _activeVisualUploadOwnersByAttachmentId();
+    final messageId = activeOwners[id];
+    final existing = messageId == null
+        ? null
+        : _messageUploadProgress[messageId];
+    MessageUploadProgressViewState? nextMessageProgress;
+    if (messageId != null) {
+      final rawTotal = event['totalBytes'];
+      final eventTotal = rawTotal is num ? rawTotal.toInt() : 0;
+      final totalBytes = eventTotal > 0
+          ? eventTotal
+          : existing?.attachmentId == id
+          ? existing!.totalBytes
+          : 0;
+      var nextSentBytes = sentBytes.toInt();
+      if (nextSentBytes < 0) nextSentBytes = 0;
+      if (totalBytes > 0 && nextSentBytes > totalBytes) {
+        nextSentBytes = totalBytes;
+      }
+      if (existing?.attachmentId != id ||
+          nextSentBytes >= (existing?.sentBytes ?? 0)) {
+        nextMessageProgress = MessageUploadProgressViewState(
+          messageId: messageId,
+          attachmentId: id,
+          sentBytes: nextSentBytes,
+          totalBytes: totalBytes,
+        );
+      }
+    }
+
+    final updatesGlobalProgress =
+        _isTrackingRelayUpload &&
+        (_trackedCurrentUploadId == null || _trackedCurrentUploadId == id);
+    final nextGlobalBytes = updatesGlobalProgress
+        ? sentBytes.toInt().clamp(0, _trackedUploadTotalBytes).toInt()
+        : _trackedCurrentUploadBytes;
+    final hasStaleMessageProgress = _messageUploadProgress.entries.any(
+      (entry) => activeOwners[entry.value.attachmentId] != entry.key,
+    );
+    if (!updatesGlobalProgress &&
+        nextMessageProgress == null &&
+        !hasStaleMessageProgress) {
+      return;
+    }
+
+    void applyProgress() {
+      _messageUploadProgress.removeWhere(
+        (candidateMessageId, state) =>
+            activeOwners[state.attachmentId] != candidateMessageId,
+      );
+      if (nextMessageProgress != null) {
+        _messageUploadProgress[messageId!] = nextMessageProgress;
+      }
+      if (updatesGlobalProgress) {
         _trackedCurrentUploadId = id;
-        _trackedCurrentUploadBytes = nextBytes;
-      });
+        _trackedCurrentUploadBytes = nextGlobalBytes;
+      }
+    }
+
+    if (mounted) {
+      setState(applyProgress);
     } else {
-      _trackedCurrentUploadId = id;
-      _trackedCurrentUploadBytes = nextBytes;
+      applyProgress();
     }
   }
 
@@ -1344,14 +1436,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     return _isAudioAttachment(attachment) &&
         (attachment.downloadStatus == 'upload_pending' ||
             attachment.downloadStatus == 'done');
-  }
-
-  bool _hasUploadPendingVoiceAttachment(List<MediaAttachment> attachments) {
-    return attachments.any(
-      (attachment) =>
-          _isAudioAttachment(attachment) &&
-          attachment.downloadStatus == 'upload_pending',
-    );
   }
 
   Future<void> _trackFailedVoiceContinuation({
@@ -2117,6 +2201,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool get _supportsDurableGroupMediaUploads =>
       widget.mediaAttachmentRepo != null && widget.mediaFileManager != null;
 
+  GroupUploadRetryProjectionRepository? get _uploadRetryProjection =>
+      widget.uploadRetryProjectionRepo ??
+      (widget.msgRepo is GroupUploadRetryProjectionRepository
+          ? widget.msgRepo as GroupUploadRetryProjectionRepository
+          : null);
+
   Future<List<_PreparedGroupMediaUpload>> _prepareDurableGroupMediaUploads({
     required String messageId,
     required List<PendingComposerMedia> mediaToUpload,
@@ -2254,9 +2344,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     });
 
     await _startRelayUploadTracking(totalBytes);
-    List<MediaAttachment?> uploadResults;
+    _lastUploadProjectionTerminal = false;
+    List<UploadMediaOutcome> uploadOutcomes;
     try {
-      uploadResults = await Future.wait(
+      uploadOutcomes = await Future.wait(
         preparedUploads.map((plan) async {
           emitFlowEvent(
             layer: 'FL',
@@ -2275,33 +2366,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             owner: MediaOwnerLane.group,
           );
           _markRelayUploadStarted(plan.pendingAttachment.id);
-          try {
-            final uploaded = await widget.uploadMediaFn(
-              bridge: widget.bridge,
-              localFilePath: plan.absoluteDurablePath,
-              mime: plan.pendingAttachment.mime,
-              recipientPeerId: widget.group.id,
-              mediaFileManager: mediaFileManager,
-              width: plan.source.width,
-              height: plan.source.height,
-              durationMs: plan.source.durationMs,
-              allowedPeers: allowedPeers,
-              blobId: plan.pendingAttachment.id,
+          final outcome = await runUploadMedia(
+            uploadMediaFn: widget.uploadMediaFn,
+            bridge: widget.bridge,
+            localFilePath: plan.absoluteDurablePath,
+            mime: plan.pendingAttachment.mime,
+            recipientPeerId: widget.group.id,
+            mediaFileManager: mediaFileManager,
+            width: plan.source.width,
+            height: plan.source.height,
+            durationMs: plan.source.durationMs,
+            allowedPeers: allowedPeers,
+            blobId: plan.pendingAttachment.id,
+          );
+          final uploaded = outcome.attachmentOrNull;
+          if (uploaded != null) {
+            _markRelayUploadCompleted(
+              fileSizes[plan.pendingAttachment.id] ?? 0,
             );
-            if (uploaded != null) {
-              _markRelayUploadCompleted(
-                fileSizes[plan.pendingAttachment.id] ?? 0,
-              );
-            }
-            return uploaded;
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_CONV_FL_MEDIA_UPLOAD_ERROR',
-              details: {'error': e.toString()},
-            );
-            return null;
           }
+          return outcome;
         }),
       );
     } finally {
@@ -2315,12 +2399,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final completedAttachments = <MediaAttachment>[];
     final failedPlans = <_PreparedGroupMediaUpload>[];
 
-    for (var index = 0; index < uploadResults.length; index++) {
+    for (var index = 0; index < uploadOutcomes.length; index++) {
       final plan = preparedUploads[index];
-      final uploaded = uploadResults[index];
+      final outcome = uploadOutcomes[index];
+      final uploaded = outcome.attachmentOrNull;
 
       if (uploaded == null) {
         failedPlans.add(plan);
+        final projection = _uploadRetryProjection;
+        if (projection != null) {
+          final projected = await projection.projectUploadFailure(
+            messageId: messageId,
+            attachmentId: plan.pendingAttachment.id,
+            failure: outcome as UploadMediaFailed,
+          );
+          _lastUploadProjectionTerminal |= projected.isTerminal;
+        }
         continue;
       }
 
@@ -2337,18 +2431,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
 
     if (failedPlans.isNotEmpty) {
-      for (final plan in failedPlans) {
-        final nextRetryCount =
-            (plan.pendingAttachment.uploadRetryCount ?? 0) + 1;
-        await mediaAttachmentRepo.saveAttachment(
-          plan.pendingAttachment.copyWith(
-            downloadStatus: nextRetryCount >= kMaxUploadRetries
-                ? 'upload_failed'
-                : 'upload_pending',
-            uploadRetryCount: nextRetryCount,
-          ),
-          owner: MediaOwnerLane.group,
-        );
+      if (_uploadRetryProjection == null) {
+        for (final plan in failedPlans) {
+          final nextRetryCount =
+              (plan.pendingAttachment.uploadRetryCount ?? 0) + 1;
+          await mediaAttachmentRepo.saveAttachment(
+            plan.pendingAttachment.copyWith(
+              downloadStatus: nextRetryCount >= kMaxUploadRetries
+                  ? 'upload_failed'
+                  : 'upload_pending',
+              uploadRetryCount: nextRetryCount,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
       }
       return null;
     }
@@ -2553,6 +2649,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // 2. Capture and clear pending attachments
     List<MediaAttachment>? optimisticMedia;
     var optimisticDisplayed = false;
+    MediaUploadLease? uploadLease;
 
     if (mediaToUpload.isNotEmpty) {
       final createdAt = now.toIso8601String();
@@ -2572,6 +2669,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           createdAt: createdAt,
         );
       }).toList();
+      uploadLease = mediaUploadInFlightTracker.tryClaimAll(
+        optimisticMedia.map((attachment) => attachment.id),
+        source: MediaUploadTriggerSource.foreground,
+      );
+      if (uploadLease == null) {
+        _endSendFlow();
+        return;
+      }
     }
 
     _pendingAttachments = [];
@@ -2683,7 +2788,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               return;
             }
             if (uploadedAttachments == null) {
-              await _restoreComposerSnapshot(composerSnapshot, messageId);
+              if (_uploadRetryProjection != null) {
+                _applyProjectedGroupUploadFailureUi(
+                  composerSnapshot,
+                  messageId: messageId,
+                  terminal: _lastUploadProjectionTerminal,
+                );
+              } else {
+                await _restoreComposerSnapshot(composerSnapshot, messageId);
+              }
               return;
             }
           } else {
@@ -2730,7 +2843,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 relayTrackingStarted = true;
               }
               _markRelayUploadStarted(attachmentId);
-              final result = await widget.uploadMediaFn(
+              final uploadOutcome = await runUploadMedia(
+                uploadMediaFn: widget.uploadMediaFn,
                 bridge: widget.bridge,
                 localFilePath: pending.file.path,
                 mime: mime,
@@ -2742,6 +2856,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 allowedPeers: allowedPeers,
                 blobId: attachmentId,
               );
+              final result = uploadOutcome.attachmentOrNull;
               if (result != null) {
                 _markRelayUploadCompleted(fileSize);
                 final contentHash =
@@ -2759,7 +2874,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 );
               } else {
                 await _stopRelayUploadTracking();
-                await _restoreComposerSnapshot(composerSnapshot, messageId);
+                final projection = _uploadRetryProjection;
+                if (projection == null) {
+                  await _restoreComposerSnapshot(composerSnapshot, messageId);
+                  return;
+                }
+                final projected = await projection.projectUploadFailure(
+                  messageId: messageId,
+                  attachmentId: attachmentId,
+                  failure: uploadOutcome as UploadMediaFailed,
+                );
+                _applyProjectedGroupUploadFailureUi(
+                  composerSnapshot,
+                  messageId: messageId,
+                  terminal: projected.isTerminal,
+                );
                 return;
               }
               if (await _cancelActiveAttachmentUploadIfRequested()) {
@@ -2930,6 +3059,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       try {
         await _endBackgroundTaskGuarded(bgTaskId);
       } finally {
+        final lease = uploadLease;
+        if (lease != null) {
+          mediaUploadInFlightTracker.release(lease);
+        }
         _endSendFlow();
       }
     }
@@ -3104,54 +3237,52 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       owner: MediaOwnerLane.group,
     );
     if (persistedMedia.any(
-      (attachment) => attachment.downloadStatus == 'upload_pending',
+      (attachment) =>
+          attachment.downloadStatus == 'upload_pending' ||
+          attachment.downloadStatus == 'upload_failed',
     )) {
-      if (_hasUploadPendingVoiceAttachment(persistedMedia)) {
-        if (!_tryBeginSendFlow()) return;
-        _clearRestoredVoiceContinuationTracking(messageId: messageId);
-        final bgTaskId = await _beginBackgroundTaskGuarded();
+      if (!_tryBeginSendFlow()) return;
+      _clearRestoredVoiceContinuationTracking(messageId: messageId);
+      final bgTaskId = await _beginBackgroundTaskGuarded();
+      try {
+        await retryIncompleteGroupUploads(
+          groupRepo: widget.groupRepo,
+          groupMsgRepo: widget.msgRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          identityRepo: widget.identityRepo,
+          uploadMediaFn: widget.uploadMediaFn,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          privateMediaAvailability: widget.privateMediaAvailability,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          tryClaimUploadLease: (attachmentIds) =>
+              mediaUploadInFlightTracker.tryClaimAll(
+                attachmentIds,
+                source: MediaUploadTriggerSource.manual,
+              ),
+          releaseUploadLease: mediaUploadInFlightTracker.release,
+          manualRetry: true,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_MANUAL_MEDIA_RETRY_ERROR',
+          details: {'error': e.toString()},
+        );
+      } finally {
         try {
-          await retryIncompleteGroupUploads(
-            groupRepo: widget.groupRepo,
-            groupMsgRepo: widget.msgRepo,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            bridge: widget.bridge,
-            p2pService: widget.p2pService,
-            identityRepo: widget.identityRepo,
-            uploadMediaFn: widget.uploadMediaFn,
-            mediaFileManager: mediaFileManager,
-            messageId: messageId,
-            privateMediaAvailability: widget.privateMediaAvailability,
-            inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-          );
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_CONV_FL_VOICE_UPLOAD_PENDING_RETRY_ERROR',
-            details: {'error': e.toString()},
+          await _refreshMessageWithHydratedMedia(
+            messageId,
+            fallbackMedia: fallbackMedia,
           );
         } finally {
-          try {
-            await _refreshMessageWithHydratedMedia(
-              messageId,
-              fallbackMedia: fallbackMedia,
-            );
-          } finally {
-            await _endBackgroundTaskGuarded(bgTaskId);
-            _endSendFlow();
-          }
+          await _endBackgroundTaskGuarded(bgTaskId);
+          _endSendFlow();
         }
-        // 149: the upload-pending / failed state is conveyed inline by the
-        // MediaGridCell placeholder — the redundant retry-failed snackbar is
-        // dropped.
-        return;
       }
-      await _refreshMessageWithHydratedMedia(
-        messageId,
-        fallbackMedia: fallbackMedia,
-      );
-      // 149: the upload-pending state is conveyed inline by the MediaGridCell
-      // upload-pending placeholder — the redundant snackbar is dropped.
+      // The upload-pending / failed state is conveyed inline by the media cell.
       return;
     }
 
@@ -3342,6 +3473,39 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
+  void _applyProjectedGroupUploadFailureUi(
+    _GroupComposerSnapshot snapshot, {
+    required String messageId,
+    required bool terminal,
+  }) {
+    if (terminal) {
+      _draftText = snapshot.draftText;
+      _pendingAttachments = List<PendingComposerMedia>.from(
+        snapshot.pendingAttachments,
+      );
+      _privateMediaPolicy = snapshot.privateMediaPolicy;
+      _updateLocalMessageStatus(messageId, 'failed');
+      if (mounted) {
+        setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
+        _updateComposerState(
+          pendingAttachments: _pendingAttachmentFiles(),
+          isUploading: false,
+        );
+      } else {
+        _activeQuoteMessageId = snapshot.quotedMessageId;
+      }
+      return;
+    }
+
+    // Retryable upload failures remain owned by the durable outbox. The
+    // composer and active quote stay cleared; the optimistic parent retains
+    // its original quotedMessageId in storage.
+    _updateLocalMessageStatus(messageId, 'queued_offline');
+    if (mounted) {
+      _updateComposerState(isUploading: false);
+    }
+  }
+
   Future<void> _restoreComposerSnapshotWithoutFailure(
     _GroupComposerSnapshot snapshot,
     String messageId, {
@@ -3416,12 +3580,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// is online (the 15-30s stale relay-state window after losing internet) a
   /// "back online" promise would be dishonest, so the queued-retry copy names
   /// what is actually happening. Slate/blueGrey floating surface
-  /// (informational/self-healing tone, NOT error-red). Copies are hardcoded
-  /// consts to match 1:1; l10n is deferred debt for both paths.
+  /// (informational/self-healing tone, NOT error-red).
   void _showOfflineQueuedSnackBar() {
     if (!mounted) return;
-    const senderOfflineCopy = "Will send when you're back online";
-    const queuedRetryCopy = 'Delivery delayed — retrying automatically';
+    final l10n = AppLocalizations.of(context)!;
+    final senderOfflineCopy = l10n.offline_send_promise;
+    final queuedRetryCopy = l10n.offline_retry_delayed;
     final senderOffline = !widget.p2pService.currentState.relayReady;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(
@@ -4687,6 +4851,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     if (!_tryBeginSendFlow()) return;
+    MediaUploadLease? voiceUploadLease;
 
     try {
       recorder.onAutoStopped = null;
@@ -4732,6 +4897,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final messageId = voiceContinuation?.messageId ?? _uuid.v4();
       final attachmentId = _uuid.v4();
       final now = voiceContinuation?.timestamp ?? DateTime.now().toUtc();
+      voiceUploadLease = mediaUploadInFlightTracker.tryClaimAll([
+        attachmentId,
+      ], source: MediaUploadTriggerSource.foreground);
+      if (voiceUploadLease == null) {
+        _restoreActiveQuoteIfNeeded(quotedMessageId);
+        return;
+      }
       final optimisticMessage = GroupMessage(
         id: messageId,
         groupId: widget.group.id,
@@ -4863,7 +5035,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         await _startRelayUploadTracking(recording.sizeBytes);
         _markRelayUploadStarted(attachmentId);
 
-        final voiceAttachment = await widget.uploadMediaFn(
+        final voiceUploadOutcome = await runUploadMedia(
+          uploadMediaFn: widget.uploadMediaFn,
           bridge: widget.bridge,
           localFilePath: durableAbsolutePath,
           mime: recording.mime,
@@ -4874,9 +5047,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           allowedPeers: allowedPeers,
           blobId: attachmentId,
         );
+        final voiceAttachment = voiceUploadOutcome.attachmentOrNull;
 
         if (voiceAttachment == null) {
           await _stopRelayUploadTracking();
+          final projection = _uploadRetryProjection;
+          if (projection != null) {
+            final projected = await projection.projectUploadFailure(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              failure: voiceUploadOutcome as UploadMediaFailed,
+            );
+            if (mounted) {
+              _updateComposerState(isUploading: false);
+              _updateLocalMessageStatus(
+                messageId,
+                projected.isTerminal ? 'failed' : 'queued_offline',
+              );
+            }
+            if (projected.isTerminal) {
+              await _trackFailedVoiceContinuation(
+                messageId: messageId,
+                timestamp: now,
+                quotedMessageId: quotedMessageId,
+              );
+              _restoreActiveQuoteIfNeeded(quotedMessageId);
+            }
+            return;
+          }
           if (mounted) {
             _updateComposerState(isUploading: false);
             _updateLocalMessageStatus(messageId, 'failed');
@@ -5028,6 +5226,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         await _endBackgroundTaskGuarded(bgTaskId);
       }
     } finally {
+      final lease = voiceUploadLease;
+      if (lease != null) {
+        mediaUploadInFlightTracker.release(lease);
+      }
       _endSendFlow();
     }
   }
@@ -6049,6 +6251,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       p2pService: widget.p2pService,
       mediaFileManager: mediaFileManager,
       imageProcessor: widget.imageProcessor!,
+      shareStoredOfflinePromise: AppLocalizations.of(
+        context,
+      )!.share_stored_offline_promise,
     );
     final delivery = GroupMediaBatchForwardDeliveryCoordinator(
       revalidateForDispatch: draftBuilder.revalidateForDispatch,
@@ -7318,6 +7523,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             readOnlyBannerText: _canWrite ? null : _readOnlyBannerText,
             isSending: _isSending,
             uploadProgress: _uploadProgressViewState,
+            messageUploadProgress: _messageUploadProgressViewStates,
+            p2pService: widget.p2pService,
             securityStatus: _securityStatus,
             onCancelUpload:
                 _activeAttachmentUpload == null ||

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -20,6 +22,7 @@ class _FakeBridge implements Bridge {
   Map<String, dynamic> uploadResponse = {'ok': true};
   Map<String, dynamic>? keygenResponse;
   Map<String, dynamic>? encryptResponse;
+  Object? mediaUploadError;
   Map<String, dynamic>? lastRequest;
   final List<Map<String, dynamic>> requests = [];
   final List<String> commandLog = [];
@@ -62,6 +65,10 @@ class _FakeBridge implements Bridge {
       });
     }
     if (cmd == 'media:upload') {
+      final error = mediaUploadError;
+      if (error != null) {
+        throw error;
+      }
       final payload = lastRequest!['payload'] as Map<String, dynamic>;
       final filePath = payload['filePath'] as String?;
       if (filePath != null && File(filePath).existsSync()) {
@@ -128,6 +135,42 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
       .toList();
 }
 
+Future<MediaAttachment?> _legacyUploadMedia({
+  required Bridge bridge,
+  required String localFilePath,
+  required String mime,
+  required String recipientPeerId,
+  MediaFileManager? mediaFileManager,
+  int? width,
+  int? height,
+  int? durationMs,
+  List<double>? waveform,
+  List<String>? allowedPeers,
+  String? blobId,
+  bool deleteSourceWhenDone = false,
+  EncryptedMediaArtifact? preparedArtifact,
+  int? groupMediaPerAttachmentLimitBytes,
+  Duration? transferStallTimeout,
+  Duration? transferMaxTimeout,
+}) async => (await uploadMedia(
+  bridge: bridge,
+  localFilePath: localFilePath,
+  mime: mime,
+  recipientPeerId: recipientPeerId,
+  mediaFileManager: mediaFileManager,
+  width: width,
+  height: height,
+  durationMs: durationMs,
+  waveform: waveform,
+  allowedPeers: allowedPeers,
+  blobId: blobId,
+  deleteSourceWhenDone: deleteSourceWhenDone,
+  preparedArtifact: preparedArtifact,
+  groupMediaPerAttachmentLimitBytes: groupMediaPerAttachmentLimitBytes,
+  transferStallTimeout: transferStallTimeout,
+  transferMaxTimeout: transferMaxTimeout,
+)).attachmentOrNull;
+
 Future<void> _waitForCapturedFlowEvent(
   List<Map<String, dynamic>> events,
   String eventName,
@@ -166,9 +209,326 @@ void main() {
     }
   });
 
+  group('UploadMedia failure contract', () {
+    test('classifies every transport error family without relay state', () {
+      final cases =
+          <({String code, String message, UploadMediaDisposition disposition})>[
+            (
+              code: 'MEDIA_ERROR',
+              message: 'relay unreachable while dialing peer',
+              disposition: UploadMediaDisposition.connectivityRetryable,
+            ),
+            (
+              code: 'MEDIA_ERROR',
+              message: 'failed to open stream for media protocol',
+              disposition: UploadMediaDisposition.connectivityRetryable,
+            ),
+            (
+              code: 'MEDIA_ERROR',
+              message: 'size 42 exceeds max 20',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'MEDIA_ERROR',
+              message: 'open file: permission denied',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'MEDIA_ERROR',
+              message: 'unrecognized native media failure',
+              disposition: UploadMediaDisposition.boundedRetryable,
+            ),
+            (
+              code: 'NOT_INITIALIZED',
+              message: '',
+              disposition: UploadMediaDisposition.connectivityRetryable,
+            ),
+            (
+              code: 'NULL_RESPONSE',
+              message: '',
+              disposition: UploadMediaDisposition.connectivityRetryable,
+            ),
+            (
+              code: 'INVALID_INPUT',
+              message: '',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'UNKNOWN_COMMAND',
+              message: '',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'MISSING_PLUGIN',
+              message: '',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'MALFORMED_RESPONSE',
+              message: '',
+              disposition: UploadMediaDisposition.terminal,
+            ),
+            (
+              code: 'PLATFORM_ERROR',
+              message: '',
+              disposition: UploadMediaDisposition.boundedRetryable,
+            ),
+            (
+              code: 'INTERNAL_ERROR',
+              message: '',
+              disposition: UploadMediaDisposition.boundedRetryable,
+            ),
+            (
+              code: 'FUTURE_NATIVE_CODE',
+              message: '',
+              disposition: UploadMediaDisposition.boundedRetryable,
+            ),
+          ];
+
+      for (final testCase in cases) {
+        final failure = classifyUploadMediaTransportFailure(
+          errorCode: testCase.code,
+          errorMessage: testCase.message,
+        );
+        expect(failure.stage, UploadMediaStage.transport);
+        expect(
+          failure.disposition,
+          testCase.disposition,
+          reason: '${testCase.code}: ${testCase.message}',
+        );
+        expect(failure.errorCode, testCase.code);
+      }
+    });
+
+    test(
+      'normalizes an injected throw at the shared consumer boundary',
+      () async {
+        final outcome = await runUploadMedia(
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async => throw StateError('injected seam failure'),
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'recipient',
+        );
+
+        expect(
+          outcome,
+          isA<UploadMediaFailed>()
+              .having(
+                (failure) => failure.stage,
+                'stage',
+                UploadMediaStage.consumerBoundary,
+              )
+              .having(
+                (failure) => failure.disposition,
+                'disposition',
+                UploadMediaDisposition.terminal,
+              )
+              .having(
+                (failure) => failure.errorCode,
+                'errorCode',
+                'UNEXPECTED_CONSUMER_THROW',
+              ),
+        );
+      },
+    );
+
+    test(
+      'classifies local, encryption, and transport throws by stage',
+      () async {
+        final invalidMime = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'not-a-mime',
+          recipientPeerId: 'recipient',
+        );
+        expect(
+          invalidMime,
+          isA<UploadMediaFailed>()
+              .having(
+                (failure) => failure.stage,
+                'stage',
+                UploadMediaStage.validation,
+              )
+              .having(
+                (failure) => failure.disposition,
+                'disposition',
+                UploadMediaDisposition.terminal,
+              ),
+        );
+
+        final missingSource = await uploadMedia(
+          bridge: bridge,
+          localFilePath: '${tempDir.path}/missing.jpg',
+          mime: 'image/jpeg',
+          recipientPeerId: 'recipient',
+        );
+        expect(
+          missingSource,
+          isA<UploadMediaFailed>()
+              .having(
+                (failure) => failure.stage,
+                'stage',
+                UploadMediaStage.localSource,
+              )
+              .having(
+                (failure) => failure.disposition,
+                'disposition',
+                UploadMediaDisposition.terminal,
+              ),
+        );
+
+        final missingGroupSource = await uploadMedia(
+          bridge: bridge,
+          localFilePath: '${tempDir.path}/missing-group.jpg',
+          mime: 'image/jpeg',
+          recipientPeerId: 'group-1',
+          allowedPeers: const ['peer-2'],
+        );
+        expect(
+          missingGroupSource,
+          isA<UploadMediaFailed>().having(
+            (failure) => failure.stage,
+            'stage',
+            UploadMediaStage.localSource,
+          ),
+        );
+
+        bridge.keygenResponse = {
+          'ok': false,
+          'errorCode': 'INTERNAL_ERROR',
+          'errorMessage': 'key generation failed',
+        };
+        final encryptionFailure = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'recipient',
+        );
+        expect(
+          encryptionFailure,
+          isA<UploadMediaFailed>()
+              .having(
+                (failure) => failure.stage,
+                'stage',
+                UploadMediaStage.encryption,
+              )
+              .having(
+                (failure) => failure.disposition,
+                'disposition',
+                UploadMediaDisposition.boundedRetryable,
+              ),
+        );
+
+        bridge.keygenResponse = null;
+        bridge.mediaUploadError = TimeoutException('issued request timed out');
+        final transportTimeout = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'recipient',
+        );
+        expect(
+          transportTimeout,
+          isA<UploadMediaFailed>()
+              .having(
+                (failure) => failure.stage,
+                'stage',
+                UploadMediaStage.transport,
+              )
+              .having(
+                (failure) => failure.disposition,
+                'disposition',
+                UploadMediaDisposition.connectivityRetryable,
+              )
+              .having(
+                (failure) => failure.errorCode,
+                'errorCode',
+                'TIMEOUT_EXCEPTION',
+              ),
+        );
+      },
+    );
+
+    test(
+      'MEDIA_ENCRYPTION_PREPARED exposes only safe attachment correlation',
+      () async {
+        final events = await captureFlowEvents(() async {
+          await uploadMedia(
+            bridge: bridge,
+            localFilePath: tempFile.path,
+            mime: 'image/jpeg',
+            recipientPeerId: 'recipient-secret',
+            blobId: 'blob-secret',
+          );
+        });
+
+        final prepared = events.singleWhere(
+          (event) => event['event'] == 'MEDIA_ENCRYPTION_PREPARED',
+        );
+        final details = prepared['details'] as Map<String, dynamic>;
+        final expectedHash = sha256
+            .convert(utf8.encode('blob-secret'))
+            .toString();
+        expect(details, {
+          'recipientClass': 'direct',
+          'mime': 'image/jpeg',
+          'attachmentSha256': expectedHash,
+        });
+        expect(details.keys, isNot(contains('blobId')));
+        expect(details.keys, isNot(contains('path')));
+        expect(details.keys, isNot(contains('contentHash')));
+        expect(details.keys, isNot(contains('key')));
+        expect(details.keys, isNot(contains('nonce')));
+      },
+    );
+
+    test('issued upload start follows encryption preparation', () async {
+      final events = await captureFlowEvents(() async {
+        await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'recipient-secret',
+          blobId: 'blob-secret',
+        );
+      });
+
+      final names = events.map((event) => event['event']).toList();
+      final preparedIndex = names.indexOf('MEDIA_ENCRYPTION_PREPARED');
+      final issuedIndex = names.indexOf('MEDIA_UPLOAD_START');
+      expect(preparedIndex, greaterThanOrEqualTo(0));
+      expect(issuedIndex, greaterThan(preparedIndex));
+      final issued = events[issuedIndex]['details'] as Map<String, dynamic>;
+      expect(issued, {
+        'recipientClass': 'direct',
+        'mime': 'image/jpeg',
+        'attachmentSha256': sha256
+            .convert(utf8.encode('blob-secret'))
+            .toString(),
+      });
+      expect(names.where((name) => name == 'MEDIA_UPLOAD_START'), hasLength(1));
+    });
+  });
+
   group('uploadMedia', () {
     test('returns MediaAttachment on success', () async {
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -213,7 +573,7 @@ void main() {
     });
 
     test('sends correct command to bridge', () async {
-      await uploadMedia(
+      await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -240,13 +600,13 @@ void main() {
       await first.writeAsBytes(List<int>.filled(64, 0x11));
       await second.writeAsBytes(List<int>.filled(64, 0x22));
 
-      final firstResult = await uploadMedia(
+      final firstResult = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: first.path,
         mime: 'image/jpeg',
         recipientPeerId: 'contact-A',
       );
-      final secondResult = await uploadMedia(
+      final secondResult = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: second.path,
         mime: 'image/jpeg',
@@ -268,7 +628,7 @@ void main() {
       () async {
         // G7a: the relay's plaintext metadata sidecar must not learn the
         // real content type; it travels only inside the ML-KEM envelope.
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',
@@ -293,7 +653,7 @@ void main() {
         ...List<int>.filled(32, 0xff),
       ]);
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: validJpegFile.path,
         mime: 'image/jpeg',
@@ -313,7 +673,7 @@ void main() {
       final pdfFile = File('${tempDir.path}/doc.pdf');
       await pdfFile.writeAsBytes(List<int>.filled(2048, 0x25));
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: pdfFile.path,
         mime: 'application/pdf',
@@ -332,7 +692,7 @@ void main() {
         final mediaFileManager = FakeMediaFileManager();
         const blobId = 'blob-enc-temp-cleanup';
 
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',
@@ -358,40 +718,37 @@ void main() {
       },
     );
 
-    test(
-      'transient source file deleted after durable copy and successful '
-      'upload when deleteSourceWhenDone',
-      () async {
-        final mediaFileManager = FakeMediaFileManager();
-        final pickerTemp = File('${tempDir.path}/picker_temp.jpg');
-        await pickerTemp.writeAsBytes(List<int>.filled(128, 0x33));
+    test('transient source file deleted after durable copy and successful '
+        'upload when deleteSourceWhenDone', () async {
+      final mediaFileManager = FakeMediaFileManager();
+      final pickerTemp = File('${tempDir.path}/picker_temp.jpg');
+      await pickerTemp.writeAsBytes(List<int>.filled(128, 0x33));
 
-        final result = await uploadMedia(
-          bridge: bridge,
-          localFilePath: pickerTemp.path,
-          mime: 'image/jpeg',
-          recipientPeerId: 'contact-A',
-          mediaFileManager: mediaFileManager,
-          deleteSourceWhenDone: true,
-        );
+      final result = await _legacyUploadMedia(
+        bridge: bridge,
+        localFilePath: pickerTemp.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'contact-A',
+        mediaFileManager: mediaFileManager,
+        deleteSourceWhenDone: true,
+      );
 
-        expect(result, isNotNull);
-        // Best-effort unlink only — secure-delete/overwrite is not
-        // meaningfully achievable on flash/APFS.
-        expect(pickerTemp.existsSync(), isFalse);
-        final resolvedPath = await mediaFileManager.resolveStoredPath(
-          result!.localPath!,
-        );
-        expect(File(resolvedPath).existsSync(), isTrue);
-      },
-    );
+      expect(result, isNotNull);
+      // Best-effort unlink only — secure-delete/overwrite is not
+      // meaningfully achievable on flash/APFS.
+      expect(pickerTemp.existsSync(), isFalse);
+      final resolvedPath = await mediaFileManager.resolveStoredPath(
+        result!.localPath!,
+      );
+      expect(File(resolvedPath).existsSync(), isTrue);
+    });
 
     test(
       'deleteSourceWhenDone without durable copy keeps the source',
       () async {
         // Without a mediaFileManager the source IS the sender's only
         // render copy — it must never be deleted.
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',
@@ -408,7 +765,7 @@ void main() {
     test('1:1 upload fails closed when blob keygen/encrypt fails', () async {
       bridge.keygenResponse = {'ok': false, 'errorMessage': 'keygen broken'};
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -422,7 +779,7 @@ void main() {
       bridge.keygenResponse = null;
       bridge.encryptResponse = {'ok': false, 'errorMessage': 'encrypt broken'};
 
-      final encryptFailResult = await uploadMedia(
+      final encryptFailResult = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -440,7 +797,7 @@ void main() {
         'errorMessage': 'Relay unavailable',
       };
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -451,7 +808,7 @@ void main() {
     });
 
     test('returns null when file does not exist', () async {
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: '/nonexistent/path/file.jpg',
         mime: 'image/jpeg',
@@ -464,7 +821,7 @@ void main() {
     test('returns null when bridge throws exception', () async {
       final throwBridge = _ThrowingBridge();
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: throwBridge,
         localFilePath: tempFile.path,
         mime: 'image/jpeg',
@@ -478,7 +835,7 @@ void main() {
       'emits MEDIA_UPLOAD_TIMING with blob, mime, and size metadata',
       () async {
         final events = await captureFlowEvents(() async {
-          await uploadMedia(
+          await _legacyUploadMedia(
             bridge: bridge,
             localFilePath: tempFile.path,
             mime: 'image/jpeg',
@@ -505,7 +862,7 @@ void main() {
         const recipientPeerId = 'peer-owned-copy-test';
 
         final events = await captureFlowEvents(() async {
-          final result = await uploadMedia(
+          final result = await _legacyUploadMedia(
             bridge: bridge,
             localFilePath: tempFile.path,
             mime: 'image/jpeg',
@@ -556,7 +913,7 @@ void main() {
         final mediaFileManager = FakeMediaFileManager();
         const blobId = 'blob-group-probe';
 
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: validJpegFile.path,
           mime: 'image/jpeg',
@@ -606,7 +963,7 @@ void main() {
       };
 
       for (final entry in cases.entries) {
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: entry.key,
@@ -622,7 +979,7 @@ void main() {
     });
 
     test('passes optional dimensions and duration', () async {
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'video/mp4',
@@ -641,7 +998,7 @@ void main() {
     test(
       'uploads GIF with mime image/gif and preserves animated metadata',
       () async {
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: gifFile.path,
           mime: 'image/gif',
@@ -662,7 +1019,7 @@ void main() {
     );
 
     test('rejects dangerous group MIME before bridge upload', () async {
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'application/pdf',
@@ -684,7 +1041,7 @@ void main() {
         ...List<int>.filled(1021, 0xff),
       ]);
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: validJpegFile.path,
         mime: 'image/jpeg',
@@ -729,14 +1086,14 @@ void main() {
           ...List<int>.filled(32, 0x22),
         ]);
 
-        final firstResult = await uploadMedia(
+        final firstResult = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: first.path,
           mime: 'image/jpeg',
           recipientPeerId: 'group-1',
           allowedPeers: const ['peer-2'],
         );
-        final secondResult = await uploadMedia(
+        final secondResult = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: second.path,
           mime: 'image/jpeg',
@@ -790,7 +1147,7 @@ void main() {
       final spoofedFile = File('${tempDir.path}/spoofed.jpg')
         ..writeAsStringSync('<script>alert(1)</script>');
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: spoofedFile.path,
         mime: 'image/jpeg',
@@ -807,7 +1164,7 @@ void main() {
       final oversizedFile = File('${tempDir.path}/oversized.jpg')
         ..writeAsBytesSync(List.filled(1024, 0x01));
 
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: oversizedFile.path,
         mime: 'image/jpeg',
@@ -829,7 +1186,7 @@ void main() {
     });
 
     test('null dimensions when not provided', () async {
-      final result = await uploadMedia(
+      final result = await _legacyUploadMedia(
         bridge: bridge,
         localFilePath: tempFile.path,
         mime: 'audio/mpeg',
@@ -850,7 +1207,7 @@ void main() {
       });
 
       test('returns relative path in localPath for DB storage', () async {
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',
@@ -868,7 +1225,7 @@ void main() {
       });
 
       test('copies file to persistent absolute path', () async {
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',
@@ -884,7 +1241,7 @@ void main() {
       });
 
       test('without mediaFileManager returns original absolute path', () async {
-        final result = await uploadMedia(
+        final result = await _legacyUploadMedia(
           bridge: bridge,
           localFilePath: tempFile.path,
           mime: 'image/jpeg',

@@ -1,6 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -17,7 +21,69 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../../features/conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../../../features/conversation/domain/repositories/fake_message_repository.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import 'helpers/fake_upload_media_fn.dart';
+
+class _FakeDirectManualUploadRetryRearmRepository
+    implements DirectManualUploadRetryRearmRepository {
+  _FakeDirectManualUploadRetryRearmRepository({
+    required this.messageRepo,
+    required this.mediaAttachmentRepo,
+  });
+
+  final FakeMessageRepository messageRepo;
+  final FakeMediaAttachmentRepository mediaAttachmentRepo;
+  int callCount = 0;
+  bool willApply = true;
+  List<ManualUploadRetryAttachmentExpectation>? lastExpectations;
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    callCount++;
+    lastExpectations = List.unmodifiable(attachments);
+    if (!willApply) return false;
+    final parent = await messageRepo.getMessage(messageId);
+    if (parent == null || parent.isIncoming || parent.status != 'failed') {
+      return false;
+    }
+    final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.direct,
+    );
+    final unfinished = persisted
+        .where((attachment) => attachment.downloadStatus != 'done')
+        .toList(growable: false);
+    if (unfinished.length != attachments.length) return false;
+    for (final expected in attachments) {
+      final matches = unfinished.where(
+        (attachment) =>
+            attachment.id == expected.attachmentId &&
+            attachment.localPath == expected.storedLocalPath &&
+            attachment.downloadStatus == expected.downloadStatus &&
+            (attachment.uploadRetryCount ?? 0) == expected.uploadRetryCount,
+      );
+      if (matches.length != 1) return false;
+    }
+
+    await messageRepo.saveMessage(
+      parent.copyWith(status: 'sending', wireEnvelope: null),
+    );
+    for (final expected in attachments) {
+      if (expected.downloadStatus != 'upload_failed') continue;
+      final current = unfinished.singleWhere(
+        (attachment) => attachment.id == expected.attachmentId,
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        current.copyWith(downloadStatus: 'upload_pending', uploadRetryCount: 0),
+        owner: MediaOwnerLane.direct,
+      );
+    }
+    return true;
+  }
+}
 
 IdentityModel _makeIdentity() {
   return IdentityModel(
@@ -76,6 +142,7 @@ MediaAttachment _makeAttachment({
   String mime = 'image/jpeg',
   String mediaType = 'image',
   int? durationMs,
+  int? uploadRetryCount,
 }) {
   return MediaAttachment(
     id: id,
@@ -87,6 +154,7 @@ MediaAttachment _makeAttachment({
     downloadStatus: downloadStatus,
     createdAt: '2026-01-01T00:00:00.000Z',
     durationMs: durationMs,
+    uploadRetryCount: uploadRetryCount,
     contentHash: _testContentHash,
     encryptionKeyBase64: 'test-blob-key-base64',
     encryptionNonce: 'test-blob-nonce',
@@ -102,6 +170,9 @@ void main() {
   late FakeBridge bridge;
   late FakeUploadMediaFn fakeUploadFn;
   late FakeP2PService p2pService;
+  late FakeMediaFileManager mediaFileManager;
+  late MediaUploadInFlightTracker uploadTracker;
+  late _FakeDirectManualUploadRetryRearmRepository manualRearmRepo;
 
   setUp(() {
     identityRepo = FakeIdentityRepository();
@@ -119,6 +190,12 @@ void main() {
       },
     );
     fakeUploadFn = FakeUploadMediaFn();
+    mediaFileManager = FakeMediaFileManager();
+    uploadTracker = MediaUploadInFlightTracker();
+    manualRearmRepo = _FakeDirectManualUploadRetryRearmRepository(
+      messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+    );
 
     identityRepo.seed(_makeIdentity());
     contactRepo.seed([_makeContact(peerId: 'peer-target')]);
@@ -138,10 +215,36 @@ void main() {
     );
   });
 
+  Future<int> retryManual(
+    String messageId, {
+    FakeMediaFileManager? manager,
+    void Function(Iterable<String> attachmentIds)? onClaim,
+  }) {
+    return retryFailedMessage(
+      messageId: messageId,
+      messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      identityRepo: identityRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      uploadMediaFn: fakeUploadFn.call,
+      mediaFileManager: manager,
+      uploadRetryRearmRepo: manualRearmRepo,
+      tryClaimUploadLease: (attachmentIds) {
+        onClaim?.call(attachmentIds);
+        return uploadTracker.tryClaimAll(
+          attachmentIds,
+          source: MediaUploadTriggerSource.manual,
+        );
+      },
+      releaseUploadLease: uploadTracker.release,
+    );
+  }
+
   group('retryFailedMessages -- re-upload incomplete media', () {
-    // F.5.1 Happy path: file present on disk -> re-uploads then sends
     test(
-      're-uploads local image file and sends when CDN upload succeeds',
+      'manual Retry rearms an at-ceiling upload and sends on success',
       () async {
         final msg = _makeFailedMsg(wireEnvelope: null);
         messageRepo.seed([msg]);
@@ -149,7 +252,8 @@ void main() {
         final attachment = _makeAttachment(
           messageId: msg.id,
           localPath: '/tmp/img.jpg',
-          downloadStatus: 'failed',
+          downloadStatus: 'upload_failed',
+          uploadRetryCount: kMaxUploadRetries,
         );
         mediaAttachmentRepo.seed([attachment]);
 
@@ -161,18 +265,17 @@ void main() {
           attachment.copyWith(id: 'new-blob-id', downloadStatus: 'done'),
         );
 
-        final count = await retryFailedMessages(
-          messageRepo: messageRepo,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-          uploadMediaFn: fakeUploadFn.call,
-        );
+        final count = await retryManual(msg.id);
 
         expect(fakeUploadFn.callCount, 1);
         expect(fakeUploadFn.lastLocalPath, '/tmp/img.jpg');
+        expect(fakeUploadFn.lastBlobId, attachment.id);
+        expect(manualRearmRepo.callCount, 1);
+        expect(
+          manualRearmRepo.lastExpectations!.single.uploadRetryCount,
+          kMaxUploadRetries,
+        );
+        expect(uploadTracker.inFlightCount, 0);
         expect(count, 1);
       },
     );
@@ -204,15 +307,14 @@ void main() {
       expect(count, 0);
     });
 
-    // F.5.3 CDN upload returns null -> message stays failed, no crash
-    test('skips message when re-upload returns null (CDN error)', () async {
+    test('manual Retry releases ownership when re-upload fails', () async {
       final msg = _makeFailedMsg(wireEnvelope: null);
       messageRepo.seed([msg]);
       mediaAttachmentRepo.seed([
         _makeAttachment(
           messageId: msg.id,
           localPath: '/tmp/img.jpg',
-          downloadStatus: 'failed',
+          downloadStatus: 'upload_pending',
         ),
       ]);
 
@@ -222,21 +324,15 @@ void main() {
 
       fakeUploadFn.willReturn(null);
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        uploadMediaFn: fakeUploadFn.call,
-      );
+      final count = await retryManual(msg.id);
 
+      expect(fakeUploadFn.callCount, 1);
+      expect(manualRearmRepo.callCount, 1);
+      expect(uploadTracker.inFlightCount, 0);
       expect(count, 0);
     });
 
-    // F.5.4 Voice message: audio attachment re-uploaded with correct mime + durationMs
-    test('re-uploads audio attachment and sends voice message', () async {
+    test('manual Retry uploads audio with its persisted metadata', () async {
       final msg = _makeFailedMsg(wireEnvelope: null);
       messageRepo.seed([msg]);
 
@@ -258,76 +354,85 @@ void main() {
         audioAttachment.copyWith(id: 'audio-blob-id', downloadStatus: 'done'),
       );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        uploadMediaFn: fakeUploadFn.call,
-      );
+      final count = await retryManual(msg.id);
 
       expect(fakeUploadFn.lastMime, 'audio/mp4');
       expect(fakeUploadFn.lastDurationMs, 3000);
+      expect(manualRearmRepo.callCount, 1);
       expect(count, 1);
     });
 
-    // F.5.5 Mixed batch: one recoverable, one file missing -> partial success
-    test('retries recoverable messages and skips unrecoverable ones', () async {
-      final msgOk = _makeFailedMsg(
-        id: 'msg-ok-recoverable-001',
-        wireEnvelope: null,
-      );
-      final msgMissing = _makeFailedMsg(
-        id: 'msg-missing-gone-002',
-        wireEnvelope: null,
-      );
-      messageRepo.seed([msgOk, msgMissing]);
+    test(
+      'automatic bulk retries done media but never claims or uploads unfinished rows',
+      () async {
+        final msgPending = _makeFailedMsg(id: 'msg-pending-001');
+        final msgTerminal = _makeFailedMsg(id: 'msg-terminal-002');
+        final msgCancelled = _makeFailedMsg(id: 'msg-cancelled-003');
+        final msgDone = _makeFailedMsg(id: 'msg-done-004');
+        messageRepo.seed([msgPending, msgTerminal, msgCancelled, msgDone]);
 
-      mediaAttachmentRepo.seed([
-        _makeAttachment(
-          id: 'att-ok-001',
-          messageId: 'msg-ok-recoverable-001',
-          localPath: '/tmp/ok.jpg',
-          downloadStatus: 'failed',
-        ),
-        _makeAttachment(
-          id: 'att-gone-002',
-          messageId: 'msg-missing-gone-002',
-          localPath: '/data/gone.jpg',
-          downloadStatus: 'failed',
-        ),
-      ]);
-      // /data/gone.jpg intentionally absent from disk
+        mediaAttachmentRepo.seed([
+          _makeAttachment(
+            id: 'att-pending-001',
+            messageId: msgPending.id,
+            localPath: '/tmp/pending.jpg',
+            downloadStatus: 'upload_pending',
+          ),
+          _makeAttachment(
+            id: 'att-terminal-002',
+            messageId: msgTerminal.id,
+            localPath: '/tmp/terminal.jpg',
+            downloadStatus: 'upload_failed',
+            uploadRetryCount: kMaxUploadRetries,
+          ),
+          _makeAttachment(
+            id: 'att-cancelled-003',
+            messageId: msgCancelled.id,
+            localPath: '/tmp/cancelled.jpg',
+            downloadStatus: 'upload_cancelled',
+          ),
+          _makeAttachment(
+            id: 'att-done-004',
+            messageId: msgDone.id,
+            localPath: 'media/peer-target/att-done-004.jpg',
+            downloadStatus: 'done',
+          ),
+        ]);
 
-      // Ensure /tmp/ok.jpg exists
-      final tmpFile = File('/tmp/ok.jpg');
-      if (!tmpFile.existsSync()) tmpFile.writeAsBytesSync([0xFF]);
+        fakeUploadFn.willReturn(
+          _makeAttachment(
+            id: 'must-not-upload',
+            messageId: msgPending.id,
+            downloadStatus: 'done',
+          ),
+        );
 
-      fakeUploadFn.willReturnForPath(
-        '/tmp/ok.jpg',
-        _makeAttachment(
-          messageId: 'msg-ok-recoverable-001',
-          localPath: '/tmp/ok.jpg',
-          downloadStatus: 'done',
-          id: 'ok-blob-id-001',
-        ),
-      );
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        uploadMediaFn: fakeUploadFn.call,
-      );
-
-      expect(count, 1);
-      expect(fakeUploadFn.callCount, 1);
-    });
+        expect(count, 1);
+        expect(fakeUploadFn.callCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(uploadTracker.inFlightCount, 0);
+        expect((await messageRepo.getMessage(msgPending.id))?.status, 'failed');
+        expect(
+          (await messageRepo.getMessage(msgTerminal.id))?.status,
+          'failed',
+        );
+        expect(
+          (await messageRepo.getMessage(msgCancelled.id))?.status,
+          'failed',
+        );
+      },
+    );
 
     // F.5.6 Attachment with null localPath -> treated as missing
     test('skips attachment with null localPath', () async {
@@ -385,30 +490,107 @@ void main() {
       },
     );
 
-    // F.5.8 Relative localPath (written by MediaFileManager) -- not resolvable
-    test('skips message when localPath is relative (not resolvable)', () async {
+    test(
+      'cached-envelope inbox success cleans settled media staging',
+      () async {
+        final msg = _makeFailedMsg(
+          id: 'msg-envelope-cleanup',
+          wireEnvelope: '{"type":"chat","version":"2","payload":{}}',
+        );
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed([
+          _makeAttachment(
+            id: 'att-envelope-cleanup',
+            messageId: msg.id,
+            localPath: 'media/peer-target/att-envelope-cleanup.jpg',
+            downloadStatus: 'done',
+          ),
+        ]);
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(deletedDirs, [msg.id]);
+        expect((await messageRepo.getMessage(msg.id))?.status, 'inboxed');
+      },
+    );
+
+    test(
+      'already-inbox cached-envelope success also cleans media staging',
+      () async {
+        final msg = _makeFailedMsg(
+          id: 'msg-already-inbox-cleanup',
+          wireEnvelope: '{"type":"chat","version":"2","payload":{}}',
+        ).copyWith(transport: 'inbox');
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed([
+          _makeAttachment(
+            id: 'att-already-inbox-cleanup',
+            messageId: msg.id,
+            localPath: 'media/peer-target/att-already-inbox-cleanup.jpg',
+            downloadStatus: 'done',
+          ),
+        ]);
+        final deletedDirs = <String>[];
+        mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(deletedDirs, [msg.id]);
+        expect((await messageRepo.getMessage(msg.id))?.status, 'inboxed');
+      },
+    );
+
+    test('manual Retry resolves and uploads a relative stored path', () async {
       final msg = _makeFailedMsg(wireEnvelope: null);
       messageRepo.seed([msg]);
-      mediaAttachmentRepo.seed([
-        _makeAttachment(
-          messageId: msg.id,
-          localPath: 'media/attachments/img.jpg', // relative -- not resolvable
-          downloadStatus: 'upload_pending',
+      final attachment = _makeAttachment(
+        messageId: msg.id,
+        localPath: 'pending_uploads/${msg.id}/att-001.jpg',
+        downloadStatus: 'upload_pending',
+      );
+      mediaAttachmentRepo.seed([attachment]);
+      final resolvedPath = await mediaFileManager.resolveStoredPath(
+        attachment.localPath!,
+      );
+      await File(resolvedPath).create(recursive: true);
+      await File(resolvedPath).writeAsBytes([0xFF]);
+      fakeUploadFn.willReturn(
+        attachment.copyWith(
+          localPath: 'media/peer-target/${attachment.id}.jpg',
+          downloadStatus: 'done',
         ),
-      ]);
-
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        uploadMediaFn: fakeUploadFn.call,
       );
 
-      expect(fakeUploadFn.callCount, 0);
-      expect(count, 0);
+      final count = await retryManual(msg.id, manager: mediaFileManager);
+
+      expect(fakeUploadFn.callCount, 1);
+      expect(fakeUploadFn.lastLocalPath, resolvedPath);
+      expect(mediaFileManager.resolveStoredPathCount, greaterThanOrEqualTo(1));
+      expect(count, 1);
     });
 
     // F.5.9 Voice-only retry without mediaAttachments returns invalidMessage
@@ -465,5 +647,191 @@ void main() {
         expect((await messageRepo.getMessage(msg.id))?.status, 'failed');
       },
     );
+
+    test(
+      'manual Retry refuses a typed-terminal row below the ceiling',
+      () async {
+        final msg = _makeFailedMsg(wireEnvelope: 'still-valid');
+        final attachment = _makeAttachment(
+          messageId: msg.id,
+          localPath: '/tmp/typed-terminal.jpg',
+          downloadStatus: 'upload_failed',
+          uploadRetryCount: kMaxUploadRetries - 1,
+        );
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed([attachment]);
+        await File(attachment.localPath!).writeAsBytes([0xFF]);
+        var claimCount = 0;
+
+        final count = await retryManual(msg.id, onClaim: (_) => claimCount++);
+
+        expect(count, 0);
+        expect(claimCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect((await messageRepo.getMessage(msg.id))?.toMap(), msg.toMap());
+        expect(
+          (await mediaAttachmentRepo.getAttachmentById(attachment.id))?.toMap(),
+          attachment.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+        );
+      },
+    );
+
+    test(
+      'held competing lease leaves parent and terminal attachment byte-identical',
+      () async {
+        final msg = _makeFailedMsg(wireEnvelope: 'still-valid');
+        final attachment = _makeAttachment(
+          messageId: msg.id,
+          localPath: '/tmp/held-terminal.jpg',
+          downloadStatus: 'upload_failed',
+          uploadRetryCount: kMaxUploadRetries,
+        );
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed([attachment]);
+        await File(attachment.localPath!).writeAsBytes([0xFF]);
+        final competitor = uploadTracker.tryClaimAll([
+          attachment.id,
+        ], source: MediaUploadTriggerSource.foreground);
+        expect(competitor, isNotNull);
+        final parentBefore = (await messageRepo.getMessage(msg.id))!.toMap();
+        final attachmentBefore = (await mediaAttachmentRepo.getAttachmentById(
+          attachment.id,
+        ))!.toMap();
+
+        final count = await retryManual(msg.id);
+
+        expect(count, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect((await messageRepo.getMessage(msg.id))?.toMap(), parentBefore);
+        expect(
+          (await mediaAttachmentRepo.getAttachmentById(attachment.id))?.toMap(),
+          attachmentBefore,
+        );
+        expect(uploadTracker.release(competitor!), isTrue);
+      },
+    );
+
+    test(
+      'missing source in a multi-attachment set prevents claim and partial rearm',
+      () async {
+        final msg = _makeFailedMsg(wireEnvelope: 'still-valid');
+        final present = _makeAttachment(
+          id: 'att-present',
+          messageId: msg.id,
+          localPath: '/tmp/present-for-all-or-none.jpg',
+          downloadStatus: 'upload_failed',
+          uploadRetryCount: kMaxUploadRetries,
+        );
+        final missing = _makeAttachment(
+          id: 'att-missing',
+          messageId: msg.id,
+          localPath: '/tmp/does-not-exist-for-all-or-none.jpg',
+          downloadStatus: 'upload_pending',
+        );
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed([present, missing]);
+        await File(present.localPath!).writeAsBytes([0xFF]);
+        final absent = File(missing.localPath!);
+        if (absent.existsSync()) await absent.delete();
+        var claimCount = 0;
+        final before = (await mediaAttachmentRepo.getAttachmentsForMessage(
+          msg.id,
+          owner: MediaOwnerLane.direct,
+        )).map((attachment) => attachment.toMap()).toList();
+
+        final count = await retryManual(msg.id, onClaim: (_) => claimCount++);
+
+        expect(count, 0);
+        expect(claimCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect((await messageRepo.getMessage(msg.id))?.toMap(), msg.toMap());
+        expect(
+          (await mediaAttachmentRepo.getAttachmentsForMessage(
+            msg.id,
+            owner: MediaOwnerLane.direct,
+          )).map((attachment) => attachment.toMap()).toList(),
+          before,
+        );
+      },
+    );
+
+    test(
+      'over-limit manual set is refused before claim or terminal rearm',
+      () async {
+        final msg = _makeFailedMsg(wireEnvelope: 'still-valid');
+        final tempDir = Directory.systemTemp.createTempSync(
+          'direct_manual_retry_over_limit_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachments = <MediaAttachment>[];
+        for (var i = 0; i < kReuploadMaxAttachmentsPerMessage + 1; i++) {
+          final path = '${tempDir.path}/$i.jpg';
+          await File(path).writeAsBytes([0xFF, i]);
+          attachments.add(
+            _makeAttachment(
+              id: 'att-over-limit-$i',
+              messageId: msg.id,
+              localPath: path,
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+            ),
+          );
+        }
+        messageRepo.seed([msg]);
+        mediaAttachmentRepo.seed(attachments);
+        var claimCount = 0;
+        final before = (await mediaAttachmentRepo.getAttachmentsForMessage(
+          msg.id,
+          owner: MediaOwnerLane.direct,
+        )).map((attachment) => attachment.toMap()).toList();
+
+        final count = await retryManual(msg.id, onClaim: (_) => claimCount++);
+
+        expect(count, 0);
+        expect(claimCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect((await messageRepo.getMessage(msg.id))?.toMap(), msg.toMap());
+        expect(
+          (await mediaAttachmentRepo.getAttachmentsForMessage(
+            msg.id,
+            owner: MediaOwnerLane.direct,
+          )).map((attachment) => attachment.toMap()).toList(),
+          before,
+        );
+      },
+    );
+
+    test('failed parent+attachment CAS releases the manual lease', () async {
+      final msg = _makeFailedMsg();
+      final attachment = _makeAttachment(
+        messageId: msg.id,
+        localPath: '/tmp/cas-lost.jpg',
+        downloadStatus: 'upload_pending',
+      );
+      messageRepo.seed([msg]);
+      mediaAttachmentRepo.seed([attachment]);
+      await File(attachment.localPath!).writeAsBytes([0xFF]);
+      manualRearmRepo.willApply = false;
+
+      final count = await retryManual(msg.id);
+
+      expect(count, 0);
+      expect(manualRearmRepo.callCount, 1);
+      expect(fakeUploadFn.callCount, 0);
+      expect(uploadTracker.inFlightCount, 0);
+      expect((await messageRepo.getMessage(msg.id))?.status, 'failed');
+      expect(
+        (await mediaAttachmentRepo.getAttachmentById(
+          attachment.id,
+        ))?.downloadStatus,
+        'upload_pending',
+      );
+    });
   });
 }

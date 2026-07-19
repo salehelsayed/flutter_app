@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
+import 'package:flutter_app/shared/widgets/private_media_policy_picker_sheet.dart';
 
 enum VoiceRecordingState { idle, arming, recording, stopping, reviewing }
 
@@ -53,6 +55,9 @@ class ComposeArea extends StatefulWidget {
   final PrivateMediaEligibility privateMediaEligibility;
   final PrivateMediaPolicy privateMediaPolicy;
   final ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged;
+  final String privateMediaRecipientName;
+  final TargetPlatform? privateMediaTargetPlatform;
+  final bool privateMediaSenderReopenEnabled;
 
   const ComposeArea({
     super.key,
@@ -83,6 +88,9 @@ class ComposeArea extends StatefulWidget {
     ),
     this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
     this.onPrivateMediaPolicyChanged,
+    this.privateMediaRecipientName = 'them',
+    this.privateMediaTargetPlatform,
+    this.privateMediaSenderReopenEnabled = false,
   });
 
   @override
@@ -327,112 +335,74 @@ class _ComposeAreaState extends State<ComposeArea>
 
   bool get _shouldShowMicButton => !_shouldShowSendButton && _canRecordVoice;
 
-  Widget _privateMediaMenuLabel(
-    BuildContext context, {
-    required String label,
-    required String detail,
-  }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label),
-        const SizedBox(height: 2),
-        Text(detail, style: Theme.of(context).textTheme.bodySmall),
-      ],
-    );
-  }
-
   Widget _buildPrivateMediaSelector(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final policy = widget.privateMediaPolicy;
-    final label = switch (policy.mode) {
-      PrivateMediaMode.protected => l10n.private_media_protected,
-      PrivateMediaMode.viewOnce => l10n.private_media_view_once,
-      PrivateMediaMode.disappearing when policy.durationSeconds == 3600 =>
-        l10n.private_media_disappearing_1h,
-      PrivateMediaMode.disappearing when policy.durationSeconds == 86400 =>
-        l10n.private_media_disappearing_1d,
-      PrivateMediaMode.disappearing => l10n.private_media_disappearing_7d,
-      _ => l10n.private_media_ordinary,
+    final selection = _pickerSelection(widget.privateMediaPolicy);
+    final title = switch (widget.privateMediaEligibility.attachmentKind) {
+      PrivateMediaAttachmentKind.video => l10n.private_media_sheet_title_video(
+        widget.privateMediaRecipientName,
+      ),
+      PrivateMediaAttachmentKind.gif => l10n.private_media_sheet_title_gif(
+        widget.privateMediaRecipientName,
+      ),
+      _ => l10n.private_media_sheet_title_photo(
+        widget.privateMediaRecipientName,
+      ),
     };
     return Align(
       alignment: AlignmentDirectional.centerStart,
-      child: PopupMenuButton<PrivateMediaPolicy>(
-        key: const ValueKey('private-media-selector'),
-        tooltip: l10n.private_media_selector_label,
-        onSelected: widget.onPrivateMediaPolicyChanged,
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-ordinary'),
-            value: const PrivateMediaPolicy.ordinary(),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_ordinary,
-              detail: l10n.private_media_ordinary_detail,
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-protected'),
-            value: const PrivateMediaPolicy.protected(),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_protected,
-              detail: l10n.private_media_protected_detail,
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-view-once'),
-            value: const PrivateMediaPolicy.viewOnce(),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_view_once,
-              detail: l10n.private_media_view_once_copy,
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-disappearing-1h'),
-            value: PrivateMediaPolicy.disappearing(3600),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_disappearing_1h,
-              detail: l10n.private_media_expiry_device_local,
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-disappearing-1d'),
-            value: PrivateMediaPolicy.disappearing(86400),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_disappearing_1d,
-              detail: l10n.private_media_expiry_device_local,
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('private-media-option-disappearing-7d'),
-            value: PrivateMediaPolicy.disappearing(604800),
-            height: 72,
-            child: _privateMediaMenuLabel(
-              context,
-              label: l10n.private_media_disappearing_7d,
-              detail: l10n.private_media_expiry_device_local,
-            ),
-          ),
-        ],
-        child: Padding(
-          padding: const EdgeInsetsDirectional.only(start: 56, bottom: 4),
-          child: Chip(
-            avatar: const Icon(Icons.lock_outline_rounded, size: 16),
-            label: Text(label),
-          ),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(start: 56, end: 4, bottom: 5),
+        child: PrivateMediaSummaryChip(
+          key: const ValueKey('private-media-selector'),
+          selection: selection,
+          recipientName: widget.privateMediaRecipientName,
+          onTap: () async {
+            final picked = await showPrivateMediaPolicyPickerSheet(
+              context: context,
+              initialSelection: selection,
+              title: title,
+              recipientName: widget.privateMediaRecipientName,
+              targetPlatform:
+                  widget.privateMediaTargetPlatform ?? defaultTargetPlatform,
+              optionKeyPrefix: 'private-media-option',
+              senderReopenEnabled: widget.privateMediaSenderReopenEnabled,
+            );
+            if (picked == null || !context.mounted) return;
+            widget.onPrivateMediaPolicyChanged?.call(_policy(picked));
+          },
         ),
       ),
     );
+  }
+
+  PrivateMediaPickerSelection _pickerSelection(PrivateMediaPolicy policy) {
+    return switch (policy.mode) {
+      PrivateMediaMode.protected => const PrivateMediaPickerSelection(
+        mode: PrivateMediaPickerMode.protected,
+      ),
+      PrivateMediaMode.viewOnce => const PrivateMediaPickerSelection(
+        mode: PrivateMediaPickerMode.viewOnce,
+      ),
+      PrivateMediaMode.disappearing => PrivateMediaPickerSelection(
+        mode: PrivateMediaPickerMode.disappearing,
+        durationSeconds: policy.durationSeconds,
+      ),
+      _ => const PrivateMediaPickerSelection(
+        mode: PrivateMediaPickerMode.ordinary,
+      ),
+    };
+  }
+
+  PrivateMediaPolicy _policy(PrivateMediaPickerSelection selection) {
+    return switch (selection.mode) {
+      PrivateMediaPickerMode.ordinary => const PrivateMediaPolicy.ordinary(),
+      PrivateMediaPickerMode.protected => const PrivateMediaPolicy.protected(),
+      PrivateMediaPickerMode.viewOnce => const PrivateMediaPolicy.viewOnce(),
+      PrivateMediaPickerMode.disappearing => PrivateMediaPolicy.disappearing(
+        selection.durationSeconds ?? 86400,
+      ),
+    };
   }
 
   @override

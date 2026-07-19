@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
@@ -82,7 +83,9 @@ class _StableLocalVoiceP2PService extends core_fake_p2p.FakeP2PService {
     String? encScheme,
   }) async {
     observedMediaId = mediaId;
-    final pending = await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct);
+    final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+      owner: MediaOwnerLane.direct,
+    );
     if (pending.isNotEmpty) {
       observedPendingAttachmentId = pending.single.id;
     }
@@ -520,30 +523,34 @@ void main() {
                   }) async {
                     uploadedBlobId = blobId;
                     final pending = await mediaAttachmentRepo
-                        .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
+                        .getUploadPendingAttachments(
+                          owner: MediaOwnerLane.direct,
+                        );
                     optimisticAttachmentId = pending.single.id;
-                    return MediaAttachment(
-                      id: blobId ?? 'server-generated-image-id',
-                      messageId: '',
-                      mime: mime,
-                      size: await File(localFilePath).length(),
-                      mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                      localPath: localFilePath,
-                      downloadStatus: 'done',
-                      createdAt: DateTime.now().toUtc().toIso8601String(),
-                      contentHash:
-                          preparedArtifact?.contentHash ??
-                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                            localFilePath,
-                          ),
-                      encryptionKeyBase64:
-                          preparedArtifact?.keyBase64 ??
-                          _fixtureEncryptionKeyBase64,
-                      encryptionNonce:
-                          preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
-                      encryptionScheme:
-                          preparedArtifact?.scheme ??
-                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    return UploadMediaSucceeded(
+                      MediaAttachment(
+                        id: blobId ?? 'server-generated-image-id',
+                        messageId: '',
+                        mime: mime,
+                        size: await File(localFilePath).length(),
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                        localPath: localFilePath,
+                        downloadStatus: 'done',
+                        createdAt: DateTime.now().toUtc().toIso8601String(),
+                        contentHash:
+                            preparedArtifact?.contentHash ??
+                            await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                              localFilePath,
+                            ),
+                        encryptionKeyBase64:
+                            preparedArtifact?.keyBase64 ??
+                            _fixtureEncryptionKeyBase64,
+                        encryptionNonce:
+                            preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
+                        encryptionScheme:
+                            preparedArtifact?.scheme ??
+                            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                      ),
                     );
                   },
               initialAttachments: [imageFile],
@@ -569,9 +576,13 @@ void main() {
         )).last;
         await _pumpUntilAsync(tester, () async {
           final currentAttachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(sentMessage.id, owner: MediaOwnerLane.direct);
-          final pending = await mediaAttachmentRepo
-              .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
+              .getAttachmentsForMessage(
+                sentMessage.id,
+                owner: MediaOwnerLane.direct,
+              );
+          final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          );
           return currentAttachments.length == 1 &&
               currentAttachments.single.id == optimisticAttachmentId &&
               currentAttachments.single.downloadStatus == 'done' &&
@@ -588,7 +599,9 @@ void main() {
         expect(attachments.single.id, optimisticAttachmentId);
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
         await _pumpFrames(tester);
@@ -699,28 +712,30 @@ void main() {
                       await original.delete();
                       originalDeletedDuringUpload = true;
                     }
-                    return MediaAttachment(
-                      id: blobId ?? 'server-generated-delete-id',
-                      messageId: '',
-                      mime: mime,
-                      size: await File(localFilePath).length(),
-                      mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                      localPath: localFilePath,
-                      downloadStatus: 'done',
-                      createdAt: DateTime.now().toUtc().toIso8601String(),
-                      contentHash:
-                          preparedArtifact?.contentHash ??
-                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                            localFilePath,
-                          ),
-                      encryptionKeyBase64:
-                          preparedArtifact?.keyBase64 ??
-                          _fixtureEncryptionKeyBase64,
-                      encryptionNonce:
-                          preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
-                      encryptionScheme:
-                          preparedArtifact?.scheme ??
-                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    return UploadMediaSucceeded(
+                      MediaAttachment(
+                        id: blobId ?? 'server-generated-delete-id',
+                        messageId: '',
+                        mime: mime,
+                        size: await File(localFilePath).length(),
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                        localPath: localFilePath,
+                        downloadStatus: 'done',
+                        createdAt: DateTime.now().toUtc().toIso8601String(),
+                        contentHash:
+                            preparedArtifact?.contentHash ??
+                            await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                              localFilePath,
+                            ),
+                        encryptionKeyBase64:
+                            preparedArtifact?.keyBase64 ??
+                            _fixtureEncryptionKeyBase64,
+                        encryptionNonce:
+                            preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
+                        encryptionScheme:
+                            preparedArtifact?.scheme ??
+                            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                      ),
                     );
                   },
               initialAttachments: [imageFile],
@@ -745,7 +760,10 @@ void main() {
             (message) => !message.isIncoming,
           );
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(sentMessage.id, owner: MediaOwnerLane.direct);
+              .getAttachmentsForMessage(
+                sentMessage.id,
+                owner: MediaOwnerLane.direct,
+              );
           return attachments.length == 1 &&
               attachments.single.downloadStatus == 'done';
         });
@@ -767,7 +785,9 @@ void main() {
         expect(attachments, hasLength(1));
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
         await tester.pumpWidget(const SizedBox.shrink());
@@ -804,7 +824,11 @@ void main() {
                     blobId,
                     deleteSourceWhenDone = false,
                     preparedArtifact,
-                  }) async => null,
+                  }) async => const UploadMediaFailed(
+                    stage: UploadMediaStage.consumerBoundary,
+                    disposition: UploadMediaDisposition.terminal,
+                    errorCode: 'TEST_UPLOAD_FAILED',
+                  ),
             ),
           ),
         );
@@ -922,7 +946,10 @@ void main() {
 
         await _pumpUntilAsync(tester, () async {
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
+              .getAttachmentsForMessage(
+                messageId,
+                owner: MediaOwnerLane.direct,
+              );
           final resolvedPath = p.join(tempDir.path, storedRelativePath);
           if (attachments.length != 1 || !File(resolvedPath).existsSync()) {
             return false;
@@ -1060,7 +1087,9 @@ void main() {
         expect(attachments.single.id, p2pService.observedPendingAttachmentId);
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
 
@@ -1183,26 +1212,28 @@ void main() {
                     preparedArtifact,
                   }) async {
                     uploadedBlobId = blobId;
-                    return MediaAttachment(
-                      id: 'server-generated-announcement-id',
-                      messageId: '',
-                      mime: mime,
-                      size: await File(localFilePath).length(),
-                      mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                      localPath: localFilePath,
-                      downloadStatus: 'done',
-                      createdAt: DateTime.now().toUtc().toIso8601String(),
-                      width: width,
-                      height: height,
-                      durationMs: durationMs,
-                      contentHash:
-                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                            localFilePath,
-                          ),
-                      encryptionKeyBase64: _fixtureEncryptionKeyBase64,
-                      encryptionNonce: _fixtureEncryptionNonce,
-                      encryptionScheme:
-                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    return UploadMediaSucceeded(
+                      MediaAttachment(
+                        id: 'server-generated-announcement-id',
+                        messageId: '',
+                        mime: mime,
+                        size: await File(localFilePath).length(),
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                        localPath: localFilePath,
+                        downloadStatus: 'done',
+                        createdAt: DateTime.now().toUtc().toIso8601String(),
+                        width: width,
+                        height: height,
+                        durationMs: durationMs,
+                        contentHash:
+                            await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                              localFilePath,
+                            ),
+                        encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+                        encryptionNonce: _fixtureEncryptionNonce,
+                        encryptionScheme:
+                            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                      ),
                     );
                   },
             ),
@@ -1241,14 +1272,19 @@ void main() {
           limit: 100,
         )).firstWhere((message) => message.id == sent.id);
         final readerAttachments = await reader.mediaAttachmentRepo
-            .getAttachmentsForMessage(readerMessage.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              readerMessage.id,
+              owner: MediaOwnerLane.group,
+            );
 
         expect(uploadedBlobId, isNotNull);
         expect(senderAttachments, hasLength(1));
         expect(senderAttachments.single.id, uploadedBlobId);
         expect(senderAttachments.single.downloadStatus, 'done');
         expect(
-          await admin.mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await admin.mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         expect(readerAttachments, hasLength(1));
@@ -1273,7 +1309,10 @@ void main() {
 
         await _pumpUntilAsync(tester, () async {
           final downloaded = await reader.mediaAttachmentRepo
-              .getAttachmentsForMessage(readerMessage.id, owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                readerMessage.id,
+                owner: MediaOwnerLane.group,
+              );
           if (downloaded.length != 1) {
             return false;
           }

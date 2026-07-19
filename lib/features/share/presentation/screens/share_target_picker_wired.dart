@@ -561,6 +561,9 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           imageProcessor: widget.imageProcessor,
           qualityPreference: _qualityPreference,
           videoQualityPreference: _videoQualityPreference,
+          shareStoredOfflinePromise: AppLocalizations.of(
+            context,
+          )!.share_stored_offline_promise,
         );
   }
 

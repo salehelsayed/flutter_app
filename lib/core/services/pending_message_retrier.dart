@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -48,6 +49,7 @@ class PendingMessageRetrier {
   final ContactRepository contactRepo;
   final Bridge bridge;
   final MediaAttachmentRepository? mediaAttachmentRepo;
+  final MediaFileManager? mediaFileManager;
 
   // Injectable recovery callbacks for correct ordering
   final Future<void> Function()? rejoinGroupTopicsFn;
@@ -56,8 +58,12 @@ class PendingMessageRetrier {
   final Future<dynamic> Function()? drainGroupOfflineInboxFn;
   final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
   final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
+  final Future<int> Function()? retryIncompleteUploadsNetworkRestoredFn;
+  final Future<int> Function()? retryIncompleteUploadsPeriodicFn;
   final Future<int> Function()? recoverStuckSendingGroupMessagesFn;
   final Future<int> Function()? retryIncompleteGroupUploadsFn;
+  final Future<int> Function()? retryIncompleteGroupUploadsNetworkRestoredFn;
+  final Future<int> Function()? retryIncompleteGroupUploadsPeriodicFn;
   final Future<int> Function()? retryFailedGroupMessagesFn;
   final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
@@ -114,14 +120,19 @@ class PendingMessageRetrier {
     required this.contactRepo,
     required this.bridge,
     this.mediaAttachmentRepo,
+    this.mediaFileManager,
     this.rejoinGroupTopicsFn,
     this.rejoinGroupTopicsWithRecoveryAckEligibilityFn,
     this.acknowledgeGroupRecoveryFn,
     this.drainGroupOfflineInboxFn,
     this.recoverStuckSendingMessagesFn, // Part A
     this.retryIncompleteUploadsFn, // Part G -- NEW
+    this.retryIncompleteUploadsNetworkRestoredFn,
+    this.retryIncompleteUploadsPeriodicFn,
     this.recoverStuckSendingGroupMessagesFn,
     this.retryIncompleteGroupUploadsFn,
+    this.retryIncompleteGroupUploadsNetworkRestoredFn,
+    this.retryIncompleteGroupUploadsPeriodicFn,
     this.retryFailedGroupMessagesFn,
     this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
@@ -233,20 +244,49 @@ class PendingMessageRetrier {
     if (_isNetworkRestoredFlushing) return;
     _isNetworkRestoredFlushing = true;
     try {
-      final count = await _retryUnackedMessagesNow(olderThan: Duration.zero);
-      if (count > 0) {
+      try {
+        final count = await _retryUnackedMessagesNow(olderThan: Duration.zero);
+        if (count > 0) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSHED',
+            details: {'count': count},
+          );
+        }
+      } catch (e) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSHED',
-          details: {'count': count},
+          event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSH_ERROR',
+          details: {'error': e.toString()},
         );
       }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSH_ERROR',
-        details: {'error': e.toString()},
-      );
+
+      final retryDirect = retryIncompleteUploadsNetworkRestoredFn;
+      if (retryDirect != null) {
+        try {
+          await retryDirect();
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_NETWORK_RESTORED_INCOMPLETE_UPLOAD_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
+
+      final retryGroup = retryIncompleteGroupUploadsNetworkRestoredFn;
+      if (retryGroup != null) {
+        try {
+          await retryGroup();
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event:
+                'PENDING_RETRIER_NETWORK_RESTORED_GROUP_INCOMPLETE_UPLOAD_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
     } finally {
       _isNetworkRestoredFlushing = false;
     }
@@ -287,6 +327,7 @@ class PendingMessageRetrier {
       p2pService: p2pService,
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
     );
   }
 
@@ -326,7 +367,7 @@ class PendingMessageRetrier {
       // Deterministic fixed cadence (default + tests).
       _periodicTimer = Timer.periodic(
         periodicRetryInterval,
-        (_) => _retryIfNeeded(),
+        (_) => _retryIfNeeded(periodic: true),
       );
       _groupContinuityTimer = Timer.periodic(
         groupContinuitySweepInterval,
@@ -341,7 +382,7 @@ class PendingMessageRetrier {
       _periodicTimer = Timer(
         jitteredRetryInterval(periodicRetryInterval, random),
         () {
-          _retryIfNeeded();
+          _retryIfNeeded(periodic: true);
           schedulePeriodic();
         },
       );
@@ -489,7 +530,10 @@ class PendingMessageRetrier {
     }
   }
 
-  Future<void> _retryIfNeeded({Duration? unackedOlderThan}) async {
+  Future<void> _retryIfNeeded({
+    Duration? unackedOlderThan,
+    bool periodic = false,
+  }) async {
     if (_isRetrying) return;
     if (_isExternalRecoveryInProgressFn?.call() == true) {
       emitFlowEvent(
@@ -572,9 +616,13 @@ class PendingMessageRetrier {
             }
           }
 
-          if (retryIncompleteGroupUploadsFn != null) {
+          final retryIncompleteGroupUploadsForPass = periodic
+              ? retryIncompleteGroupUploadsPeriodicFn ??
+                    retryIncompleteGroupUploadsFn
+              : retryIncompleteGroupUploadsFn;
+          if (retryIncompleteGroupUploadsForPass != null) {
             try {
-              await retryIncompleteGroupUploadsFn!();
+              await retryIncompleteGroupUploadsForPass();
             } catch (e) {
               emitFlowEvent(
                 layer: 'FL',
@@ -637,9 +685,12 @@ class PendingMessageRetrier {
       }
 
       // Step 7: Re-upload incomplete attachments (Part G)
-      if (retryIncompleteUploadsFn != null) {
+      final retryIncompleteUploadsForPass = periodic
+          ? retryIncompleteUploadsPeriodicFn ?? retryIncompleteUploadsFn
+          : retryIncompleteUploadsFn;
+      if (retryIncompleteUploadsForPass != null) {
         try {
-          final count = await retryIncompleteUploadsFn!();
+          final count = await retryIncompleteUploadsForPass();
           if (count > 0) {
             emitFlowEvent(
               layer: 'FL',

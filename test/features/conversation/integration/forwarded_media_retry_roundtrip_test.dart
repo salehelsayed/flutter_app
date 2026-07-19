@@ -5,6 +5,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -146,15 +147,17 @@ void main() {
               blobId,
               deleteSourceWhenDone = false,
               preparedArtifact,
-            }) async => originalAttachment.copyWith(
-              id: blobId,
-              localPath: localFilePath,
-              downloadStatus: 'done',
-              encryptionKeyBase64: 'retry-upload-key',
-              encryptionNonce: 'retry-upload-nonce',
-              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-              contentHash:
-                  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+            }) async => UploadMediaSucceeded(
+              originalAttachment.copyWith(
+                id: blobId,
+                localPath: localFilePath,
+                downloadStatus: 'done',
+                encryptionKeyBase64: 'retry-upload-key',
+                encryptionNonce: 'retry-upload-nonce',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                contentHash:
+                    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+              ),
             ),
       );
       expect(incompleteCount, 1);

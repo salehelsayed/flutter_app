@@ -3,7 +3,10 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
@@ -20,7 +23,29 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
-enum _RetryFailedMessageSkipReason { none, localFileMissing, uploadCancelled }
+enum _RetryFailedMessageSkipReason {
+  none,
+  localFileMissing,
+  uploadCancelled,
+  unfinishedAutomatic,
+  manualRearmNotEligible,
+  uploadOwnershipUnavailable,
+  uploadFailed,
+}
+
+class _RetryAttachmentResolution {
+  const _RetryAttachmentResolution({
+    required this.attachments,
+    required this.skipReason,
+    this.uploadLease,
+    this.didUpload = false,
+  });
+
+  final List<MediaAttachment>? attachments;
+  final _RetryFailedMessageSkipReason skipReason;
+  final MediaUploadLease? uploadLease;
+  final bool didUpload;
+}
 
 /// 116 EF-1 (row-derived action): the semantic action of a retried row comes
 /// from the DB row, never from caller defaults — an `editedAt`-bearing row
@@ -56,6 +81,7 @@ Future<int> retryFailedMessages({
   required Bridge bridge,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
+  MediaFileManager? mediaFileManager,
 }) {
   return _retryFailedMessagesInternal(
     messageRepo: messageRepo,
@@ -65,6 +91,9 @@ Future<int> retryFailedMessages({
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
     uploadMediaFn: uploadMediaFn,
+    mediaFileManager: mediaFileManager,
+    uploadRetryProjectionRepo: null,
+    manualRetry: false,
     loadFailedMessages: messageRepo.getFailedOutgoingMessages,
   );
 }
@@ -79,6 +108,11 @@ Future<int> retryFailedMessage({
   required Bridge bridge,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
+  MediaFileManager? mediaFileManager,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
+  TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
+  ReleaseMediaUploadLease? releaseUploadLease,
 }) {
   return _retryFailedMessagesInternal(
     messageRepo: messageRepo,
@@ -88,6 +122,20 @@ Future<int> retryFailedMessage({
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
     uploadMediaFn: uploadMediaFn,
+    mediaFileManager: mediaFileManager,
+    uploadRetryProjectionRepo:
+        uploadRetryProjectionRepo ??
+        (messageRepo is DirectUploadRetryProjectionRepository
+            ? messageRepo as DirectUploadRetryProjectionRepository
+            : null),
+    uploadRetryRearmRepo:
+        uploadRetryRearmRepo ??
+        (messageRepo is DirectManualUploadRetryRearmRepository
+            ? messageRepo as DirectManualUploadRetryRearmRepository
+            : null),
+    tryClaimUploadLease: tryClaimUploadLease,
+    releaseUploadLease: releaseUploadLease,
+    manualRetry: true,
     loadFailedMessages: () async {
       final message = await messageRepo.getMessage(messageId);
       if (message == null || message.isIncoming || message.status != 'failed') {
@@ -107,6 +155,12 @@ Future<int> _retryFailedMessagesInternal({
   required Future<List<ConversationMessage>> Function() loadFailedMessages,
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
+  MediaFileManager? mediaFileManager,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
+  TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
+  ReleaseMediaUploadLease? releaseUploadLease,
+  required bool manualRetry,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   final effectiveUploadFn = uploadMediaFn ?? uploadMedia;
@@ -171,6 +225,12 @@ Future<int> _retryFailedMessagesInternal({
       identity: identity,
       mediaAttachmentRepo: mediaAttachmentRepo,
       uploadFn: effectiveUploadFn,
+      mediaFileManager: mediaFileManager,
+      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+      uploadRetryRearmRepo: uploadRetryRearmRepo,
+      tryClaimUploadLease: tryClaimUploadLease,
+      releaseUploadLease: releaseUploadLease,
+      manualRetry: manualRetry,
     );
     if (retried) {
       successCount++;
@@ -207,7 +267,13 @@ Future<bool> _retryFailedMessageCandidate({
   required Bridge bridge,
   required dynamic identity,
   required UploadMediaFn uploadFn,
+  MediaFileManager? mediaFileManager,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
+  TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
+  ReleaseMediaUploadLease? releaseUploadLease,
+  required bool manualRetry,
 }) async {
   if (!_retryInFlightMessageIds.add(msg.id)) {
     emitFlowEvent(
@@ -217,6 +283,7 @@ Future<bool> _retryFailedMessageCandidate({
     );
     return false;
   }
+  MediaUploadLease? uploadLease;
   try {
     // 116 EF-3 settled-recheck: the loaded list may hold a stale snapshot of
     // a row that settled between load and execution — re-fetch and use the
@@ -242,8 +309,77 @@ Future<bool> _retryFailedMessageCandidate({
       );
     }
 
-    // Prefer wire_envelope -> inbox-only (preserves media, no re-encrypt)
-    if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
+    // Resolve media authority before replaying a cached envelope. Automatic
+    // retries are envelope-only for completed media; pending/terminal rows are
+    // owned by the incomplete/manual lanes and must never be uploaded here.
+    final resolution = await _resolveAttachmentsForRetry(
+      messageId: msg.id,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: bridge,
+      targetPeerId: msg.contactPeerId,
+      uploadFn: uploadFn,
+      mediaFileManager: mediaFileManager,
+      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+      uploadRetryRearmRepo: uploadRetryRearmRepo,
+      tryClaimUploadLease: tryClaimUploadLease,
+      releaseUploadLease: releaseUploadLease,
+      manualRetry: manualRetry,
+    );
+    uploadLease = resolution.uploadLease;
+    if (resolution.skipReason != _RetryFailedMessageSkipReason.none) {
+      final details = {
+        'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+      };
+      switch (resolution.skipReason) {
+        case _RetryFailedMessageSkipReason.localFileMissing:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
+            details: details,
+          );
+          break;
+        case _RetryFailedMessageSkipReason.uploadCancelled:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_UPLOAD_CANCELLED',
+            details: details,
+          );
+          break;
+        case _RetryFailedMessageSkipReason.unfinishedAutomatic:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_AUTOMATIC_UPLOAD_SKIPPED',
+            details: details,
+          );
+          break;
+        case _RetryFailedMessageSkipReason.manualRearmNotEligible:
+        case _RetryFailedMessageSkipReason.uploadOwnershipUnavailable:
+        case _RetryFailedMessageSkipReason.uploadFailed:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_MANUAL_RETRY_SKIPPED',
+            details: {...details, 'reason': resolution.skipReason.name},
+          );
+          break;
+        case _RetryFailedMessageSkipReason.none:
+          break;
+      }
+      return false;
+    }
+
+    Future<void> cleanupSettledMediaStaging() async {
+      if (resolution.attachments == null || mediaFileManager == null) return;
+      try {
+        await mediaFileManager.deletePendingUploadDir(msg.id);
+      } catch (_) {}
+    }
+
+    // Prefer wire_envelope -> inbox-only only when this attempt did not mint
+    // new attachment keys. Manual upload rearm clears the durable envelope in
+    // the same transaction, and the stale in-memory snapshot must not replay it.
+    if (!resolution.didUpload &&
+        msg.wireEnvelope != null &&
+        msg.wireEnvelope!.isNotEmpty) {
       if (msg.transport == 'inbox') {
         // Already in the relay inbox — that is custody, not receiver delivery
         // (F6). Keep it 'inboxed' (envelope retained) so the custody sweep +
@@ -254,6 +390,7 @@ Future<bool> _retryFailedMessageCandidate({
             msg.copyWith(status: 'inboxed'),
           ),
         );
+        await cleanupSettledMediaStaging();
         emitFlowEvent(
           layer: 'FL',
           event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
@@ -278,12 +415,10 @@ Future<bool> _retryFailedMessageCandidate({
             // to 'delivered' on the receiver's confirmation.
             await messageRepo.saveMessage(
               normalizeOutgoingDeleteTombstoneVisibility(
-                msg.copyWith(
-                  status: 'inboxed',
-                  transport: 'inbox',
-                ),
+                msg.copyWith(status: 'inboxed', transport: 'inbox'),
               ),
             );
+            await cleanupSettledMediaStaging();
             emitFlowEvent(
               layer: 'FL',
               event: 'RETRY_FAILED_MESSAGE_SUCCESS',
@@ -310,39 +445,7 @@ Future<bool> _retryFailedMessageCandidate({
     final contact = await contactRepo.getContact(msg.contactPeerId);
     final mlKemPk = contact?.mlKemPublicKey;
 
-    // Three-branch attachment dispatch (Part F)
-    final (:attachments, :skipReason) = await _resolveAttachmentsForRetry(
-      messageId: msg.id,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      bridge: bridge,
-      targetPeerId: msg.contactPeerId,
-      uploadFn: uploadFn,
-    );
-
-    if (skipReason != _RetryFailedMessageSkipReason.none) {
-      final details = {
-        'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-      };
-      switch (skipReason) {
-        case _RetryFailedMessageSkipReason.localFileMissing:
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
-            details: details,
-          );
-          break;
-        case _RetryFailedMessageSkipReason.uploadCancelled:
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_MEDIA_UPLOAD_CANCELLED',
-            details: details,
-          );
-          break;
-        case _RetryFailedMessageSkipReason.none:
-          break;
-      }
-      return false;
-    }
+    final attachments = resolution.attachments;
 
     // 116 EF-1: the fallback derives action/editedAt/createdAt from the ROW
     // so a failed edit goes back out as an EDIT (the row's ORIGINAL editedAt
@@ -372,6 +475,7 @@ Future<bool> _retryFailedMessageCandidate({
     );
 
     if (result == SendChatMessageResult.success) {
+      await cleanupSettledMediaStaging();
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_MESSAGE_SUCCESS',
@@ -404,6 +508,9 @@ Future<bool> _retryFailedMessageCandidate({
     );
     return false;
   } finally {
+    if (uploadLease != null) {
+      releaseUploadLease?.call(uploadLease);
+    }
     _retryInFlightMessageIds.remove(msg.id);
   }
 }
@@ -640,18 +747,18 @@ void _emitDeleteTombstoneStillFailed(
 /// [MediaAttachment] objects (either reused from Part C or re-uploaded).
 /// Returns [skipReason] when the message cannot be recovered or should remain
 /// terminal (e.g. local file missing or user-cancelled upload).
-Future<
-  ({
-    List<MediaAttachment>? attachments,
-    _RetryFailedMessageSkipReason skipReason,
-  })
->
-_resolveAttachmentsForRetry({
+Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
   required String messageId,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required Bridge bridge,
   required String targetPeerId,
   required UploadMediaFn uploadFn,
+  required bool manualRetry,
+  MediaFileManager? mediaFileManager,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
+  TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
+  ReleaseMediaUploadLease? releaseUploadLease,
 }) async {
   // Load any persisted attachments for this message
   final persistedAttachments =
@@ -661,12 +768,10 @@ _resolveAttachmentsForRetry({
       ) ??
       const <MediaAttachment>[];
 
-  if (persistedAttachments.any(
-    (attachment) => attachment.downloadStatus == 'upload_cancelled',
-  )) {
-    return (
+  if (persistedAttachments.isEmpty) {
+    return const _RetryAttachmentResolution(
       attachments: null,
-      skipReason: _RetryFailedMessageSkipReason.uploadCancelled,
+      skipReason: _RetryFailedMessageSkipReason.none,
     );
   }
 
@@ -679,31 +784,157 @@ _resolveAttachmentsForRetry({
 
   if (allUploaded) {
     // CDN blobs already exist for ALL attachments -- reuse them (Part C path).
-    return (
+    return _RetryAttachmentResolution(
       attachments: persistedAttachments,
       skipReason: _RetryFailedMessageSkipReason.none,
     );
-  } else if (persistedAttachments.isNotEmpty) {
-    // Attachment rows exist but upload never completed -> re-upload required.
-    final reuploadedAttachments = await _reuploadAttachments(
-      attachments: persistedAttachments,
-      bridge: bridge,
-      targetPeerId: targetPeerId,
-      uploadFn: uploadFn,
+  }
+
+  if (persistedAttachments.any(
+    (attachment) => attachment.downloadStatus == 'upload_cancelled',
+  )) {
+    return const _RetryAttachmentResolution(
+      attachments: null,
+      skipReason: _RetryFailedMessageSkipReason.uploadCancelled,
     );
-    if (reuploadedAttachments == null) {
-      return (
+  }
+
+  // Bulk/reconnect/resume retry is envelope-only. It must not steal pending
+  // media from incomplete retry or bypass a terminal upload budget.
+  if (!manualRetry) {
+    return const _RetryAttachmentResolution(
+      attachments: null,
+      skipReason: _RetryFailedMessageSkipReason.unfinishedAutomatic,
+    );
+  }
+
+  final unfinished = persistedAttachments
+      .where((attachment) => attachment.downloadStatus != 'done')
+      .toList(growable: false);
+  if (unfinished.length > kReuploadMaxAttachmentsPerMessage) {
+    return const _RetryAttachmentResolution(
+      attachments: null,
+      skipReason: _RetryFailedMessageSkipReason.manualRearmNotEligible,
+    );
+  }
+  final resolvedPaths = <String, String>{};
+  final expectations = <ManualUploadRetryAttachmentExpectation>[];
+  for (final attachment in unfinished) {
+    final retryCount = attachment.uploadRetryCount ?? 0;
+    final pending = attachment.downloadStatus == 'upload_pending';
+    final boundedExhausted =
+        attachment.downloadStatus == 'upload_failed' &&
+        retryCount >= kMaxUploadRetries;
+    if (!pending && !boundedExhausted) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.manualRearmNotEligible,
+      );
+    }
+
+    final storedPath = attachment.localPath?.trim();
+    if (storedPath == null || storedPath.isEmpty) {
+      return const _RetryAttachmentResolution(
         attachments: null,
         skipReason: _RetryFailedMessageSkipReason.localFileMissing,
       );
     }
-    return (
-      attachments: reuploadedAttachments,
-      skipReason: _RetryFailedMessageSkipReason.none,
+    String absolutePath;
+    try {
+      absolutePath = mediaFileManager == null
+          ? storedPath
+          : await mediaFileManager.resolveStoredPath(storedPath);
+      if (!await File(absolutePath).exists()) {
+        return const _RetryAttachmentResolution(
+          attachments: null,
+          skipReason: _RetryFailedMessageSkipReason.localFileMissing,
+        );
+      }
+    } catch (_) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.localFileMissing,
+      );
+    }
+    resolvedPaths[attachment.id] = absolutePath;
+    expectations.add(
+      ManualUploadRetryAttachmentExpectation(
+        attachmentId: attachment.id,
+        storedLocalPath: storedPath,
+        downloadStatus: attachment.downloadStatus,
+        uploadRetryCount: retryCount,
+      ),
     );
-  } else {
-    // Text-only message with no attachment rows.
-    return (attachments: null, skipReason: _RetryFailedMessageSkipReason.none);
+  }
+
+  MediaUploadLease? lease;
+  var leaseHandedOff = false;
+  try {
+    if (tryClaimUploadLease == null ||
+        releaseUploadLease == null ||
+        uploadRetryRearmRepo == null) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.uploadOwnershipUnavailable,
+      );
+    }
+
+    lease = tryClaimUploadLease(unfinished.map((attachment) => attachment.id));
+    if (lease == null) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.uploadOwnershipUnavailable,
+      );
+    }
+
+    final rearmed = await uploadRetryRearmRepo.rearmUploadRetryForManualRetry(
+      messageId: messageId,
+      attachments: expectations,
+    );
+    if (!rearmed) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.manualRearmNotEligible,
+      );
+    }
+
+    final reuploadedAttachments = await _reuploadAttachments(
+      attachments: unfinished,
+      resolvedPaths: resolvedPaths,
+      bridge: bridge,
+      targetPeerId: targetPeerId,
+      uploadFn: uploadFn,
+      messageId: messageId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+    );
+    if (reuploadedAttachments == null) {
+      leaseHandedOff = true;
+      return _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.uploadFailed,
+        uploadLease: lease,
+      );
+    }
+
+    final uploadedById = <String, MediaAttachment>{
+      for (final attachment in reuploadedAttachments) attachment.id: attachment,
+    };
+    final complete = persistedAttachments
+        .map((attachment) => uploadedById[attachment.id] ?? attachment)
+        .toList(growable: false);
+    leaseHandedOff = true;
+    return _RetryAttachmentResolution(
+      attachments: complete,
+      skipReason: _RetryFailedMessageSkipReason.none,
+      uploadLease: lease,
+      didUpload: true,
+    );
+  } finally {
+    if (!leaseHandedOff && lease != null) {
+      releaseUploadLease?.call(lease);
+    }
   }
 }
 
@@ -719,9 +950,14 @@ _resolveAttachmentsForRetry({
 /// relay blobs expire after 7 days so orphaned blobs are self-cleaning.
 Future<List<MediaAttachment>?> _reuploadAttachments({
   required List<MediaAttachment> attachments,
+  required Map<String, String> resolvedPaths,
   required Bridge bridge,
   required String targetPeerId,
   required UploadMediaFn uploadFn,
+  required String messageId,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
+  DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
 }) async {
   // Defensive ceiling: skip messages with too many attachments
   if (attachments.length > kReuploadMaxAttachmentsPerMessage) {
@@ -736,31 +972,22 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
   final result = <MediaAttachment>[];
 
   for (final attachment in attachments) {
-    final localPath = attachment.localPath;
-    if (localPath == null || localPath.isEmpty) {
-      return null; // No path recorded -- cannot re-upload
-    }
+    final localPath = resolvedPaths[attachment.id]!;
 
-    if (!File(localPath).existsSync()) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_REUPLOAD_FILE_NOT_FOUND',
-        details: {'localPath': localPath},
-      );
-      return null;
-    }
-
-    final uploaded = await uploadFn(
+    final uploadOutcome = await runUploadMedia(
+      uploadMediaFn: uploadFn,
       bridge: bridge,
       localFilePath: localPath,
       mime: attachment.mime,
       recipientPeerId: targetPeerId,
+      mediaFileManager: mediaFileManager,
       durationMs: attachment.durationMs,
       waveform: attachment.waveform,
       width: attachment.width,
       height: attachment.height,
       blobId: attachment.id, // Stable-ID contract (F.7.1)
     );
+    final uploaded = uploadOutcome.attachmentOrNull;
 
     if (uploaded == null) {
       emitFlowEvent(
@@ -768,10 +995,26 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
         event: 'RETRY_REUPLOAD_FAILED',
         details: {'localPath': localPath},
       );
+      await uploadRetryProjectionRepo?.projectUploadFailure(
+        messageId: messageId,
+        attachmentId: attachment.id,
+        failure: uploadOutcome as UploadMediaFailed,
+      );
       return null;
     }
 
-    result.add(uploaded);
+    final completed = uploaded.copyWith(
+      id: attachment.id,
+      messageId: messageId,
+      downloadStatus: 'done',
+      uploadRetryCount: 0,
+      ownerLane: MediaOwnerLane.direct,
+    );
+    await mediaAttachmentRepo?.saveAttachment(
+      completed,
+      owner: MediaOwnerLane.direct,
+    );
+    result.add(completed);
   }
 
   return result;

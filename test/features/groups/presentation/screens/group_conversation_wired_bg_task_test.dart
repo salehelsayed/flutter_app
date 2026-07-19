@@ -10,6 +10,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -81,6 +82,19 @@ class _NoOpMsgRepo implements GroupMessageRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+/// This suite verifies background-task ordering, while the repository CAS is
+/// covered by the projection/application suites. Supply the production manual
+/// retry capability so the wired path can reach its upload and publish seams.
+class _AcceptingManualRetryGroupMessageRepository
+    extends InMemoryGroupMessageRepository
+    implements GroupManualUploadRetryRearmRepository {
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async => true;
 }
 
 class _FakeGroupMessageListener extends GroupMessageListener {
@@ -294,6 +308,34 @@ MediaAttachment _uploadedMedia({
   );
 }
 
+UploadMediaOutcome _uploadedMediaOutcome({
+  required String id,
+  required String messageId,
+  required String mime,
+  required String localPath,
+  int? width,
+  int? height,
+  int? durationMs,
+  List<double>? waveform,
+}) => UploadMediaSucceeded(
+  _uploadedMedia(
+    id: id,
+    messageId: messageId,
+    mime: mime,
+    localPath: localPath,
+    width: width,
+    height: height,
+    durationMs: durationMs,
+    waveform: waveform,
+  ),
+);
+
+const _failedUploadOutcome = UploadMediaFailed(
+  stage: UploadMediaStage.consumerBoundary,
+  disposition: UploadMediaDisposition.terminal,
+  errorCode: 'TEST_UPLOAD_FAILED',
+);
+
 Future<void> _pumpGroupConversationWired(
   WidgetTester tester, {
   required Bridge bridge,
@@ -472,7 +514,7 @@ void main() {
                 preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
-                return _uploadedMedia(
+                return _uploadedMediaOutcome(
                   id: blobId ?? 'blob-1',
                   messageId: '',
                   mime: mime,
@@ -540,7 +582,7 @@ void main() {
               String? blobId,
               bool deleteSourceWhenDone = false,
               preparedArtifact,
-            }) async => null,
+            }) async => _failedUploadOutcome,
       );
 
       await _sendText(tester, 'upload fail');
@@ -738,7 +780,7 @@ void main() {
                   uploadStarted.complete();
                 }
                 await uploadGate.future;
-                return null;
+                return _failedUploadOutcome;
               },
         );
 
@@ -832,7 +874,7 @@ void main() {
               preparedArtifact,
             }) async {
               operationLog.add('uploadMediaFn');
-              return _uploadedMedia(
+              return _uploadedMediaOutcome(
                 id: blobId ?? 'voice-1',
                 messageId: '',
                 mime: mime,
@@ -877,7 +919,7 @@ void main() {
         final operationLog = <String>[];
         final bridge = _OrderRecordingBridge(operationLog: operationLog);
         final groupRepo = InMemoryGroupRepository();
-        final msgRepo = InMemoryGroupMessageRepository();
+        final msgRepo = _AcceptingManualRetryGroupMessageRepository();
         final mediaRepo = InMemoryMediaAttachmentRepository();
         final mediaFileManager = FakeMediaFileManager();
         final localPath = p.join(
@@ -943,7 +985,7 @@ void main() {
                 preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
-                return _uploadedMedia(
+                return _uploadedMediaOutcome(
                   id: blobId ?? 'att-voice-pending-bg',
                   messageId: '',
                   mime: mime,
@@ -1030,7 +1072,7 @@ void main() {
                 preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
-                return _uploadedMedia(
+                return _uploadedMediaOutcome(
                   id: blobId ?? 'announce-voice-1',
                   messageId: '',
                   mime: mime,
@@ -1497,7 +1539,7 @@ void main() {
               }) async {
                 operationLog.add('uploadMediaFn');
                 uploadedBlobId = blobId;
-                return _uploadedMedia(
+                return _uploadedMediaOutcome(
                   id: blobId ?? 'att-announce-media',
                   messageId: '',
                   mime: mime,
@@ -1625,7 +1667,7 @@ void main() {
               preparedArtifact,
             }) async {
               operationLog.add('uploadMediaFn');
-              return _uploadedMedia(
+              return _uploadedMediaOutcome(
                 id: blobId ?? 'blob-1',
                 messageId: '',
                 mime: mime,

@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/media/private_media_policy.dart';
+
 import '../models/conversation_message.dart';
 
 /// Direct-parent CAS/query authority consumed by the lane adapter.
@@ -44,4 +46,59 @@ abstract class DirectPrivateMediaLifecycleRepository {
   });
 
   Future<int?> loadNextPrivateMediaExpiryAtMs();
+}
+
+/// Durable CAS authority for transitions owned by one exact in-memory lease.
+///
+/// The parent direction/mode and attachment identity/path are part of the
+/// write predicate, rather than only a pre-write read, so a concurrent row
+/// replacement cannot inherit another operation's reveal authority.
+abstract class DirectPrivateMediaExactOpeningLeaseRepository {
+  Future<bool> claimExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  });
+
+  Future<bool> markExactPrivateMediaViewing(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  });
+
+  Future<bool> rollbackExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+  });
+
+  Future<bool> consumeExactPrivateMedia(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  });
+}
+
+/// Optional exact-CAS authority required only for operation-aware settlement
+/// recovery after an indeterminate terminalization write.
+abstract class DirectPrivateMediaIndeterminateQuarantineRepository {
+  Future<bool> quarantineIndeterminatePrivateMediaAvailable(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  });
 }

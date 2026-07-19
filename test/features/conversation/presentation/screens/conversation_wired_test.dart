@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -70,6 +72,7 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
@@ -251,6 +254,16 @@ class FakeContactRepository implements ContactRepository {
 
   @override
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
+}
+
+class _SingleContactRepository extends FakeContactRepository {
+  _SingleContactRepository(this.contact);
+
+  final ContactModel contact;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async =>
+      peerId == contact.peerId ? contact : null;
 }
 
 class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
@@ -504,6 +517,61 @@ class FakeMessageRepository
   }) async => 0;
 }
 
+class _ManualRetryFakeMessageRepository extends FakeMessageRepository
+    implements DirectManualUploadRetryRearmRepository {
+  _ManualRetryFakeMessageRepository(this.mediaAttachmentRepo);
+
+  final FakeMediaAttachmentRepository mediaAttachmentRepo;
+  int manualRearmCalls = 0;
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    manualRearmCalls++;
+    final parent = await getMessage(messageId);
+    if (parent == null || parent.isIncoming || parent.status != 'failed') {
+      return false;
+    }
+    final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.direct,
+    );
+    final unfinished = persisted
+        .where((attachment) => attachment.downloadStatus != 'done')
+        .toList(growable: false);
+    if (unfinished.length != attachments.length) return false;
+    for (final expected in attachments) {
+      if (!unfinished.any(
+        (attachment) =>
+            attachment.id == expected.attachmentId &&
+            attachment.localPath == expected.storedLocalPath &&
+            attachment.downloadStatus == expected.downloadStatus &&
+            (attachment.uploadRetryCount ?? 0) == expected.uploadRetryCount,
+      )) {
+        return false;
+      }
+    }
+
+    await saveMessage(parent.copyWith(status: 'sending', wireEnvelope: null));
+    for (final expected in attachments) {
+      if (expected.downloadStatus != 'upload_failed') continue;
+      final attachment = unfinished.singleWhere(
+        (candidate) => candidate.id == expected.attachmentId,
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        attachment.copyWith(
+          downloadStatus: 'upload_pending',
+          uploadRetryCount: 0,
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+    }
+    return true;
+  }
+}
+
 class _FakeIncomingConversationListener extends ChatMessageListener {
   final _incomingController = StreamController<ConversationMessage>.broadcast();
 
@@ -585,6 +653,9 @@ class SlowInitialPageMessageRepository extends FakeMessageRepository {
 class FakeP2PService implements P2PService {
   final bool localPeer;
   final bool localMediaResult;
+  final StreamController<NodeState> _stateController =
+      StreamController<NodeState>.broadcast();
+  NodeState _currentState;
   int sendLocalMediaCallCount = 0;
   int sendMessageCallCount = 0;
   int storeInInboxCallCount = 0;
@@ -592,13 +663,25 @@ class FakeP2PService implements P2PService {
   String? lastLocalMediaPath;
   String? lastLocalMediaMime;
 
-  FakeP2PService({this.localPeer = false, this.localMediaResult = false});
+  FakeP2PService({
+    this.localPeer = false,
+    this.localMediaResult = false,
+    NodeState? initialState,
+  }) : _currentState =
+           initialState ?? const NodeState(isStarted: true, peerId: 'me');
 
   @override
-  NodeState get currentState => const NodeState(isStarted: true, peerId: 'me');
+  NodeState get currentState => _currentState;
+
+  void emitState(NodeState state) {
+    _currentState = state;
+    _stateController.add(state);
+  }
 
   @override
-  void dispose() {}
+  void dispose() {
+    _stateController.close();
+  }
 
   // FDC-04 (TC-04-09): record eager-warm calls fired on conversation open.
   final List<String> warmPeerCalls = [];
@@ -644,7 +727,7 @@ class FakeP2PService implements P2PService {
   Future<bool> startNode(String privateKeyBase64, String peerId) async => true;
 
   @override
-  Stream<NodeState> get stateStream => const Stream.empty();
+  Stream<NodeState> get stateStream => _stateController.stream;
 
   @override
   Future<bool> stopNode() async => true;
@@ -899,6 +982,29 @@ class TerminalizationRecordingMediaAttachmentRepository
   }
 }
 
+class _RecordingComposerUploadProjection
+    implements DirectUploadRetryProjectionRepository {
+  int callCount = 0;
+  String? messageId;
+  String? attachmentId;
+  UploadMediaFailed? failure;
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    callCount++;
+    this.messageId = messageId;
+    this.attachmentId = attachmentId;
+    this.failure = failure;
+    return const UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.retryPending,
+    );
+  }
+}
+
 void main() {
   late FakeUploadWakeLockDriver wakeLockDriver;
 
@@ -966,7 +1072,9 @@ void main() {
     DeleteMessageForEveryoneFn? deleteForEveryoneFn,
     P2PService? p2pService,
     Bridge? bridge,
-    UploadMediaFn? uploadMediaFn,
+    LegacyTestUploadMediaFn? uploadMediaFn,
+    UploadMediaFn? typedUploadMediaFn,
+    DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
     SendVoiceMessageFn? sendVoiceMessageFn,
     MediaAttachmentRepository? mediaAttachmentRepo,
     ContactRepository? contactRepo,
@@ -1011,7 +1119,12 @@ void main() {
           deleteMessageForMeFn: deleteForMeFn ?? deleteMessageForMe,
           deleteMessageForEveryoneFn:
               deleteForEveryoneFn ?? deleteMessageForEveryone,
-          uploadMediaFn: uploadMediaFn ?? uploadMedia,
+          uploadMediaFn:
+              typedUploadMediaFn ??
+              (uploadMediaFn == null
+                  ? uploadMedia
+                  : adaptLegacyTestUploadMediaFn(uploadMediaFn)),
+          uploadRetryProjectionRepo: uploadRetryProjectionRepo,
           sendVoiceMessageFn: sendVoiceMessageFn ?? sendVoiceMessage,
           prepareEncryptedMediaArtifactFn: syncPrepareEncryptedArtifactStub,
           contactRepo: contactRepo,
@@ -1202,6 +1315,18 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
+      final policySheetScrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: policySheetScrollable,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpUntil(tester, () => capturedPolicies.length == 1);
 
@@ -1313,6 +1438,18 @@ void main() {
         find.byKey(const ValueKey('private-media-option-view-once')),
       );
       await tester.pump();
+      final policySheetScrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: policySheetScrollable,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpUntil(
         tester,
@@ -2079,6 +2216,89 @@ void main() {
       expect(savedAttachment.localPath, attachment.path);
       expect(savedAttachment.size, attachment.lengthSync());
     });
+
+    testWidgets(
+      'retryable composer upload failure projects once and keeps the optimistic queued lane',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final projection = _RecordingComposerUploadProjection();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_retryable_projection_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/pending.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        Future<UploadMediaOutcome> connectivityFailure({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async => const UploadMediaFailed(
+          stage: UploadMediaStage.transport,
+          disposition: UploadMediaDisposition.connectivityRetryable,
+          errorCode: 'NOT_INITIALIZED',
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          typedUploadMediaFn: connectivityFailure,
+          uploadRetryProjectionRepo: projection,
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'Queued photo');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => projection.callCount == 1);
+
+        expect(projection.callCount, 1);
+        expect(projection.messageId, isNotEmpty);
+        expect(projection.attachmentId, isNotEmpty);
+        expect(
+          projection.failure?.disposition,
+          UploadMediaDisposition.connectivityRetryable,
+        );
+        expect(
+          mediaAttachmentRepo.allSavedAttachments.where(
+            (row) => row.downloadStatus == 'upload_failed',
+          ),
+          isEmpty,
+        );
+        expect(messageRepo.store[projection.messageId!]?.status, 'sending');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty,
+        );
+        expect(find.byType(SnackBar), findsNothing);
+      },
+    );
 
     testWidgets(
       'post-send image/video viewer keeps the canonical direct owner projection',
@@ -2867,6 +3087,7 @@ void main() {
           ),
           initialMessages: [message],
         );
+        await tester.pump();
         await tester.pump();
 
         expect(find.text('Media unavailable'), findsNothing);
@@ -8382,6 +8603,225 @@ void main() {
       expect(find.text('Failed to upload media. Try again.'), findsOneWidget);
     });
 
+    testWidgets(
+      'offline banner seeds current state and follows both service edges',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final p2pService = FakeP2PService(initialState: NodeState.stopped);
+        addTearDown(p2pService.dispose);
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2pService,
+        );
+
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsOneWidget,
+        );
+        expect(find.text("You're offline"), findsOneWidget);
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'me',
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsNothing,
+        );
+
+        p2pService.emitState(NodeState.stopped);
+        await tester.pump();
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('offline-message-banner')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'retry progress is message-keyed, attachment-correlated, and cleaned on settle',
+      (tester) async {
+        final identity = makeIdentity();
+        final contact = makeContact();
+        final identityRepo = FakeIdentityRepository(identity);
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final createdAt = DateTime.now().toUtc().toIso8601String();
+        ConversationMessage queuedMessage(String messageId, String blobId) {
+          return ConversationMessage(
+            id: messageId,
+            contactPeerId: contact.peerId,
+            senderPeerId: identity.peerId,
+            text: '',
+            timestamp: createdAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: createdAt,
+            media: [
+              MediaAttachment(
+                id: blobId,
+                messageId: messageId,
+                mime: 'image/jpeg',
+                size: 10,
+                mediaType: 'image',
+                downloadStatus: 'upload_pending',
+                createdAt: createdAt,
+              ),
+            ],
+          );
+        }
+
+        final queuedA = queuedMessage('retry-progress-a', 'retry-blob-a');
+        final queuedB = queuedMessage('retry-progress-b', 'retry-blob-b');
+        await messageRepo.saveMessage(queuedA);
+        await messageRepo.saveMessage(queuedB);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialMessages: [queuedA, queuedB],
+        );
+
+        emitMediaUploadProgressEvent({
+          'id': 'wrong-blob',
+          'sentBytes': 5,
+          'totalBytes': 10,
+          'toPeerId': contact.peerId,
+        });
+        await tester.pump();
+        var projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(projectedScreen.messageUploadProgress, isEmpty);
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 1,
+          'toPeerId': contact.peerId,
+        });
+        await tester.pump();
+        await tester.pump();
+        projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          projectedScreen
+              .messageUploadProgress['retry-progress-a']
+              ?.attachmentId,
+          'retry-blob-a',
+        );
+        expect(
+          projectedScreen.messageUploadProgress['retry-progress-a']?.totalBytes,
+          0,
+        );
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 5,
+          'totalBytes': 10,
+          'toPeerId': contact.peerId,
+        });
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-b',
+          'sentBytes': 2,
+          'totalBytes': 10,
+          'toPeerId': contact.peerId,
+        });
+        await tester.pump();
+        await tester.pump();
+        projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress['retry-progress-a']?.percent,
+          50,
+        );
+        expect(
+          projectedScreen.messageUploadProgress['retry-progress-b']?.percent,
+          20,
+        );
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 1,
+          'totalBytes': 10,
+          'toPeerId': contact.peerId,
+        });
+        await tester.pump();
+        projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress['retry-progress-a']?.percent,
+          50,
+        );
+
+        await messageRepo.updateMessageStatus(queuedA.id, 'sent');
+        await pumpUntil(
+          tester,
+          () =>
+              tester
+                  .widget<ConversationScreen>(find.byType(ConversationScreen))
+                  .messages
+                  .where((message) => message.id == queuedA.id)
+                  .single
+                  .status ==
+              'sent',
+        );
+        projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-a'),
+          isFalse,
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-b'),
+          isTrue,
+        );
+
+        emitMediaUploadProgressEvent({
+          'id': 'retry-blob-a',
+          'sentBytes': 9,
+          'totalBytes': 10,
+          'toPeerId': contact.peerId,
+        });
+        await tester.pump();
+        await tester.pump();
+        projectedScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          projectedScreen.messageUploadProgress.containsKey('retry-progress-a'),
+          isFalse,
+        );
+      },
+    );
+
     testWidgets('shows relay upload progress and blocks leaving mid-upload', (
       tester,
     ) async {
@@ -8469,6 +8909,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('50%'), findsOneWidget);
+      expect(find.text('Sending automatically…'), findsOneWidget);
+      expect(find.text('Uploading photo · 50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,
@@ -8506,6 +8948,7 @@ void main() {
       );
 
       expect(UploadWakeLockController.debugActiveHolds, 0);
+      expect(find.text('Sending automatically…'), findsNothing);
       await tester.pump(const Duration(milliseconds: 500));
     });
 
@@ -8871,6 +9314,149 @@ void main() {
       expect(find.byIcon(Icons.inbox), findsNothing);
       expect(find.text('Could not retry media message.'), findsNothing);
     });
+
+    testWidgets(
+      'manual retry resolves a relative terminal media path before upload',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final messageRepo = _ManualRetryFakeMessageRepository(
+          mediaAttachmentRepo,
+        );
+        final mediaFileManager = FakeMediaFileManager();
+        final contactRepo = _SingleContactRepository(
+          makeContact().copyWith(mlKemPublicKey: 'test-mlkem-public-key'),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_manual_retry_relative_',
+        );
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        addTearDown(() {
+          MediaFileManager.debugResetDocumentsDirCache();
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final source = File(
+          '${tempDir.path}/pending_uploads/failed-relative-media-msg/retry.jpg',
+        )..parent.createSync(recursive: true);
+        source.writeAsBytesSync(_tinyPngBytes);
+        mediaFileManager.resolveResult = source.path;
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        const messageId = 'failed-relative-media-msg';
+        const attachmentId = 'failed-relative-media-att';
+        const storedPath =
+            'pending_uploads/failed-relative-media-msg/retry.jpg';
+        final failedMessage = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Retry relative media',
+          timestamp: '2026-02-11T10:06:00.000Z',
+          status: 'failed',
+          wireEnvelope: '{"stale":true}',
+          isIncoming: false,
+          createdAt: '2026-02-11T10:06:00.000Z',
+          media: const [
+            MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 10,
+              mediaType: 'image',
+              localPath: storedPath,
+              downloadStatus: 'upload_failed',
+              uploadRetryCount: kMaxUploadRetries,
+              createdAt: '2026-02-11T10:06:00.000Z',
+            ),
+          ],
+        );
+        await messageRepo.saveMessage(failedMessage);
+        mediaAttachmentRepo.seedAttachments(
+          messageId: messageId,
+          attachments: failedMessage.media,
+        );
+        String? uploadedPath;
+        MediaFileManager? uploadedWithManager;
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                uploadedPath = localFilePath;
+                uploadedWithManager = mediaFileManager;
+                return MediaAttachment(
+                  id: blobId!,
+                  messageId: messageId,
+                  mime: mime,
+                  size: source.lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                  contentHash:
+                      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  encryptionKeyBase64: 'test-blob-key',
+                  encryptionNonce: 'test-blob-nonce',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                );
+              },
+          p2pService: InboxRetryP2PService(),
+        );
+
+        final resolveCountBeforeRetry = mediaFileManager.resolveStoredPathCount;
+        await tester.tap(
+          find.byKey(const ValueKey('failed-media-retry-$messageId')),
+        );
+        await tester.pump();
+        await pumpUntilAsyncIo(
+          tester,
+          () => messageRepo.store[messageId]?.status == 'inboxed',
+        );
+
+        expect(
+          mediaFileManager.resolveStoredPathCount,
+          greaterThan(resolveCountBeforeRetry),
+        );
+        expect(uploadedPath, source.path);
+        expect(uploadedWithManager, same(mediaFileManager));
+        expect(messageRepo.manualRearmCalls, 1);
+        expect(mediaUploadInFlightTracker.isInFlight(attachmentId), isFalse);
+        final stored = await mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(stored.single.id, attachmentId);
+        expect(stored.single.downloadStatus, 'done');
+      },
+    );
 
     testWidgets('delete control removes a failed outgoing media row and files', (
       tester,
@@ -9367,7 +9953,7 @@ void main() {
     }
 
     testWidgets(
-      '1:1 mic denial shows the rationale dialog instead of the snackbar (permanentlyDenied)',
+      '1:1 mic denial shows the rationale sheet instead of the snackbar (permanentlyDenied)',
       (tester) async {
         final l10n = await AppLocalizations.delegate.load(const Locale('en'));
         final recorder = FakeAudioRecorderService()..permissionGranted = false;
@@ -9383,7 +9969,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
         expect(
           find.byKey(const ValueKey('mic-perm-open-settings')),
           findsOneWidget,
@@ -9392,19 +9978,14 @@ void main() {
         expect(find.text(l10n.perm_microphone_record), findsNothing);
         expect(recorder.startCallCount, 0);
 
-        // Dismiss; the composer must reset to idle. Assert the LIVE rendered
-        // composer (the internal ValueListenableBuilder on _composerState), not
-        // the stale `recordingState` widget prop (only refreshed on a parent
-        // rebuild) nor the never-populated `isRecording` field.
+        // Dismiss; the composer must reset to idle. Wait for the sheet route to
+        // leave first so its decorative mic cannot satisfy the composer check.
         await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
-        for (
-          var i = 0;
-          i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
-          i++
-        ) {
-          await tester.pump(const Duration(milliseconds: 50));
-        }
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         await pending;
+        await tester.pump();
+        expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
         expect(find.byIcon(Icons.stop_rounded), findsNothing);
         expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       },
@@ -9426,14 +10007,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.byKey(const ValueKey('mic-perm-sheet')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('mic-perm-open-settings')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await pending;
 
       expect(gateway.openAppSettingsCallCount, 1);
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
     });
 
     testWidgets('granted mic permission still starts recording', (
@@ -9451,7 +10032,7 @@ void main() {
       await (screen.onRecordStart! as Future<void> Function())();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
       expect(recorder.startCallCount, 1);
     });
 
@@ -9459,7 +10040,7 @@ void main() {
     // app — request() already showed the OS prompt) resets to idle WITHOUT
     // forcing the Settings dialog. Locks the denied-vs-permanentlyDenied axis.
     testWidgets(
-      '1:1 first plain denied resets to idle with no dialog/snackbar',
+      '1:1 first plain denied resets to idle with no sheet/snackbar',
       (tester) async {
         final l10n = await AppLocalizations.delegate.load(const Locale('en'));
         final recorder = FakeAudioRecorderService();
@@ -9475,7 +10056,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.byKey(const ValueKey('mic-perm-sheet')), findsNothing);
         expect(find.text(l10n.perm_microphone_record), findsNothing);
         expect(recorder.startCallCount, 0);
         // Live rendered composer is back to idle (mic shown, not recording).

@@ -25,6 +25,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
@@ -94,6 +95,8 @@ void main() {
     bool isRecovering = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
     UploadProgressViewState? uploadProgress,
+    Map<String, MessageUploadProgressViewState> messageUploadProgress =
+        const {},
     VoidCallback? onCancelUpload,
     String? activeQuoteText,
     bool isActiveQuoteUnavailable = false,
@@ -106,6 +109,12 @@ void main() {
     onRetryUnavailableMedia,
     Set<String> retryingFailedMessageIds = const {},
     void Function(String messageId, int index)? onMediaTap,
+    ValueChanged<String>? onOpenPrivateMedia,
+    bool privateMediaEnabled = false,
+    bool privateMediaComposerEligible = false,
+    GroupPrivateMediaPolicy privateMediaPolicy =
+        const GroupPrivateMediaPolicy.ordinary(),
+    ValueChanged<GroupPrivateMediaPolicy>? onPrivateMediaPolicyChanged,
     void Function(String messageId, String attachmentId)? onMediaSave,
     void Function(String messageId, String attachmentId)? onMediaShare,
     ValueChanged<String>? onMediaDeleteForMe,
@@ -137,6 +146,7 @@ void main() {
           canWrite: canWrite,
           isSending: isSending,
           uploadProgress: uploadProgress,
+          messageUploadProgress: messageUploadProgress,
           onCancelUpload: onCancelUpload,
           initialLoadDone: initialLoadDone,
           isRecovering: isRecovering,
@@ -151,6 +161,11 @@ void main() {
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           retryingFailedMessageIds: retryingFailedMessageIds,
           onMediaTap: onMediaTap,
+          onOpenPrivateMedia: onOpenPrivateMedia,
+          privateMediaEnabled: privateMediaEnabled,
+          privateMediaComposerEligible: privateMediaComposerEligible,
+          privateMediaPolicy: privateMediaPolicy,
+          onPrivateMediaPolicyChanged: onPrivateMediaPolicyChanged,
           onMediaSave: onMediaSave,
           onMediaShare: onMediaShare,
           onMediaDeleteForMe: onMediaDeleteForMe,
@@ -181,6 +196,315 @@ void main() {
       expect(ambient.isChatSurface, isTrue);
     },
   );
+
+  testWidgets(
+    'group private slot is non-zero inside the decorated card and preserves tap target',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const messageId = 'group-private-card';
+      final message = GroupMessage(
+        id: messageId,
+        groupId: testGroup.id,
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: DateTime.utc(2026, 7, 19, 10),
+        createdAt: DateTime.utc(2026, 7, 19, 10),
+        isIncoming: true,
+        privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+      );
+      final media = MediaAttachment(
+        id: 'group-private-card-attachment',
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 42,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-07-19T10:00:00.000Z',
+        ownerLane: MediaOwnerLane.group,
+      );
+      final opened = <String>[];
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [message],
+          initialLoadDone: true,
+          mediaMap: {
+            messageId: [media],
+          },
+          privateMediaEnabled: true,
+          onOpenPrivateMedia: opened.add,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      const slotKey = ValueKey('group-private-media-slot-$messageId');
+      const decoratedKey = ValueKey(
+        'group-private-media-decorated-body-$messageId',
+      );
+      final slot = find.byKey(slotKey);
+      final decorated = find.byKey(decoratedKey);
+      expect(slot, findsOneWidget);
+      expect(decorated, findsOneWidget);
+      expect(find.descendant(of: decorated, matching: slot), findsOneWidget);
+      final slotRect = tester.getRect(slot);
+      final decoratedRect = tester.getRect(decorated);
+      expect(slotRect.width, greaterThan(0));
+      expect(slotRect.height, greaterThan(0));
+      expect(decoratedRect.left, lessThanOrEqualTo(slotRect.left));
+      expect(decoratedRect.top, lessThanOrEqualTo(slotRect.top));
+      expect(decoratedRect.right, greaterThanOrEqualTo(slotRect.right));
+      expect(decoratedRect.bottom, greaterThanOrEqualTo(slotRect.bottom));
+
+      const openKey = ValueKey('group-private-open-$messageId');
+      expect(find.byKey(openKey), findsOneWidget);
+      expect(
+        find.descendant(of: find.byKey(openKey), matching: slot),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(openKey));
+      await tester.pump();
+      expect(opened, [messageId]);
+    },
+  );
+
+  testWidgets(
+    'group private picker keeps selection provisional until CTA commits',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final selected = <GroupPrivateMediaPolicy>[];
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          initialLoadDone: true,
+          privateMediaComposerEligible: true,
+          onPrivateMediaPolicyChanged: selected.add,
+        ),
+      );
+
+      const selectorKey = ValueKey('group-private-media-selector');
+      await tester.tap(find.byKey(selectorKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('How should members see this photo?'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('private-media-policy-sheet')),
+        findsOneWidget,
+      );
+      final sheetScrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-private-media-option-protected')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('group-private-media-option-protected')),
+      );
+      await tester.pump();
+      expect(selected, isEmpty);
+      expect(find.text('Use Protected view'), findsOneWidget);
+
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(selected, isEmpty);
+
+      await tester.tap(find.byKey(selectorKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-private-media-option-view-once')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('group-private-media-option-view-once')),
+      );
+      await tester.pump();
+      expect(selected, isEmpty);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(selected, [const GroupPrivateMediaPolicy.viewOnce()]);
+    },
+  );
+
+  testWidgets(
+    'group private picker reveals duration chips and maps exact duration',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      GroupPrivateMediaPolicy? selected;
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          initialLoadDone: true,
+          privateMediaComposerEligible: true,
+          onPrivateMediaPolicyChanged: (policy) => selected = policy,
+        ),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('group-private-media-selector')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final sheetScrollable = find.descendant(
+        of: find.byKey(const ValueKey('private-media-policy-sheet')),
+        matching: find.byType(Scrollable),
+      );
+
+      expect(
+        find.byKey(
+          const ValueKey('group-private-media-option-disappearing-1d'),
+        ),
+        findsNothing,
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-private-media-option-expiry')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('group-private-media-option-expiry')),
+      );
+      await tester.pump();
+
+      expect(find.text('Delete after'), findsOneWidget);
+      expect(find.text('1 hour'), findsOneWidget);
+      expect(find.text('1 day'), findsOneWidget);
+      expect(find.text('7 days'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.byKey(
+          const ValueKey('group-private-media-option-disappearing-1d'),
+        ),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(
+          const ValueKey('group-private-media-option-disappearing-1d'),
+        ),
+      );
+      await tester.pump();
+      expect(selected, isNull);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: sheetScrollable,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(selected, GroupPrivateMediaPolicy.disappearing(86400));
+    },
+  );
+
+  testWidgets('group private summary re-derives from supplied policy', (
+    tester,
+  ) async {
+    const selectorKey = ValueKey('group-private-media-selector');
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        privateMediaComposerEligible: true,
+        privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+        onPrivateMediaPolicyChanged: (_) {},
+      ),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('View once'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('One view for Members'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('Change'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        privateMediaComposerEligible: true,
+        privateMediaPolicy: GroupPrivateMediaPolicy.disappearing(604800),
+        onPrivateMediaPolicyChanged: (_) {},
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('Set an expiry'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('No saving or sharing · deleted after 7 days'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        privateMediaComposerEligible: true,
+        onPrivateMediaPolicyChanged: (_) {},
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('Keep in chat'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(selectorKey),
+        matching: find.text('Normal photo · can be saved or shared'),
+      ),
+      findsOneWidget,
+    );
+  });
 
   Finder messageRow(String messageId) =>
       find.byKey(ValueKey('grp-msg-$messageId'));
@@ -1346,6 +1670,65 @@ void main() {
     );
   });
 
+  testWidgets('group row renders attachment-correlated upload progress', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const messageId = 'group-upload-progress';
+    const attachmentId = 'group-upload-progress-blob';
+    final message = GroupMessage(
+      id: messageId,
+      groupId: testGroup.id,
+      senderPeerId: 'peer-1',
+      senderUsername: 'You',
+      text: '',
+      timestamp: DateTime.utc(2026, 7, 19, 10),
+      createdAt: DateTime.utc(2026, 7, 19, 10),
+      status: GroupMessage.statusQueuedOffline,
+      isIncoming: false,
+    );
+    final media = MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 10,
+      mediaType: 'image',
+      downloadStatus: 'upload_pending',
+      createdAt: '2026-07-19T10:00:00.000Z',
+      ownerLane: MediaOwnerLane.group,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: [message],
+        initialLoadDone: true,
+        mediaMap: {
+          messageId: [media],
+        },
+        messageUploadProgress: const {
+          messageId: MessageUploadProgressViewState(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            sentBytes: 5,
+            totalBytes: 10,
+          ),
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      find.byKey(const ValueKey('message-upload-progress-$messageId')),
+      findsOneWidget,
+    );
+    expect(find.text('Sending automatically…'), findsOneWidget);
+    expect(find.text('Uploading photo · 50%'), findsOneWidget);
+  });
+
   testWidgets('shows loading shell while initial group page is still loading', (
     tester,
   ) async {
@@ -1742,6 +2125,67 @@ void main() {
     expect(retriedId, 'failed-media');
     expect(deletedId, 'failed-media');
   });
+
+  testWidgets(
+    'outgoing redacted private-media failure keeps Retry and Delete reachable',
+    (tester) async {
+      String? retriedId;
+      String? deletedId;
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            GroupMessage(
+              id: 'failed-private-media',
+              groupId: 'group-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'must remain redacted',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: false,
+              privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+              media: [
+                makeImageAttachment(
+                  id: 'failed-private-att',
+                  messageId: 'failed-private-media',
+                ),
+              ],
+            ),
+          ],
+          privateMediaEnabled: true,
+          initialLoadDone: true,
+          onRetryFailedMedia: (id) => retriedId = id,
+          onDeleteFailedMedia: (id) => deletedId = id,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(
+          const ValueKey('group-private-media-slot-failed-private-media'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('must remain redacted'), findsNothing);
+      final retry = find.byKey(
+        const ValueKey('failed-media-retry-failed-private-media'),
+      );
+      final delete = find.byKey(
+        const ValueKey('failed-media-delete-failed-private-media'),
+      );
+      expect(retry, findsOneWidget);
+      expect(delete, findsOneWidget);
+
+      await tester.tap(retry);
+      await tester.pump();
+      await tester.tap(delete);
+      await tester.pump();
+      expect(retriedId, 'failed-private-media');
+      expect(deletedId, 'failed-private-media');
+    },
+  );
 
   testWidgets('GFR-003 failed outgoing text-only rows show retry', (
     tester,

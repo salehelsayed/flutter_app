@@ -33,6 +33,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import 'share_target_selection.dart';
 
@@ -291,6 +292,7 @@ class DefaultShareBatchDeliveryCoordinator
   final SendToContactFn? sendToContactFn;
   final SendToGroupFn? sendToGroupFn;
   final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
+  final String shareStoredOfflinePromise;
   final DateTime Function() _forwardNow;
   final Map<String, DateTime> _forwardTimestampByOperationKey = {};
 
@@ -312,8 +314,12 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToContactFn,
     this.sendToGroupFn,
     this.mediaUploadProgressEvents,
+    String? shareStoredOfflinePromise,
     DateTime Function()? forwardNow,
-  }) : _forwardNow = forwardNow ?? _defaultForwardNow;
+  }) : shareStoredOfflinePromise =
+           shareStoredOfflinePromise ??
+           AppLocalizationsEn().share_stored_offline_promise,
+       _forwardNow = forwardNow ?? _defaultForwardNow;
 
   String? get _currentSenderDeviceId {
     final peerId = p2pService.currentState.peerId?.trim();
@@ -1216,7 +1222,8 @@ class DefaultShareBatchDeliveryCoordinator
       uploadHooks.started(blobId: attachmentId, budgetBytes: media.budgetBytes);
       MediaAttachment? uploaded;
       try {
-        uploaded = await uploadMedia(
+        final outcome = await runUploadMedia(
+          uploadMediaFn: uploadMedia,
           bridge: bridge,
           localFilePath: media.file.path,
           mime: mime,
@@ -1228,6 +1235,7 @@ class DefaultShareBatchDeliveryCoordinator
           blobId: attachmentId,
           preparedArtifact: preparedArtifact,
         );
+        uploaded = outcome.attachmentOrNull;
       } finally {
         uploadHooks.settled(succeeded: uploaded != null);
       }
@@ -1371,7 +1379,8 @@ class DefaultShareBatchDeliveryCoordinator
         );
         MediaAttachment? uploaded;
         try {
-          uploaded = await uploadMedia(
+          final outcome = await runUploadMedia(
+            uploadMediaFn: uploadMedia,
             bridge: bridge,
             localFilePath: media.file.path,
             mime: mime,
@@ -1383,6 +1392,7 @@ class DefaultShareBatchDeliveryCoordinator
             allowedPeers: allowedPeers,
             blobId: attachmentId,
           );
+          uploaded = outcome.attachmentOrNull;
         } finally {
           uploadHooks.settled(succeeded: uploaded != null);
         }
@@ -1451,8 +1461,7 @@ class DefaultShareBatchDeliveryCoordinator
           SendGroupMessageResult.success => 'Sent.',
           SendGroupMessageResult.successNoPeers =>
             'Stored for offline group delivery.',
-          SendGroupMessageResult.queuedOffline =>
-            "Stored — will send when you're back online.",
+          SendGroupMessageResult.queuedOffline => shareStoredOfflinePromise,
           SendGroupMessageResult.groupNotFound => 'Group was not found.',
           SendGroupMessageResult.unauthorized =>
             'You no longer have permission to post there.',

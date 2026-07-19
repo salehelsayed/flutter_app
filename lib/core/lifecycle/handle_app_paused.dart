@@ -1,11 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 
 /// Group sends younger than this may still be owned by an active background
@@ -177,6 +179,7 @@ class AppPausedResult {
 /// exceptions.
 Future<AppPausedResult> handleAppPaused({
   required MessageRepository messageRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
   GroupMessageRepository? groupMsgRepo,
   // ── FDC-S4 pause-flush (Option A prototype) ──
   // Inert unless [enablePauseFlush] is true AND both network deps are provided.
@@ -200,7 +203,16 @@ Future<AppPausedResult> handleAppPaused({
 
   try {
     // Step 1: Find all in-flight sending messages
-    final sendingMessages = await messageRepo.getSendingOutgoingMessages();
+    final allSendingMessages = await messageRepo.getSendingOutgoingMessages();
+    final pendingUploadMessageIds = mediaAttachmentRepo == null
+        ? const <String>{}
+        : await _loadDirectPendingUploadMessageIds(
+            mediaAttachmentRepo,
+            allSendingMessages.map((message) => message.id).toList(),
+          );
+    final sendingMessages = allSendingMessages
+        .where((message) => !pendingUploadMessageIds.contains(message.id))
+        .toList(growable: false);
     var transitionedCount = 0;
     var flushDepositedCount = 0;
 
@@ -368,6 +380,36 @@ Future<AppPausedResult> handleAppPaused({
       groupTransitionedCount: 0,
     );
   }
+}
+
+/// Loads exact direct-lane attachment ownership for every supplied parent.
+///
+/// This is deliberately independent from the 50-row retry page. Chunks stay
+/// below SQLite's bind-variable ceiling while covering arbitrarily large
+/// pause batches (including the 51-parent regression boundary).
+Future<Set<String>> _loadDirectPendingUploadMessageIds(
+  MediaAttachmentRepository repository,
+  List<String> messageIds,
+) async {
+  const batchSize = 400;
+  final pending = <String>{};
+  for (var start = 0; start < messageIds.length; start += batchSize) {
+    final end = start + batchSize < messageIds.length
+        ? start + batchSize
+        : messageIds.length;
+    final attachments = await repository.getAttachmentsForMessages(
+      messageIds.sublist(start, end),
+      owner: MediaOwnerLane.direct,
+    );
+    for (final entry in attachments.entries) {
+      if (entry.value.any(
+        (attachment) => attachment.downloadStatus == 'upload_pending',
+      )) {
+        pending.add(entry.key);
+      }
+    }
+  }
+  return pending;
 }
 
 /// Outcome of the FDC-S4 pause-flush: the message ids whose wire envelope was

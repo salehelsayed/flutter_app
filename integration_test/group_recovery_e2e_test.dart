@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -645,27 +646,29 @@ void main() {
                     deleteSourceWhenDone = false,
                     preparedArtifact,
                   }) async {
-                    return MediaAttachment(
-                      id: blobId!,
-                      messageId: '',
-                      mime: mime,
-                      size: 1,
-                      mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                      localPath: mediaFileManager?.relativePathForAttachment(
-                        contactPeerId: recipientPeerId,
-                        blobId: blobId,
+                    return UploadMediaSucceeded(
+                      MediaAttachment(
+                        id: blobId!,
+                        messageId: '',
                         mime: mime,
+                        size: 1,
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                        localPath: mediaFileManager?.relativePathForAttachment(
+                          contactPeerId: recipientPeerId,
+                          blobId: blobId,
+                          mime: mime,
+                        ),
+                        downloadStatus: 'done',
+                        contentHash:
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        encryptionKeyBase64: 'key-$blobId',
+                        encryptionNonce: 'nonce-$blobId',
+                        encryptionScheme:
+                            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                        durationMs: durationMs,
+                        waveform: waveform,
+                        createdAt: DateTime.now().toUtc().toIso8601String(),
                       ),
-                      downloadStatus: 'done',
-                      contentHash:
-                          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                      encryptionKeyBase64: 'key-$blobId',
-                      encryptionNonce: 'nonce-$blobId',
-                      encryptionScheme:
-                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-                      durationMs: durationMs,
-                      waveform: waveform,
-                      createdAt: DateTime.now().toUtc().toIso8601String(),
                     );
                   },
             ),
@@ -721,7 +724,10 @@ void main() {
         expect(bobRows, hasLength(1));
         expect(bobRows.single.id, failedRow.id);
         expect(
-          await bob.mediaAttachmentRepo.getAttachmentsForMessage(failedRow.id, owner: MediaOwnerLane.group),
+          await bob.mediaAttachmentRepo.getAttachmentsForMessage(
+            failedRow.id,
+            owner: MediaOwnerLane.group,
+          ),
           hasLength(1),
         );
       } finally {

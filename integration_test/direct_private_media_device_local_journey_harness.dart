@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/material.dart' show Locale;
+import 'package:flutter/material.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -18,7 +18,11 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
@@ -33,6 +37,9 @@ const _deviceId = String.fromEnvironment('P234_DEVICE_ID');
 const _correlatedPrivateMessageId = 'p234-private-fixture';
 const _correlatedPrivateAttachmentId = 'p234-private-fixture-attachment';
 const _privateFixtureText = 'never disclose this caption';
+const _productionOutgoingFixtureId = 'p260-production-outgoing';
+const _productionIncomingFixtureId = 'p260-production-incoming';
+const _productionTerminalFixtureId = 'p260-production-terminal';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -45,9 +52,12 @@ void main() {
       reason: 'P234_ROLE must be sender or recipient',
     );
 
+    final productionConversation = await _runProductionConversationProof(
+      tester,
+    );
     final artifact = _role == 'sender'
-        ? _runSenderProof()
-        : await _runRecipientProof();
+        ? _runSenderProof(productionConversation)
+        : await _runRecipientProof(productionConversation);
     final encoded = base64Url.encode(utf8.encode(jsonEncode(artifact)));
     // The runner captures exactly one marker and performs strict combined
     // validation. The artifact contains no payload text, path, key, or nonce.
@@ -57,7 +67,338 @@ void main() {
   });
 }
 
-Map<String, Object?> _runSenderProof() {
+Future<Map<String, Object?>> _runProductionConversationProof(
+  WidgetTester tester,
+) async {
+  final tempRoot = await Directory.systemTemp.createTemp(
+    'p260-production-private-cards-',
+  );
+  final databasePath = p.join(tempRoot.path, 'production-cards.db');
+  sqlcipher.Database? database;
+  try {
+    ConversationMessage fixture({
+      required String id,
+      required bool isIncoming,
+      required PrivateMediaPolicy policy,
+      required PrivateMediaLifecycleState state,
+      int? receivedAtMs,
+      int? revealedAtMs,
+      int? terminalAtMs,
+      int? highWaterMs,
+    }) {
+      return ConversationMessage(
+        id: id,
+        contactPeerId: 'p260-production-contact',
+        senderPeerId: isIncoming
+            ? 'p260-production-contact'
+            : 'p260-production-own-peer',
+        text: '',
+        timestamp: '2026-07-19T10:00:00.000Z',
+        status: 'sent',
+        isIncoming: isIncoming,
+        createdAt: '2026-07-19T10:00:00.000Z',
+        privateMediaPolicy: policy,
+        privateMediaState: state,
+        privateMediaReceivedAtMs: receivedAtMs,
+        privateMediaRevealedAtMs: revealedAtMs,
+        privateMediaTerminalAtMs: terminalAtMs,
+        privateMediaClockHighWaterMs: highWaterMs,
+      );
+    }
+
+    final durableFixtures = <ConversationMessage>[
+      fixture(
+        id: _productionOutgoingFixtureId,
+        isIncoming: false,
+        policy: const PrivateMediaPolicy.protected(),
+        state: PrivateMediaLifecycleState.available,
+      ),
+      fixture(
+        id: _productionIncomingFixtureId,
+        isIncoming: true,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.available,
+        receivedAtMs: 1_752_307_200_000,
+        highWaterMs: 1_752_307_200_000,
+      ),
+      fixture(
+        id: _productionTerminalFixtureId,
+        isIncoming: true,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.consumed,
+        receivedAtMs: 1_752_307_200_000,
+        revealedAtMs: 1_752_307_200_010,
+        terminalAtMs: 1_752_307_200_020,
+        highWaterMs: 1_752_307_200_020,
+      ),
+    ];
+
+    database = await _openProofDatabase(databasePath);
+    for (final message in durableFixtures) {
+      await dbInsertMessage(database, message.toMap());
+    }
+    await database.close();
+    database = await _openProofDatabase(databasePath);
+
+    Future<ConversationMessage> reload(String id) async {
+      final row = await dbLoadMessage(database!, id);
+      expect(row, isNotNull);
+      return ConversationMessage.fromMap(row!);
+    }
+
+    final persistedOutgoing = await reload(_productionOutgoingFixtureId);
+    final persistedIncoming = await reload(_productionIncomingFixtureId);
+    final persistedTerminal = await reload(_productionTerminalFixtureId);
+
+    const bytes = _JourneyDownloadBridge.mediaBytes;
+    final contentHash = sha256.convert(bytes).toString();
+    Future<MediaAttachment> createAttachment(String messageId) async {
+      final path = p.join(tempRoot.path, '$messageId.png');
+      await File(path).writeAsBytes(bytes, flush: true);
+      return MediaAttachment(
+        id: '$messageId-attachment',
+        messageId: messageId,
+        mime: 'image/png',
+        size: bytes.length,
+        mediaType: 'image',
+        localPath: path,
+        downloadStatus: 'done',
+        contentHash: contentHash,
+        createdAt: '2026-07-19T10:00:00.000Z',
+        ownerLane: MediaOwnerLane.direct,
+      );
+    }
+
+    final outgoingAttachment = await createAttachment(
+      _productionOutgoingFixtureId,
+    );
+    final incomingAttachment = await createAttachment(
+      _productionIncomingFixtureId,
+    );
+    final terminalAttachment = await createAttachment(
+      _productionTerminalFixtureId,
+    );
+    final parentById = <String, ConversationMessage>{
+      persistedOutgoing.id: persistedOutgoing,
+      persistedIncoming.id: persistedIncoming,
+      persistedTerminal.id: persistedTerminal,
+    };
+    final attachmentById = <String, MediaAttachment>{
+      persistedOutgoing.id: outgoingAttachment,
+      persistedIncoming.id: incomingAttachment,
+      persistedTerminal.id: terminalAttachment,
+    };
+
+    List<ConversationMessage> projection({
+      required bool terminalAttachmentDeleted,
+    }) => <ConversationMessage>[
+      persistedOutgoing.copyWith(media: <MediaAttachment>[outgoingAttachment]),
+      persistedIncoming.copyWith(media: <MediaAttachment>[incomingAttachment]),
+      persistedTerminal.copyWith(
+        media: terminalAttachmentDeleted
+            ? const <MediaAttachment>[]
+            : <MediaAttachment>[terminalAttachment],
+      ),
+    ];
+
+    Future<void> pumpConversation(List<ConversationMessage> messages) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ConversationScreen(
+              contactPeerId: 'p260-production-contact',
+              contactUsername: 'Recipient',
+              connectionDate: 'July 19, 2026',
+              ownPeerId: 'p260-production-own-peer',
+              messages: messages,
+              onSend: (_) {},
+              onBack: () {},
+              initialLoadDone: true,
+              hasMoreOlderMessages: false,
+              onReactionSelected: (_, _) {},
+              onQuoteReply: (_) {},
+              onDeleteMessage: (_) {},
+              onOpenPrivateMedia: (_) async {},
+              onLoadPrivateParentDecision: (messageId) async {
+                final attachment = attachmentById[messageId];
+                return DirectPrivateMediaActionEligibility.evaluate(
+                  parent: parentById[messageId],
+                  attachment: messageId == _productionTerminalFixtureId
+                      ? null
+                      : attachment,
+                  expectedMessageId: messageId,
+                  expectedAttachmentId:
+                      messageId == _productionTerminalFixtureId
+                      ? null
+                      : attachment?.id,
+                  attachmentRequired: messageId != _productionTerminalFixtureId,
+                  requireIncoming: false,
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    await pumpConversation(projection(terminalAttachmentDeleted: false));
+    expect(find.byType(ConversationScreen), findsOneWidget);
+    expect(find.byType(LetterCard), findsNWidgets(3));
+
+    await File(terminalAttachment.localPath!).delete();
+    attachmentById.remove(_productionTerminalFixtureId);
+    await pumpConversation(projection(terminalAttachmentDeleted: true));
+
+    const fixtureIds = <String>[
+      _productionOutgoingFixtureId,
+      _productionIncomingFixtureId,
+      _productionTerminalFixtureId,
+    ];
+    var privateSlotCount = 0;
+    var slotsInsideDecoratedBodies = 0;
+    var nonZeroPrivateSlotCount = 0;
+    var slotImageWidgetCount = 0;
+    var slotDecorationImageCount = 0;
+
+    Finder scopedSlot(String messageId) => find.descendant(
+      of: find.byKey(ValueKey('msg-$messageId')),
+      matching: find.byKey(ValueKey('private-media-slot-$messageId')),
+    );
+
+    for (final messageId in fixtureIds) {
+      final row = find.byKey(ValueKey('msg-$messageId'));
+      final letterCard = find.descendant(
+        of: row,
+        matching: find.byType(LetterCard),
+      );
+      final slot = scopedSlot(messageId);
+      final decoratedBody = find.descendant(
+        of: row,
+        matching: find.byKey(
+          ValueKey('private-media-decorated-body-$messageId'),
+        ),
+      );
+      final slotInDecoratedBody = find.descendant(
+        of: decoratedBody,
+        matching: find.byKey(ValueKey('private-media-slot-$messageId')),
+      );
+
+      expect(row, findsOneWidget);
+      expect(letterCard, findsOneWidget);
+      expect(slot, findsOneWidget);
+      expect(decoratedBody, findsOneWidget);
+      expect(slotInDecoratedBody, findsOneWidget);
+      privateSlotCount += slot.evaluate().length;
+      slotsInsideDecoratedBodies += slotInDecoratedBody.evaluate().length;
+
+      final slotSize = tester.getSize(slot);
+      if (slotSize.width > 0 && slotSize.height > 0) {
+        nonZeroPrivateSlotCount += 1;
+      }
+      expect(slotSize.width, greaterThan(0));
+      expect(slotSize.height, greaterThan(0));
+
+      final imageCount = find
+          .descendant(of: slot, matching: find.byType(Image))
+          .evaluate()
+          .length;
+      final rawImageCount = find
+          .descendant(of: slot, matching: find.byType(RawImage))
+          .evaluate()
+          .length;
+      final mediaGridCount = find
+          .descendant(of: slot, matching: find.byType(MediaGrid))
+          .evaluate()
+          .length;
+      slotImageWidgetCount += imageCount + rawImageCount + mediaGridCount;
+      expect(imageCount, 0);
+      expect(rawImageCount, 0);
+      expect(mediaGridCount, 0);
+
+      final containers = find
+          .descendant(of: slot, matching: find.byType(Container))
+          .evaluate();
+      for (final element in containers) {
+        final container = element.widget as Container;
+        final decorations = <Decoration?>[
+          container.decoration,
+          container.foregroundDecoration,
+        ];
+        for (final decoration in decorations) {
+          if (decoration is BoxDecoration && decoration.image != null) {
+            slotDecorationImageCount += 1;
+          }
+        }
+      }
+    }
+
+    bool visibleAction(String messageId, String actionKey) {
+      final action = find.descendant(
+        of: scopedSlot(messageId),
+        matching: find.byKey(ValueKey(actionKey)),
+      );
+      if (action.evaluate().length != 1) return false;
+      final size = tester.getSize(action);
+      return size.width > 0 && size.height > 0;
+    }
+
+    final productionConversationMounted =
+        find.byType(ConversationScreen).evaluate().length == 1;
+    final productionLetterCardCount = find.byType(LetterCard).evaluate().length;
+    final outgoingActionVisible = visibleAction(
+      _productionOutgoingFixtureId,
+      'private-media-open',
+    );
+    final incomingActionVisible = visibleAction(
+      _productionIncomingFixtureId,
+      'private-media-open',
+    );
+    final terminalActionVisibleAfterRepump = visibleAction(
+      _productionTerminalFixtureId,
+      'private-action-deleteForMe',
+    );
+
+    expect(productionConversationMounted, isTrue);
+    expect(productionLetterCardCount, 3);
+    expect(privateSlotCount, 3);
+    expect(slotsInsideDecoratedBodies, 3);
+    expect(nonZeroPrivateSlotCount, 3);
+    expect(slotImageWidgetCount, 0);
+    expect(slotDecorationImageCount, 0);
+    expect(outgoingActionVisible, isTrue);
+    expect(incomingActionVisible, isTrue);
+    expect(terminalActionVisibleAfterRepump, isTrue);
+
+    return <String, Object?>{
+      'productionConversationMounted': productionConversationMounted,
+      'productionLetterCardCount': productionLetterCardCount,
+      'privateSlotCount': privateSlotCount,
+      'slotsInsideDecoratedBodies': slotsInsideDecoratedBodies,
+      'nonZeroPrivateSlotCount': nonZeroPrivateSlotCount,
+      'slotImageWidgetCount': slotImageWidgetCount,
+      'slotDecorationImageCount': slotDecorationImageCount,
+      'outgoingActionVisible': outgoingActionVisible,
+      'incomingActionVisible': incomingActionVisible,
+      'terminalActionVisibleAfterRepump': terminalActionVisibleAfterRepump,
+    };
+  } finally {
+    if (database != null && database.isOpen) {
+      await database.close();
+    }
+    if (await tempRoot.exists()) {
+      await tempRoot.delete(recursive: true);
+    }
+  }
+}
+
+Map<String, Object?> _runSenderProof(
+  Map<String, Object?> productionConversation,
+) {
   final privatePayload = _privatePayload(
     id: _correlatedPrivateMessageId,
     policy: const PrivateMediaPolicy.viewOnce(),
@@ -105,11 +446,14 @@ Map<String, Object?> _runSenderProof() {
       'outerPrivateMediaPresent': envelope.containsKey('privateMedia'),
       'innerPrivateMediaPresent': inner.containsKey('privateMedia'),
       'ordinarySendPreserved': !ordinaryInner.containsKey('privateMedia'),
+      ...productionConversation,
     },
   };
 }
 
-Future<Map<String, Object?>> _runRecipientProof() async {
+Future<Map<String, Object?>> _runRecipientProof(
+  Map<String, Object?> productionConversation,
+) async {
   var sequence = 0;
   var phase = 'setup';
   final tempRoot = await Directory.systemTemp.createTemp('p234-device-local-');
@@ -528,6 +872,7 @@ Future<Map<String, Object?>> _runRecipientProof() async {
         'ordinaryPreviewSucceeded': ordinaryPreview == 'Photo',
         'ordinaryManualDownloadSucceeded': ordinaryManualDownloadSucceeded,
         'consumeReceiptCount': consumeReceiptCount,
+        ...productionConversation,
       },
     };
   } on Object catch (error) {
@@ -631,7 +976,10 @@ MediaAttachment _attachment({
   );
 }
 
-class _SqlLifecycleRepository implements DirectPrivateMediaLifecycleRepository {
+class _SqlLifecycleRepository
+    implements
+        DirectPrivateMediaLifecycleRepository,
+        DirectPrivateMediaExactOpeningLeaseRepository {
   const _SqlLifecycleRepository(this.database);
 
   final sqlcipher.Database database;
@@ -659,6 +1007,26 @@ class _SqlLifecycleRepository implements DirectPrivateMediaLifecycleRepository {
       1;
 
   @override
+  Future<bool> claimExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) async =>
+      await dbClaimDirectPrivateMediaOpening(
+        database,
+        messageId,
+        nowMs: nowMs,
+        isIncoming: isIncoming,
+        mode: mode.wireValue,
+        attachmentId: attachmentId,
+        storedLocalPath: storedLocalPath,
+      ) ==
+      1;
+
+  @override
   Future<bool> markPrivateMediaViewing(
     String messageId, {
     required int nowMs,
@@ -671,8 +1039,46 @@ class _SqlLifecycleRepository implements DirectPrivateMediaLifecycleRepository {
       1;
 
   @override
+  Future<bool> markExactPrivateMediaViewing(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) async =>
+      await dbMarkDirectPrivateMediaViewing(
+        database,
+        messageId,
+        nowMs: nowMs,
+        isIncoming: isIncoming,
+        mode: mode.wireValue,
+        attachmentId: attachmentId,
+        storedLocalPath: storedLocalPath,
+      ) ==
+      1;
+
+  @override
   Future<bool> rollbackPrivateMediaOpening(String messageId) async =>
       await dbRollbackDirectPrivateMediaOpening(database, messageId) == 1;
+
+  @override
+  Future<bool> rollbackExactPrivateMediaOpening(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+  }) async =>
+      await dbRollbackDirectPrivateMediaOpening(
+        database,
+        messageId,
+        isIncoming: isIncoming,
+        mode: mode.wireValue,
+        attachmentId: attachmentId,
+        storedLocalPath: storedLocalPath,
+      ) ==
+      1;
 
   @override
   Future<bool> consumePrivateMedia(
@@ -680,6 +1086,26 @@ class _SqlLifecycleRepository implements DirectPrivateMediaLifecycleRepository {
     required int nowMs,
   }) async =>
       await dbConsumeDirectPrivateMedia(database, messageId, nowMs: nowMs) == 1;
+
+  @override
+  Future<bool> consumeExactPrivateMedia(
+    String messageId, {
+    required bool isIncoming,
+    required PrivateMediaMode mode,
+    required String attachmentId,
+    required String storedLocalPath,
+    required int nowMs,
+  }) async =>
+      await dbConsumeDirectPrivateMedia(
+        database,
+        messageId,
+        nowMs: nowMs,
+        isIncoming: isIncoming,
+        mode: mode.wireValue,
+        attachmentId: attachmentId,
+        storedLocalPath: storedLocalPath,
+      ) ==
+      1;
 
   @override
   Future<bool> advancePrivateMediaClock(

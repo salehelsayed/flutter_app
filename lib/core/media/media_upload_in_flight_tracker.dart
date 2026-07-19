@@ -1,47 +1,132 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
-/// Process-wide registry of media blob uploads currently owned by a live
-/// (foreground) send.
+/// Why an upload attempt owns a media attachment lease.
 ///
-/// 127-Bug-B: the background `PendingMessageRetrier` / `retryIncompleteUploads`
-/// consults this before re-uploading an `upload_pending` blob. While a
-/// foreground send is actively uploading a blob — and through the subsequent
-/// envelope send — the retrier must NOT re-encrypt + re-upload the same blob:
-/// AES-GCM mints a fresh nonce per encryption, so a concurrent re-upload would
-/// store ciphertext on the relay whose SHA-256 no longer matches the
-/// `contentHash` the foreground already advertised in the message envelope,
-/// and the recipient's pre-decrypt content-hash gate would reject it
-/// (`integrity_failed` / "Couldn't verify this media").
-///
-/// Re-uploading IS correct when the retrier runs alone (a send that crashed
-/// mid-upload): it re-encrypts and re-advertises the new hash. This tracker
-/// only suppresses the racing-concurrent case, which is the sole inconsistent
-/// one.
-class MediaUploadInFlightTracker {
-  final Set<String> _inFlight = <String>{};
+/// The value is consumed only by claim telemetry. Production behavior never
+/// branches on it.
+enum MediaUploadTriggerSource {
+  foreground,
+  networkRestored,
+  full,
+  periodic,
+  resume,
+  manual;
 
-  /// Marks [blobId] as being uploaded by a live foreground send.
-  void begin(String blobId) {
-    if (blobId.isEmpty) return;
-    _inFlight.add(blobId);
-  }
-
-  /// Clears the in-flight mark for [blobId] (no-op if absent).
-  void end(String blobId) {
-    _inFlight.remove(blobId);
-  }
-
-  /// Whether [blobId] is currently being uploaded by a live foreground send.
-  bool isInFlight(String blobId) => _inFlight.contains(blobId);
-
-  @visibleForTesting
-  int get inFlightCount => _inFlight.length;
-
-  @visibleForTesting
-  void clearAll() => _inFlight.clear();
+  String get wireValue => switch (this) {
+    MediaUploadTriggerSource.foreground => 'foreground',
+    MediaUploadTriggerSource.networkRestored => 'network_restored',
+    MediaUploadTriggerSource.full => 'full',
+    MediaUploadTriggerSource.periodic => 'periodic',
+    MediaUploadTriggerSource.resume => 'resume',
+    MediaUploadTriggerSource.manual => 'manual',
+  };
 }
 
-/// The single process-wide instance, shared between the foreground send path
-/// (`conversation_wired.dart`) and the background retrier wiring (`main.dart`).
+/// Opaque ownership token returned by [MediaUploadInFlightTracker.tryClaimAll].
+///
+/// A lease can only release the exact all-or-none claim that created it. Its
+/// attachment identifiers are deliberately private so telemetry and callers
+/// cannot accidentally expose raw blob IDs.
+class MediaUploadLease {
+  const MediaUploadLease._({
+    required Object trackerToken,
+    required Object ownerToken,
+    required Set<String> attachmentIds,
+  }) : _trackerToken = trackerToken,
+       _ownerToken = ownerToken,
+       _attachmentIds = attachmentIds;
+
+  final Object _trackerToken;
+  final Object _ownerToken;
+  final Set<String> _attachmentIds;
+
+  int get attachmentCount => _attachmentIds.length;
+}
+
+typedef TryClaimMediaUploadLease =
+    MediaUploadLease? Function(
+      Iterable<String> attachmentIds, {
+      required MediaUploadTriggerSource source,
+    });
+
+/// A claim callback whose trigger source was bound by its production caller.
+///
+/// Retry entry points accept this shape so trigger source remains claim-only
+/// metadata rather than becoming a behavior-bearing use-case parameter.
+typedef TryClaimMediaUploadLeaseForSource =
+    MediaUploadLease? Function(Iterable<String> attachmentIds);
+typedef ReleaseMediaUploadLease = bool Function(MediaUploadLease lease);
+
+/// Process-wide, token-owned registry for conversation media uploads.
+///
+/// Claims are synchronous and therefore atomic within the owning Dart
+/// isolate. Multi-attachment claims are all-or-none: if any requested ID is
+/// already owned, no ID is mutated. Release requires the opaque owner token;
+/// a stale lease or a lease created by another tracker cannot clear a winner.
+class MediaUploadInFlightTracker {
+  final Object _trackerToken = Object();
+  final Map<String, Object> _owners = <String, Object>{};
+
+  MediaUploadLease? tryClaimAll(
+    Iterable<String> attachmentIds, {
+    required MediaUploadTriggerSource source,
+  }) {
+    final ids = attachmentIds.toSet();
+    if (ids.isEmpty || ids.any((id) => id.isEmpty)) return null;
+    if (ids.any(_owners.containsKey)) return null;
+
+    final ownerToken = Object();
+    for (final id in ids) {
+      _owners[id] = ownerToken;
+    }
+    final lease = MediaUploadLease._(
+      trackerToken: _trackerToken,
+      ownerToken: ownerToken,
+      attachmentIds: Set<String>.unmodifiable(ids),
+    );
+
+    // One receipt per attachment lets the E2E endpoint correlate its selected
+    // row without exposing raw/truncated identifiers. Keep these details exact.
+    for (final id in ids) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MEDIA_UPLOAD_LEASE_CLAIMED',
+        details: {
+          'source': source.wireValue,
+          'attachmentSha256': sha256.convert(utf8.encode(id)).toString(),
+        },
+      );
+    }
+    return lease;
+  }
+
+  /// Releases [lease] only when every attachment is still owned by its token.
+  bool release(MediaUploadLease lease) {
+    if (!identical(lease._trackerToken, _trackerToken)) return false;
+    if (lease._attachmentIds.any(
+      (id) => !identical(_owners[id], lease._ownerToken),
+    )) {
+      return false;
+    }
+    for (final id in lease._attachmentIds) {
+      _owners.remove(id);
+    }
+    return true;
+  }
+
+  bool isInFlight(String attachmentId) => _owners.containsKey(attachmentId);
+
+  @visibleForTesting
+  int get inFlightCount => _owners.length;
+
+  @visibleForTesting
+  void clearAll() => _owners.clear();
+}
+
+/// The single process-wide instance shared by every conversation upload lane.
 final MediaUploadInFlightTracker mediaUploadInFlightTracker =
     MediaUploadInFlightTracker();

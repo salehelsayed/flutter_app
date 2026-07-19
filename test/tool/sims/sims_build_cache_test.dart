@@ -14,6 +14,9 @@ BuildProfileInput _input({
   String runtimeScenario = 'scenario-a',
   String profile = 'android.e2e.standard',
   String appId = 'com.mknoon.app',
+  Map<String, String> compileDefines = const <String, String>{
+    'E2E_TEST_MODE': 'true',
+  },
 }) => BuildProfileInput(
   profileId: profile,
   platform: 'android',
@@ -21,7 +24,7 @@ BuildProfileInput _input({
   entrypoint: 'integration_test/sims_dispatcher.dart',
   mode: 'debug',
   flavor: 'default',
-  compileDefines: const <String, String>{'E2E_TEST_MODE': 'true'},
+  compileDefines: compileDefines,
   appId: appId,
   providerConfigDigests: const <String, String>{},
   signingDigests: const <String, String>{},
@@ -103,6 +106,124 @@ void main() {
       reason: 'the reserved handshake cannot be overridden by the manifest',
     );
   });
+
+  test('Android E2E artifacts attest the selected relay boundary', () {
+    final manifest = SimsManifest.loadSync(
+      File('tool/sims/critical_features.json'),
+    );
+    final profile = manifest.buildProfileById('android.e2e.main')!;
+    const stagingRelays =
+        '/dns/staging.example/udp/4002/quic-v1/p2p/12D3KooWFixture';
+
+    final configured = effectiveSimsCompileDefines(
+      profile,
+      environment: const <String, String>{
+        'MKNOON_RELAY_ADDRESSES': stagingRelays,
+      },
+    );
+    expect(configured['MKNOON_RELAY_ADDRESSES'], stagingRelays);
+
+    final unconfigured = effectiveSimsCompileDefines(
+      profile,
+      environment: const <String, String>{},
+    );
+    expect(unconfigured, isNot(contains('MKNOON_RELAY_ADDRESSES')));
+  });
+
+  test(
+    'relay dart-defines stay private in deterministic cache attestations',
+    () {
+      const relayA =
+          '/dns/staging-a.example/udp/4002/quic-v1/p2p/12D3KooWRelayA';
+      const relayB =
+          '/dns/staging-b.example/udp/4002/quic-v1/p2p/12D3KooWRelayB';
+      const commandPrefix = <String>['flutter', 'build', 'apk', '--debug'];
+
+      List<String> redacted(String relay) =>
+          redactSimsBuildCommandForAttestation(<String>[
+            ...commandPrefix,
+            '--dart-define=SIMS_BUILD_PROFILE_ID=android.e2e.main',
+            '--dart-define=MKNOON_RELAY_ADDRESSES=$relay',
+          ]);
+
+      final redactedA = redacted(relayA);
+      expect(redactedA, redacted(relayA));
+      expect(redactedA, isNot(redacted(relayB)));
+      expect(redactedA.join(' '), isNot(contains(relayA)));
+      expect(
+        redactedA.singleWhere(
+          (value) => value.contains('MKNOON_RELAY_ADDRESSES'),
+        ),
+        matches(
+          RegExp(
+            r'^--dart-define=MKNOON_RELAY_ADDRESSES='
+            r'<sha256:[a-f0-9]{64}>$',
+          ),
+        ),
+      );
+      expect(
+        redactedA.singleWhere((value) => value.contains('SIMS_BUILD_PROFILE')),
+        isNot(contains('android.e2e.main')),
+        reason: 'all compile-time values are private by default',
+      );
+      final encodedDefines = base64.encode(
+        utf8.encode('MKNOON_RELAY_ADDRESSES=$relayA'),
+      );
+      final redactedEncoded = redactSimsBuildCommandForAttestation(<String>[
+        'xcodebuild',
+        'DART_DEFINES=$encodedDefines',
+      ]);
+      expect(redactedEncoded.join(' '), isNot(contains(encodedDefines)));
+      expect(
+        redactedEncoded.last,
+        matches(RegExp(r'^DART_DEFINES=<sha256:[a-f0-9]{64}>$')),
+      );
+
+      final inputA = _input(
+        profile: 'android.e2e.main',
+        compileDefines: const <String, String>{
+          'SIMS_BUILD_PROFILE_ID': 'android.e2e.main',
+          'MKNOON_RELAY_ADDRESSES': relayA,
+        },
+      );
+      final repeatedInputA = _input(
+        profile: 'android.e2e.main',
+        compileDefines: const <String, String>{
+          'SIMS_BUILD_PROFILE_ID': 'android.e2e.main',
+          'MKNOON_RELAY_ADDRESSES': relayA,
+        },
+      );
+      final inputB = _input(
+        profile: 'android.e2e.main',
+        compileDefines: const <String, String>{
+          'SIMS_BUILD_PROFILE_ID': 'android.e2e.main',
+          'MKNOON_RELAY_ADDRESSES': relayB,
+        },
+      );
+      expect(inputA.inputDigest, repeatedInputA.inputDigest);
+      expect(inputA.inputDigest, isNot(inputB.inputDigest));
+
+      final artifactBytes = utf8.encode('relay-boundary-apk');
+      final attestation = BuildAttestation.create(
+        input: inputA,
+        artifactBytes: artifactBytes,
+        artifactPath: '/cache/android.e2e.main/app.apk',
+        redactedCommand: redactedA,
+        createdAt: DateTime.utc(2026, 7, 19),
+      );
+      final encoded = jsonEncode(attestation.toJson());
+      expect(encoded, isNot(contains(relayA)));
+      expect(encoded, contains('MKNOON_RELAY_ADDRESSES'));
+      expect(
+        BuildCacheVerifier.verify(inputA, attestation, artifactBytes).isHit,
+        isTrue,
+      );
+      expect(
+        BuildCacheVerifier.verify(inputB, attestation, artifactBytes).isHit,
+        isFalse,
+      );
+    },
+  );
 
   test('build and whole-suite source closures are intentionally separated', () {
     expect(

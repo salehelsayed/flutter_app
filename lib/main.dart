@@ -184,6 +184,7 @@ import 'package:flutter_app/core/debug/ios_sender_projection_fixture.dart';
 import 'package:flutter_app/core/debug/ios_sender_projection_fixture_contract.dart';
 import 'package:flutter_app/core/debug/auto_setup_config.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
+import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -243,6 +244,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
@@ -660,14 +662,99 @@ void main() async {
               fromStatus: fromStatus,
               toStatus: toStatus,
             ),
-    dbClaimDirectPrivateMediaOpening: (id, {required nowMs}) =>
-        dbClaimDirectPrivateMediaOpening(db, id, nowMs: nowMs),
-    dbMarkDirectPrivateMediaViewing: (id, {required nowMs}) =>
-        dbMarkDirectPrivateMediaViewing(db, id, nowMs: nowMs),
-    dbRollbackDirectPrivateMediaOpening: (id) =>
-        dbRollbackDirectPrivateMediaOpening(db, id),
-    dbConsumeDirectPrivateMedia: (id, {required nowMs}) =>
-        dbConsumeDirectPrivateMedia(db, id, nowMs: nowMs),
+    dbProjectDirectUploadFailure:
+        ({required messageId, required attachmentId, required disposition}) =>
+            dbProjectDirectUploadFailure(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+              disposition: disposition,
+            ),
+    dbRearmDirectUploadRetryForManualRetry:
+        ({required messageId, required attachments}) =>
+            dbRearmDirectUploadRetryForManualRetry(
+              db,
+              messageId: messageId,
+              attachments: attachments,
+            ),
+    dbClaimDirectPrivateMediaOpening:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbClaimDirectPrivateMediaOpening(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
+    dbMarkDirectPrivateMediaViewing:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbMarkDirectPrivateMediaViewing(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
+    dbRollbackDirectPrivateMediaOpening:
+        (id, {isIncoming, mode, attachmentId, storedLocalPath}) =>
+            dbRollbackDirectPrivateMediaOpening(
+              db,
+              id,
+              isIncoming: isIncoming,
+              mode: mode,
+              attachmentId: attachmentId,
+              storedLocalPath: storedLocalPath,
+            ),
+    dbQuarantineIndeterminateDirectPrivateMediaAvailable:
+        (
+          id, {
+          required isIncoming,
+          required mode,
+          required attachmentId,
+          required storedLocalPath,
+          required nowMs,
+        }) => dbQuarantineIndeterminateDirectPrivateMediaAvailable(
+          db,
+          id,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+          nowMs: nowMs,
+        ),
+    dbConsumeDirectPrivateMedia:
+        (
+          id, {
+          required nowMs,
+          isIncoming,
+          mode,
+          attachmentId,
+          storedLocalPath,
+        }) => dbConsumeDirectPrivateMedia(
+          db,
+          id,
+          nowMs: nowMs,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedLocalPath,
+        ),
     dbAdvanceDirectPrivateMediaClock: (id, {required nowMs}) =>
         dbAdvanceDirectPrivateMediaClock(db, id, nowMs: nowMs),
     dbFailClosedCorruptDirectPrivateMediaState: (id, {required nowMs}) =>
@@ -1557,6 +1644,26 @@ void main() async {
           dbLoadRetryableOutgoingGroupMessages(executor),
       dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+      dbProjectGroupUploadFailureFn: executor is Database
+          ? ({
+              required messageId,
+              required attachmentId,
+              required disposition,
+            }) => dbProjectGroupUploadFailure(
+              executor,
+              messageId: messageId,
+              attachmentId: attachmentId,
+              disposition: disposition,
+            )
+          : null,
+      dbRearmGroupUploadRetryForManualRetryFn: executor is Database
+          ? ({required messageId, required attachments}) =>
+                dbRearmGroupUploadRetryForManualRetry(
+                  executor,
+                  messageId: messageId,
+                  attachments: attachments,
+                )
+          : null,
       dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
           dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
       dbUpdateGroupMessageInboxStoredFn: (id, {required bool stored}) =>
@@ -2038,6 +2145,9 @@ void main() async {
 
   // Create audio recorder service
   final audioRecorderService = RecordAudioRecorderService();
+  final privateMediaOutboxE2EController = PrivateMediaOutboxE2EController(
+    enabled: kDebugMode && kE2ETestMode,
+  );
 
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
@@ -3290,6 +3400,7 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
     rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
       return runAccountRuntimeNetworkAction<bool>(
         operation: 'pending_retrier_group_rejoin',
@@ -3374,6 +3485,52 @@ void main() async {
         identityRepo: repository,
         mediaFileManager: mediaFileManager,
         inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+        tryClaimUploadLease: (attachmentIds) => mediaUploadInFlightTracker
+            .tryClaimAll(attachmentIds, source: MediaUploadTriggerSource.full),
+        releaseUploadLease: mediaUploadInFlightTracker.release,
+        requireOsConnectivity: true,
+      ),
+    ),
+    retryIncompleteGroupUploadsNetworkRestoredFn: () =>
+        runAccountRuntimeNetworkAction(
+          operation: 'pending_retrier_group_upload_retry_network_restored',
+          blockedValue: 0,
+          action: () => retryIncompleteGroupUploads(
+            groupRepo: groupRepository,
+            groupMsgRepo: groupMessageRepository,
+            mediaAttachmentRepo: mediaAttachmentRepository,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: repository,
+            mediaFileManager: mediaFileManager,
+            inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+            tryClaimUploadLease: (attachmentIds) =>
+                mediaUploadInFlightTracker.tryClaimAll(
+                  attachmentIds,
+                  source: MediaUploadTriggerSource.networkRestored,
+                ),
+            releaseUploadLease: mediaUploadInFlightTracker.release,
+          ),
+        ),
+    retryIncompleteGroupUploadsPeriodicFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_upload_retry_periodic',
+      blockedValue: 0,
+      action: () => retryIncompleteGroupUploads(
+        groupRepo: groupRepository,
+        groupMsgRepo: groupMessageRepository,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: repository,
+        mediaFileManager: mediaFileManager,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+        tryClaimUploadLease: (attachmentIds) =>
+            mediaUploadInFlightTracker.tryClaimAll(
+              attachmentIds,
+              source: MediaUploadTriggerSource.periodic,
+            ),
+        releaseUploadLease: mediaUploadInFlightTracker.release,
+        requireOsConnectivity: true,
       ),
     ),
     retryFailedGroupMessagesFn: () => runAccountRuntimeNetworkAction(
@@ -3444,6 +3601,50 @@ void main() async {
         contactRepo: contactRepository,
         mediaFileManager: mediaFileManager,
         isUploadInFlight: mediaUploadInFlightTracker.isInFlight,
+        tryClaimUploadLease: (attachmentIds) => mediaUploadInFlightTracker
+            .tryClaimAll(attachmentIds, source: MediaUploadTriggerSource.full),
+        releaseUploadLease: mediaUploadInFlightTracker.release,
+        requireOsConnectivity: true,
+      ),
+    ),
+    retryIncompleteUploadsNetworkRestoredFn: () =>
+        runAccountRuntimeNetworkAction(
+          operation: 'pending_retrier_upload_retry_network_restored',
+          blockedValue: 0,
+          action: () => retryIncompleteUploads(
+            mediaAttachmentRepo: mediaAttachmentRepository,
+            messageRepo: messageRepository,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: repository,
+            contactRepo: contactRepository,
+            mediaFileManager: mediaFileManager,
+            tryClaimUploadLease: (attachmentIds) =>
+                mediaUploadInFlightTracker.tryClaimAll(
+                  attachmentIds,
+                  source: MediaUploadTriggerSource.networkRestored,
+                ),
+            releaseUploadLease: mediaUploadInFlightTracker.release,
+          ),
+        ),
+    retryIncompleteUploadsPeriodicFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_upload_retry_periodic',
+      blockedValue: 0,
+      action: () => retryIncompleteUploads(
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        messageRepo: messageRepository,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: repository,
+        contactRepo: contactRepository,
+        mediaFileManager: mediaFileManager,
+        tryClaimUploadLease: (attachmentIds) =>
+            mediaUploadInFlightTracker.tryClaimAll(
+              attachmentIds,
+              source: MediaUploadTriggerSource.periodic,
+            ),
+        releaseUploadLease: mediaUploadInFlightTracker.release,
+        requireOsConnectivity: true,
       ),
     ),
   );
@@ -3640,6 +3841,7 @@ void main() async {
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
       audioRecorderService: audioRecorderService,
+      privateMediaOutboxE2EController: privateMediaOutboxE2EController,
       reactionRepository: reactionRepository,
       isDesktop: isDesktop,
       notificationService: notificationService,
@@ -3724,19 +3926,17 @@ void main() async {
       loadProjectedContact: (peerId) async =>
           (await directReactionNotificationProjection.readContacts())[peerId],
       insertProjectedContactIfAbsent: (request) =>
-          directReactionNotificationProjection
-              .insertSimsFixtureContactIfAbsent(
-                peerId: request.senderPeerId,
-                username: request.senderUsername,
-                fixtureDigest: request.fixtureDigest,
-              ),
+          directReactionNotificationProjection.insertSimsFixtureContactIfAbsent(
+            peerId: request.senderPeerId,
+            username: request.senderUsername,
+            fixtureDigest: request.fixtureDigest,
+          ),
       deleteProjectedContactIfExact: (request) =>
-          directReactionNotificationProjection
-              .removeSimsFixtureContactIfExact(
-                peerId: request.senderPeerId,
-                username: request.senderUsername,
-                fixtureDigest: request.fixtureDigest,
-              ),
+          directReactionNotificationProjection.removeSimsFixtureContactIfExact(
+            peerId: request.senderPeerId,
+            username: request.senderUsername,
+            fixtureDigest: request.fixtureDigest,
+          ),
     );
     unawaited(
       runIosSenderProjectionFixtureLoop(
@@ -3815,6 +4015,7 @@ void main() async {
     registerWakeTokens: (tokens) => registerWakeTokensViaBridge(bridge, tokens),
     detailedInboxStore: p2pService,
     wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
+    privateMediaOutboxE2EController: privateMediaOutboxE2EController,
     resolveWakeToken: wakeTokenResolver,
     openConversationByPeerId: (peerId) async {
       for (var attempt = 0; attempt < 30; attempt++) {
@@ -3829,6 +4030,7 @@ void main() async {
                   contact: contact,
                   identityRepo: repository,
                   messageRepo: messageRepository,
+                  uploadRetryProjectionRepo: messageRepository,
                   chatMessageListener: chatMessageListener,
                   p2pService: p2pService,
                   bridge: bridge,
@@ -3849,6 +4051,8 @@ void main() async {
                   forwardGroupConversationTracker: groupConversationTracker,
                   appShellController: appShellController,
                   transportMetrics: transportMetrics,
+                  privateMediaOutboxE2EController:
+                      privateMediaOutboxE2EController,
                 ),
               ),
             ),
@@ -3943,6 +4147,7 @@ class MyApp extends StatefulWidget {
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
+  final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
@@ -4047,6 +4252,7 @@ class MyApp extends StatefulWidget {
     required this.secureKeyStore,
     required this.imageProcessor,
     required this.audioRecorderService,
+    this.privateMediaOutboxE2EController,
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
@@ -4892,6 +5098,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               group: group,
               groupRepo: widget.groupRepository,
               msgRepo: widget.groupMessageRepository,
+              uploadRetryProjectionRepo: widget.groupMessageRepository,
               groupMessageListener: widget.groupMessageListener,
               openAnnouncementSenderConversation: (contact) =>
                   _openConversationForContact(
@@ -5044,6 +5251,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           contact: contact,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
+          uploadRetryProjectionRepo: widget.messageRepository,
           chatMessageListener: widget.chatMessageListener,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
@@ -5065,6 +5273,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
           transportMetrics: widget.transportMetrics,
+          privateMediaOutboxE2EController:
+              widget.privateMediaOutboxE2EController,
         ),
       ),
     );
@@ -5368,6 +5578,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     unawaited(
       handleAppPaused(
             messageRepo: widget.messageRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
             groupMsgRepo: widget.groupMessageRepository,
             enablePauseFlush: kFdcPauseFlushEnabled,
             p2pService: widget.p2pService,
@@ -5506,6 +5717,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           mediaFileManager: widget.mediaFileManager,
           inviteDeliveryAttemptRepo:
               widget.groupInviteDeliveryAttemptRepository,
+          tryClaimUploadLease: (attachmentIds) =>
+              mediaUploadInFlightTracker.tryClaimAll(
+                attachmentIds,
+                source: MediaUploadTriggerSource.resume,
+              ),
+          releaseUploadLease: mediaUploadInFlightTracker.release,
+          requireOsConnectivity: true,
         ),
         retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
           groupMsgRepo: widget.groupMessageRepository,
@@ -5530,6 +5748,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           contactRepo: widget.contactRepository,
           mediaFileManager: widget.mediaFileManager,
           isUploadInFlight: mediaUploadInFlightTracker.isInFlight,
+          tryClaimUploadLease: (attachmentIds) =>
+              mediaUploadInFlightTracker.tryClaimAll(
+                attachmentIds,
+                source: MediaUploadTriggerSource.resume,
+              ),
+          releaseUploadLease: mediaUploadInFlightTracker.release,
+          requireOsConnectivity: true,
         ),
         retryFailedMessagesFn: () => retryFailedMessages(
           messageRepo: widget.messageRepository,
@@ -5538,6 +5763,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
         ),
         retryUnackedMessagesFn: () => retryUnackedMessages(
           messageRepo: widget.messageRepository,
@@ -5878,6 +6104,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         title: 'mknoon',
         navigatorKey: MyApp.navigatorKey,
         scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
+        navigatorObservers: [directPrivateMediaRouteObserver],
+        builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+          observer: directPrivateMediaRouteObserver,
+          child: child ?? const SizedBox.shrink(),
+        ),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: AppTheme.lightTheme,

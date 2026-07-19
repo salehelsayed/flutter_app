@@ -95,6 +95,11 @@ record_archived_proof_requirements() {
     "android-physical+android-emulator" \
     "manifest_owned_ADB_driver_three_message_drain_no_resume_and_fdc04_network_change_rewarm"
   record_capability "implemented" "$registry" \
+    "android.connectivity_restore_media_outbox" "major" "1to1" \
+    "android.os-network.private-media-outbox.relay-delivery" \
+    "android.e2e.main" "android-physical+android-emulator" \
+    "manifest_owned_production_private_media_offline_restore_exactly_once_delivery"
+  record_capability "implemented" "$registry" \
     "android.keepalive_drop_skip_direct" "major" "1to1" \
     "android-process-lifecycle+bridge+relay" "android.e2e.main" \
     "android-physical+android-emulator" \
@@ -139,6 +144,9 @@ classify_path() {
     lib/core/debug/group_reaction_e2e_probe.dart|\
     lib/core/debug/android_notification_payload_e2e.dart|\
     lib/core/debug/android_notification_payload_e2e_protocol.dart|\
+    lib/core/debug/private_media_outbox_e2e.dart|\
+    lib/core/debug/private_media_outbox_e2e_conversation.dart|\
+    lib/core/debug/private_media_outbox_e2e_protocol.dart|\
     lib/core/debug/wake_token_directionality_e2e.dart|\
     lib/core/debug/wake_token_directionality_e2e_protocol.dart)
       record "support" "$path" "support" "debug-only E2E mode, campaign contract, or production-database probe wiring"
@@ -308,6 +316,10 @@ classify_path() {
       ;;
     integration_test/scripts/run_connectivity_restore_sims.dart)
       record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator connectivity restore campaign"
+      return
+      ;;
+    integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart)
+      record "support" "$path" "support" "manifest-owned production private-media outbox restore campaign"
       return
       ;;
     integration_test/scripts/android_keepalive_drop_campaign.dart)

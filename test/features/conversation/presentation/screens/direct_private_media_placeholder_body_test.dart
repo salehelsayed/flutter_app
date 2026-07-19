@@ -63,7 +63,10 @@ void main() {
       );
 
       expect(
-        find.text("Only Layla can view it. They can't save or share it."),
+        find.text(
+          "Only Layla can view it. They can't save or share it.\n"
+          'You can reopen it once here after sending.',
+        ),
         findsOneWidget,
       );
       expect(find.textContaining('screenshot'), findsNothing);
@@ -106,7 +109,10 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text(ar.private_media_outgoing_body(contactName)),
+      find.text(
+        '${ar.private_media_outgoing_body(contactName)}\n'
+        '${ar.private_media_disclosure_reopen}',
+      ),
       findsOneWidget,
     );
     expect(

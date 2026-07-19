@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -610,28 +611,30 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             blobId,
             deleteSourceWhenDone = false,
             preparedArtifact,
-          }) async => MediaAttachment(
-            id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
-            messageId: '',
-            mime: mime,
-            size: await File(localFilePath).length(),
-            mediaType: MediaAttachment.mediaTypeFromMime(mime),
-            localPath: localFilePath,
-            downloadStatus: 'done',
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-            width: width,
-            height: height,
-            durationMs: durationMs,
-            waveform: waveform,
-            // 112: 1:1 attachments carry the full blob-encryption metadata
-            // too (the G5 send gate enforces it); the receiver leg of this
-            // journey exercises the direct decrypt-adopt path.
-            contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-              localFilePath,
+          }) async => UploadMediaSucceeded(
+            MediaAttachment(
+              id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
+              messageId: '',
+              mime: mime,
+              size: await File(localFilePath).length(),
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+              localPath: localFilePath,
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+              width: width,
+              height: height,
+              durationMs: durationMs,
+              waveform: waveform,
+              // 112: 1:1 attachments carry the full blob-encryption metadata
+              // too (the G5 send gate enforces it); the receiver leg of this
+              // journey exercises the direct decrypt-adopt path.
+              contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                localFilePath,
+              ),
+              encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+              encryptionNonce: _fixtureEncryptionNonce,
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             ),
-            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
-            encryptionNonce: _fixtureEncryptionNonce,
-            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
       sendChatMessageFn: sendChatMessage,
       deleteContactFn: (_) async {},
@@ -669,25 +672,27 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             blobId,
             deleteSourceWhenDone = false,
             preparedArtifact,
-          }) async => MediaAttachment(
-            id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
-            messageId: '',
-            mime: mime,
-            size: await File(localFilePath).length(),
-            mediaType: MediaAttachment.mediaTypeFromMime(mime),
-            localPath: localFilePath,
-            downloadStatus: 'done',
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-            width: width,
-            height: height,
-            durationMs: durationMs,
-            waveform: waveform,
-            contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-              localFilePath,
+          }) async => UploadMediaSucceeded(
+            MediaAttachment(
+              id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
+              messageId: '',
+              mime: mime,
+              size: await File(localFilePath).length(),
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+              localPath: localFilePath,
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+              width: width,
+              height: height,
+              durationMs: durationMs,
+              waveform: waveform,
+              contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                localFilePath,
+              ),
+              encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+              encryptionNonce: _fixtureEncryptionNonce,
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             ),
-            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
-            encryptionNonce: _fixtureEncryptionNonce,
-            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
     );
   }
@@ -981,9 +986,15 @@ Future<void> _waitForOneToOneDelivery(
       return false;
     }
     final ibraAttachments = await harness.ibraChatUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(ibraMessage.last.id, owner: MediaOwnerLane.direct);
+        .getAttachmentsForMessage(
+          ibraMessage.last.id,
+          owner: MediaOwnerLane.direct,
+        );
     final salehAttachments = await harness.salehChatUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(salehMessage.last.id, owner: MediaOwnerLane.direct);
+        .getAttachmentsForMessage(
+          salehMessage.last.id,
+          owner: MediaOwnerLane.direct,
+        );
     return ibraAttachments.length == 1 && salehAttachments.length == 1;
   });
 }
@@ -1012,9 +1023,15 @@ Future<void> _waitForGroupDelivery(
       return false;
     }
     final ibraAttachments = await harness.ibraGroupUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(ibraMessage.last.id, owner: MediaOwnerLane.group);
+        .getAttachmentsForMessage(
+          ibraMessage.last.id,
+          owner: MediaOwnerLane.group,
+        );
     final salehAttachments = await harness.salehGroupUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(salehMessage.last.id, owner: MediaOwnerLane.group);
+        .getAttachmentsForMessage(
+          salehMessage.last.id,
+          owner: MediaOwnerLane.group,
+        );
     return ibraAttachments.length == 1 && salehAttachments.length == 1;
   });
 }

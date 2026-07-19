@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
@@ -30,6 +32,8 @@ class GroupMessageRepositoryImpl
         GroupMessageAroundRepository,
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
+        GroupUploadRetryProjectionRepository,
+        GroupManualUploadRetryRearmRepository,
         GroupMembershipRepairDeletionRepository,
         GroupMessageLocalDeletionAuthority,
         GroupPrivateMediaLifecycleRepository,
@@ -92,6 +96,12 @@ class GroupMessageRepositoryImpl
   dbLoadRetryableOutgoingGroupMessagesFn;
   final Future<int> Function({DateTime? olderThan})?
   dbRecoverStuckSendingGroupMessagesFn;
+  final Future<UploadRetryProjectionResult> Function({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaDisposition disposition,
+  })?
+  dbProjectGroupUploadFailureFn;
   final Future<List<Map<String, dynamic>>> Function({int limit})?
   dbLoadGroupMessagesWithFailedInboxStore;
   final Future<void> Function(String id, {required bool stored})?
@@ -122,6 +132,11 @@ class GroupMessageRepositoryImpl
   final Future<int> Function(String id, {required int nowMs})?
   dbRotateGroupPrivateMediaRecoveryCandidateFn;
   final Future<int> Function(String id)? dbCompleteGroupPrivateMediaCleanupFn;
+  final Future<bool> Function({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  })?
+  dbRearmGroupUploadRetryForManualRetryFn;
 
   /// 235: migration-069 tombstone row loader (`message_id -> row with
   /// group_id`). Optional; null keeps [getLocalDeletionGroupId] conservative.
@@ -172,6 +187,7 @@ class GroupMessageRepositoryImpl
     this.dbLoadFailedOutgoingGroupMessagesFn,
     this.dbLoadRetryableOutgoingGroupMessagesFn,
     this.dbRecoverStuckSendingGroupMessagesFn,
+    this.dbProjectGroupUploadFailureFn,
     this.dbLoadGroupMessagesWithFailedInboxStore,
     this.dbUpdateGroupMessageInboxStoredFn,
     this.dbUpdateGroupMessageInboxRetryPayloadFn,
@@ -187,6 +203,7 @@ class GroupMessageRepositoryImpl
     this.dbLoadGroupPrivateMediaRecoveryCandidatesFn,
     this.dbRotateGroupPrivateMediaRecoveryCandidateFn,
     this.dbCompleteGroupPrivateMediaCleanupFn,
+    this.dbRearmGroupUploadRetryForManualRetryFn,
     this.dbLoadGroupMessageLocalDeletionFn,
     this.dbLoadGroupInboxCursorFn,
     this.dbLoadGroupMessageReceiptsFn,
@@ -506,6 +523,37 @@ class GroupMessageRepositoryImpl
     final count = await fn(olderThan: cutoff);
     _emitOutgoingRowsChangedIfNeeded(count);
     return count;
+  }
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    final project = dbProjectGroupUploadFailureFn;
+    if (project == null) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+    final result = await project(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      disposition: failure.disposition,
+    );
+    _emitOutgoingRowsChangedIfNeeded(result.applied ? 1 : 0);
+    return result;
+  }
+
+  @override
+  Future<bool> rearmUploadRetryForManualRetry({
+    required String messageId,
+    required List<ManualUploadRetryAttachmentExpectation> attachments,
+  }) async {
+    final rearm = dbRearmGroupUploadRetryForManualRetryFn;
+    if (rearm == null) return false;
+    final applied = await rearm(messageId: messageId, attachments: attachments);
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
   }
 
   @override

@@ -220,6 +220,24 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart"
   # 259: receiver/sender reassurance copy, name substitution, and RTL safety.
   "test/features/conversation/presentation/screens/direct_private_media_placeholder_body_test.dart"
+  # 260 S1: private media is one keyed, no-pixel LetterCard body in both the
+  # live row and lifted context-overlay snapshot.
+  "test/features/conversation/presentation/screens/direct_private_media_card_test.dart"
+  # 260 S3/S4: durable queued media, typed upload/retry ownership, owner-aware
+  # pause/stuck recovery, background-task release, and the one stable direct
+  # private-media route/lifecycle observer.
+  "test/features/conversation/application/media_outbox_queued_lane_test.dart"
+  "test/features/conversation/application/retry_incomplete_uploads_use_case_test.dart"
+  "test/features/conversation/application/retry_failed_messages_use_case_test.dart"
+  "test/features/conversation/application/retry_failed_messages_media_reupload_test.dart"
+  "test/features/conversation/application/send_voice_message_use_case_test.dart"
+  "test/features/conversation/application/send_voice_message_durable_copy_test.dart"
+  "test/core/lifecycle/handle_app_paused_test.dart"
+  "test/core/lifecycle/handle_app_paused_pause_flush_test.dart"
+  "test/core/database/helpers/messages_db_helpers_stuck_sending_query_test.dart"
+  "test/core/database/helpers/messages_db_helpers_stuck_sending_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_bg_task_test.dart"
+  "test/features/conversation/presentation/screens/direct_private_media_route_observer_wiring_test.dart"
   "test/core/media/private_media_protection_coordinator_test.dart"
   # 234 Session 06: strict fail-closed evaluator for the fully automated,
   # availability-bounded physical-Android + emulator device-local artifact.
@@ -446,6 +464,10 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/retry_failed_group_messages_use_case_test.dart"
   "test/features/groups/integration/external_share_group_media_liveness_test.dart"
   "test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart"
+  # 260 S3: group queued-parent SQL qualification and foreground-task lease
+  # release are explicit members of the curated group gate.
+  "test/core/database/helpers/group_messages_db_helpers_sending_test.dart"
+  "test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart"
   "test/features/groups/application/group_message_listener_test.dart"
   "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
   "test/features/groups/integration/group_forwarding_transport_boundary_test.dart"

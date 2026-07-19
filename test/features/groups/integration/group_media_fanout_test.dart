@@ -1438,14 +1438,14 @@ void main() {
 
         final localMedia = File(p.join(tempDir.path, 'pl005.jpg'));
         await localMedia.writeAsBytes(validJpegFixtureBytes);
-        final uploaded = await uploadMedia(
+        final uploaded = (await uploadMedia(
           bridge: alice.bridge,
           localFilePath: localMedia.path,
           mime: 'image/jpeg',
           recipientPeerId: groupId,
           allowedPeers: allowedPeers,
           blobId: 'blob-pl005-active-media',
-        );
+        )).attachmentOrNull;
         expect(uploaded, isNotNull);
         final uploadedAttachment = uploaded!;
 
