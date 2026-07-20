@@ -254,6 +254,31 @@
   },
   "orbit_delete_chat": "حذف المحادثة؟",
   "orbit_leave_group": "مغادرة المجموعة وحذفها؟",
+  "orbit_leave_action": "مغادرة",
+  "orbit_leave_group_body": "تؤدي المغادرة إلى إزالة هذه المجموعة وسجلها من هذا الجهاز. لا يمكن التراجع عن ذلك.",
+  "orbit_leave_group_action": "مغادرة وحذف",
+  "group_exit_only_admin_title": "أنت المشرف الوحيد",
+  "group_exit_only_admin_body": "تحتاج المجموعة إلى مشرف واحد على الأقل قبل أن تتمكن من المغادرة. اختر ما يجب أن يحدث لـ {groupName}.",
+  "@group_exit_only_admin_body": {
+    "placeholders": {
+      "groupName": {
+        "type": "String"
+      }
+    }
+  },
+  "group_exit_choose_admin": "اختيار مشرف آخر",
+  "group_exit_choose_admin_body": "بعد ذلك يمكنك المغادرة وإزالة هذه المجموعة من هذا الجهاز.",
+  "group_exit_dissolve_for_everyone": "حل المجموعة للجميع",
+  "group_exit_keep_group": "الاحتفاظ بالمجموعة",
+  "group_exit_keep_and_close_semantics": "الاحتفاظ بالمجموعة والإغلاق",
+  "group_exit_no_eligible_successor": "انتظر انضمام شخص، أو قم بحل المجموعة.",
+  "group_exit_choose_member": "اختيار عضو",
+  "group_exit_continue_to_leave": "المتابعة للمغادرة",
+  "group_exit_stay_in_group": "البقاء في المجموعة",
+  "group_exit_admin_sync_pending_title": "لا يزال تغيير المشرف قيد المزامنة",
+  "group_exit_admin_sync_pending_body": "انتظر حتى تكتمل مزامنة تغيير المشرف الموقّع قبل المغادرة.",
+  "group_exit_leave_uncertain": "ربما اكتمل طلب المغادرة. حدّث المجموعة قبل المحاولة مرة أخرى.",
+  "group_exit_cleanup_incomplete": "لقد غادرت المجموعة، ولكن تعذرت إزالة سجلها المحلي بالكامل.",
   "conversation_hint": "اكتب شيئًا...",
   "conversation_voice_fail": "فشل إرسال الرسالة الصوتية.",
   "conversation_voice_limit_reached": "وصل التسجيل إلى الحد الأقصى وهو 5 دقائق.",
@@ -1596,6 +1621,7 @@
   "private_media_unsupported": "حدّث Mknoon لعرض هذه الوسائط الخاصة أو احذفها",
   "private_media_android_capture_limit": "تُحظر لقطات الشاشة وتسجيلها فقط أثناء فتح هذا العرض الخاص",
   "private_media_ios_capture_limit": "لا يستطيع iOS منع لقطات الشاشة بشكل موثوق؛ يُكتشف الالتقاط وتُحجب الوسائط الخاصة أو يُغلق عرضها",
+  "private_media_ios_image_capture_limit": "تُخفى هذه الصورة المحمية في لقطات الشاشة وتسجيلات الشاشة أثناء فتحها",
   "private_media_general_capture_limit": "لا يزال بإمكان جهاز آخر أو كاميرا تصوير الشاشة",
   "private_media_sheet_title_photo": "كيف ينبغي أن يرى {name} هذه الصورة؟",
   "@private_media_sheet_title_photo": {"placeholders": {"name": {"type": "String"}}},

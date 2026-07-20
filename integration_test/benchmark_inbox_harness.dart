@@ -1,7 +1,7 @@
 /// Simulator Benchmark: Inbox Store/Retrieve Round-Trip (Test D)
 ///
 /// Measures inbox store per-step timing and e2e delivery latency.
-/// Run: flutter test integration_test/benchmark_inbox_harness.dart -d <DEVICE_ID>
+/// Run: `flutter test integration_test/benchmark_inbox_harness.dart -d <DEVICE_ID>`
 library;
 
 import 'dart:convert';

@@ -97,12 +97,15 @@ class NodeState {
 
     // Phase 4: Include relay session fields when present.
     if (relayState != null) result['relayState'] = relayState;
-    if (healthyRelayCount != null)
+    if (healthyRelayCount != null) {
       result['healthyRelayCount'] = healthyRelayCount;
-    if (watchdogRestartCount != null)
+    }
+    if (watchdogRestartCount != null) {
       result['watchdogRestartCount'] = watchdogRestartCount;
-    if (needsGroupRecovery != null)
+    }
+    if (needsGroupRecovery != null) {
       result['needsGroupRecovery'] = needsGroupRecovery;
+    }
     if (featureFlags != null) result['featureFlags'] = featureFlags;
     result['sendCapabilityReady'] = sendCapabilityReady;
     result['inboxCapabilityReady'] = inboxCapabilityReady;

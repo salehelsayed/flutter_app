@@ -322,21 +322,16 @@ abstract class GroupConversationReadEventSource {
 /// repository implementation.
 class GroupOutgoingLocalMessageChange {
   const GroupOutgoingLocalMessageChange.inserted({
-    required String groupId,
-    required String messageId,
-  }) : groupId = groupId,
-       messageId = messageId,
-       status = null,
+    required String this.groupId,
+    required String this.messageId,
+  }) : status = null,
        reloadRequired = false;
 
   const GroupOutgoingLocalMessageChange.status({
-    required String groupId,
-    required String messageId,
-    required String status,
-  }) : groupId = groupId,
-       messageId = messageId,
-       status = status,
-       reloadRequired = false;
+    required String this.groupId,
+    required String this.messageId,
+    required String this.status,
+  }) : reloadRequired = false;
 
   const GroupOutgoingLocalMessageChange.rowsChanged({this.groupId})
     : messageId = null,

@@ -34,8 +34,7 @@ void main() {
           'username': 'Admin',
           'role': 'admin',
           'publicKey': 'pk-admin',
-          if (inviterMlKemPublicKey != null)
-            'mlKemPublicKey': inviterMlKemPublicKey,
+          'mlKemPublicKey': ?inviterMlKemPublicKey,
         },
       );
     }

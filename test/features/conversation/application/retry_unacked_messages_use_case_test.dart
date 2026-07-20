@@ -433,7 +433,6 @@ void main() {
       messageRepo.unackedOutgoingOverride = [msg1, msg2];
 
       // First call throws, second succeeds
-      var callCount = 0;
       final p2pService = _ThrowingInboxP2PService(
         initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
         throwOnIndices: {0},

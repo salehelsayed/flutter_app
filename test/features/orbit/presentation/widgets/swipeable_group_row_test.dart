@@ -18,6 +18,7 @@ void main() {
     bool isArchived = false,
     VoidCallback? onArchive,
     VoidCallback? onUnarchive,
+    VoidCallback? onLeave,
     VoidCallback? onDelete,
   }) {
     return MaterialApp(
@@ -32,6 +33,7 @@ void main() {
           openRowNotifier: openRowNotifier,
           onArchive: onArchive,
           onUnarchive: onUnarchive,
+          onLeave: onLeave,
           onDelete: onDelete,
           // onBlock/onUnblock intentionally null — groups don't support blocking
           child: Container(
@@ -46,28 +48,52 @@ void main() {
   }
 
   group('Swipeable Group Row', () {
-    testWidgets('swiping left reveals only Delete + Archive (no Block)', (
+    testWidgets('Leave and Delete expose distinct button semantics', (
       tester,
     ) async {
+      final semantics = tester.ensureSemantics();
+      var leaveCalls = 0;
+      var deleteCalls = 0;
       await tester.pumpWidget(
-        buildGroupSwipeableRow(onArchive: () {}, onDelete: () {}),
+        buildGroupSwipeableRow(onArchive: () {}, onLeave: () => leaveCalls++),
       );
 
       final center = tester.getCenter(find.text('Group Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
       await tester.pumpAndSettle();
 
-      // Delete and Archive should be visible
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+      expect(find.byIcon(Icons.logout), findsOneWidget);
       expect(find.byIcon(Icons.archive_outlined), findsOneWidget);
-      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Leave'), findsOneWidget);
       expect(find.text('Archive'), findsOneWidget);
-
-      // Block/Unblock should NOT be visible
+      expect(find.text('Delete'), findsNothing);
       expect(find.byIcon(Icons.block), findsNothing);
-      expect(find.text('Block'), findsNothing);
-      expect(find.byIcon(Icons.replay), findsNothing);
-      expect(find.text('Unblock'), findsNothing);
+      expect(
+        tester.getSemantics(find.bySemanticsLabel('Leave')),
+        matchesSemantics(label: 'Leave', isButton: true, hasTapAction: true),
+      );
+      await tester.tap(find.text('Leave'));
+      expect(leaveCalls, 1);
+      expect(deleteCalls, 0);
+
+      await tester.pumpWidget(
+        buildGroupSwipeableRow(onArchive: () {}, onDelete: () => deleteCalls++),
+      );
+      await tester.dragFrom(
+        tester.getCenter(find.text('Group Content')),
+        const Offset(-250, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Leave'), findsNothing);
+      expect(
+        tester.getSemantics(find.bySemanticsLabel('Delete')),
+        matchesSemantics(label: 'Delete', isButton: true, hasTapAction: true),
+      );
+      await tester.tap(find.text('Delete'));
+      expect(deleteCalls, 1);
+      expect(leaveCalls, 1);
+      semantics.dispose();
     });
 
     testWidgets('tapping Archive fires onArchive callback', (tester) async {
@@ -89,13 +115,13 @@ void main() {
       expect(archiveCalled, isTrue);
     });
 
-    testWidgets('tapping Delete fires onDelete callback', (tester) async {
-      bool deleteCalled = false;
+    testWidgets('tapping Leave fires onLeave callback', (tester) async {
+      bool leaveCalled = false;
 
       await tester.pumpWidget(
         buildGroupSwipeableRow(
           onArchive: () {},
-          onDelete: () => deleteCalled = true,
+          onLeave: () => leaveCalled = true,
         ),
       );
 
@@ -103,9 +129,9 @@ void main() {
       await tester.dragFrom(center, const Offset(-250, 0));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Delete'));
+      await tester.tap(find.text('Leave'));
       await tester.pumpAndSettle();
-      expect(deleteCalled, isTrue);
+      expect(leaveCalled, isTrue);
     });
 
     testWidgets('group delete does not fire a neighboring friend delete', (
@@ -170,7 +196,10 @@ void main() {
       await tester.pumpWidget(
         buildGroupSwipeableRow(
           isArchived: true,
+          onArchive: () {},
           onUnarchive: () => unarchiveCalled = true,
+          onLeave: () => fail('archived row must not leave'),
+          onDelete: () => fail('archived row must not delete'),
         ),
       );
 
@@ -179,6 +208,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Unarchive'), findsOneWidget);
+      expect(find.text('Leave'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+      expect(find.text('Archive'), findsNothing);
 
       await tester.tap(find.text('Unarchive'));
       await tester.pumpAndSettle();

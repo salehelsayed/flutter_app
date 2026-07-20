@@ -1,28 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-
 import '../domain/repositories/fake_message_repository.dart';
-
-ConversationMessage _makeSendingMessage({
-  String id = 'msg-stuck-001',
-  String contactPeerId = 'peer-target',
-  String? wireEnvelope,
-  Duration age = const Duration(minutes: 5),
-}) {
-  final ts = DateTime.now().toUtc().subtract(age).toIso8601String();
-  return ConversationMessage(
-    id: id,
-    contactPeerId: contactPeerId,
-    senderPeerId: 'my-peer-id',
-    text: 'Hello',
-    timestamp: ts,
-    status: 'sending',
-    isIncoming: false,
-    createdAt: ts,
-    wireEnvelope: wireEnvelope,
-  );
-}
 
 void main() {
   group('recoverStuckSendingMessages use case', () {

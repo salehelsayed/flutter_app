@@ -10,7 +10,6 @@
 // Launch:
 //   flutter test integration_test/wifi_transport_test.dart -d <device>
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 

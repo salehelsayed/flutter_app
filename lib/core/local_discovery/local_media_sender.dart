@@ -121,7 +121,7 @@ class LocalMediaSender {
         'sha256': sha256Hex,
         'token': token,
         'nonce': nonce,
-        if (durationMs != null) 'durationMs': durationMs,
+        'durationMs': ?durationMs,
         if (!enc && waveform != null) 'waveform': waveform,
         if (!enc && filename != null) 'filename': filename,
         if (enc) 'enc': true,

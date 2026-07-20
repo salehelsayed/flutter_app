@@ -16,6 +16,7 @@ class SwipeableFriendRow extends StatefulWidget {
   final VoidCallback? onUnarchive;
   final VoidCallback? onBlock;
   final VoidCallback? onUnblock;
+  final VoidCallback? onLeave;
   final VoidCallback? onDelete;
   final ValueNotifier<Key?> openRowNotifier;
 
@@ -29,8 +30,9 @@ class SwipeableFriendRow extends StatefulWidget {
     this.onUnarchive,
     this.onBlock,
     this.onUnblock,
+    this.onLeave,
     this.onDelete,
-  });
+  }) : assert(isArchived || onLeave == null || onDelete == null);
 
   @override
   State<SwipeableFriendRow> createState() => _SwipeableFriendRowState();
@@ -52,9 +54,11 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
   bool get _hasBlockAction =>
       widget.onBlock != null || widget.onUnblock != null;
   bool get _hasDeleteAction => widget.onDelete != null;
+  bool get _hasLeaveAction => widget.onLeave != null;
   bool get _hasArchiveAction => widget.onArchive != null;
   int get _actionCount =>
       (_hasBlockAction ? 1 : 0) +
+      (_hasLeaveAction ? 1 : 0) +
       (_hasDeleteAction ? 1 : 0) +
       (_hasArchiveAction ? 1 : 0);
   double get _actionWidth => widget.isArchived
@@ -205,6 +209,11 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
     widget.onDelete?.call();
   }
 
+  void _handleLeave() {
+    // Swipe stays open — confirmation/recovery owns the next state.
+    widget.onLeave?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.isArchived && _actionCount == 0) {
@@ -263,6 +272,9 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
             ? UnblockActionButton(onTap: _handleUnblock)
             : BlockActionButton(onTap: _handleBlock),
       );
+    }
+    if (_hasLeaveAction) {
+      addButton(LeaveActionButton(onTap: _handleLeave));
     }
     if (_hasDeleteAction) {
       addButton(DeleteActionButton(onTap: _handleDelete));

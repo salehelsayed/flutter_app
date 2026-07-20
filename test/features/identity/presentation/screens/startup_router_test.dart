@@ -3,6 +3,7 @@
 /// These tests verify startup path behavior via the startup decision logic
 /// and P2P service contracts, without requiring widget tree rendering
 /// (avoiding Firebase/platform dependencies).
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
@@ -10,12 +11,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
-import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
-import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
-import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 // ─── Fake Identity Repository ─────────────────────────────────
 class _FakeIdentityRepo implements IdentityRepository {
@@ -29,11 +24,6 @@ class _FakeIdentityRepo implements IdentityRepository {
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     _identity = identity;
-  }
-
-  @override
-  Future<void> deleteIdentity() async {
-    _identity = null;
   }
 }
 
@@ -73,116 +63,6 @@ class _FakeContactRepo implements ContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
-// ─── Fake P2P Service for tracking ────────────────────────────
-class _TrackingP2PService implements P2PService {
-  bool startNodeCalled = false;
-  bool warmBackgroundCalled = false;
-  bool drainOfflineInboxCalled = false;
-
-  @override
-  NodeState get currentState => const NodeState(isStarted: false);
-  @override
-  Stream<NodeState> get stateStream => const Stream.empty();
-  @override
-  Stream<ChatMessage> get messageStream => const Stream.empty();
-
-  @override
-  Future<bool> startNode(String privateKeyBase64, String peerId) async {
-    startNodeCalled = true;
-    return true;
-  }
-
-  @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async =>
-      true;
-  @override
-  Future<void> warmBackground() async {
-    warmBackgroundCalled = true;
-  }
-
-  @override
-  Future<bool> stopNode() async => true;
-  @override
-  Future<bool> sendMessage(String peerId, String message) async => false;
-  @override
-  Future<SendMessageResult> sendMessageWithReply(
-    String peerId,
-    String message, {
-    int? timeoutMs,
-  }) async => const SendMessageResult(sent: false);
-  @override
-  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
-      null;
-  @override
-  Future<bool> dialPeer(
-    String peerId, {
-    List<String>? addresses,
-    int? timeoutMs,
-  }) async => false;
-  @override
-  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
-  @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
-  @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
-      [];
-  @override
-  Future<bool> registerPushToken(String token, String platform) async => true;
-  @override
-  Future<void> performImmediateHealthCheck() async {}
-  @override
-  Future<void> drainOfflineInbox() async {
-    drainOfflineInboxCalled = true;
-  }
-
-  @override
-  bool isLocalPeer(String peerId) => false;
-
-  @override
-  String? lastKnownGoodTransport(String peerId) => null;
-
-  @override
-  void recordSuccessfulTransport(String peerId, String transport) {}
-
-  @override
-  Future<bool> discoverLocalPeer(
-    String peerId, {
-    required Duration timeout,
-  }) async =>
-      false;
-
-  @override
-  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
-  @override
-  bool isConnectedToPeer(String peerId) => false;
-  @override
-  Future<RelayProbeResult> probeRelay(String peerId) async =>
-      RelayProbeResult.error;
-  @override
-  Future<bool> sendLocalMessage(
-    String peerId,
-    String message,
-    String fromPeerId, {
-    int? timeoutMs,
-  }) async => false;
-  @override
-  Future<bool> sendLocalMedia({
-    required String peerId,
-    required String filePath,
-    required String mime,
-    required String mediaId,
-    required String fromPeerId,
-    int? durationMs,
-    List<double>? waveform,
-    String? filename,
-    bool enc = false,
-    String? encScheme,
-  }) async => false;
-  @override
-  String? get lastRecoveryMethod => null;
-  @override
-  void dispose() {}
-}
 
 void main() {
   group('Phase 1 — startup routing', () {

@@ -351,7 +351,7 @@ void main() {
           expect(
             find.text(
               platform == TargetPlatform.iOS
-                  ? l10n.private_media_ios_capture_limit
+                  ? l10n.private_media_ios_image_capture_limit
                   : l10n.private_media_android_capture_limit,
             ),
             findsOneWidget,

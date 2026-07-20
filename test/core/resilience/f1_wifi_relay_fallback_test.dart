@@ -4,7 +4,6 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../shared/fakes/fake_p2p_network.dart';
-import '../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../shared/fakes/test_user.dart';
 
 void main() {
@@ -42,7 +41,7 @@ void main() {
     });
 
     test('WiFi send succeeds with transport=wifi', () async {
-      final aliceP2P = alice.p2pService as FakeP2PService;
+      final aliceP2P = alice.p2pService;
       aliceP2P.localPeers.add(bob.peerId);
 
       final bobReceived = Completer<void>();
@@ -70,7 +69,7 @@ void main() {
     test(
       'WiFi disappears mid-session, next send falls through to relay',
       () async {
-        final aliceP2P = alice.p2pService as FakeP2PService;
+        final aliceP2P = alice.p2pService;
 
         // First message: WiFi path
         aliceP2P.localPeers.add(bob.peerId);
@@ -128,7 +127,7 @@ void main() {
     test(
       'WiFi send fails (localSendResult=false), falls through to relay',
       () async {
-        final aliceP2P = alice.p2pService as FakeP2PService;
+        final aliceP2P = alice.p2pService;
         aliceP2P.localPeers.add(bob.peerId);
         aliceP2P.localSendResult = false;
 
@@ -161,7 +160,7 @@ void main() {
     test(
       'WiFi timeout falls through to direct without duplicate delivery',
       () async {
-        final aliceP2P = alice.p2pService as FakeP2PService;
+        final aliceP2P = alice.p2pService;
         aliceP2P.localPeers.add(bob.peerId);
         aliceP2P.localAckDelay =
             interactiveLocalBudget + const Duration(milliseconds: 200);
@@ -205,7 +204,7 @@ void main() {
     test(
       'WiFi timeout with no direct success falls back to inbox once',
       () async {
-        final aliceP2P = alice.p2pService as FakeP2PService;
+        final aliceP2P = alice.p2pService;
         aliceP2P.localPeers.add(bob.peerId);
         aliceP2P.localAckDelay =
             interactiveLocalBudget + const Duration(milliseconds: 200);
@@ -228,7 +227,7 @@ void main() {
         expect(network.storeInInboxCallCount, 1);
         expect(network.inboxCount(bob.peerId), 1);
 
-        final drained = await (bob.p2pService as FakeP2PService)
+        final drained = await (bob.p2pService)
             .drainOfflineInboxCount();
         expect(drained, 1);
         await bobReceived.future.timeout(const Duration(seconds: 2));
@@ -248,7 +247,7 @@ void main() {
     );
 
     test('transport stable across WiFi/relay/WiFi transitions', () async {
-      final aliceP2P = alice.p2pService as FakeP2PService;
+      final aliceP2P = alice.p2pService;
 
       // Message 1: WiFi
       aliceP2P.localPeers.add(bob.peerId);

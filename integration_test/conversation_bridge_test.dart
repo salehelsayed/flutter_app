@@ -54,7 +54,6 @@ import 'package:flutter_app/core/database/migrations/077_message_relay_custody.d
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';

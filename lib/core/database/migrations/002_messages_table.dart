@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';

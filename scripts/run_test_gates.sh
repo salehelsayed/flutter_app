@@ -355,6 +355,12 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/group_list_wired_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
+  # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
+  # active-Leave/dissolved-Delete swipe semantics.
+  "test/features/groups/application/group_exit_policy_test.dart"
+  "test/features/groups/application/group_exit_actions_test.dart"
+  "test/features/groups/presentation/widgets/group_exit_recovery_sheet_test.dart"
+  "test/features/orbit/presentation/widgets/swipeable_group_row_test.dart"
   # 206: Orbit center self-avatar → Settings entry (full-chain + gating + latch).
   "test/features/orbit/presentation/screens/orbit_settings_entry_test.dart"
   "test/features/groups/presentation/widgets/pending_group_invite_card_test.dart"

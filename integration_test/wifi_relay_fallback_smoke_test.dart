@@ -77,7 +77,7 @@ void _writeFlutterPeerFixture({
   final data = {
     'peerId': peerId,
     'publicKey': publicKey,
-    if (mlKemPublicKey != null) 'mlKemPublicKey': mlKemPublicKey,
+    'mlKemPublicKey': ?mlKemPublicKey,
   };
   _writeSignals.writeJson('flutter_peer_fixture.json', data, createDir: true);
   print(

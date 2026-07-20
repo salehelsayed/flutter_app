@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/announce_restored_device_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_device_announce_marker.dart';
-import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 

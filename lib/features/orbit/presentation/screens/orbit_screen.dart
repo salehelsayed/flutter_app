@@ -263,12 +263,14 @@ class OrbitScreen extends StatefulWidget {
   final void Function(GroupType) onCreateGroup;
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
+  final void Function(OrbitGroup) onLeaveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
 
   /// "Retry now" / "Leave" for a stuck (given-up) rejoin row (G2). Optional so
   /// lightweight callers/tests can omit them.
   final void Function(OrbitGroup)? onRetryStuckRejoinGroup;
   final void Function(OrbitGroup)? onLeaveStuckGroup;
+
   /// 193: which surface to show. Defaults to [OrbitViewMode.allChats] so the
   /// existing bare-`OrbitScreen` pumps (loading / archived-groups / intro-route
   /// harnesses) keep rendering the classic list without change.
@@ -345,6 +347,7 @@ class OrbitScreen extends StatefulWidget {
     required this.onCreateGroup,
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
+    required this.onLeaveGroup,
     required this.onDeleteGroup,
     this.onRetryStuckRejoinGroup,
     this.onLeaveStuckGroup,
@@ -417,58 +420,59 @@ class _OrbitScreenState extends State<OrbitScreen> {
 
   @override
   Widget build(BuildContext context) => _OrbitScreenView(
-        headerProjectionListenable: widget.headerProjectionListenable,
-        listProjectionListenable: widget.listProjectionListenable,
-        scrollController: widget.scrollController,
-        searchController: widget.searchController,
-        searchFocusNode: widget.searchFocusNode,
-        collapseAnimation: widget.collapseAnimation,
-        searchDockAnimation: widget.searchDockAnimation,
-        searchTriggerAnimation: widget.searchTriggerAnimation,
-        onClose: widget.onClose,
-        onFriendTap: widget.onFriendTap,
-        onFriendAvatarTap: widget.onFriendAvatarTap,
-        onSearchOpen: widget.onSearchOpen,
-        onSearchClose: widget.onSearchClose,
-        onSearchChanged: widget.onSearchChanged,
-        onSearchClear: widget.onSearchClear,
-        onFilterChanged: widget.onFilterChanged,
-        onArchiveFriend: widget.onArchiveFriend,
-        onUnarchiveFriend: widget.onUnarchiveFriend,
-        onBlockFriend: widget.onBlockFriend,
-        onUnblockFriend: widget.onUnblockFriend,
-        onDeleteFriend: widget.onDeleteFriend,
-        openRowNotifier: widget.openRowNotifier,
-        onGroupTap: widget.onGroupTap,
-        onCreateGroup: widget.onCreateGroup,
-        onArchiveGroup: widget.onArchiveGroup,
-        onUnarchiveGroup: widget.onUnarchiveGroup,
-        onDeleteGroup: widget.onDeleteGroup,
-        onRetryStuckRejoinGroup: widget.onRetryStuckRejoinGroup,
-        onLeaveStuckGroup: widget.onLeaveStuckGroup,
-        viewMode: widget.viewMode,
-        onToggleView: widget.onToggleView,
-        activeTab: widget.activeTab,
-        onSwitchView: widget.onSwitchView,
-        feedUnreadCountListenable: widget.feedUnreadCountListenable,
-        onIntroBannerTap: widget.onIntroBannerTap,
-        onIntroDockTap: widget.onIntroDockTap,
-        onIntroDockDismissed: widget.onIntroDockDismissed,
-        onHeaderBuild: widget.onHeaderBuild,
-        onListBuild: widget.onListBuild,
-        backgroundPreference: widget.backgroundPreference,
-        readableToneOverride: widget.readableToneOverride,
-        secureKeyStore: widget.secureKeyStore,
-        innerCircleResetListenable: widget.innerCircleResetListenable,
-        onSelfAvatarTap: widget.onSelfAvatarTap,
-        p2pService: widget.p2pService,
-        innerEditing: _innerEditing,
-        onInnerEdit: _onInnerEdit,
-        ringsFindSignal: _ringsFindSignal,
-        ringsFindOpenListenable: _ringsFindOpen,
-        onRingsFindOpenChanged: _onRingsFindOpenChanged,
-        hideShellNav: widget.hideShellNav,
-      );
+    headerProjectionListenable: widget.headerProjectionListenable,
+    listProjectionListenable: widget.listProjectionListenable,
+    scrollController: widget.scrollController,
+    searchController: widget.searchController,
+    searchFocusNode: widget.searchFocusNode,
+    collapseAnimation: widget.collapseAnimation,
+    searchDockAnimation: widget.searchDockAnimation,
+    searchTriggerAnimation: widget.searchTriggerAnimation,
+    onClose: widget.onClose,
+    onFriendTap: widget.onFriendTap,
+    onFriendAvatarTap: widget.onFriendAvatarTap,
+    onSearchOpen: widget.onSearchOpen,
+    onSearchClose: widget.onSearchClose,
+    onSearchChanged: widget.onSearchChanged,
+    onSearchClear: widget.onSearchClear,
+    onFilterChanged: widget.onFilterChanged,
+    onArchiveFriend: widget.onArchiveFriend,
+    onUnarchiveFriend: widget.onUnarchiveFriend,
+    onBlockFriend: widget.onBlockFriend,
+    onUnblockFriend: widget.onUnblockFriend,
+    onDeleteFriend: widget.onDeleteFriend,
+    openRowNotifier: widget.openRowNotifier,
+    onGroupTap: widget.onGroupTap,
+    onCreateGroup: widget.onCreateGroup,
+    onArchiveGroup: widget.onArchiveGroup,
+    onUnarchiveGroup: widget.onUnarchiveGroup,
+    onLeaveGroup: widget.onLeaveGroup,
+    onDeleteGroup: widget.onDeleteGroup,
+    onRetryStuckRejoinGroup: widget.onRetryStuckRejoinGroup,
+    onLeaveStuckGroup: widget.onLeaveStuckGroup,
+    viewMode: widget.viewMode,
+    onToggleView: widget.onToggleView,
+    activeTab: widget.activeTab,
+    onSwitchView: widget.onSwitchView,
+    feedUnreadCountListenable: widget.feedUnreadCountListenable,
+    onIntroBannerTap: widget.onIntroBannerTap,
+    onIntroDockTap: widget.onIntroDockTap,
+    onIntroDockDismissed: widget.onIntroDockDismissed,
+    onHeaderBuild: widget.onHeaderBuild,
+    onListBuild: widget.onListBuild,
+    backgroundPreference: widget.backgroundPreference,
+    readableToneOverride: widget.readableToneOverride,
+    secureKeyStore: widget.secureKeyStore,
+    innerCircleResetListenable: widget.innerCircleResetListenable,
+    onSelfAvatarTap: widget.onSelfAvatarTap,
+    p2pService: widget.p2pService,
+    innerEditing: _innerEditing,
+    onInnerEdit: _onInnerEdit,
+    ringsFindSignal: _ringsFindSignal,
+    ringsFindOpenListenable: _ringsFindOpen,
+    onRingsFindOpenChanged: _onRingsFindOpenChanged,
+    hideShellNav: widget.hideShellNav,
+  );
 }
 
 /// Pure UI layout for the Orbit screen (all state + callbacks supplied by
@@ -502,6 +506,7 @@ class _OrbitScreenView extends StatelessWidget {
   final void Function(GroupType) onCreateGroup;
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
+  final void Function(OrbitGroup) onLeaveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
   final void Function(OrbitGroup)? onRetryStuckRejoinGroup;
   final void Function(OrbitGroup)? onLeaveStuckGroup;
@@ -574,6 +579,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.onCreateGroup,
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
+    required this.onLeaveGroup,
     required this.onDeleteGroup,
     required this.onRetryStuckRejoinGroup,
     required this.onLeaveStuckGroup,
@@ -755,30 +761,30 @@ class _OrbitScreenView extends StatelessWidget {
             if (viewMode == OrbitViewMode.allChats)
               AnimatedBuilder(
                 animation: searchDockAnimation,
-              builder: (context, child) {
-                final t = searchDockAnimation.value;
-                return Positioned(
-                  bottom: _searchDockBottomOffset(context),
-                  left: 0,
-                  right: 0,
-                  child: Transform.translate(
-                    offset: Offset(0, (1 - t) * 300),
-                    child: IgnorePointer(ignoring: t < 0.1, child: child),
+                builder: (context, child) {
+                  final t = searchDockAnimation.value;
+                  return Positioned(
+                    bottom: _searchDockBottomOffset(context),
+                    left: 0,
+                    right: 0,
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - t) * 300),
+                      child: IgnorePointer(ignoring: t < 0.1, child: child),
+                    ),
+                  );
+                },
+                child: ValueListenableBuilder<OrbitViewProjection>(
+                  valueListenable: listProjectionListenable,
+                  builder: (context, projection, child) => OrbitSearchDock(
+                    controller: searchController,
+                    focusNode: searchFocusNode,
+                    onChanged: onSearchChanged,
+                    onClear: onSearchClear,
+                    onClose: onSearchClose,
+                    query: projection.searchQuery,
                   ),
-                );
-              },
-              child: ValueListenableBuilder<OrbitViewProjection>(
-                valueListenable: listProjectionListenable,
-                builder: (context, projection, child) => OrbitSearchDock(
-                  controller: searchController,
-                  focusNode: searchFocusNode,
-                  onChanged: onSearchChanged,
-                  onClear: onSearchClear,
-                  onClose: onSearchClose,
-                  query: projection.searchQuery,
                 ),
               ),
-            ),
 
             if (_showsPersistentNav)
               Positioned(
@@ -840,7 +846,9 @@ class _OrbitScreenView extends StatelessWidget {
                                 ),
                               );
                             },
-                            child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+                            child: OrbitSearchTrigger(
+                              onSearchTap: onSearchOpen,
+                            ),
                           ),
                         ),
 
@@ -892,7 +900,7 @@ class _OrbitScreenView extends StatelessWidget {
                       child: OrbitIntroDock(
                         foldedReviewItems:
                             projection.introsData?.foldedReviewItems ??
-                                const [],
+                            const [],
                         pendingGroupInviteCount:
                             projection.pendingGroupInviteCount,
                         unseenCount: projection.unseenReviewCount,
@@ -1522,7 +1530,8 @@ class _OrbitScreenView extends StatelessWidget {
           openRowNotifier: openRowNotifier,
           onArchive: () => onArchiveGroup(group),
           onUnarchive: () => onUnarchiveGroup(group),
-          onDelete: () => onDeleteGroup(group),
+          onLeave: group.group.isDissolved ? null : () => onLeaveGroup(group),
+          onDelete: group.group.isDissolved ? () => onDeleteGroup(group) : null,
           child: GroupRow(
             group: group,
             onTap: () => onGroupTap(group),

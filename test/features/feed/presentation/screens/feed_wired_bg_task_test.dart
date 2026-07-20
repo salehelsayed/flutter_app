@@ -180,22 +180,18 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
 }
 
 class _FakeP2PService implements P2PService {
-  final bool isStarted;
-  final DiscoveredPeer? discoverPeerResult;
-  final bool dialPeerResult;
+  final bool isStarted = true;
+  final DiscoveredPeer? discoverPeerResult = const DiscoveredPeer(
+    id: 'contact-peer-id',
+    addresses: ['/ip4/127.0.0.1/tcp/4001'],
+  );
+  final bool dialPeerResult = true;
   final bool sendMessageResult = true;
   final bool storeInInboxResult = false;
-  final RelayProbeResult probeRelayResultValue;
+  final RelayProbeResult probeRelayResultValue = RelayProbeResult.error;
   final List<String> operationLog;
 
   _FakeP2PService({
-    this.isStarted = true,
-    this.discoverPeerResult = const DiscoveredPeer(
-      id: 'contact-peer-id',
-      addresses: ['/ip4/127.0.0.1/tcp/4001'],
-    ),
-    this.dialPeerResult = true,
-    this.probeRelayResultValue = RelayProbeResult.error,
     List<String>? operationLog,
   }) : operationLog = operationLog ?? <String>[];
 

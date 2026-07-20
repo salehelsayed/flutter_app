@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -205,13 +203,13 @@ class _InviteStatusBadge extends StatelessWidget {
           key: ValueKey('group-member-invite-status-$peerId'),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: color.withOpacity(
-              readableColors.isLightSurface ? 0.08 : 0.14,
+            color: color.withValues(
+              alpha: readableColors.isLightSurface ? 0.08 : 0.14,
             ),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: color.withOpacity(
-                readableColors.isLightSurface ? 0.22 : 0.26,
+              color: color.withValues(
+                alpha: readableColors.isLightSurface ? 0.22 : 0.26,
               ),
               width: 0.5,
             ),
@@ -291,13 +289,13 @@ class _IdentityChangedWarning extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: warningColor.withOpacity(
-          readableColors.isLightSurface ? 0.08 : 0.14,
+        color: warningColor.withValues(
+          alpha: readableColors.isLightSurface ? 0.08 : 0.14,
         ),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: warningColor.withOpacity(
-            readableColors.isLightSurface ? 0.24 : 0.26,
+          color: warningColor.withValues(
+            alpha: readableColors.isLightSurface ? 0.24 : 0.26,
           ),
           width: 0.5,
         ),

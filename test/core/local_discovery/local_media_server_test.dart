@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -16,7 +14,7 @@ void main() {
     late HttpServer testHttpServer;
     late int serverPort;
 
-    LocalMediaServer _createMediaServer({int? maxAcceptedFileSizeBytes}) {
+    LocalMediaServer createMediaServer({int? maxAcceptedFileSizeBytes}) {
       return LocalMediaServer(
         tempDir: '${tempDir.path}/temp',
         mediaDir: mediaDir.path,
@@ -30,7 +28,7 @@ void main() {
         '${tempDir.path}/media',
       ).create(recursive: true);
 
-      mediaServer = _createMediaServer();
+      mediaServer = createMediaServer();
 
       // Start an HTTP server that delegates /media/* to the media server.
       testHttpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -61,7 +59,7 @@ void main() {
     });
 
     /// Create a test file with random content and return (file, sha256hex).
-    Future<(File, String)> _createTestFile(int size) async {
+    Future<(File, String)> createTestFile(int size) async {
       final random = Random(42);
       final bytes = List<int>.generate(size, (_) => random.nextInt(256));
       final file = File('${tempDir.path}/test_upload.bin');
@@ -70,7 +68,7 @@ void main() {
       return (file, hash);
     }
 
-    MediaOffer _makeOffer({
+    MediaOffer makeOffer({
       String id = 'test-media-id',
       String mime = 'image/jpeg',
       int size = 1024,
@@ -90,7 +88,7 @@ void main() {
       );
     }
 
-    Future<HttpClientResponse> _putMedia(
+    Future<HttpClientResponse> putMedia(
       String mediaId,
       List<int> body, {
       String? authToken,
@@ -115,7 +113,7 @@ void main() {
       }
     }
 
-    Future<HttpClientResponse> _putMediaRawPath(
+    Future<HttpClientResponse> putMediaRawPath(
       String rawPath, {
       String? authHeader,
       List<int>? body,
@@ -146,7 +144,7 @@ void main() {
       }
     }
 
-    Future<File> _createZeroFile(int size) async {
+    Future<File> createZeroFile(int size) async {
       final file = File('${tempDir.path}/zero_file_$size.bin');
       final sink = file.openWrite();
       const chunkSize = 64 * 1024;
@@ -162,7 +160,7 @@ void main() {
       return file;
     }
 
-    Future<String> _sha256OfFile(File file) async {
+    Future<String> sha256OfFile(File file) async {
       late Digest digest;
       final digestSink = _CallbackSink<Digest>((d) => digest = d);
       final hashSink = sha256.startChunkedConversion(digestSink);
@@ -173,7 +171,7 @@ void main() {
       return digest.toString();
     }
 
-    Future<HttpClientResponse> _putMediaFromFile(
+    Future<HttpClientResponse> putMediaFromFile(
       String mediaId,
       File file, {
       required String authToken,
@@ -197,34 +195,34 @@ void main() {
 
     group('acceptOffer', () {
       test('accepts valid offer with allowed MIME and size under limit', () {
-        final offer = _makeOffer(mime: 'image/jpeg', size: 1024);
+        final offer = makeOffer(mime: 'image/jpeg', size: 1024);
         expect(mediaServer.acceptOffer(offer), isTrue);
         expect(mediaServer.hasPendingOffer('test-media-id'), isTrue);
       });
 
       test('rejects offer with disallowed MIME type', () {
-        final offer = _makeOffer(mime: 'text/html', size: 1024);
+        final offer = makeOffer(mime: 'text/html', size: 1024);
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
 
       test('rejects offer exceeding the configured max size', () {
-        final offer = _makeOffer(size: LocalMediaServer.maxFileSize + 1);
+        final offer = makeOffer(size: LocalMediaServer.maxFileSize + 1);
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
 
       test('rejects offer with zero size', () {
-        final offer = _makeOffer(size: 0);
+        final offer = makeOffer(size: 0);
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
 
       test('rejects offer with negative size', () {
-        final offer = _makeOffer(size: -1);
+        final offer = makeOffer(size: -1);
         expect(mediaServer.acceptOffer(offer), isFalse);
       });
 
       test('rejects duplicate offer ID', () {
-        final offer1 = _makeOffer(id: 'dup-id');
-        final offer2 = _makeOffer(id: 'dup-id');
+        final offer1 = makeOffer(id: 'dup-id');
+        final offer2 = makeOffer(id: 'dup-id');
         expect(mediaServer.acceptOffer(offer1), isTrue);
         expect(mediaServer.acceptOffer(offer2), isFalse);
       });
@@ -238,7 +236,7 @@ void main() {
           'audio/aac',
           'application/pdf',
         ]) {
-          final offer = _makeOffer(id: 'id-$mime', mime: mime);
+          final offer = makeOffer(id: 'id-$mime', mime: mime);
           expect(
             mediaServer.acceptOffer(offer),
             isTrue,
@@ -250,19 +248,19 @@ void main() {
 
     group('handleUpload (PUT /media/<id>)', () {
       test('rejects PUT without Authorization header → 401', () async {
-        final offer = _makeOffer();
+        final offer = makeOffer();
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia('test-media-id', [1, 2, 3]);
+        final response = await putMedia('test-media-id', [1, 2, 3]);
         expect(response.statusCode, HttpStatus.unauthorized);
         await response.drain<void>();
       });
 
       test('rejects PUT with wrong token → 403', () async {
-        final offer = _makeOffer(token: 'correct-token');
+        final offer = makeOffer(token: 'correct-token');
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia('test-media-id', [
+        final response = await putMedia('test-media-id', [
           1,
           2,
           3,
@@ -272,7 +270,7 @@ void main() {
       });
 
       test('rejects PUT for unknown media ID (no prior offer) → 404', () async {
-        final response = await _putMedia('unknown-id', [
+        final response = await putMedia('unknown-id', [
           1,
           2,
           3,
@@ -284,10 +282,10 @@ void main() {
       test('rejects concurrent PUT for same ID → 409', () async {
         // Create a large enough file that the first upload takes time.
         final size = 64 * 1024; // 64KB
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(
+        final offer = makeOffer(
           size: size,
           sha256hex: hash,
           token: 'the-token',
@@ -295,7 +293,7 @@ void main() {
         mediaServer.acceptOffer(offer);
 
         // Start first upload (don't await immediately).
-        final firstUpload = _putMedia(
+        final firstUpload = putMedia(
           'test-media-id',
           bytes,
           authToken: 'the-token',
@@ -305,7 +303,7 @@ void main() {
         await Future.delayed(const Duration(milliseconds: 10));
 
         // Second upload should get 409.
-        final response2 = await _putMedia(
+        final response2 = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'the-token',
@@ -321,10 +319,10 @@ void main() {
 
       test('accepts PUT with valid token, streams to disk', () async {
         const size = 1024;
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(
+        final offer = makeOffer(
           size: size,
           sha256hex: hash,
           token: 'valid-token',
@@ -334,7 +332,7 @@ void main() {
         final mediaReadyEvents = <LocalMediaReady>[];
         final sub = mediaServer.mediaReadyStream.listen(mediaReadyEvents.add);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'valid-token',
@@ -361,13 +359,13 @@ void main() {
 
       test('verifies SHA-256 after upload, returns success', () async {
         const size = 512;
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(size: size, sha256hex: hash, token: 'token');
+        final offer = makeOffer(size: size, sha256hex: hash, token: 'token');
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'token',
@@ -380,14 +378,14 @@ void main() {
         const size = 512;
         final bytes = List<int>.generate(size, (i) => i % 256);
 
-        final offer = _makeOffer(
+        final offer = makeOffer(
           size: size,
           sha256hex: 'definitely-wrong-hash',
           token: 'token',
         );
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'token',
@@ -401,7 +399,7 @@ void main() {
       });
 
       test('rejects upload when bytes exceed declared size', () async {
-        final offer = _makeOffer(
+        final offer = makeOffer(
           size: 10, // Declared 10 bytes
           sha256hex: 'irrelevant',
           token: 'token',
@@ -409,7 +407,7 @@ void main() {
         mediaServer.acceptOffer(offer);
 
         // Send 100 bytes (way more than declared 10).
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           List<int>.filled(100, 42),
           authToken: 'token',
@@ -420,14 +418,14 @@ void main() {
 
       test('rejects upload when body is shorter than declared size', () async {
         final body = [1, 2, 3, 4, 5];
-        final offer = _makeOffer(
+        final offer = makeOffer(
           size: 10, // Declared larger than actual body.
           sha256hex: sha256.convert(body).toString(),
           token: 'token',
         );
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           body,
           authToken: 'token',
@@ -440,13 +438,13 @@ void main() {
     group('persistMedia', () {
       test('moves temp file to permanent location', () async {
         const size = 256;
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(size: size, sha256hex: hash, token: 'token');
+        final offer = makeOffer(size: size, sha256hex: hash, token: 'token');
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'token',
@@ -471,7 +469,7 @@ void main() {
     group('cleanup', () {
       test('cleanupMedia deletes temp file and removes pending', () async {
         const size = 128;
-        final offer = _makeOffer(size: size, sha256hex: 'irrelevant');
+        final offer = makeOffer(size: size, sha256hex: 'irrelevant');
         mediaServer.acceptOffer(offer);
 
         // Create temp dir + file manually to simulate partial state.
@@ -490,13 +488,13 @@ void main() {
 
       test('completed files are NOT deleted by cleanup', () async {
         const size = 256;
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(size: size, sha256hex: hash, token: 'token');
+        final offer = makeOffer(size: size, sha256hex: hash, token: 'token');
         mediaServer.acceptOffer(offer);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'test-media-id',
           bytes,
           authToken: 'token',
@@ -536,7 +534,7 @@ void main() {
 
     group('security and boundary', () {
       test('rejects path traversal mediaId in upload route', () async {
-        final response = await _putMediaRawPath(
+        final response = await putMediaRawPath(
           '/media/%2E%2E%2Fevil',
           authHeader: 'Bearer token',
           body: [1, 2, 3],
@@ -549,10 +547,10 @@ void main() {
 
       test('persistMedia rejects path traversal contactPeerId', () async {
         const size = 64;
-        final (file, hash) = await _createTestFile(size);
+        final (file, hash) = await createTestFile(size);
         final bytes = await file.readAsBytes();
 
-        final offer = _makeOffer(
+        final offer = makeOffer(
           id: 'persist-traversal',
           size: size,
           sha256hex: hash,
@@ -560,7 +558,7 @@ void main() {
         );
         expect(mediaServer.acceptOffer(offer), isTrue);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'persist-traversal',
           bytes,
           authToken: 'token',
@@ -580,7 +578,7 @@ void main() {
       });
 
       test('rejects malformed Authorization header variants', () async {
-        final offer = _makeOffer(
+        final offer = makeOffer(
           id: 'auth-variants',
           size: 3,
           sha256hex: sha256.convert([1, 2, 3]).toString(),
@@ -589,7 +587,7 @@ void main() {
         mediaServer.acceptOffer(offer);
 
         for (final header in ['bearer token123', 'Bearer  token123']) {
-          final response = await _putMediaRawPath(
+          final response = await putMediaRawPath(
             '/media/auth-variants',
             authHeader: header,
             body: [1, 2, 3],
@@ -608,15 +606,15 @@ void main() {
         'accepts upload exactly at the configured max size (streamed)',
         () async {
           mediaServer.dispose();
-          mediaServer = _createMediaServer(
+          mediaServer = createMediaServer(
             maxAcceptedFileSizeBytes: 512 * 1024,
           );
 
           final maxSize = mediaServer.maxAcceptedFileSizeBytes;
-          final file = await _createZeroFile(maxSize);
-          final hash = await _sha256OfFile(file);
+          final file = await createZeroFile(maxSize);
+          final hash = await sha256OfFile(file);
 
-          final offer = _makeOffer(
+          final offer = makeOffer(
             id: 'max-size',
             size: maxSize,
             sha256hex: hash,
@@ -625,7 +623,7 @@ void main() {
           );
           expect(mediaServer.acceptOffer(offer), isTrue);
 
-          final response = await _putMediaFromFile(
+          final response = await putMediaFromFile(
             'max-size',
             file,
             authToken: 'max-token',
@@ -670,7 +668,7 @@ void main() {
           final sub = mediaServer.mediaReadyStream.listen(ready.add);
           addTearDown(sub.cancel);
 
-          final response = await _putMedia(
+          final response = await putMedia(
             'enc-blob-1',
             bytes,
             authToken: 'enc-token',
@@ -701,7 +699,7 @@ void main() {
         final random = Random(9);
         final bytes = List<int>.generate(64, (_) => random.nextInt(256));
         final hash = sha256.convert(bytes).toString();
-        final offer = _makeOffer(
+        final offer = makeOffer(
           id: 'voice-1',
           mime: 'audio/mp4',
           size: 64,
@@ -710,7 +708,7 @@ void main() {
         );
         expect(mediaServer.acceptOffer(offer), isTrue);
 
-        final response = await _putMedia(
+        final response = await putMedia(
           'voice-1',
           bytes,
           authToken: 'voice-token',
@@ -747,7 +745,7 @@ void main() {
           final random = Random(index + 20);
           final bytes = List<int>.generate(64, (_) => random.nextInt(256));
           final hash = sha256.convert(bytes).toString();
-          final offer = _makeOffer(
+          final offer = makeOffer(
             id: id,
             mime: mime,
             size: 64,
@@ -756,7 +754,7 @@ void main() {
           );
           expect(mediaServer.acceptOffer(offer), isTrue);
 
-          final response = await _putMedia(
+          final response = await putMedia(
             id,
             bytes,
             authToken: 'token-$id',
@@ -780,7 +778,7 @@ void main() {
           final random = Random(11);
           final bytes = List<int>.generate(256, (_) => random.nextInt(256));
           final hash = sha256.convert(bytes).toString();
-          final offer = _makeOffer(
+          final offer = makeOffer(
             id: 'plain-blob-1',
             size: 256,
             sha256hex: hash,
@@ -792,7 +790,7 @@ void main() {
           final sub = mediaServer.mediaReadyStream.listen(ready.add);
           addTearDown(sub.cancel);
 
-          final response = await _putMedia(
+          final response = await putMedia(
             'plain-blob-1',
             bytes,
             authToken: 'plain-token',
@@ -816,7 +814,7 @@ void main() {
       test(
         'plaintext offer with disallowed mime is still rejected',
         () async {
-          final offer = _makeOffer(
+          final offer = makeOffer(
             id: 'plain-octet',
             mime: 'application/octet-stream',
           );

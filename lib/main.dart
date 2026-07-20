@@ -3216,6 +3216,8 @@ void main() async {
     dbCountForGroup: (groupId) =>
         dbCountPendingGroupBroadcastsForGroup(db, groupId),
     dbDelete: (id) => dbDeletePendingGroupBroadcast(db, id),
+    dbDeleteForGroup: (groupId) =>
+        dbDeletePendingGroupBroadcastsForGroup(db, groupId),
   );
   final groupPendingBroadcastRunner = GroupPendingBroadcastRunner(
     repository: groupPendingBroadcastRepository,
@@ -3228,6 +3230,11 @@ void main() async {
   setGroupPendingBroadcastEnqueueSink(groupPendingBroadcastRepository.enqueue);
   setGroupPendingBroadcastCountSink(
     groupPendingBroadcastRepository.countForGroup,
+  );
+  setGroupPendingBroadcastAccessSinks(
+    loadForGroup: groupPendingBroadcastRepository.forGroup,
+    remove: groupPendingBroadcastRepository.remove,
+    discardForGroup: groupPendingBroadcastRepository.removeForGroup,
   );
   setGroupPendingBroadcastDrainSinks(
     forGroup: groupPendingBroadcastRunner.drainForGroup,

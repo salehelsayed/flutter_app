@@ -117,6 +117,10 @@ Command:
 
 Files:
 
+- `test/features/groups/application/group_exit_policy_test.dart` (261: fresh exit disposition and strict successor evidence)
+- `test/features/groups/application/group_exit_actions_test.dart` (261: signed promotion and stage-aware active exit)
+- `test/features/groups/presentation/widgets/group_exit_recovery_sheet_test.dart` (261: recovery state, retry, semantics, RTL/large text)
+- `test/features/orbit/presentation/widgets/swipeable_group_row_test.dart` (261: active Leave versus dissolved Delete)
 - `test/features/groups/integration/group_messaging_smoke_test.dart`
 - `test/features/groups/integration/group_admin_metadata_convergence_test.dart`
 - `test/features/groups/integration/group_resume_recovery_test.dart`

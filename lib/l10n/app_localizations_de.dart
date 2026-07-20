@@ -575,6 +575,70 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_leave_group => 'Gruppe verlassen und löschen?';
 
   @override
+  String get orbit_leave_action => 'Verlassen';
+
+  @override
+  String get orbit_leave_group_body =>
+      'Beim Verlassen werden diese Gruppe und ihr Verlauf von diesem Gerät entfernt. Dies kann nicht rückgängig gemacht werden.';
+
+  @override
+  String get orbit_leave_group_action => 'Verlassen & löschen';
+
+  @override
+  String get group_exit_only_admin_title => 'Du bist der einzige Admin';
+
+  @override
+  String group_exit_only_admin_body(String groupName) {
+    return 'Eine Gruppe benötigt mindestens einen Admin, bevor du sie verlassen kannst. Wähle, was mit $groupName geschehen soll.';
+  }
+
+  @override
+  String get group_exit_choose_admin => 'Anderen Admin auswählen';
+
+  @override
+  String get group_exit_choose_admin_body =>
+      'Danach kannst du die Gruppe verlassen und von diesem Gerät entfernen.';
+
+  @override
+  String get group_exit_dissolve_for_everyone => 'Für alle auflösen';
+
+  @override
+  String get group_exit_keep_group => 'Gruppe behalten';
+
+  @override
+  String get group_exit_keep_and_close_semantics =>
+      'Gruppe behalten und schließen';
+
+  @override
+  String get group_exit_no_eligible_successor =>
+      'Warte, bis jemand beitritt, oder löse die Gruppe auf.';
+
+  @override
+  String get group_exit_choose_member => 'Mitglied auswählen';
+
+  @override
+  String get group_exit_continue_to_leave => 'Weiter zum Verlassen';
+
+  @override
+  String get group_exit_stay_in_group => 'In der Gruppe bleiben';
+
+  @override
+  String get group_exit_admin_sync_pending_title =>
+      'Die Admin-Änderung wird noch synchronisiert';
+
+  @override
+  String get group_exit_admin_sync_pending_body =>
+      'Warte, bis die signierte Admin-Änderung synchronisiert ist, bevor du die Gruppe verlässt.';
+
+  @override
+  String get group_exit_leave_uncertain =>
+      'Die Anfrage zum Verlassen wurde möglicherweise abgeschlossen. Aktualisiere die Gruppe, bevor du es erneut versuchst.';
+
+  @override
+  String get group_exit_cleanup_incomplete =>
+      'Du hast die Gruppe verlassen, aber ihr lokaler Verlauf konnte nicht vollständig entfernt werden.';
+
+  @override
   String get conversation_hint => 'Schreib etwas...';
 
   @override
@@ -3216,6 +3280,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get private_media_ios_capture_limit =>
       'iOS kann Screenshots nicht zuverlässig verhindern; Aufnahmen werden erkannt und private Medien werden verdeckt bzw. geschlossen';
+
+  @override
+  String get private_media_ios_image_capture_limit =>
+      'Dieses geschützte Bild wird in Screenshots und Bildschirmaufnahmen ausgeblendet, solange es geöffnet ist.';
 
   @override
   String get private_media_general_capture_limit =>

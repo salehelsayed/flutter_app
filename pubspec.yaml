@@ -74,6 +74,7 @@ dependencies:
   background_push_crypto:
     path: packages/background_push_crypto
 
+  sqflite_common: any
 dependency_overrides:
   # record 5.2.1 caps record_linux at <1.0.0, but record_platform_interface
   # 1.5.0 added startStream + changed hasPermission signature, breaking 0.7.2.
@@ -105,6 +106,8 @@ dev_dependencies:
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
+  path_provider_platform_interface: any
+  plugin_platform_interface: any
 flutter:
   generate: true
 

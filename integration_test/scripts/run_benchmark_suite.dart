@@ -6,12 +6,12 @@
 /// into the baseline table from 03b Section 5.
 ///
 /// Usage:
-///   dart run integration_test/scripts/run_benchmark_suite.dart -d <SIMULATOR_ID>
-///   dart run integration_test/scripts/run_benchmark_suite.dart -d <SIMULATOR_ID> --scenarios B,F,G
+///   `dart run integration_test/scripts/run_benchmark_suite.dart -d <SIMULATOR_ID>`
+///   `dart run integration_test/scripts/run_benchmark_suite.dart -d <SIMULATOR_ID> --scenarios B,F,G`
 ///
 /// Prerequisites:
 ///   - Go testpeer built: cd go-mknoon && go build -o bin/testpeer ./cmd/testpeer/
-///   - iOS simulator booted: xcrun simctl boot <SIMULATOR_ID>
+///   - iOS simulator booted: `xcrun simctl boot <SIMULATOR_ID>`
 ///   - flutter build done (or flutter test will build on first run)
 library;
 
@@ -71,12 +71,12 @@ void main(List<String> args) async {
       };
 
   print('');
-  print('${'═' * 60}');
+  print('═' * 60);
   print('  mknoon Benchmark Suite');
   print('  Device: $deviceId');
   print('  Scenarios: ${requestedScenarios.join(', ')}');
   print('  Fixture dir: $fixtureDir');
-  print('${'═' * 60}');
+  print('═' * 60);
   print('');
 
   // Ensure fixture directory exists
@@ -149,7 +149,7 @@ void main(List<String> args) async {
         Map<String, dynamic>? params,
       ]) async {
         peer.stdin.writeln(
-          jsonEncode({'cmd': cmd, if (params != null) 'params': params}),
+          jsonEncode({'cmd': cmd, 'params': ?params}),
         );
         await peer.stdin.flush();
         final line = await peerLines
@@ -212,7 +212,7 @@ void main(List<String> args) async {
         jsonEncode({
           'peerId': cliPeerId,
           'publicKey': identityResult['publicKey'],
-          if (cliMlKemPublicKey != null) 'mlKemPublicKey': cliMlKemPublicKey,
+          'mlKemPublicKey': ?cliMlKemPublicKey,
         }),
       );
       print('[PEER] Fixture written to $cliFixturePath');
@@ -256,15 +256,15 @@ void main(List<String> args) async {
 
   // --- Print baseline table ---
   print('');
-  print('${'═' * 60}');
+  print('═' * 60);
   print('  mknoon Transport Timing — Simulator Baseline');
   print('  Device: $deviceId');
   print('  Date: ${DateTime.now().toIso8601String().split('T').first}');
-  print('${'═' * 60}');
+  print('═' * 60);
   for (final line in allBenchmarks) {
     print('  $line');
   }
-  print('${'═' * 60}');
+  print('═' * 60);
 }
 
 Future<String> _runFlutterTest(

@@ -333,8 +333,8 @@ class GroupInfoScreen extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: secureAccent.withOpacity(
-                    readableColors.isLightSurface ? 0.08 : 0.14,
+                  color: secureAccent.withValues(
+                    alpha: readableColors.isLightSurface ? 0.08 : 0.14,
                   ),
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -423,11 +423,13 @@ class GroupInfoScreen extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: danger.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
+        color: danger.withValues(
+          alpha: readableColors.isLightSurface ? 0.08 : 0.12,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: danger.withOpacity(
-            readableColors.isLightSurface ? 0.28 : 0.24,
+          color: danger.withValues(
+            alpha: readableColors.isLightSurface ? 0.28 : 0.24,
           ),
           width: 0.5,
         ),
@@ -439,8 +441,8 @@ class GroupInfoScreen extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: danger.withOpacity(
-                readableColors.isLightSurface ? 0.10 : 0.18,
+              color: danger.withValues(
+                alpha: readableColors.isLightSurface ? 0.10 : 0.18,
               ),
               borderRadius: BorderRadius.circular(12),
             ),
@@ -535,7 +537,7 @@ class GroupInfoScreen extends StatelessWidget {
             key: const ValueKey('group-mute-switch'),
             value: isMuted,
             onChanged: isUpdatingMute ? null : onMuteChanged,
-            activeColor: muteAccent,
+            activeThumbColor: muteAccent,
           ),
         ],
       ),
@@ -634,13 +636,13 @@ class GroupInfoScreen extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: actionBlue.withOpacity(
-              readableColors.isLightSurface ? 0.08 : 0.10,
+            color: actionBlue.withValues(
+              alpha: readableColors.isLightSurface ? 0.08 : 0.10,
             ),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: actionBlue.withOpacity(
-                readableColors.isLightSurface ? 0.20 : 0.18,
+              color: actionBlue.withValues(
+                alpha: readableColors.isLightSurface ? 0.20 : 0.18,
               ),
               width: 0.5,
             ),
@@ -679,13 +681,13 @@ class GroupInfoScreen extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: danger.withOpacity(
-              readableColors.isLightSurface ? 0.08 : 0.10,
+            color: danger.withValues(
+              alpha: readableColors.isLightSurface ? 0.08 : 0.10,
             ),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: danger.withOpacity(
-                readableColors.isLightSurface ? 0.24 : 0.20,
+              color: danger.withValues(
+                alpha: readableColors.isLightSurface ? 0.24 : 0.20,
               ),
               width: 0.5,
             ),
@@ -718,13 +720,13 @@ class GroupInfoScreen extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: danger.withOpacity(
-              readableColors.isLightSurface ? 0.08 : 0.12,
+            color: danger.withValues(
+              alpha: readableColors.isLightSurface ? 0.08 : 0.12,
             ),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: danger.withOpacity(
-                readableColors.isLightSurface ? 0.28 : 0.24,
+              color: danger.withValues(
+                alpha: readableColors.isLightSurface ? 0.28 : 0.24,
               ),
               width: 0.5,
             ),
@@ -786,13 +788,13 @@ class GroupInfoScreen extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  color: danger.withOpacity(
-                    readableColors.isLightSurface ? 0.08 : 0.10,
+                  color: danger.withValues(
+                    alpha: readableColors.isLightSurface ? 0.08 : 0.10,
                   ),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: danger.withOpacity(
-                      readableColors.isLightSurface ? 0.24 : 0.20,
+                    color: danger.withValues(
+                      alpha: readableColors.isLightSurface ? 0.24 : 0.20,
                     ),
                     width: 0.5,
                   ),

@@ -10,6 +10,7 @@
 ///
 /// The two FakeP2PService instances are connected via a FakeP2PNetwork
 /// that routes messages between them (simulating the real relay).
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -96,14 +97,12 @@ class FakeP2PService implements P2PService {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
-  bool _online = true;
 
   FakeP2PService({required this.peerId, required this.network}) {
     network.register(this);
   }
 
   void setOnline(bool online) {
-    _online = online;
     if (online) {
       network.register(this);
     } else {

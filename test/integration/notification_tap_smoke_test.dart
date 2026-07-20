@@ -4,6 +4,7 @@
 ///
 /// If any notification type silently breaks (wrong kind, lost peerId, skipped
 /// drain, swallowed route) this test will catch it.
+library;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';

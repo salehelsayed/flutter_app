@@ -21,8 +21,8 @@ class GroupTypeBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
-        color: typeColor.withOpacity(
-          readableColors.isLightSurface ? 0.12 : 0.15,
+        color: typeColor.withValues(
+          alpha: readableColors.isLightSurface ? 0.12 : 0.15,
         ),
         borderRadius: BorderRadius.circular(4),
       ),

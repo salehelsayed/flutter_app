@@ -136,7 +136,7 @@ void _writeFlutterPeerFixture({
   final data = {
     'peerId': peerId,
     'publicKey': publicKey,
-    if (mlKemPublicKey != null) 'mlKemPublicKey': mlKemPublicKey,
+    'mlKemPublicKey': ?mlKemPublicKey,
   };
   File(fixturePath).writeAsStringSync(jsonEncode(data));
   print('[TEST] Flutter peer fixture written to $fixturePath');
@@ -2308,10 +2308,11 @@ void main() {
         var total = results.length;
         for (final r in results) {
           final status = r.passed ? 'PASS' : 'FAIL';
-          if (r.passed)
+          if (r.passed) {
             passed++;
-          else
+          } else {
             failed++;
+          }
           print('  ${r.name}: $status — ${r.detail}');
         }
         print('----------------------------------------');

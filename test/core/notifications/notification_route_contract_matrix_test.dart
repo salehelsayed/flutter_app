@@ -153,7 +153,7 @@ void main() {
         );
 
         expect(notification, isNotNull);
-        expect(notification!.payload, testCase.target.toPayload());
+        expect(notification.payload, testCase.target.toPayload());
       });
     }
 

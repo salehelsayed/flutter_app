@@ -52,7 +52,6 @@ struct NotificationResponseDiagnostic: Equatable {
     return string
   }
 }
-
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 #if canImport(GoMknoon)
@@ -82,6 +81,7 @@ struct NotificationResponseDiagnostic: Equatable {
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
+  private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
 
   // 191 (Fix N1): the FCM plugin's published UNUserNotificationCenterDelegate,
   // captured at plugin-registration time (scene-connect). Under UIScene the
@@ -260,6 +260,14 @@ struct NotificationResponseDiagnostic: Equatable {
     captureFcmMessagingPluginDelegate(registry: engineBridge.pluginRegistry)
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
+    let privateMediaImageViewFactory = PrivateMediaCaptureProtectedImageViewFactory(
+      messenger: messenger
+    )
+    engineBridge.applicationRegistrar.register(
+      privateMediaImageViewFactory,
+      withId: PrivateMediaCaptureProtectedImageViewFactory.viewType
+    )
+    self.privateMediaImageViewFactory = privateMediaImageViewFactory
     setupIosNotificationOpenBridge(messenger: messenger)
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     setupIosReceiverBootstrapBridge(messenger: messenger)

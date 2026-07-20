@@ -99,7 +99,7 @@ GroupMessage _makeFailedGroupMessage({
     'text': text,
     'timestamp': timestampIso,
     'messageId': id,
-    if (logicalDeliveryId != null) 'logicalDeliveryId': logicalDeliveryId,
+    'logicalDeliveryId': ?logicalDeliveryId,
     ...quotedMessageId == null
         ? const <String, Object?>{}
         : {'quotedMessageId': quotedMessageId},
@@ -125,7 +125,7 @@ GroupMessage _makeFailedGroupMessage({
       'senderPeerId': 'peer-1',
       'senderUsername': 'Alice',
       'messageId': id,
-      if (logicalDeliveryId != null) 'logicalDeliveryId': logicalDeliveryId,
+      'logicalDeliveryId': ?logicalDeliveryId,
       ...quotedMessageId == null
           ? const <String, Object?>{}
           : {'quotedMessageId': quotedMessageId},

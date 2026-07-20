@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
@@ -863,6 +864,105 @@ void main() {
       expect(find.byKey(const ValueKey('media_meta_caption')), findsNothing);
     },
   );
+
+  testWidgets(
+    'private renderer fails closed for a missing path and a throwing first-frame transaction',
+    (tester) async {
+      var preFrameFailures = 0;
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            items: const [
+              MediaViewerItem(
+                attachmentId: 'missing-private-image',
+                messageId: 'missing-private-message',
+                kind: MediaViewerKind.image,
+                mime: 'image/png',
+                owner: MediaOwnerLane.direct,
+              ),
+            ],
+            privacyMinimized: true,
+            onFirstRenderedFrame: () async => true,
+            onPreFrameFailure: () => preFrameFailures++,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(preFrameFailures, 1);
+
+      var postFrameFailures = 0;
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('throwing-private-renderer'),
+            items: [
+              videoItem(
+                attachmentId: 'throwing-private-video',
+                messageId: 'throwing-private-message',
+                owner: MediaOwnerLane.direct,
+              ),
+            ],
+            privacyMinimized: true,
+            playbackAdapterFactory: (_) => FakeMediaPlaybackAdapter(),
+            onFirstRenderedFrame: () async => throw StateError('db failure'),
+            onPreFrameFailure: () => preFrameFailures++,
+            onPostFrameFailure: () => postFrameFailures++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(postFrameFailures, 1);
+      expect(preFrameFailures, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('iOS private images and GIFs use the protected native surface', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      for (final kind in <MediaViewerKind>[
+        MediaViewerKind.image,
+        MediaViewerKind.gif,
+      ]) {
+        await tester.pumpWidget(
+          wrap(
+            FullScreenTypedMediaViewer(
+              key: ValueKey('private-${kind.name}'),
+              items: [
+                MediaViewerItem(
+                  attachmentId: 'private-${kind.name}',
+                  messageId: 'private-message-${kind.name}',
+                  kind: kind,
+                  mime: kind == MediaViewerKind.gif ? 'image/gif' : 'image/png',
+                  owner: MediaOwnerLane.direct,
+                  localPath: '/tmp/private-${kind.name}',
+                ),
+              ],
+              privacyMinimized: true,
+              onFirstRenderedFrame: () async => true,
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byType(UiKitView), findsOneWidget, reason: kind.name);
+        expect(
+          find.byKey(
+            const ValueKey('ios-capture-protected-image-prereveal-cover'),
+          ),
+          findsOneWidget,
+          reason: kind.name,
+        );
+        expect(tester.takeException(), isNull, reason: kind.name);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
 
   testWidgets(
     'video initialization reports zero frames until one mounted post-raster surface and then settles once',

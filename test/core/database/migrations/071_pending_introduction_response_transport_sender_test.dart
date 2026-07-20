@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_test/flutter_test.dart';

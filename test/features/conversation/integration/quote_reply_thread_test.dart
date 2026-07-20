@@ -2,8 +2,8 @@
 ///
 /// Verifies quotedMessageId propagation through send -> receive -> persist,
 /// MessagePayload round-trip, and thread grouping.
+library;
 
-import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';

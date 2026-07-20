@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -16,7 +15,6 @@ void main() {
     late LocalWsServer serverA;
     late LocalWsServer serverB;
     late LocalMediaServer mediaServerB;
-    late int portA;
     late int portB;
 
     setUp(() async {
@@ -34,7 +32,7 @@ void main() {
       );
       serverB.configureMediaServer(mediaServerB);
 
-      portA = await serverA.start();
+      await serverA.start();
       portB = await serverB.start();
     });
 
@@ -46,7 +44,7 @@ void main() {
     });
 
     /// Create a test file with deterministic content.
-    Future<(File, String)> _createTestFile(
+    Future<(File, String)> createTestFile(
       Directory dir,
       int size, {
       int seed = 42,
@@ -68,7 +66,7 @@ void main() {
       // download/link suites (1.3 adoption + 1.5 staging placement).
       const size = 1024;
       final (plaintextFile, plaintextHash) =
-          await _createTestFile(tempDirA, size, seed: 7);
+          await createTestFile(tempDirA, size, seed: 7);
       // Stand-in ciphertext artifact: distinct bytes from the plaintext.
       final plaintextBytes = await plaintextFile.readAsBytes();
       final artifactBytes = [
@@ -122,7 +120,7 @@ void main() {
         'sender uploads 1KB image, receiver gets file at local path, '
         'SHA-256 matches', () async {
       const size = 1024;
-      final (file, expectedHash) = await _createTestFile(tempDirA, size);
+      final (file, expectedHash) = await createTestFile(tempDirA, size);
 
       // Listen for media ready events on receiver.
       final mediaReadyEvents = <LocalMediaReady>[];
@@ -205,7 +203,7 @@ void main() {
         'sender uploads voice message with durationMs and waveform metadata',
         () async {
       const size = 512;
-      final (file, _) = await _createTestFile(tempDirA, size, seed: 99);
+      final (file, _) = await createTestFile(tempDirA, size, seed: 99);
 
       final mediaReadyEvents = <LocalMediaReady>[];
       final sub =
@@ -241,9 +239,9 @@ void main() {
     test('two concurrent transfers from same sender complete independently',
         () async {
       final (file1, hash1) =
-          await _createTestFile(tempDirA, 1024, seed: 1);
+          await createTestFile(tempDirA, 1024, seed: 1);
       final (file2, hash2) =
-          await _createTestFile(tempDirA, 2048, seed: 2);
+          await createTestFile(tempDirA, 2048, seed: 2);
 
       final mediaReadyEvents = <LocalMediaReady>[];
       final sub =
@@ -294,7 +292,7 @@ void main() {
     test('transfer fails gracefully when receiver server stops mid-upload',
         () async {
       const size = 64 * 1024; // 64KB
-      final (file, _) = await _createTestFile(tempDirA, size);
+      final (file, _) = await createTestFile(tempDirA, size);
 
       // Stop receiver mid-transfer.
       final resultFuture = serverA.sendMedia(
@@ -318,7 +316,7 @@ void main() {
 
     test('wrong token on PUT returns 403, sender gets false', () async {
       const size = 256;
-      final (file, expectedHash) = await _createTestFile(tempDirA, size);
+      final (file, expectedHash) = await createTestFile(tempDirA, size);
 
       // Create a custom receiver that accepts the offer but modifies the
       // token when sending media_offer_accepted (simulating token mismatch).
@@ -338,8 +336,6 @@ void main() {
         mediaDir: '${tempDirB.path}/media2',
       );
 
-      String? capturedToken;
-
       rawServer.listen((request) {
         final path = request.uri.path;
         if (path.startsWith('/media/')) {
@@ -355,7 +351,6 @@ void main() {
             try {
               final json = jsonDecode(data) as Map<String, dynamic>;
               if (json['type'] == 'media_offer') {
-                capturedToken = json['token'] as String?;
                 // Accept the offer but with a DIFFERENT token registered.
                 // The sender will use the real token in the PUT, but the
                 // media server has a different one.

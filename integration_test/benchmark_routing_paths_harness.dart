@@ -4,7 +4,7 @@
 /// the live Go bridge to produce real timing numbers for each routing decision.
 /// Uses the Go CLI test peer to control which paths succeed or fail.
 ///
-/// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios R
+/// Run: `dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios R`
 library;
 
 import 'dart:convert';

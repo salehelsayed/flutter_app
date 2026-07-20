@@ -14,7 +14,7 @@ void main() {
     );
   }
 
-  Text _textWidget(WidgetTester tester, String text) {
+  Text textWidget(WidgetTester tester, String text) {
     return tester.widget<Text>(find.text(text));
   }
 
@@ -45,7 +45,7 @@ void main() {
         wrap(const IntroGroupHeader(introducerUsername: username)),
       );
 
-      expect(_textWidget(tester, username).textDirection, TextDirection.rtl);
+      expect(textWidget(tester, username).textDirection, TextDirection.rtl);
       expect(
         tester.getTopLeft(find.text('From')).dx,
         lessThan(tester.getTopLeft(find.text(username)).dx),
@@ -60,7 +60,7 @@ void main() {
         wrap(const IntroGroupHeader(introducerUsername: username)),
       );
 
-      expect(_textWidget(tester, username).textDirection, TextDirection.ltr);
+      expect(textWidget(tester, username).textDirection, TextDirection.ltr);
       expect(
         tester.getTopLeft(find.text('From')).dx,
         lessThan(tester.getTopLeft(find.text(username)).dx),

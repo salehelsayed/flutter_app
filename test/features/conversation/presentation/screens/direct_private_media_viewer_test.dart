@@ -1729,7 +1729,7 @@ void main() {
           );
           final viewerL10n = AppLocalizations.of(viewerContext)!;
           final expectedCapture = platform == TargetPlatform.iOS
-              ? viewerL10n.private_media_ios_capture_limit
+              ? viewerL10n.private_media_ios_image_capture_limit
               : viewerL10n.private_media_android_capture_limit;
           expect(find.text(expectedCapture), findsOneWidget);
           // The generic "another camera can still photograph the screen"

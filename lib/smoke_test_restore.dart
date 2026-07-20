@@ -1,5 +1,8 @@
+// ignore_for_file: avoid_print
 /// Smoke test for identity restore functionality.
 /// Run with: flutter run -t lib/smoke_test_restore.dart
+library;
+
 
 import 'dart:convert';
 import 'package:flutter/material.dart';

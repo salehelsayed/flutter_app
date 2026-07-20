@@ -441,7 +441,7 @@ Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   await runZoned(
     action,
     zoneSpecification: ZoneSpecification(
-      print: (_, __, ___, line) {
+      print: (_, _, _, line) {
         printed.add(line);
       },
     ),
@@ -506,11 +506,11 @@ void main() {
         'senderPeerId': senderPeerId,
         'senderUsername': 'Alice',
         'timestamp': timestamp ?? '2026-02-09T15:30:00.000Z',
-        if (action != null) 'action': action,
-        if (editedAt != null) 'editedAt': editedAt,
-        if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
-        if (media != null) 'media': media,
-        if (dedupKey != null) 'dedupKey': dedupKey,
+        'action': ?action,
+        'editedAt': ?editedAt,
+        'quotedMessageId': ?quotedMessageId,
+        'media': ?media,
+        'dedupKey': ?dedupKey,
       },
     });
   }
@@ -1169,7 +1169,7 @@ void main() {
               timestamp: '2099-01-01T00:00:00.000Z',
             ),
           );
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -1192,7 +1192,7 @@ void main() {
           final message = buildP2PMessage(
             buildValidChatJson(id: 'msg-uuid-002'),
           );
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -1218,7 +1218,7 @@ void main() {
             timestamp: '2099-01-01T00:00:00.000Z',
           ),
         );
-        final (result, _, __) = await handleIncomingChatMessage(
+        final (result, _, _) = await handleIncomingChatMessage(
           message: message,
           messageRepo: messageRepo,
           contactRepo: contactRepo,
@@ -1240,7 +1240,7 @@ void main() {
           final message = buildP2PMessage(
             buildValidChatJson(id: 'msg-uuid-002', dedupKey: 'src-9'),
           );
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -1300,7 +1300,7 @@ void main() {
               timestamp: '2099-01-01T00:00:00.000Z',
             ),
           );
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -2420,7 +2420,7 @@ void main() {
             'senderPeerId': senderPeerId,
             'senderUsername': 'Alice',
             'timestamp': '2026-02-09T15:30:00.000Z',
-            if (media != null) 'media': media,
+            'media': ?media,
           },
         });
       }
@@ -2612,7 +2612,7 @@ void main() {
         '132 Phase 1 (live default): a direct-staged durable message DOES mint a confirmatory receipt',
         () async {
           final receiptIds = <String>[];
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: buildP2PMessage(
               buildValidChatJson(id: 'msg-phase1-direct-01'),
             ),
@@ -2641,7 +2641,7 @@ void main() {
           final message = buildP2PMessage(buildValidChatJson());
 
           // First receive (relay drain) → receipt after the repo save.
-          final (first, _, __) = await handleIncomingChatMessage(
+          final (first, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -2658,7 +2658,7 @@ void main() {
           );
 
           // Duplicate receive (lost-receipt repair loop) → re-invoked.
-          final (second, _, __2) = await handleIncomingChatMessage(
+          final (second, _, _) = await handleIncomingChatMessage(
             message: message,
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -2672,7 +2672,7 @@ void main() {
           // Live-direct origin in OFF mode → NOT called (confirmNonce owns that
           // ack). Distinct content so it is a genuinely new message, not an F8
           // content-duplicate of the relay message saved above.
-          final (third, _, __3) = await handleIncomingChatMessage(
+          final (third, _, _) = await handleIncomingChatMessage(
             message: buildP2PMessage(
               buildValidChatJson(id: 'msg-live-001', text: 'A live message'),
             ),
@@ -2757,7 +2757,7 @@ void main() {
           // persist, never mints a receipt — the 111 state machine owns it.
           final failBridge = FakeDecryptBridge()
             ..decryptResponse = {'ok': false, 'errorCode': 'DECRYPT_FAILED'};
-          final (result, _, __) = await handleIncomingChatMessage(
+          final (result, _, _) = await handleIncomingChatMessage(
             message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
             messageRepo: messageRepo,
             contactRepo: contactRepo,
@@ -3036,8 +3036,8 @@ void main() {
         'senderPeerId': senderPeerId,
         'senderUsername': 'Alice',
         'timestamp': timestamp,
-        if (action != null) 'action': action,
-        if (editedAt != null) 'editedAt': editedAt,
+        'action': ?action,
+        'editedAt': ?editedAt,
       });
     }
 

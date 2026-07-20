@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -16,7 +15,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
-import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
+import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
@@ -31,6 +30,7 @@ import 'package:flutter_app/features/groups/application/group_recovery_gate.dart
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/leave_group_and_delete_local_history_use_case.dart';
 import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
@@ -39,9 +39,7 @@ import 'package:flutter_app/features/groups/application/rotate_and_distribute_gr
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
-import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
-import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
@@ -121,6 +119,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   bool _isUpdatingMute = false;
   bool _isDissolving = false;
   bool _isDeletingLocally = false;
+  late final LeaveGroupAndDeleteLocalHistoryUseCase _leaveAction;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
@@ -133,6 +132,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   void initState() {
     super.initState();
     _group = widget.group;
+    _leaveAction = LeaveGroupAndDeleteLocalHistoryUseCase(
+      bridge: widget.bridge,
+      groupRepo: widget.groupRepo,
+      groupMessageRepo: widget.msgRepo,
+      identityRepo: widget.identityRepo,
+      sendP2PMessage: (peerId, message) =>
+          widget.p2pService.sendMessage(peerId, message),
+      storeP2PMessageInInbox: (peerId, message) =>
+          widget.p2pService.storeInInbox(peerId, message),
+    );
     _loadGroupInfo();
     _loadIdentity();
   }
@@ -445,45 +454,38 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _onLeave() async {
-    _LeaveRollbackSnapshot? rollbackSnapshot;
-    var voluntaryPreworkCompleted = false;
-
-    try {
-      rollbackSnapshot = await _captureLeaveRollbackSnapshot();
-      final msgRepo = widget.msgRepo;
-      final broadcastResult = await _broadcastSelfRemovalIfNeeded();
-      voluntaryPreworkCompleted = broadcastResult.didBroadcast;
-      await leaveGroup(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: _group.id,
-      );
-      if (msgRepo != null) {
-        await msgRepo.deleteMessagesForGroup(_group.id);
-      }
-
-      if (!mounted) return;
-      // Pop back to group list (pop info screen + conversation screen)
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_INFO_FL_LEAVE_ERROR',
-        details: {'error': e.toString()},
-      );
-      if (voluntaryPreworkCompleted &&
-          rollbackSnapshot != null &&
-          _isNativeLeaveFailure(e)) {
-        await _rollbackFailedVoluntaryLeave(rollbackSnapshot);
+    final result = await _leaveAction.call(_group.id);
+    if (!mounted) return;
+    switch (result.status) {
+      case LeaveGroupAndDeleteLocalHistoryStatus.left:
+      case LeaveGroupAndDeleteLocalHistoryStatus.leftCleanupIncomplete:
+        // Native leave already committed. A cleanup warning must never invite
+        // a second leave attempt from this screen.
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        return;
+      case LeaveGroupAndDeleteLocalHistoryStatus.blockedLastAdmin:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(lastAdminLeaveBlockedMessage)),
+        );
+        return;
+      case LeaveGroupAndDeleteLocalHistoryStatus.preworkFailed:
+      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveFailed:
+      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveUncertain:
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INFO_FL_LEAVE_ERROR',
+          details: {'error': result.cause.toString()},
+        );
         await _loadGroupInfo();
-      }
-      if (!mounted) return;
-      final message = e is StateError
-          ? e.message
-          : AppLocalizations.of(context)!.group_info_leave_failed;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.group_info_leave_failed,
+            ),
+          ),
+        );
+        return;
     }
   }
 
@@ -577,12 +579,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       return;
     }
 
+    // Captured pre-gap: thrown after awaits, when this State may be unmounted.
+    final noIdentityError = AppLocalizations.of(context)!.group_info_no_identity;
     setState(() => _isDissolving = true);
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
+        throw StateError(noIdentityError);
       }
 
       // Sign the dissolve audit with the same device/transport binding the
@@ -748,9 +752,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError
-          ? e.message
-          : AppLocalizations.of(context)!.group_info_delete_local_failed;
+      final message = AppLocalizations.of(
+        context,
+      )!.group_info_delete_local_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -760,135 +764,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       } else {
         _isDeletingLocally = false;
       }
-    }
-  }
-
-  Future<VoluntaryLeaveBroadcastResult> _broadcastSelfRemovalIfNeeded() async {
-    return broadcastVoluntaryLeaveAndRotateKey(
-      bridge: widget.bridge,
-      groupRepo: widget.groupRepo,
-      group: _group,
-      identityRepo: widget.identityRepo,
-      msgRepo: widget.msgRepo,
-      sendP2PMessage: (peerId, message) async {
-        return widget.p2pService.sendMessage(peerId, message);
-      },
-      storeP2PMessageInInbox: (peerId, message) async {
-        return widget.p2pService.storeInInbox(peerId, message);
-      },
-    );
-  }
-
-  Future<_LeaveRollbackSnapshot?> _captureLeaveRollbackSnapshot() async {
-    final identity = await widget.identityRepo.loadIdentity();
-    if (identity == null) {
-      return null;
-    }
-
-    final operationStartedAt = DateTime.now().toUtc();
-    final latestKey = await widget.groupRepo.getLatestKey(_group.id);
-    final previousKey = latestKey != null && latestKey.keyGeneration > 1
-        ? await widget.groupRepo.getKeyByGeneration(
-            _group.id,
-            latestKey.keyGeneration - 1,
-          )
-        : null;
-    final groupRepo = widget.groupRepo;
-    GroupKeyRotationDraftRepository? draftRepo;
-    if (groupRepo is GroupKeyRotationDraftRepository) {
-      draftRepo = groupRepo as GroupKeyRotationDraftRepository;
-    }
-    final pendingDraft = await draftRepo?.getPendingKeyRotation(_group.id);
-
-    return _LeaveRollbackSnapshot(
-      groupId: _group.id,
-      operationStartedAt: operationStartedAt,
-      peerId: identity.peerId,
-      username: identity.username,
-      latestKey: latestKey,
-      previousKey: previousKey,
-      pendingDraft: pendingDraft,
-    );
-  }
-
-  bool _isNativeLeaveFailure(Object error) =>
-      error is BridgeCommandException && error.command == 'group:leave';
-
-  Future<void> _rollbackFailedVoluntaryLeave(
-    _LeaveRollbackSnapshot snapshot,
-  ) async {
-    await _deleteFailedSelfLeaveTimelineMessage(snapshot);
-    await _restoreFailedLeaveKeyWindow(snapshot);
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_INFO_FL_LEAVE_ROLLBACK_RESTORED',
-      details: {
-        'groupId': snapshot.groupId.length > 8
-            ? snapshot.groupId.substring(0, 8)
-            : snapshot.groupId,
-      },
-    );
-  }
-
-  Future<void> _deleteFailedSelfLeaveTimelineMessage(
-    _LeaveRollbackSnapshot snapshot,
-  ) async {
-    final msgRepo = widget.msgRepo;
-    if (msgRepo == null) {
-      return;
-    }
-
-    final leftAt = await msgRepo.getLatestSystemEventTimestampForTarget(
-      snapshot.groupId,
-      eventType: 'member_removed',
-      targetId: snapshot.peerId,
-    );
-    if (leftAt == null ||
-        leftAt.toUtc().isBefore(snapshot.operationStartedAt)) {
-      return;
-    }
-
-    final timelineMessage = buildMemberRemovedTimelineMessage(
-      groupId: snapshot.groupId,
-      removedPeerId: snapshot.peerId,
-      removedUsername: snapshot.username,
-      senderId: snapshot.peerId,
-      senderUsername: snapshot.username,
-      eventAt: leftAt,
-    );
-    await msgRepo.deleteMessage(timelineMessage.id);
-  }
-
-  Future<void> _restoreFailedLeaveKeyWindow(
-    _LeaveRollbackSnapshot snapshot,
-  ) async {
-    final latestKey = snapshot.latestKey;
-    if (latestKey == null) {
-      return;
-    }
-
-    final currentLatest = await widget.groupRepo.getLatestKey(snapshot.groupId);
-    if (currentLatest != null &&
-        currentLatest.keyGeneration <= latestKey.keyGeneration) {
-      return;
-    }
-
-    await widget.groupRepo.removeAllKeys(snapshot.groupId);
-    final previousKey = snapshot.previousKey;
-    if (previousKey != null) {
-      await widget.groupRepo.saveKey(previousKey);
-    }
-    await widget.groupRepo.saveKey(latestKey);
-
-    final pendingDraft = snapshot.pendingDraft;
-    final groupRepo = widget.groupRepo;
-    GroupKeyRotationDraftRepository? draftRepo;
-    if (groupRepo is GroupKeyRotationDraftRepository) {
-      draftRepo = groupRepo as GroupKeyRotationDraftRepository;
-    }
-    if (pendingDraft != null && draftRepo != null) {
-      await draftRepo.savePendingKeyRotation(pendingDraft);
     }
   }
 
@@ -941,6 +816,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _onRemoveMember(GroupMember member) async {
+    // Captured pre-gap: used after awaits, when this State may be unmounted.
+    final publishRemovalFailedError = AppLocalizations.of(
+      context,
+    )!.group_info_publish_member_removal_failed;
     GroupModel? preRemovalGroup;
     GroupMember? preRemovalMember;
     String? removalTimelineMessageId;
@@ -1116,9 +995,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               throw StateError(
                 errorMessage != null && errorMessage.isNotEmpty
                     ? errorMessage
-                    : AppLocalizations.of(
-                        context,
-                      )!.group_info_publish_member_removal_failed,
+                    : publishRemovalFailedError,
               );
             }
           }
@@ -1345,184 +1222,53 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         : MemberRole.admin;
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
-    final memberNotFoundMessage = l10n.group_info_member_not_found;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
         throw StateError(noIdentityMessage);
       }
-      final preTransitionStateHash = await buildGroupTransitionStateHash(
-        widget.groupRepo,
-        _group.id,
-      );
-
-      // Pass no explicit eventAt: the use case mints monotonically from the
-      // wall clock so a clock-skewed watermark can never self-block this
-      // legitimate local toggle. It returns the canonical (eventAt, eventId)
-      // pair it recorded in the local watermark; the audit/timeline below
-      // publish the SAME pair so a concurrent remote toggle tie-breaks against
-      // the same id on every device.
-      final minted = await updateGroupMemberRole(
+      final result = await changeGroupMemberRoleAndBroadcast(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
+        identityRepo: widget.identityRepo,
         groupId: _group.id,
         memberPeerId: member.peerId,
         role: nextRole,
-        selfPeerId: identity.peerId,
-      );
-      if (minted == null) {
-        // No-op: the target already holds [nextRole]; nothing to broadcast.
-        await _loadGroupInfo();
-        return;
-      }
-      final changedAt = minted.eventAt;
-
-      final group = await widget.groupRepo.getGroup(_group.id);
-      final updatedMember = await widget.groupRepo.getMember(
-        _group.id,
-        member.peerId,
-      );
-      final members = await widget.groupRepo.getMembers(_group.id);
-
-      if (group == null || updatedMember == null) {
-        throw StateError(memberNotFoundMessage);
-      }
-
-      final senderBinding = await resolveGroupSenderDeviceBinding(
-        groupRepo: widget.groupRepo,
-        groupId: _group.id,
-        senderPeerId: identity.peerId,
-        preferredDeviceId: _currentSenderDeviceId,
-        preferredTransportPeerId: _currentSenderDeviceId,
-        senderPublicKey: identity.publicKey,
-      );
-      final sourceEventId = minted.eventId;
-      final sysPayload = await signGroupSystemTransitionPayload(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: _group.id,
-        transitionType: 'member_role_updated',
-        sourceEventId: sourceEventId,
-        eventAt: changedAt,
-        actorPeerId: identity.peerId,
-        actorUsername: identity.username,
-        actorSigningPublicKey: identity.publicKey,
-        actorPrivateKey: identity.privateKey,
-        actorDeviceId: senderBinding.deviceId,
-        actorTransportPeerId: senderBinding.transportPeerId,
-        actorKeyPackageId: senderBinding.keyPackageId,
-        preTransitionStateHash: preTransitionStateHash,
-        systemPayload: {
-          '__sys': 'member_role_updated',
-          'eventAt': changedAt.toIso8601String(),
-          'member': updatedMember.toConfigJson(),
-          'groupConfig': _buildGroupConfig(group, members),
-        },
-      );
-      final sysText = jsonEncode(sysPayload);
-      final roleTimelineMessage = buildMemberRoleUpdatedTimelineMessage(
-        groupId: _group.id,
-        updatedPeerId: updatedMember.peerId,
-        updatedUsername: updatedMember.username,
-        previousRole: member.role,
-        newRole: updatedMember.role,
-        senderId: identity.peerId,
-        senderUsername: identity.username,
-        eventAt: changedAt,
+        messageRepo: widget.msgRepo,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+        senderDeviceId: _currentSenderDeviceId,
+        sendP2PMessage: (peerId, message) =>
+            widget.p2pService.sendMessage(peerId, message),
       );
 
-      if (widget.msgRepo != null) {
-        await widget.msgRepo!.saveMessage(roleTimelineMessage);
-      }
-
-      await callGroupPublish(
-        widget.bridge,
-        groupId: _group.id,
-        text: sysText,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username,
-        senderDeviceId: senderBinding.deviceId,
-        senderTransportPeerId: senderBinding.transportPeerId,
-        senderDevicePublicKey: senderBinding.devicePublicKey,
-        senderKeyPackageId: senderBinding.keyPackageId,
-        messageId: sourceEventId,
-      );
-
-      final recipientPeerIds = members
-          .where((groupMember) => groupMember.peerId != identity.peerId)
-          .map((groupMember) => groupMember.peerId)
-          .toList();
-
-      if (recipientPeerIds.isNotEmpty) {
-        final inboxPayload = jsonEncode({
-          'groupId': _group.id,
-          'senderId': identity.peerId,
-          'senderUsername': identity.username,
-          if (senderBinding.deviceId != null)
-            'senderDeviceId': senderBinding.deviceId,
-          if (senderBinding.transportPeerId != null)
-            'transportPeerId': senderBinding.transportPeerId,
-          'text': sysText,
-          'timestamp': changedAt.toIso8601String(),
-          'messageId': sourceEventId,
-        });
-        final replayEnvelope = await buildGroupOfflineReplayEnvelope(
-          bridge: widget.bridge,
-          groupRepo: widget.groupRepo,
-          groupId: _group.id,
-          payloadType: groupOfflineReplayPayloadTypeMessage,
-          plaintext: inboxPayload,
-          senderPeerId: identity.peerId,
-          senderPublicKey: identity.publicKey,
-          senderPrivateKey: identity.privateKey,
-          senderDeviceId: senderBinding.deviceId,
-          senderTransportPeerId: senderBinding.transportPeerId,
-          senderKeyPackageId: senderBinding.keyPackageId,
-          messageId: roleTimelineMessage.id,
-          recipientPeerIds: recipientPeerIds,
-        );
-        await callGroupInboxStore(
-          widget.bridge,
-          _group.id,
-          replayEnvelope,
-          recipientPeerIds: recipientPeerIds,
-          preserveRecipientPeerIds: true,
-        );
-        final directTargets = groupMembershipUpdateDirectTargets(
-          members: members,
-          excludingPeerId: identity.peerId,
-        );
-        for (final target in directTargets) {
-          unawaited(
-            sendGroupMembershipUpdateDirect(
-              sendP2PMessage: (peerId, message) async {
-                return widget.p2pService.sendMessage(peerId, message);
-              },
-              recipientPeerId: target.deliveryPeerId,
-              groupId: _group.id,
-              senderPeerId: identity.peerId,
-              replayEnvelope: replayEnvelope,
-              timestamp: changedAt,
-              messageId: sourceEventId,
-            ),
-          );
-        }
-      }
-
-      _didMutateGroup = true;
+      _didMutateGroup =
+          result.outcome != ChangeGroupMemberRoleAndBroadcastOutcome.unchanged;
       await _loadGroupInfo();
       if (!mounted) return;
-      final l10n = AppLocalizations.of(context)!;
+
+      if (result.outcome ==
+          ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.group_info_member_role_update_failed)),
+        );
+        return;
+      }
+      if (result.outcome ==
+          ChangeGroupMemberRoleAndBroadcastOutcome.unchanged) {
+        return;
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            updatedMember.role == MemberRole.admin
-                ? l10n.group_info_admin_added(_displayName(updatedMember))
-                : l10n.group_info_admin_removed(_displayName(updatedMember)),
+            result.updatedMember.role == MemberRole.admin
+                ? l10n.group_info_admin_added(
+                    _displayName(result.updatedMember),
+                  )
+                : l10n.group_info_admin_removed(
+                    _displayName(result.updatedMember),
+                  ),
           ),
         ),
       );
@@ -1541,8 +1287,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError
-          ? e.message
+      // The preflight identity failure is already localized above. Other
+      // StateErrors come from the shared application action and are diagnostic
+      // English, so they must not leak into localized presentation copy.
+      final message = e is StateError && e.message == noIdentityMessage
+          ? noIdentityMessage
           : AppLocalizations.of(context)!.group_info_member_role_update_failed;
       ScaffoldMessenger.of(
         context,
@@ -2065,11 +1814,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       return;
     }
 
+    // Captured pre-gap: thrown after awaits, when this State may be unmounted.
+    final noIdentityError = AppLocalizations.of(context)!.group_info_no_identity;
     setState(() => _resendingInvitePeerIds.add(member.peerId));
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
+        throw StateError(noIdentityError);
       }
       final result = await resendGroupInvite(
         p2pService: widget.p2pService,
@@ -2702,26 +2453,6 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
       ),
     );
   }
-}
-
-class _LeaveRollbackSnapshot {
-  final String groupId;
-  final DateTime operationStartedAt;
-  final String peerId;
-  final String username;
-  final GroupKeyInfo? latestKey;
-  final GroupKeyInfo? previousKey;
-  final GroupKeyInfo? pendingDraft;
-
-  const _LeaveRollbackSnapshot({
-    required this.groupId,
-    required this.operationStartedAt,
-    required this.peerId,
-    required this.username,
-    required this.latestKey,
-    required this.previousKey,
-    required this.pendingDraft,
-  });
 }
 
 class GroupInfoScreenAvatarPreview extends StatelessWidget {

@@ -190,12 +190,12 @@ void main() {
     expect(result, SendPostResult.success);
     expect(created, isNotNull);
     expect(created!.post.authorUsername, 'Ali\u200Fce');
-    expect(created!.post.text, '  Hello world\u200F  ');
+    expect(created.post.text, '  Hello world\u200F  ');
 
     final storedPost = await posts.getPost(created.post.id);
     expect(storedPost, isNotNull);
     expect(storedPost!.authorUsername, 'Ali\u200Fce');
-    expect(storedPost!.text, '  Hello world\u200F  ');
+    expect(storedPost.text, '  Hello world\u200F  ');
   });
 
   test(

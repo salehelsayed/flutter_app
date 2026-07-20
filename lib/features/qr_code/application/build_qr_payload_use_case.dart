@@ -58,7 +58,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
     'ns': identity.peerId,
     'pk': identity.publicKey,
-    'rv': RENDEZVOUS_ADDRESS,
+    'rv': rendezvousAddress,
     'ts': timestamp,
     'un': identity.username,
   });

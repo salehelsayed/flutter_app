@@ -110,7 +110,7 @@ class PendingGroupInviteCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: isExpired
-              ? danger.withOpacity(readableColors.isLightSurface ? 0.32 : 0.22)
+              ? danger.withValues(alpha: readableColors.isLightSurface ? 0.32 : 0.22)
               : readableColors.divider,
         ),
       ),

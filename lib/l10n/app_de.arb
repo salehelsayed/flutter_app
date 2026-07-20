@@ -254,6 +254,31 @@
   },
   "orbit_delete_chat": "Chat löschen?",
   "orbit_leave_group": "Gruppe verlassen und löschen?",
+  "orbit_leave_action": "Verlassen",
+  "orbit_leave_group_body": "Beim Verlassen werden diese Gruppe und ihr Verlauf von diesem Gerät entfernt. Dies kann nicht rückgängig gemacht werden.",
+  "orbit_leave_group_action": "Verlassen & löschen",
+  "group_exit_only_admin_title": "Du bist der einzige Admin",
+  "group_exit_only_admin_body": "Eine Gruppe benötigt mindestens einen Admin, bevor du sie verlassen kannst. Wähle, was mit {groupName} geschehen soll.",
+  "@group_exit_only_admin_body": {
+    "placeholders": {
+      "groupName": {
+        "type": "String"
+      }
+    }
+  },
+  "group_exit_choose_admin": "Anderen Admin auswählen",
+  "group_exit_choose_admin_body": "Danach kannst du die Gruppe verlassen und von diesem Gerät entfernen.",
+  "group_exit_dissolve_for_everyone": "Für alle auflösen",
+  "group_exit_keep_group": "Gruppe behalten",
+  "group_exit_keep_and_close_semantics": "Gruppe behalten und schließen",
+  "group_exit_no_eligible_successor": "Warte, bis jemand beitritt, oder löse die Gruppe auf.",
+  "group_exit_choose_member": "Mitglied auswählen",
+  "group_exit_continue_to_leave": "Weiter zum Verlassen",
+  "group_exit_stay_in_group": "In der Gruppe bleiben",
+  "group_exit_admin_sync_pending_title": "Die Admin-Änderung wird noch synchronisiert",
+  "group_exit_admin_sync_pending_body": "Warte, bis die signierte Admin-Änderung synchronisiert ist, bevor du die Gruppe verlässt.",
+  "group_exit_leave_uncertain": "Die Anfrage zum Verlassen wurde möglicherweise abgeschlossen. Aktualisiere die Gruppe, bevor du es erneut versuchst.",
+  "group_exit_cleanup_incomplete": "Du hast die Gruppe verlassen, aber ihr lokaler Verlauf konnte nicht vollständig entfernt werden.",
   "conversation_hint": "Schreib etwas...",
   "conversation_voice_fail": "Sprachnachricht konnte nicht gesendet werden.",
   "conversation_voice_limit_reached": "Die Aufnahme hat das 5-Minuten-Limit erreicht.",
@@ -1596,6 +1621,7 @@
   "private_media_unsupported": "Aktualisiere Mknoon, um diese privaten Medien anzusehen, oder lösche sie",
   "private_media_android_capture_limit": "Screenshots und Bildschirmaufnahmen werden nur blockiert, solange diese private Ansicht geöffnet ist",
   "private_media_ios_capture_limit": "iOS kann Screenshots nicht zuverlässig verhindern; Aufnahmen werden erkannt und private Medien werden verdeckt bzw. geschlossen",
+  "private_media_ios_image_capture_limit": "Dieses geschützte Bild wird in Screenshots und Bildschirmaufnahmen ausgeblendet, solange es geöffnet ist.",
   "private_media_general_capture_limit": "Ein anderes Gerät oder eine Kamera kann den Bildschirm weiterhin fotografieren",
   "private_media_sheet_title_photo": "Wie soll {name} dieses Foto sehen?",
   "@private_media_sheet_title_photo": {"placeholders": {"name": {"type": "String"}}},

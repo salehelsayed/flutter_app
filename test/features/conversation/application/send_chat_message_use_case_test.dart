@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:ui' show VoidCallback;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -425,30 +424,18 @@ class DurableLanFakeP2PService extends FakeP2PService
 
   DurableLanFakeP2PService({
     this.localSendAck = LanSendAck.committed,
-    NodeState? currentState,
-    bool sendMessageResult = true,
-    String? sendMessageReply = 'received: ok',
-    bool? sendMessageAcked,
-    String? sendMessageTransport,
-    bool shouldThrow = false,
-    bool storeInInboxResult = false,
-    RelayProbeResult probeRelayResult = RelayProbeResult.error,
-    DiscoveredPeer? discoverPeerResult,
-    bool useNullDiscover = false,
-    bool dialPeerResult = true,
-  }) : super(
-         currentState: currentState,
-         sendMessageResult: sendMessageResult,
-         sendMessageReply: sendMessageReply,
-         sendMessageAcked: sendMessageAcked,
-         sendMessageTransport: sendMessageTransport,
-         shouldThrow: shouldThrow,
-         storeInInboxResult: storeInInboxResult,
-         probeRelayResult: probeRelayResult,
-         discoverPeerResult: discoverPeerResult,
-         useNullDiscover: useNullDiscover,
-         dialPeerResult: dialPeerResult,
-       );
+    super.currentState,
+    super.sendMessageResult,
+    super.sendMessageReply,
+    super.sendMessageAcked,
+    super.sendMessageTransport,
+    super.shouldThrow,
+    super.storeInInboxResult,
+    super.probeRelayResult,
+    super.discoverPeerResult,
+    super.useNullDiscover,
+    super.dialPeerResult,
+  });
 
   @override
   Future<LanSendAck> sendLocalMessageDurable(

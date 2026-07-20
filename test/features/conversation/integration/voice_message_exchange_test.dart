@@ -5,6 +5,7 @@
 ///   Alice records voice → sends with audio MediaAttachment → Bob receives & persists
 ///
 /// Uses the same TestUser / FakeP2PNetwork infrastructure as text message tests.
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';

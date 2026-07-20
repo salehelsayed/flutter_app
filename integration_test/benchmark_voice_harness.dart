@@ -4,11 +4,9 @@
 /// Invoked via the shared benchmark dispatcher (benchmarkKey: VOICE).
 library;
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
@@ -17,11 +15,6 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 import '../test/shared/fakes/in_memory_message_repository.dart';
 
 import 'benchmark_helpers.dart';
-
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
 
 Future<void> runVoiceBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {

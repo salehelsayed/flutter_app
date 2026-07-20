@@ -11,6 +11,10 @@ Future<void> Function(GroupPendingBroadcast broadcast)? _enqueueSink;
 Future<int> Function(String groupId)? _drainForGroupSink;
 Future<int> Function()? _drainAllSink;
 Future<int> Function(String groupId)? _countForGroupSink;
+Future<List<GroupPendingBroadcast>> Function(String groupId)? _loadForGroupSink;
+Future<void> Function(String id)? _removeSink;
+Future<void> Function(String groupId)? _discardForGroupSink;
+final Set<String> _rolePreparationsInFlight = <String>{};
 
 void setGroupPendingBroadcastEnqueueSink(
   Future<void> Function(GroupPendingBroadcast broadcast)? sink,
@@ -28,11 +32,38 @@ void setGroupPendingBroadcastCountSink(
   Future<int> Function(String groupId)? sink,
 ) => _countForGroupSink = sink;
 
+void setGroupPendingBroadcastAccessSinks({
+  Future<List<GroupPendingBroadcast>> Function(String groupId)? loadForGroup,
+  Future<void> Function(String id)? remove,
+  Future<void> Function(String groupId)? discardForGroup,
+}) {
+  _loadForGroupSink = loadForGroup;
+  _removeSink = remove;
+  _discardForGroupSink = discardForGroup;
+}
+
 /// Whether a durable-enqueue path is wired. The metadata-edit producer uses
 /// this to choose keep-and-retry over the (S2a) revert fallback.
 bool get hasGroupPendingBroadcastEnqueueSink => _enqueueSink != null;
 
-Future<void> enqueueGroupPendingBroadcast(GroupPendingBroadcast broadcast) async {
+/// Prevents a concurrent queue drain from treating a prepared role row as
+/// stale during the narrow prepare-before-commit window. Process death clears
+/// this memory marker; the durable prepared row then resolves from local role
+/// state on the next drain.
+void markGroupRolePreparationInFlight(String broadcastId) {
+  _rolePreparationsInFlight.add(broadcastId);
+}
+
+void clearGroupRolePreparationInFlight(String broadcastId) {
+  _rolePreparationsInFlight.remove(broadcastId);
+}
+
+bool isGroupRolePreparationInFlight(String broadcastId) =>
+    _rolePreparationsInFlight.contains(broadcastId);
+
+Future<void> enqueueGroupPendingBroadcast(
+  GroupPendingBroadcast broadcast,
+) async {
   final sink = _enqueueSink;
   if (sink == null) return;
   await sink(broadcast);
@@ -52,6 +83,14 @@ Future<void> triggerGroupPendingBroadcastDrainForGroup(String groupId) async {
       details: {'scope': 'group', 'error': e.toString()},
     );
   }
+}
+
+/// Awaits a user-requested retry and exposes the runner's result. Callers must
+/// still re-read the exact durable row; a drain count is not an unlock signal.
+Future<int> drainGroupPendingBroadcastsForGroup(String groupId) async {
+  final sink = _drainForGroupSink;
+  if (sink == null) return 0;
+  return sink(groupId);
 }
 
 /// Fire-and-forget drain across all groups (e.g. on app resume). Never throws.
@@ -75,4 +114,26 @@ Future<int> groupPendingBroadcastCount(String groupId) async {
   final sink = _countForGroupSink;
   if (sink == null) return 0;
   return sink(groupId);
+}
+
+Future<List<GroupPendingBroadcast>> loadGroupPendingBroadcasts(
+  String groupId,
+) async {
+  final sink = _loadForGroupSink;
+  if (sink == null) return const <GroupPendingBroadcast>[];
+  return sink(groupId);
+}
+
+/// Clears one exact broadcast after its signed distribution completes.
+Future<void> removeGroupPendingBroadcast(String id) async {
+  final sink = _removeSink;
+  if (sink == null) return;
+  await sink(id);
+}
+
+/// Clears only the committed target group's obsolete queue rows.
+Future<void> discardGroupPendingBroadcasts(String groupId) async {
+  final sink = _discardForGroupSink;
+  if (sink == null) return;
+  await sink(groupId);
 }

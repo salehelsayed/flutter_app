@@ -1,6 +1,6 @@
 # 261 - Orbit Sole-Admin Group Exit Guidance
 
-Status: execution-ready
+Status: implemented
 Type: Feature Improvement
 Spec: `Test-Flight-Improv/orbit-sole-admin-leave-ux-mockup-codex.html`
 Classification: implementation-ready
@@ -246,24 +246,26 @@ Pass interpretation: every closure command exits `0`; the scoped loop proves eac
 - Environment blocker: none expected. The plan reuses existing protocol/storage mechanisms and changes no wire/native/relay/device boundary.
 - Scope drift: a new schema/retry framework, universal exit/cleanup coordinator, temporary dissolve-only UI, redefinition of existing-admin policy, Group Info/stuck-rejoin UX replacement beyond snackbar parity, or inability to distinguish native commit from local cleanup requires plan amendment.
 
-- [ ] TC-01 through TC-03 and TC-05 through TC-15 record causal RED, focused GREEN, and a representative mutation re-red; TC-04 and TC-16 sentinels remain GREEN.
-- [ ] Active Orbit groups say Leave and dissolved groups say Delete with localized button semantics and correct exclusive callbacks.
-- [ ] A sole admin's first swipe-Leave opens localized recovery with zero generic destructive confirmation, bridge leave, or purge.
-- [ ] An archived row passed every active callback exposes and invokes only Unarchive; friend/introduction actions remain unchanged.
-- [ ] Only a currently confirmed-joined new successor can be promoted.
-- [ ] Continue requires completed signed distribution; a queued role transition round-trips with its exact signed event and non-empty recipients, and remains blocked across re-entry until that exact durable row is absent.
-- [ ] Promotion signing/stale failure performs zero role, config, watermark, publish, or leave writes; pending Retry drains rather than promotes again.
-- [ ] Promotion cannot pass on command presence or `{ok:false}`; voluntary leave permits live `{ok:false}` only after required signed inbox replay succeeds, while inbox failure performs zero native leave.
-- [ ] Active-exit prework/definite native rejection preserves local state and the complete retained key window.
-- [ ] Native timeout reports an uncertain, non-destructive outcome with no automatic rollback, purge, publish, or leave retry.
-- [ ] Post-native cleanup failure is reported as already-left and never triggers an in-session second publish/leave; crash-after-commit ambiguity is recorded, not falsely signed off.
-- [ ] Shared active leave, committed Orbit dissolve, and strict local deletion remove obsolete target pending rows; refusal/failure before commit preserves them, with no global claim over legacy bare/remote exits.
-- [ ] Dissolve preserves read-only history; strict local deletion never leaves and clears rejoin state.
-- [ ] Existing peer-admin policy, Group Info UX, stuck-rejoin transport behavior, other groups, and 1:1 messages remain unchanged; Orbit stuck-row failure now matches Group List's existing localized snackbar.
-- [ ] en/ar/de, generated getter comparisons, RTL, 200% text, semantics, focusability, and back behavior pass without an exact focus-order contract.
-- [ ] All four headline files occur exactly once in `GROUP_TESTS`; completeness, groups, and feature discovery pass for their distinct purposes.
-- [ ] No migration, wire-format, native, relay, device-proof, second retry store, or general exit coordinator was introduced.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean; the incremental graph refresh completes after implementation.
+- [x] TC-01 through TC-03 and TC-05 through TC-15 record causal RED, focused GREEN, and a representative mutation re-red; TC-04 and TC-16 sentinels remain GREEN.
+- [x] Active Orbit groups say Leave and dissolved groups say Delete with localized button semantics and correct exclusive callbacks.
+- [x] A sole admin's first swipe-Leave opens localized recovery with zero generic destructive confirmation, bridge leave, or purge.
+- [x] An archived row passed every active callback exposes and invokes only Unarchive; friend/introduction actions remain unchanged.
+- [x] Only a currently confirmed-joined new successor can be promoted.
+- [x] Continue requires completed signed distribution; a queued role transition round-trips with its exact signed event and non-empty recipients, and remains blocked across re-entry until that exact durable row is absent.
+- [x] Promotion signing/stale failure performs zero role, config, watermark, publish, or leave writes; pending Retry drains rather than promotes again.
+- [x] Promotion cannot pass on command presence or `{ok:false}`; voluntary leave permits live `{ok:false}` only after required signed inbox replay succeeds, while inbox failure performs zero native leave.
+- [x] Active-exit prework/definite native rejection preserves local state and the complete retained key window.
+- [x] Native timeout reports an uncertain, non-destructive outcome with no automatic rollback, purge, publish, or leave retry.
+- [x] Post-native cleanup failure is reported as already-left and never triggers an in-session second publish/leave; crash-after-commit ambiguity is recorded, not falsely signed off.
+- [x] Shared active leave, committed Orbit dissolve, and strict local deletion remove obsolete target pending rows; refusal/failure before commit preserves them, with no global claim over legacy bare/remote exits.
+- [x] Dissolve preserves read-only history; strict local deletion never leaves and clears rejoin state.
+- [x] Existing peer-admin policy, Group Info UX, stuck-rejoin transport behavior, other groups, and 1:1 messages remain unchanged; Orbit stuck-row failure now matches Group List's existing localized snackbar.
+- [x] en/ar/de, generated getter comparisons, RTL, 200% text, semantics, focusability, and back behavior pass without an exact focus-order contract.
+- [x] All four headline files occur exactly once in `GROUP_TESTS`; completeness, groups, and feature discovery pass for their distinct purposes.
+- [x] No migration, wire-format, native, relay, device-proof, second retry store, or general exit coordinator was introduced.
+- [x] `flutter analyze` has no new issues.
+- [ ] Repository-wide `git diff --check` is clean. Plan 261's scoped diff is clean; 21 unrelated dirty UI lines still contain trailing whitespace and were preserved.
+- [x] The incremental graph refresh completes after implementation.
 
 ## Handoff
 
@@ -277,4 +279,6 @@ Pass interpretation: every closure command exits `0`; the scoped loop proves eac
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting implementation authorization | contract extraction |
+| 2026-07-19 22:43 CEST | implementation | Groups/Orbit exit policy, signed promotion + pending-broadcast lifecycle, shared active leave, strict dissolved delete, recovery UI, l10n, wiring, gates, and causal tests | Focused suites: 205 passed; queue/actions: 31 passed; localization: 8 passed; preservation suites and representative mutation restored GREEN | Active/dissolved/archive action exclusivity, successor evidence, exact durable promotion retry, leave-stage outcomes, target cleanup, and recovery UX are covered | none | run closure gates |
+| 2026-07-19 22:46 CEST | closure | Plan 261 production/tests plus curated gate registration | `groups`: 2,293 Flutter tests plus bridge/node/relay legs passed; `feature-host-all`: 8,190 passed, 1 skipped across 803 paths; completeness 1,315/1,315; full analyzer clean | Four headline paths each occur exactly once; Graphify affected audit completed; Plan-scoped `git diff --check` is clean | Repository-wide `git diff --check` still reports 21 trailing-whitespace findings confined to unrelated dirty UI files; preserved rather than rewriting concurrent user work | refresh the architecture graph once |
+| 2026-07-19 22:48 CEST | graph closure | `graphify-arch/graphify-out/graph.json`; `graphify-arch/tdd-overlay.json` | `./graphify-arch/refresh_arch_graph.sh --incremental` passed: 20 changed code files, 2,793 unchanged, 0 deleted | Architecture graph now has 57,124 nodes / 88,481 edges; TDD overlay has 1,416 files / 13,674 named tests / 1,043 production targets | no Plan 261 blocker; unrelated repository-wide whitespace exception remains recorded above | handoff |

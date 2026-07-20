@@ -99,7 +99,7 @@ Future<ResendGroupInviteResult> resendGroupInvite({
     senderPeerId: identity.peerId,
     senderPublicKey: identity.publicKey,
     senderPrivateKey: identity.privateKey,
-    senderUsername: identity.username ?? '',
+    senderUsername: identity.username,
     groupId: groupId,
     groupKey: keyInfo.encryptedKey,
     keyEpoch: keyInfo.keyGeneration,

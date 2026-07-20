@@ -32,8 +32,8 @@ class _IdentityProgressScreenState extends State<IdentityProgressScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async => false,
+    return PopScope(
+      canPop: false,
       child: SizedBox.expand(
         key: const ValueKey('identity-progress-screen'),
         child: Material(

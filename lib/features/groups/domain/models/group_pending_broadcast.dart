@@ -1,5 +1,13 @@
 import 'dart:convert';
 
+const groupPendingBroadcastKindMemberRoleUpdated = 'member_role_updated';
+const groupPendingBroadcastKindMemberRolePrepared =
+    'member_role_updated_prepared';
+
+bool isPendingGroupMemberRoleBroadcastKind(String kind) =>
+    kind == groupPendingBroadcastKindMemberRoleUpdated ||
+    kind == groupPendingBroadcastKindMemberRolePrepared;
+
 /// A group system broadcast (e.g. a `group_metadata_updated` edit) that was
 /// persisted locally but failed to leave the device. Retained durably so it can
 /// be re-pushed on the next rejoin/foreground instead of being lost or silently

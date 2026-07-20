@@ -214,7 +214,7 @@ class MigrationFileManifestBuilder {
           'absolutePath': sourceFile.path,
           'absolutePathKind': _pathKind(sourceFile.path),
           'fileExists': false,
-          if (expectedSize != null) 'expectedSizeBytes': expectedSize,
+          'expectedSizeBytes': ?expectedSize,
         },
       );
     }

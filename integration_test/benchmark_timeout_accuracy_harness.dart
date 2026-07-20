@@ -98,7 +98,9 @@ Future<void> runTimeoutAccuracyBenchmark(WidgetTester tester) async {
         peerId: '12D3KooWTimeoutHarnessRelayProbe000000000000',
       );
       fail('callP2PRelayProbe should time out when the bridge never responds');
-    } on TimeoutException {}
+    } on TimeoutException {
+      // Expected: the probe wrapper timed out.
+    }
     sw.stop();
     results['relay_probe'] = _TimeoutResult(
       configured: 5000,
@@ -114,7 +116,9 @@ Future<void> runTimeoutAccuracyBenchmark(WidgetTester tester) async {
     try {
       await Completer<void>().future.timeout(const Duration(seconds: 2));
       fail('The generic timeout wrapper should time out');
-    } on TimeoutException {}
+    } on TimeoutException {
+      // Expected: the generic wrapper timed out.
+    }
     sw.stop();
     results['foreground_wrapper'] = _TimeoutResult(
       configured: 2000,

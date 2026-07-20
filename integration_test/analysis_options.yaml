@@ -1,0 +1,6 @@
+# Integration-test harnesses log via print by design (device/CI log capture).
+include: ../analysis_options.yaml
+
+linter:
+  rules:
+    avoid_print: false

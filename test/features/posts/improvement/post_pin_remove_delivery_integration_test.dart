@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -6,7 +5,6 @@ import 'package:flutter_app/features/posts/application/load_pinned_posts_use_cas
 import 'package:flutter_app/features/posts/application/pin_post_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
 import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart';
-import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';

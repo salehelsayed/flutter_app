@@ -1,5 +1,4 @@
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../shared/fakes/in_memory_contact_repository.dart';

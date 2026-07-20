@@ -2,6 +2,7 @@
 ///
 /// Tests the wire format, routing, and detection logic for profile updates.
 /// Actual file I/O is not tested (path_provider unavailable in unit tests).
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -17,7 +18,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
@@ -69,21 +69,6 @@ class _MockBridge extends Bridge {
     return jsonEncode(nextResponse);
   }
 
-  @override
-  void Function(ChatMessage)? onMessageReceived;
-  @override
-  void Function(ConnectionState)? onPeerConnected;
-  @override
-  void Function(ConnectionState)? onPeerDisconnected;
-  @override
-  void Function(List<String> listenAddresses, List<String> circuitAddresses)?
-  onAddressesUpdated;
-  @override
-  void Function(Map<String, dynamic>)? onRelayStateChanged;
-  @override
-  void Function(Map<String, dynamic>)? onGroupMessageReceived;
-  @override
-  void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
 
 class _FakeIdentityRepository implements IdentityRepository {

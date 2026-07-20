@@ -107,6 +107,7 @@ void main() {
         onCreateGroup: (_) {},
         onArchiveGroup: (_) {},
         onUnarchiveGroup: (_) {},
+        onLeaveGroup: (_) {},
         onDeleteGroup: (_) {},
       ),
     );

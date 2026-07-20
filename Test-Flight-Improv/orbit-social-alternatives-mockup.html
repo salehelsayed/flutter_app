@@ -1,0 +1,3254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Orbit Social Layer — Interactive UI Alternatives</title>
+  <style>
+    /*
+      Grounded in the current app-owned Orbit surface:
+      - 320px visualization canvas; self at center; 5 inner + 8 outer seats
+      - dashed teal / violet rings and expandable overflow arcs
+      - top-left view toggle, top-right connection state + create control
+      - cosmic mirrored background and glass Feed / Orbit navigation
+
+      This is a standalone design exploration. It intentionally uses no remote
+      fonts, scripts, images, or runtime dependencies.
+    */
+    :root {
+      --page: #080a0f;
+      --panel: #0f1219;
+      --panel-2: #141823;
+      --line: rgba(255, 255, 255, .085);
+      --line-strong: rgba(255, 255, 255, .16);
+      --ink: #f5f7fb;
+      --muted: #9ba4b4;
+      --faint: #7c8699;
+      --green: #1ed760;
+      --teal: #81e6d9;
+      --violet: #a78bfa;
+      --rose: #f472b6;
+      --orange: #ff8a65;
+      --display: "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
+      --body: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 82% 8%, rgba(96, 69, 182, .10), transparent 28rem),
+        radial-gradient(circle at 12% 76%, rgba(29, 185, 84, .06), transparent 30rem),
+        var(--page);
+      color: var(--ink);
+      font-family: var(--body);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, textarea { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 3px;
+    }
+    svg { display: block; }
+    .icon {
+      width: 1em;
+      height: 1em;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    .site {
+      width: min(1480px, 100%);
+      margin: 0 auto;
+      padding: 48px clamp(18px, 4vw, 58px) 72px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding-bottom: 30px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 840px;
+      margin: 0;
+      font-family: var(--display);
+      font-size: clamp(34px, 5vw, 66px);
+      font-weight: 650;
+      letter-spacing: -.052em;
+      line-height: .98;
+    }
+    .hero-copy {
+      max-width: 760px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .hero-copy strong { color: var(--ink); font-weight: 600; }
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      justify-content: flex-end;
+    }
+    .lab-btn {
+      min-height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      padding: 0 14px;
+      background: rgba(255, 255, 255, .035);
+      color: var(--ink);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12px;
+      font-weight: 650;
+      transition: border-color .2s, background .2s, transform .2s;
+    }
+    .lab-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(129, 230, 217, .35);
+      background: rgba(129, 230, 217, .055);
+    }
+    .lab-btn.is-on {
+      border-color: rgba(30, 215, 96, .42);
+      background: rgba(30, 215, 96, .09);
+      color: #c9f7d8;
+    }
+    .lab-btn .icon { font-size: 16px; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(230px, 290px) minmax(430px, 1fr) minmax(230px, 300px);
+      gap: clamp(22px, 3vw, 44px);
+      align-items: start;
+      padding-top: 38px;
+    }
+    .workspace[hidden], .compare[hidden] { display: none; }
+
+    .concept-nav, .design-notes {
+      position: sticky;
+      top: 22px;
+    }
+    .rail-label, .note-label {
+      margin: 0 0 12px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    .concept-list {
+      display: grid;
+      gap: 8px;
+    }
+    .concept-choice {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 17px;
+      padding: 14px;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 11px;
+      transition: background .24s, border-color .24s, transform .24s;
+    }
+    .concept-choice:hover {
+      background: rgba(255, 255, 255, .025);
+      transform: translateX(2px);
+    }
+    .concept-choice.is-active {
+      border-color: rgba(129, 230, 217, .22);
+      background:
+        linear-gradient(135deg, rgba(129, 230, 217, .08), rgba(167, 139, 250, .035));
+    }
+    .concept-no {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding-top: 3px;
+    }
+    .concept-choice.is-active .concept-no { color: var(--teal); }
+    .concept-name {
+      display: block;
+      font-family: var(--display);
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -.015em;
+    }
+    .concept-sub {
+      display: block;
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .concept-tag {
+      display: inline-flex;
+      margin-top: 8px;
+      border: 1px solid rgba(30, 215, 96, .25);
+      border-radius: 999px;
+      padding: 3px 7px;
+      color: #8ce7aa;
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .rail-context {
+      margin-top: 22px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .018);
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+    .rail-context strong { color: var(--ink); font-weight: 600; }
+
+    .stage-column {
+      min-width: 0;
+      display: grid;
+      place-items: start center;
+    }
+    .stage-kicker {
+      width: min(460px, 100%);
+      margin: 0 0 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .live-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #8ce7aa;
+    }
+    .live-dot::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(30, 215, 96, .10);
+      animation: livePulse 2.4s ease-in-out infinite;
+    }
+    @keyframes livePulse {
+      50% { box-shadow: 0 0 0 8px rgba(30, 215, 96, 0); }
+    }
+
+    .device-frame {
+      position: relative;
+      width: 418px;
+      height: 876px;
+      padding: 13px;
+      border: 1px solid rgba(255, 255, 255, .12);
+      border-radius: 57px;
+      background: linear-gradient(145deg, #282d38, #0d0f14 44%, #262b35);
+      box-shadow:
+        0 45px 100px rgba(0, 0, 0, .52),
+        inset 0 1px 1px rgba(255, 255, 255, .18),
+        0 0 0 1px rgba(0, 0, 0, .7);
+    }
+    .device-frame::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border: 1px solid rgba(255, 255, 255, .05);
+      border-radius: 52px;
+      pointer-events: none;
+    }
+    .phone {
+      --p-bg: #02030a;
+      --p-bg-mid: #050714;
+      --p-raised: rgba(17, 21, 31, .88);
+      --p-subtle: rgba(255, 255, 255, .055);
+      --p-surface: rgba(9, 12, 20, .72);
+      --p-surface-solid: #10141e;
+      --p-line: rgba(255, 255, 255, .12);
+      --p-line-soft: rgba(255, 255, 255, .075);
+      --p-ink: #f7f8fb;
+      --p-muted: #a7afbd;
+      --p-faint: #8791a3;
+      --p-green: #1ed760;
+      --p-teal: #81e6d9;
+      --p-violet: #a78bfa;
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border-radius: 45px;
+      color: var(--p-ink);
+      background:
+        radial-gradient(110% 74% at 16% 94%, #0a1825 0, transparent 52%),
+        radial-gradient(95% 62% at 89% 7%, #191b3a 0, transparent 58%),
+        linear-gradient(145deg, var(--p-bg), var(--p-bg-mid) 55%, var(--p-bg));
+      font-family: var(--body);
+      isolation: isolate;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .phone[data-theme="light"] {
+      --p-bg: #ece8e1;
+      --p-bg-mid: #f6f3ed;
+      --p-raised: rgba(250, 248, 243, .90);
+      --p-subtle: rgba(37, 34, 43, .055);
+      --p-surface: rgba(250, 248, 243, .72);
+      --p-surface-solid: #faf8f3;
+      --p-line: rgba(37, 34, 43, .16);
+      --p-line-soft: rgba(37, 34, 43, .085);
+      --p-ink: #25222b;
+      --p-muted: #67616d;
+      --p-faint: #6c6571;
+      --p-green: #236143;
+      --p-teal: #19756d;
+      --p-violet: #6045b6;
+      background:
+        radial-gradient(90% 74% at 13% 94%, rgba(90, 170, 158, .20), transparent 58%),
+        radial-gradient(95% 68% at 90% 5%, rgba(96, 69, 182, .19), transparent 58%),
+        linear-gradient(145deg, var(--p-bg-mid), var(--p-bg));
+    }
+    .phone::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 80;
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: inherit;
+      pointer-events: none;
+    }
+    .island {
+      position: absolute;
+      z-index: 70;
+      top: 11px;
+      left: 50%;
+      width: 112px;
+      height: 31px;
+      border-radius: 18px;
+      transform: translateX(-50%);
+      background: #000;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .035);
+    }
+    .phone[data-theme="light"] .island { background: #09090b; }
+    .stars { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+    .star {
+      position: absolute;
+      width: var(--s);
+      height: var(--s);
+      border-radius: 50%;
+      background: #fff;
+      opacity: var(--o);
+      animation: starTwinkle var(--d) ease-in-out var(--delay) infinite alternate;
+    }
+    .phone[data-theme="light"] .star { opacity: calc(var(--o) * .20); background: #6045b6; }
+    @keyframes starTwinkle { to { opacity: .12; transform: scale(.72); } }
+    .ambient-bloom {
+      position: absolute;
+      z-index: -1;
+      border-radius: 50%;
+      filter: blur(1px);
+      pointer-events: none;
+      animation: bloomDrift 14s ease-in-out infinite alternate;
+    }
+    .ambient-bloom.one {
+      width: 280px;
+      height: 280px;
+      top: -90px;
+      right: -115px;
+      background: radial-gradient(circle, rgba(129, 140, 248, .16), transparent 67%);
+    }
+    .ambient-bloom.two {
+      width: 310px;
+      height: 310px;
+      bottom: -118px;
+      left: -130px;
+      background: radial-gradient(circle, rgba(129, 230, 217, .13), transparent 68%);
+      animation-delay: -7s;
+    }
+    @keyframes bloomDrift { to { transform: translate(18px, 13px) scale(1.06); } }
+
+    .statusbar {
+      position: absolute;
+      z-index: 60;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 50px;
+      padding: 15px 25px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--p-ink);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .01em;
+    }
+    .status-icons { display: flex; align-items: center; gap: 6px; }
+    .cell-bars { display: flex; align-items: end; gap: 2px; height: 12px; }
+    .cell-bars i { display: block; width: 3px; border-radius: 3px; background: currentColor; }
+    .cell-bars i:nth-child(1) { height: 4px; }
+    .cell-bars i:nth-child(2) { height: 7px; }
+    .cell-bars i:nth-child(3) { height: 10px; }
+    .wifi-mark {
+      width: 14px;
+      height: 10px;
+      border-top: 2px solid currentColor;
+      border-radius: 50% 50% 0 0;
+      position: relative;
+    }
+    .wifi-mark::after {
+      content: "";
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      left: 5px;
+      bottom: 0;
+    }
+    .battery {
+      width: 19px;
+      height: 9px;
+      border: 1.4px solid currentColor;
+      border-radius: 2px;
+      padding: 1.5px;
+      position: relative;
+    }
+    .battery::after {
+      content: "";
+      position: absolute;
+      right: -3px;
+      top: 2px;
+      width: 2px;
+      height: 4px;
+      border-radius: 0 1px 1px 0;
+      background: currentColor;
+    }
+    .battery i { display: block; width: 75%; height: 100%; border-radius: 1px; background: currentColor; }
+
+    .top-chrome {
+      position: absolute;
+      z-index: 45;
+      top: 55px;
+      left: 15px;
+      right: 15px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chrome-circle {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      flex: none;
+      border: 1px solid var(--p-line);
+      border-radius: 50%;
+      background: var(--p-surface);
+      color: var(--p-ink);
+      backdrop-filter: blur(16px);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: transform .18s, background .18s;
+    }
+    .chrome-circle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .chrome-circle:hover { transform: scale(1.04); background: var(--p-raised); }
+    .chrome-circle .icon { font-size: 19px; }
+    .connection {
+      height: 35px;
+      margin-left: auto;
+      padding: 0 11px;
+      border: 1px solid color-mix(in srgb, var(--p-green) 38%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--p-green) 10%, transparent);
+      color: var(--p-green);
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      backdrop-filter: blur(12px);
+    }
+    .connection::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .create {
+      border-color: color-mix(in srgb, var(--p-violet) 60%, transparent);
+      background: color-mix(in srgb, var(--p-violet) 24%, transparent);
+      box-shadow: 0 0 18px color-mix(in srgb, var(--p-violet) 28%, transparent);
+      color: var(--p-ink);
+    }
+
+    .surface-switch {
+      position: absolute;
+      z-index: 44;
+      top: 108px;
+      left: 50%;
+      height: 34px;
+      padding: 3px;
+      border: 1px solid var(--p-line);
+      border-radius: 18px;
+      background: var(--p-surface);
+      backdrop-filter: blur(18px);
+      transform: translateX(-50%);
+      display: flex;
+      gap: 2px;
+      box-shadow: 0 7px 20px rgba(0, 0, 0, .10);
+    }
+    .surface-switch button {
+      position: relative;
+      min-width: 84px;
+      height: 26px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 11px;
+      background: transparent;
+      color: var(--p-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .03em;
+      transition: color .2s, background .2s;
+    }
+    .surface-switch button::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 48px;
+      transform: translateY(-50%);
+    }
+    .surface-switch button.is-active {
+      background: color-mix(in srgb, var(--p-ink) 12%, transparent);
+      color: var(--p-ink);
+    }
+    .surface-switch .tiny-orbit {
+      width: 11px;
+      height: 11px;
+      border: 1px dashed currentColor;
+      border-radius: 50%;
+      position: relative;
+    }
+    .surface-switch .tiny-orbit::after {
+      content: "";
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      left: 3px;
+      top: 3px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .concept-surface {
+      position: absolute;
+      z-index: 10;
+      inset: 145px 0 36px;
+      overflow: hidden;
+    }
+
+    .bottom-nav {
+      position: absolute;
+      z-index: 50;
+      left: 50%;
+      bottom: 20px;
+      height: 55px;
+      padding: 5px 6px;
+      border: 1px solid var(--p-line);
+      border-radius: 30px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--p-ink) 15%, transparent), var(--p-surface));
+      backdrop-filter: blur(28px);
+      transform: translateX(-50%);
+      display: flex;
+      gap: 4px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+    }
+    .nav-item {
+      width: 72px;
+      border: 0;
+      border-radius: 20px;
+      background: transparent;
+      color: var(--p-muted);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 2px;
+      font-size: 9px;
+      font-weight: 650;
+    }
+    .nav-item .icon { font-size: 17px; }
+    .nav-item.is-active {
+      background: color-mix(in srgb, var(--p-ink) 12%, transparent);
+      color: var(--p-ink);
+    }
+    .home-indicator {
+      position: absolute;
+      z-index: 55;
+      bottom: 7px;
+      left: 50%;
+      width: 124px;
+      height: 4px;
+      border-radius: 3px;
+      background: var(--p-ink);
+      opacity: .75;
+      transform: translateX(-50%);
+    }
+
+    /* Baseline People orbit */
+    .people-baseline {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    .people-caption {
+      position: absolute;
+      top: 14px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .baseline-canvas {
+      position: relative;
+      width: 310px;
+      height: 310px;
+      transform: translateY(5px);
+    }
+    .orbit-ring {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .orbit-ring.inner {
+      width: 130px;
+      height: 130px;
+      border: 1.5px dashed color-mix(in srgb, var(--p-teal) 34%, transparent);
+      box-shadow: 0 0 14px color-mix(in srgb, var(--p-teal) 8%, transparent);
+    }
+    .orbit-ring.outer {
+      width: 230px;
+      height: 230px;
+      border: 1.5px dashed color-mix(in srgb, var(--p-violet) 30%, transparent);
+      box-shadow: 0 0 16px color-mix(in srgb, var(--p-violet) 7%, transparent);
+    }
+    .avatar, .node-avatar {
+      --av-a: #6d8bf1;
+      --av-b: #6945a8;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 26%, rgba(255, 255, 255, .42), transparent 18%),
+        linear-gradient(145deg, var(--av-a), var(--av-b));
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--av-a) 70%, white 10%);
+    }
+    .baseline-node {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      margin: -24px 0 0 -24px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+    .baseline-node .avatar { width: var(--node-size); height: var(--node-size); }
+    .baseline-node.self .avatar {
+      width: 48px;
+      height: 48px;
+      box-shadow:
+        0 0 0 2px var(--p-green),
+        0 0 20px color-mix(in srgb, var(--p-green) 42%, transparent);
+    }
+    .baseline-node .unread {
+      position: absolute;
+      right: 3px;
+      top: 2px;
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--p-bg-mid);
+      border-radius: 50%;
+      background: #ff4d67;
+    }
+    .overflow-node {
+      position: absolute;
+      left: 33px;
+      top: 60px;
+      width: 33px;
+      height: 33px;
+      border: 1px dashed var(--p-line);
+      border-radius: 50%;
+      background: var(--p-surface);
+      color: var(--p-muted);
+      display: grid;
+      place-items: center;
+      font-size: 9px;
+      font-weight: 750;
+      backdrop-filter: blur(10px);
+    }
+    .people-find {
+      position: absolute;
+      right: 16px;
+      bottom: 7px;
+      width: 48px;
+      height: 48px;
+      border: 1px solid var(--p-line);
+      border-radius: 50%;
+      background: var(--p-surface);
+      color: var(--p-ink);
+      display: grid;
+      place-items: center;
+      backdrop-filter: blur(16px);
+    }
+
+    /* Shared social surface controls */
+    .feed-filter {
+      height: 48px;
+      padding: 0 17px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .feed-filter button {
+      position: relative;
+      height: 28px;
+      border: 1px solid var(--p-line-soft);
+      border-radius: 14px;
+      padding: 0 10px;
+      background: var(--p-surface);
+      color: var(--p-faint);
+      cursor: pointer;
+      font-size: 9px;
+      font-weight: 700;
+      backdrop-filter: blur(12px);
+    }
+    .feed-filter button::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 48px;
+      transform: translateY(-50%);
+    }
+    .feed-filter button.is-active {
+      border-color: color-mix(in srgb, var(--p-green) 38%, transparent);
+      background: color-mix(in srgb, var(--p-green) 10%, transparent);
+      color: var(--p-green);
+    }
+    .surface-title {
+      margin-left: auto;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    /* Alternative 1: Orbit Stream */
+    .stream-scroll {
+      position: absolute;
+      inset: 49px 0 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: none;
+      padding: 13px 18px 70px 23px;
+    }
+    .stream-scroll::-webkit-scrollbar { display: none; }
+    .trajectory {
+      position: absolute;
+      z-index: -1;
+      left: 13px;
+      top: 0;
+      width: 75px;
+      height: 1000px;
+      overflow: visible;
+      opacity: .78;
+      pointer-events: none;
+    }
+    .trajectory path {
+      fill: none;
+      stroke: color-mix(in srgb, var(--p-teal) 40%, transparent);
+      stroke-width: 1.2;
+      stroke-dasharray: 7 6;
+    }
+    .now-marker {
+      margin: 0 0 17px 56px;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .trail-post {
+      position: relative;
+      min-height: 132px;
+      margin: 0 0 23px;
+      padding-left: 55px;
+      animation: postArrive .48s cubic-bezier(.2, .9, .2, 1) both;
+      animation-delay: calc(var(--i) * 70ms);
+    }
+    @keyframes postArrive {
+      from { opacity: 0; transform: translateY(12px); }
+    }
+    .trail-anchor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 45px;
+      height: 45px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+    .trail-anchor::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1px dashed color-mix(in srgb, var(--p-teal) 52%, transparent);
+      border-radius: 50%;
+      animation: slowSpin 18s linear infinite;
+    }
+    @keyframes slowSpin { to { transform: rotate(360deg); } }
+    .trail-anchor .avatar { width: 35px; height: 35px; }
+    .trail-body {
+      position: relative;
+      padding: 1px 2px 14px 0;
+    }
+    .trail-body::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 4px;
+      bottom: 0;
+      height: 12px;
+      border-bottom: 1px solid var(--p-line-soft);
+      border-radius: 0 0 80% 40%;
+      opacity: .9;
+      pointer-events: none;
+    }
+    .post-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      min-width: 0;
+    }
+    .post-author {
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: -.01em;
+    }
+    .post-time { color: var(--p-faint); font-size: 9px; }
+    .post-scope {
+      margin-left: auto;
+      color: var(--p-green);
+      font-size: 8px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .post-copy {
+      margin: 7px 0 10px;
+      color: var(--p-ink);
+      font-size: 12.2px;
+      line-height: 1.48;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .media-swatch {
+      position: relative;
+      display: block;
+      width: 100%;
+      height: 84px;
+      margin: 9px 0 10px;
+      border: 0;
+      overflow: hidden;
+      border-radius: 7px 29px 29px 22px;
+      background:
+        radial-gradient(circle at 72% 26%, rgba(255, 242, 178, .9) 0 7px, transparent 8px),
+        linear-gradient(164deg, transparent 0 43%, rgba(25, 59, 66, .88) 44% 55%, transparent 56%),
+        linear-gradient(194deg, transparent 0 55%, rgba(15, 37, 50, .92) 56% 70%, transparent 71%),
+        linear-gradient(180deg, #a978b5, #eb9a7e 42%, #466c78 43%, #102631);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10);
+      cursor: pointer;
+    }
+    .media-swatch::after {
+      content: "RIVER · 19:42";
+      position: absolute;
+      right: 8px;
+      bottom: 7px;
+      padding: 3px 6px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, .45);
+      color: #fff;
+      font-family: var(--mono);
+      font-size: 6.5px;
+      letter-spacing: .1em;
+    }
+    .post-actions {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .post-actions button {
+      position: relative;
+      min-width: 48px;
+      height: 40px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 8px;
+      background: transparent;
+      color: var(--p-faint);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 8px;
+      transition: color .18s, background .18s, transform .18s;
+    }
+    .post-actions button::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .post-actions button:hover { background: var(--p-subtle); color: var(--p-ink); }
+    .post-actions button:active { transform: scale(.94); }
+    .post-actions button.is-liked { color: #ff5e76; }
+    .post-actions .icon { font-size: 14px; }
+    .reply-satellites {
+      position: absolute;
+      left: 0;
+      bottom: -10px;
+      width: 52px;
+      height: 48px;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .reply-satellite {
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      border: 2px solid var(--p-bg-mid);
+      border-radius: 50%;
+      background: transparent;
+      pointer-events: none;
+    }
+    .reply-satellite .avatar { width: 100%; height: 100%; font-size: 6px; }
+    .reply-satellite:nth-child(1) { left: 0; bottom: 0; }
+    .reply-satellite:nth-child(2) { left: 15px; top: 0; }
+    .reply-satellite:nth-child(3) { right: 0; bottom: 1px; }
+    .reply-count {
+      position: absolute;
+      left: 17px;
+      bottom: -5px;
+      color: var(--p-faint);
+      font-size: 7px;
+      white-space: nowrap;
+    }
+    .inline-branch {
+      margin: 10px 0 0;
+      padding: 1px 0 0 13px;
+      border-left: 1px dashed color-mix(in srgb, var(--p-violet) 40%, transparent);
+      animation: branchOpen .25s ease-out both;
+    }
+    @keyframes branchOpen { from { opacity: 0; transform: translateY(-5px); } }
+    .branch-reply {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      margin-top: 9px;
+      color: var(--p-muted);
+      font-size: 9px;
+      line-height: 1.45;
+    }
+    .branch-reply .avatar { width: 23px; height: 23px; font-size: 6px; }
+    .branch-reply strong { color: var(--p-ink); font-size: 9px; }
+    .compose-orb {
+      position: absolute;
+      z-index: 24;
+      right: 15px;
+      bottom: 8px;
+      width: 48px;
+      height: 48px;
+      border: 1px solid color-mix(in srgb, var(--p-violet) 60%, transparent);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--p-violet) 58%, white 12%), var(--p-violet));
+      color: #fff;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 24px color-mix(in srgb, var(--p-violet) 36%, transparent);
+    }
+    .compose-orb::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border: 1px dashed color-mix(in srgb, var(--p-violet) 45%, transparent);
+      border-radius: 50%;
+      animation: slowSpin 16s linear infinite reverse;
+    }
+    .compose-orb .icon { font-size: 19px; }
+
+    /* Alternative 2: Orbit Voices / post halos */
+    .voices-head {
+      position: absolute;
+      top: 2px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 7.5px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .voices-canvas {
+      position: absolute;
+      left: 50%;
+      top: 49%;
+      width: 310px;
+      height: 310px;
+      transform: translate(-50%, -50%);
+      transition: transform .4s ease;
+    }
+    .voices-canvas.has-selection { transform: translate(-50%, -58%) scale(.87); }
+    .voice-node {
+      --segments: conic-gradient(var(--p-green) 0 58deg, transparent 58deg 78deg, var(--p-violet) 78deg 135deg, transparent 135deg 360deg);
+      position: absolute;
+      width: 55px;
+      height: 55px;
+      margin: -27.5px 0 0 -27.5px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: transform .25s, filter .25s;
+    }
+    .voice-node::before {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      border-radius: 50%;
+      background: var(--segments);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+      filter: drop-shadow(0 0 5px color-mix(in srgb, var(--p-green) 30%, transparent));
+      animation: haloBreathe 3s ease-in-out infinite;
+    }
+    @keyframes haloBreathe { 50% { transform: scale(1.06); opacity: .7; } }
+    .voice-node:hover, .voice-node.is-selected { transform: scale(1.12); z-index: 5; }
+    .voice-node.is-selected::before {
+      filter: drop-shadow(0 0 9px color-mix(in srgb, var(--p-teal) 65%, transparent));
+    }
+    .voice-node .avatar { width: var(--voice-size, 33px); height: var(--voice-size, 33px); }
+    .voice-pulse {
+      position: absolute;
+      right: 1px;
+      top: 5px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      border: 2px solid var(--p-bg-mid);
+      border-radius: 8px;
+      background: #ff4d67;
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 6px;
+      font-weight: 800;
+    }
+    .voice-label {
+      position: absolute;
+      top: 48px;
+      left: 50%;
+      color: var(--p-muted);
+      font-size: 7px;
+      font-weight: 650;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      text-shadow: 0 1px 3px var(--p-bg);
+    }
+    .voice-node.self::before {
+      background: conic-gradient(var(--p-green) 0 300deg, transparent 300deg);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+    }
+    .voice-node.self .avatar {
+      width: 45px;
+      height: 45px;
+      box-shadow: 0 0 18px color-mix(in srgb, var(--p-green) 40%, transparent);
+    }
+    .voice-node.self .compose-mini {
+      position: absolute;
+      right: -2px;
+      bottom: 0;
+      width: 19px;
+      height: 19px;
+      border: 2px solid var(--p-bg-mid);
+      border-radius: 50%;
+      background: var(--p-green);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+    }
+    .voice-peek {
+      position: absolute;
+      z-index: 12;
+      left: 20px;
+      right: 20px;
+      bottom: 6px;
+      min-height: 112px;
+      border: 1px solid var(--p-line);
+      border-radius: 30px 30px 12px 30px;
+      padding: 13px 15px 12px 17px;
+      background: var(--p-raised);
+      backdrop-filter: blur(22px);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, .20);
+      animation: peekUp .28s cubic-bezier(.2, .9, .2, 1) both;
+    }
+    @keyframes peekUp { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+    .peek-head { display: flex; align-items: center; gap: 8px; }
+    .peek-head .avatar { width: 25px; height: 25px; font-size: 7px; }
+    .peek-head strong { font-size: 10px; }
+    .peek-head span { color: var(--p-faint); font-size: 8px; }
+    .peek-close {
+      margin-left: auto;
+      width: 25px;
+      height: 25px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--p-subtle);
+      color: var(--p-muted);
+      cursor: pointer;
+    }
+    .peek-copy {
+      margin: 8px 0 8px;
+      color: var(--p-ink);
+      font-size: 10.5px;
+      line-height: 1.42;
+    }
+    .peek-foot {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--p-faint);
+      font-size: 7.5px;
+    }
+    .peek-foot button {
+      border: 0;
+      border-radius: 10px;
+      padding: 4px 8px;
+      background: color-mix(in srgb, var(--p-green) 10%, transparent);
+      color: var(--p-green);
+      cursor: pointer;
+      font-size: 7.5px;
+      font-weight: 750;
+    }
+    .all-signals {
+      position: absolute;
+      z-index: 10;
+      right: 15px;
+      bottom: 8px;
+      height: 35px;
+      border: 1px solid var(--p-line);
+      border-radius: 18px;
+      padding: 0 12px;
+      background: var(--p-surface);
+      color: var(--p-ink);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 8px;
+      font-weight: 720;
+      backdrop-filter: blur(16px);
+    }
+
+    /* Alternative 3: Constellation Now */
+    .constellation-toolbar {
+      position: absolute;
+      z-index: 18;
+      top: 4px;
+      left: 13px;
+      right: 13px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .time-key {
+      display: flex;
+      gap: 5px;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 7px;
+      text-transform: uppercase;
+    }
+    .time-key span { display: flex; align-items: center; gap: 4px; }
+    .time-key i { width: 5px; height: 5px; border-radius: 50%; background: var(--p-teal); }
+    .time-key span:nth-child(2) i { background: var(--p-violet); }
+    .zoom-controls {
+      display: flex;
+      border: 1px solid var(--p-line);
+      border-radius: 13px;
+      overflow: hidden;
+      background: var(--p-surface);
+      backdrop-filter: blur(12px);
+    }
+    .zoom-controls button {
+      width: 40px;
+      height: 40px;
+      border: 0;
+      background: transparent;
+      color: var(--p-muted);
+      cursor: pointer;
+    }
+    .zoom-controls button + button { border-left: 1px solid var(--p-line-soft); }
+    .constellation-space {
+      position: absolute;
+      left: 50%;
+      top: 49%;
+      width: 330px;
+      height: 520px;
+      transform: translate(-50%, -50%) scale(var(--constellation-zoom, 1));
+      transform-origin: center;
+      transition: transform .35s cubic-bezier(.2, .8, .2, 1);
+    }
+    .time-ring {
+      position: absolute;
+      left: 50%;
+      top: 44%;
+      border: 1px dashed color-mix(in srgb, var(--p-teal) 30%, transparent);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .time-ring.now { width: 130px; height: 130px; }
+    .time-ring.today {
+      width: 255px;
+      height: 255px;
+      border-color: color-mix(in srgb, var(--p-violet) 27%, transparent);
+    }
+    .time-ring.older {
+      width: 378px;
+      height: 378px;
+      border-color: var(--p-line-soft);
+    }
+    .constellation-you {
+      position: absolute;
+      z-index: 4;
+      left: 50%;
+      top: 44%;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+    }
+    .constellation-you .avatar {
+      width: 42px;
+      height: 42px;
+      box-shadow: 0 0 0 2px var(--p-green), 0 0 18px color-mix(in srgb, var(--p-green) 45%, transparent);
+    }
+    .cluster-link {
+      position: absolute;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--p-teal) 35%, transparent), transparent);
+      transform-origin: left center;
+      pointer-events: none;
+    }
+    .signal-node {
+      --node-color: var(--p-teal);
+      position: absolute;
+      z-index: 5;
+      width: var(--node, 45px);
+      height: var(--node, 45px);
+      margin: calc(var(--node, 45px) / -2) 0 0 calc(var(--node, 45px) / -2);
+      border: 0;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--node-color) 12%, var(--p-bg-mid));
+      color: var(--p-ink);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--node-color) 55%, transparent),
+        0 0 16px color-mix(in srgb, var(--node-color) 20%, transparent);
+      transition: transform .24s, box-shadow .24s;
+    }
+    .signal-node::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border: 1px dashed color-mix(in srgb, var(--node-color) 40%, transparent);
+      border-radius: 50%;
+    }
+    .signal-node::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .signal-node:hover, .signal-node.is-selected {
+      z-index: 9;
+      transform: scale(1.14);
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--node-color) 75%, transparent),
+        0 0 25px color-mix(in srgb, var(--node-color) 42%, transparent);
+    }
+    .signal-node .avatar { width: 68%; height: 68%; font-size: 7px; }
+    .node-topic {
+      position: absolute;
+      top: calc(100% + 7px);
+      left: 50%;
+      max-width: 72px;
+      color: var(--p-muted);
+      font-size: 7px;
+      font-weight: 650;
+      line-height: 1.1;
+      text-align: center;
+      text-shadow: 0 1px 3px var(--p-bg);
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .nearby-halo {
+      position: absolute;
+      inset: -12px;
+      border: 1px solid color-mix(in srgb, var(--p-green) 26%, transparent);
+      border-radius: 50%;
+      animation: nearbyRipple 2.6s ease-out infinite;
+    }
+    @keyframes nearbyRipple {
+      to { transform: scale(1.25); opacity: 0; }
+    }
+    .constellation-lens {
+      position: absolute;
+      z-index: 15;
+      left: 24px;
+      right: 24px;
+      bottom: 8px;
+      min-height: 116px;
+      border: 1px solid color-mix(in srgb, var(--p-violet) 28%, var(--p-line));
+      border-radius: 50% 50% 27px 27px / 32px 32px 22px 22px;
+      padding: 15px 20px 12px;
+      background: var(--p-raised);
+      backdrop-filter: blur(24px);
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, .18);
+      animation: lensIn .32s ease-out both;
+    }
+    @keyframes lensIn { from { opacity: 0; transform: scale(.94) translateY(7px); } }
+    .lens-meta {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      color: var(--p-faint);
+      font-size: 7.5px;
+    }
+    .lens-meta strong { color: var(--p-ink); font-size: 9px; }
+    .lens-copy {
+      margin: 7px auto 8px;
+      max-width: 280px;
+      color: var(--p-ink);
+      font-size: 10.5px;
+      line-height: 1.4;
+    }
+    .lens-actions {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+    }
+    .lens-actions button {
+      height: 24px;
+      border: 0;
+      border-radius: 12px;
+      padding: 0 9px;
+      background: var(--p-subtle);
+      color: var(--p-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 7px;
+    }
+
+    /* Alternative 4: Solar Reader */
+    .reader-label {
+      position: absolute;
+      top: 5px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: var(--p-faint);
+      font-family: var(--mono);
+      font-size: 7px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .reader-stage {
+      position: absolute;
+      inset: 26px 0 5px;
+      display: grid;
+      place-items: center;
+      perspective: 900px;
+    }
+    .reader-orbit {
+      position: relative;
+      width: 318px;
+      height: 470px;
+      display: grid;
+      place-items: center;
+    }
+    .reader-ring {
+      position: absolute;
+      left: 50%;
+      top: 49%;
+      width: 308px;
+      height: 375px;
+      border: 1.4px dashed color-mix(in srgb, var(--p-teal) 32%, transparent);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      animation: readerTurn 26s linear infinite;
+    }
+    .reader-ring.secondary {
+      width: 278px;
+      height: 345px;
+      border-color: color-mix(in srgb, var(--p-violet) 25%, transparent);
+      animation-direction: reverse;
+      animation-duration: 32s;
+    }
+    @keyframes readerTurn { to { transform: translate(-50%, -50%) rotate(360deg); } }
+    .solar-lens {
+      position: relative;
+      z-index: 3;
+      width: 264px;
+      min-height: 344px;
+      border: 1px solid var(--p-line);
+      border-radius: 48% 48% 42% 42% / 13% 13% 13% 13%;
+      padding: 26px 24px 22px;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--p-ink) 5%, transparent), transparent 30%),
+        var(--p-raised);
+      backdrop-filter: blur(25px);
+      box-shadow:
+        0 25px 60px rgba(0, 0, 0, .22),
+        inset 0 1px 0 color-mix(in srgb, var(--p-ink) 9%, transparent);
+      text-align: center;
+      animation: solarChange .4s cubic-bezier(.2, .9, .2, 1) both;
+    }
+    @keyframes solarChange {
+      from { opacity: 0; transform: rotateY(9deg) scale(.96); }
+    }
+    .solar-author .avatar {
+      width: 48px;
+      height: 48px;
+      margin: -51px auto 8px;
+      border: 5px solid var(--p-bg-mid);
+      box-shadow: 0 0 0 1px var(--p-teal), 0 0 18px color-mix(in srgb, var(--p-teal) 28%, transparent);
+    }
+    .solar-author strong { display: block; font-size: 12px; }
+    .solar-author span { display: block; margin-top: 2px; color: var(--p-faint); font-size: 8px; }
+    .solar-copy {
+      margin: 17px 0 16px;
+      color: var(--p-ink);
+      font-family: var(--display);
+      font-size: 17px;
+      font-weight: 520;
+      letter-spacing: -.025em;
+      line-height: 1.38;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .solar-media {
+      height: 105px;
+      margin: 0 -9px 13px;
+      border-radius: 48% 48% 42% 42% / 22% 22% 28% 28%;
+    }
+    .solar-actions {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+    }
+    .solar-actions button {
+      position: relative;
+      width: 42px;
+      height: 32px;
+      border: 1px solid var(--p-line-soft);
+      border-radius: 18px;
+      background: var(--p-subtle);
+      color: var(--p-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 7px;
+    }
+    .solar-actions button::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .solar-actions button.is-liked { color: #ff5e76; }
+    .solar-actions .icon { font-size: 13px; }
+    .reply-moon {
+      position: absolute;
+      z-index: 7;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--p-line);
+      border-radius: 50%;
+      padding: 3px;
+      background: var(--p-surface-solid);
+      color: var(--p-ink);
+      cursor: pointer;
+      box-shadow: 0 0 12px rgba(0, 0, 0, .18);
+    }
+    .reply-moon::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .reply-moon .avatar { width: 100%; height: 100%; font-size: 6px; }
+    .reply-moon:nth-of-type(1) { left: 4px; top: 142px; }
+    .reply-moon:nth-of-type(2) { right: 3px; top: 214px; }
+    .reply-moon:nth-of-type(3) { left: 28px; bottom: 48px; }
+    .moon-reply {
+      position: absolute;
+      z-index: 9;
+      left: 50%;
+      bottom: 1px;
+      max-width: 250px;
+      border: 1px solid var(--p-line);
+      border-radius: 18px;
+      padding: 8px 12px;
+      background: var(--p-surface-solid);
+      color: var(--p-muted);
+      font-size: 8px;
+      line-height: 1.35;
+      transform: translateX(-50%);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, .16);
+    }
+    .reader-nav {
+      position: absolute;
+      z-index: 12;
+      top: 50%;
+      width: 31px;
+      height: 44px;
+      border: 1px solid var(--p-line);
+      background: var(--p-surface);
+      color: var(--p-muted);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      backdrop-filter: blur(14px);
+      transform: translateY(-50%);
+    }
+    .reader-nav::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 48px;
+      height: 48px;
+      transform: translate(-50%, -50%);
+    }
+    .reader-nav.prev { left: 7px; border-radius: 18px 7px 7px 18px; }
+    .reader-nav.next { right: 7px; border-radius: 7px 18px 18px 7px; }
+    .reader-dots {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 3px;
+      display: flex;
+      justify-content: center;
+      gap: 0;
+    }
+    .reader-dots button {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .reader-dots button::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--p-faint);
+      opacity: .5;
+      transform: translate(-50%, -50%);
+      transition: width .2s, opacity .2s, border-radius .2s;
+    }
+    .reader-dots button.is-active::before {
+      width: 18px;
+      border-radius: 4px;
+      background: var(--p-green);
+      opacity: 1;
+    }
+
+    /* Composer inside device */
+    .phone-scrim {
+      position: absolute;
+      z-index: 88;
+      inset: 0;
+      border: 0;
+      background: rgba(0, 0, 0, .48);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s;
+    }
+    .composer-sheet {
+      position: absolute;
+      z-index: 89;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      min-height: 390px;
+      border-top: 1px solid var(--p-line);
+      border-radius: 30px 30px 0 0;
+      padding: 12px 18px 28px;
+      background: color-mix(in srgb, var(--p-surface-solid) 96%, transparent);
+      backdrop-filter: blur(30px);
+      transform: translateY(102%);
+      transition: transform .34s cubic-bezier(.2, .85, .2, 1);
+      box-shadow: 0 -30px 70px rgba(0, 0, 0, .30);
+    }
+    .phone.composer-open .phone-scrim { opacity: 1; pointer-events: auto; }
+    .phone.composer-open .composer-sheet { transform: translateY(0); }
+    .sheet-grabber {
+      width: 38px;
+      height: 4px;
+      margin: 0 auto 14px;
+      border-radius: 3px;
+      background: var(--p-line);
+    }
+    .sheet-head { display: flex; align-items: center; gap: 10px; }
+    .sheet-head .avatar { width: 34px; height: 34px; }
+    .sheet-title strong { display: block; font-size: 13px; }
+    .sheet-title span { display: block; margin-top: 2px; color: var(--p-faint); font-size: 8px; }
+    .sheet-close {
+      margin-left: auto;
+      width: 31px;
+      height: 31px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--p-subtle);
+      color: var(--p-muted);
+      cursor: pointer;
+    }
+    .composer-sheet textarea {
+      width: 100%;
+      min-height: 150px;
+      margin: 18px 0 12px;
+      border: 0;
+      resize: none;
+      background: transparent;
+      color: var(--p-ink);
+      font-size: 18px;
+      line-height: 1.42;
+      outline: 0;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .composer-sheet textarea::placeholder { color: var(--p-faint); }
+    .audience-row {
+      display: flex;
+      gap: 6px;
+      padding: 12px 0;
+      border-top: 1px solid var(--p-line-soft);
+    }
+    .audience-row button {
+      min-height: 40px;
+      border: 1px solid var(--p-line);
+      border-radius: 14px;
+      padding: 0 10px;
+      background: transparent;
+      color: var(--p-faint);
+      cursor: pointer;
+      font-size: 8px;
+      font-weight: 700;
+    }
+    .audience-row button.is-active {
+      border-color: color-mix(in srgb, var(--p-green) 36%, transparent);
+      background: color-mix(in srgb, var(--p-green) 10%, transparent);
+      color: var(--p-green);
+    }
+    .transmit-row { display: flex; align-items: center; gap: 8px; }
+    .expires { color: var(--p-faint); font-size: 8px; }
+    .transmit {
+      margin-left: auto;
+      height: 39px;
+      border: 0;
+      border-radius: 20px;
+      padding: 0 17px;
+      background: var(--p-green);
+      color: #07110a;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      box-shadow: 0 0 20px color-mix(in srgb, var(--p-green) 24%, transparent);
+    }
+
+    .stage-help {
+      width: min(460px, 100%);
+      margin: 18px 0 0;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.55;
+      text-align: center;
+    }
+    .stage-help kbd {
+      border: 1px solid var(--line-strong);
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      padding: 2px 5px;
+      background: var(--panel);
+      color: var(--muted);
+      font: 9px var(--mono);
+    }
+
+    .design-notes {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background:
+        linear-gradient(145deg, rgba(129, 230, 217, .025), transparent 42%),
+        rgba(255, 255, 255, .018);
+    }
+    .notes-index {
+      color: var(--teal);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .14em;
+    }
+    .notes-title {
+      margin: 8px 0 8px;
+      font-family: var(--display);
+      font-size: 24px;
+      font-weight: 650;
+      letter-spacing: -.035em;
+      line-height: 1.05;
+    }
+    .notes-thesis {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.58;
+    }
+    .recommendation {
+      display: none;
+      margin: 15px 0 0;
+      border: 1px solid rgba(30, 215, 96, .26);
+      border-radius: 12px;
+      padding: 10px 11px;
+      background: rgba(30, 215, 96, .065);
+      color: #a6edbd;
+      font-size: 10.5px;
+      line-height: 1.45;
+    }
+    .recommendation.is-visible { display: block; }
+    .note-grid {
+      display: grid;
+      gap: 13px;
+      margin-top: 20px;
+    }
+    .note-item {
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .note-item dt {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .note-item dd {
+      margin: 5px 0 0;
+      color: var(--ink);
+      font-size: 11.5px;
+      line-height: 1.45;
+    }
+    .score-block { margin-top: 20px; }
+    .score-row {
+      display: grid;
+      grid-template-columns: 78px 1fr 16px;
+      gap: 8px;
+      align-items: center;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .score-track {
+      height: 4px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, .07);
+    }
+    .score-track i {
+      display: block;
+      width: calc(var(--score) * 20%);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--teal), var(--violet));
+      transform-origin: left;
+      animation: scoreGrow .45s ease-out both;
+    }
+    @keyframes scoreGrow { from { transform: scaleX(0); } }
+    .score-row b { color: var(--faint); font-family: var(--mono); font-size: 8px; }
+
+    /* Compare all */
+    .compare { padding-top: 38px; }
+    .compare-intro {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .compare-intro h2 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 30px;
+      letter-spacing: -.035em;
+    }
+    .compare-intro p {
+      max-width: 640px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      gap: 16px;
+    }
+    .compare-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px 14px 16px;
+      background: rgba(255, 255, 255, .018);
+      cursor: pointer;
+      transition: border-color .2s, transform .2s, background .2s;
+    }
+    .compare-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(129, 230, 217, .28);
+      background: rgba(129, 230, 217, .025);
+    }
+    .mini-stage {
+      width: 207px;
+      height: 447px;
+      margin: 0 auto 14px;
+      overflow: hidden;
+      border-radius: 25px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, .28);
+      pointer-events: none;
+    }
+    .mini-stage .phone {
+      transform: scale(.53);
+      transform-origin: top left;
+    }
+    .compare-card h3 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: -.02em;
+    }
+    .compare-card p {
+      min-height: 36px;
+      margin: 6px 0 0;
+      color: var(--faint);
+      font-size: 10.5px;
+      line-height: 1.45;
+    }
+    .compare-card .mini-tag {
+      display: inline-flex;
+      margin-top: 10px;
+      border-radius: 9px;
+      padding: 4px 7px;
+      background: rgba(255, 255, 255, .045);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    /* Comparison matrix */
+    .matrix-section {
+      margin-top: 52px;
+      padding-top: 32px;
+      border-top: 1px solid var(--line);
+    }
+    .matrix-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 520px);
+      gap: 30px;
+      align-items: end;
+      margin-bottom: 20px;
+    }
+    .matrix-head h2 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 27px;
+      letter-spacing: -.035em;
+    }
+    .matrix-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .matrix-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    th, td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    td { color: var(--muted); line-height: 1.45; }
+    td:first-child { color: var(--ink); font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    .pick-cell { color: #92e7ae; }
+    .footer-note {
+      margin-top: 18px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      line-height: 1.7;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 200;
+      left: 50%;
+      bottom: 24px;
+      max-width: calc(100vw - 34px);
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      padding: 11px 15px;
+      background: rgba(16, 20, 30, .94);
+      color: var(--ink);
+      font-size: 11px;
+      box-shadow: 0 15px 50px rgba(0, 0, 0, .45);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity .22s, transform .22s;
+      backdrop-filter: blur(18px);
+    }
+    .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+
+    body.motion-off *, body.motion-off *::before, body.motion-off *::after {
+      animation: none !important;
+      transition-duration: .001ms !important;
+    }
+
+    @media (max-width: 1180px) {
+      .workspace { grid-template-columns: 230px minmax(420px, 1fr); }
+      .design-notes {
+        position: static;
+        grid-column: 1 / -1;
+        width: min(880px, 100%);
+        margin: 4px auto 0;
+      }
+      .note-grid { grid-template-columns: repeat(4, 1fr); }
+      .score-block { max-width: 420px; }
+      .compare-grid { grid-template-columns: repeat(2, minmax(230px, 1fr)); }
+    }
+    @media (max-width: 780px) {
+      .site { padding-top: 30px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-actions { justify-content: flex-start; }
+      .workspace { grid-template-columns: 1fr; }
+      .concept-nav {
+        position: static;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .concept-list {
+        display: flex;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        overflow-x: auto;
+        padding-bottom: 5px;
+        scroll-snap-type: x proximity;
+      }
+      .concept-choice {
+        min-width: 215px;
+        scroll-snap-align: start;
+      }
+      .rail-context { display: none; }
+      .note-grid { grid-template-columns: repeat(2, 1fr); }
+      .matrix-head { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 500px) {
+      .site { padding-left: 12px; padding-right: 12px; }
+      h1 { font-size: 38px; }
+      .hero-copy { font-size: 13px; }
+      .lab-btn { padding: 0 11px; }
+      .stage-kicker { padding: 0 8px; }
+      .device-frame {
+        width: 352px;
+        height: 738px;
+        padding: 11px;
+        border-radius: 49px;
+      }
+      .device-frame .phone {
+        transform: scale(.846);
+        transform-origin: top left;
+      }
+      .stage-help { max-width: 350px; }
+      .design-notes { padding: 17px; }
+      .note-grid { grid-template-columns: 1fr; }
+      .compare-grid { grid-template-columns: 1fr; }
+      .compare-card { width: min(290px, 100%); margin: 0 auto; }
+      .compare-intro { align-items: start; flex-direction: column; }
+    }
+    @media (max-width: 380px) {
+      .device-frame {
+        width: 323px;
+        height: 677px;
+        padding: 9px;
+        border-radius: 44px;
+      }
+      .device-frame .phone { transform: scale(.782); }
+    }
+    @media (max-width: 350px) {
+      .device-frame {
+        width: 296px;
+        height: 622px;
+        padding: 8px;
+        border-radius: 40px;
+      }
+      .device-frame .phone { transform: scale(.718); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true">
+    <symbol id="i-list" viewBox="0 0 24 24">
+      <path d="M9 6h11M9 12h11M9 18h11"></path>
+      <circle cx="4" cy="6" r="1"></circle>
+      <circle cx="4" cy="12" r="1"></circle>
+      <circle cx="4" cy="18" r="1"></circle>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8z"></path></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 1 4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></symbol>
+    <symbol id="i-feed" viewBox="0 0 24 24"><path d="M4 5h16M4 12h11M4 19h8"></path><circle cx="19" cy="17" r="2"></circle></symbol>
+    <symbol id="i-orbit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><ellipse cx="12" cy="12" rx="10" ry="5" transform="rotate(-28 12 12)"></ellipse><circle cx="20" cy="7" r="1"></circle></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"></rect><rect x="14" y="3" width="7" height="7" rx="2"></rect><rect x="3" y="14" width="7" height="7" rx="2"></rect><rect x="14" y="14" width="7" height="7" rx="2"></rect></symbol>
+    <symbol id="i-motion" viewBox="0 0 24 24"><path d="M3 12h3l2-6 4 12 3-9 2 3h4"></path></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></symbol>
+  </svg>
+
+  <div class="site">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">mknoon · Orbit social layer · interactive exploration</p>
+        <h1>Social, without another rectangle.</h1>
+        <p class="hero-copy">
+          The current Orbit is a <strong>map of people</strong>; the existing Posts surface is a
+          <strong>traditional card feed</strong>. These four directions keep horizontal text readable
+          while using paths, halos, time rings, and satellites to make conversation feel native to Orbit.
+        </p>
+      </div>
+      <div class="hero-actions" aria-label="Mockup controls">
+        <button class="lab-btn" id="themeToggle" type="button">
+          <svg class="icon"><use href="#i-sun"></use></svg>
+          <span>Light phone</span>
+        </button>
+        <button class="lab-btn" id="motionToggle" type="button">
+          <svg class="icon"><use href="#i-motion"></use></svg>
+          <span>Pause motion</span>
+        </button>
+        <button class="lab-btn" id="compareToggle" type="button">
+          <svg class="icon"><use href="#i-grid"></use></svg>
+          <span>Compare all</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace" id="workspace">
+      <aside class="concept-nav" aria-label="Social design alternatives">
+        <p class="rail-label">Choose a model</p>
+        <div class="concept-list" id="conceptList"></div>
+        <div class="rail-context">
+          <strong>Use the phone.</strong> Switch between People and Signals, tap nodes,
+          expand replies, react, browse, and open the composer. Every concept uses the same
+          people and posts so the structural difference is easier to judge.
+        </div>
+      </aside>
+
+      <section class="stage-column" aria-label="Interactive phone mockup">
+        <div class="stage-kicker">
+          <span class="live-dot">Interactive prototype</span>
+          <span id="stageName">01 · Orbit Stream</span>
+        </div>
+        <div class="device-frame">
+          <div class="phone" id="phone" data-theme="dark"></div>
+        </div>
+        <p class="stage-help" id="stageHelp">
+          Tap reply satellites to uncoil a branch. Use <kbd>←</kbd> <kbd>→</kbd> to move between concepts.
+        </p>
+      </section>
+
+      <aside class="design-notes" aria-live="polite">
+        <p class="note-label">Design readout</p>
+        <span class="notes-index" id="notesIndex">OPTION 01</span>
+        <h2 class="notes-title" id="notesTitle">Orbit Stream</h2>
+        <p class="notes-thesis" id="notesThesis"></p>
+        <div class="recommendation" id="recommendation">
+          Best first prototype: it keeps the scanning speed users expect from Threads while making
+          replies and pass-alongs visibly relational.
+        </div>
+        <dl class="note-grid">
+          <div class="note-item">
+            <dt>Best for</dt>
+            <dd id="noteBest"></dd>
+          </div>
+          <div class="note-item">
+            <dt>Thread model</dt>
+            <dd id="noteThread"></dd>
+          </div>
+          <div class="note-item">
+            <dt>Signature gesture</dt>
+            <dd id="noteGesture"></dd>
+          </div>
+          <div class="note-item">
+            <dt>Main tradeoff</dt>
+            <dd id="noteTradeoff"></dd>
+          </div>
+        </dl>
+        <div class="score-block">
+          <p class="note-label">Relative fit · 5 is strongest</p>
+          <div id="scoreRows"></div>
+        </div>
+      </aside>
+    </main>
+
+    <section class="compare" id="compareSection" hidden>
+      <div class="compare-intro">
+        <div>
+          <p class="eyebrow">Same content · four information models</p>
+          <h2>Side-by-side comparison</h2>
+          <p>Click any phone to return to the interactive version of that concept.</p>
+        </div>
+        <button class="lab-btn" type="button" data-exit-compare>
+          <svg class="icon"><use href="#i-arrow-left"></use></svg>
+          Back to prototype
+        </button>
+      </div>
+      <div class="compare-grid" id="compareGrid"></div>
+    </section>
+
+    <section class="matrix-section">
+      <div class="matrix-head">
+        <div>
+          <p class="eyebrow">Product lens</p>
+          <h2>What changes between the alternatives</h2>
+        </div>
+        <p>
+          The first question is not the color or icon set. It is whether social activity should be
+          chronological, person-first, spatial, or immersive. That choice determines the interaction model.
+        </p>
+      </div>
+      <div class="matrix-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Direction</th>
+              <th>Primary object</th>
+              <th>Scanning</th>
+              <th>Conversation</th>
+              <th>Best use</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody id="matrixBody"></tbody>
+        </table>
+      </div>
+      <p class="footer-note">
+        Mockup fidelity: app palette, cosmic/light ambient surfaces, 5+8 contact geometry,
+        top chrome, and glass treatments are source-grounded. Social content and interactions are exploratory.
+        No network connection or external asset is required.
+      </p>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    "use strict";
+
+    var concepts = [
+      {
+        id: "stream",
+        number: "01",
+        name: "Orbit Stream",
+        short: "Trajectory feed",
+        tag: "Recommended",
+        thesis: "A cardless chronological stream. Each author sits on a curved trajectory; posts open beside the node and replies become orbiting satellites that uncoil into branches.",
+        best: "A primary social feed that must stay fast to scan.",
+        thread: "Replies branch from the author node instead of nesting inside a card.",
+        gesture: "Tap the small reply moons to open or close the inline branch.",
+        tradeoff: "Still fundamentally linear, so it is the least radical departure.",
+        scores: { Readability: 5, Originality: 4, "Orbit fit": 5, Scalability: 5 },
+        matrix: ["Post in time", "Fast", "Inline branches", "Daily default", "Build first"],
+        help: "Tap reply satellites to uncoil a branch. Scroll the path; react or compose."
+      },
+      {
+        id: "voices",
+        number: "02",
+        name: "Orbit Voices",
+        short: "Posts live on people",
+        tag: "Most native",
+        thesis: "Keep today’s contact Orbit almost intact. Fresh posts appear as colored halo segments around each person; tapping a halo fans that person’s recent signals into view.",
+        best: "A private, person-first network where who spoke matters most.",
+        thread: "A person owns a halo; their latest signal opens in a floating petal.",
+        gesture: "Tap a segmented halo, then move into All signals for chronology.",
+        tradeoff: "Unread post halos and chat-avatar taps need very clear hit separation.",
+        scores: { Readability: 3, Originality: 5, "Orbit fit": 5, Scalability: 3 },
+        matrix: ["Person", "Medium", "Per-person petals", "Orbit landing", "Pair with Stream"],
+        help: "Tap a colored halo—not just the avatar—to preview that person’s signals."
+      },
+      {
+        id: "constellation",
+        number: "03",
+        name: "Constellation Now",
+        short: "Spatial discovery",
+        tag: "Experimental",
+        thesis: "Posts become a living map arranged on time rings. Topic proximity, post size, nearby halos, and dotted pass-along links reveal patterns before any text is opened.",
+        best: "Discovery, ambient browsing, and a memorable secondary view.",
+        thread: "A focused signal moves into an oval lens; commenters remain satellites.",
+        gesture: "Tap nodes to focus; use plus and minus to change information density.",
+        tradeoff: "Chronology and accessibility require a list fallback.",
+        scores: { Readability: 2, Originality: 5, "Orbit fit": 5, Scalability: 3 },
+        matrix: ["Signal cluster", "Low", "Focus lens", "Explore mode", "Prototype later"],
+        help: "Tap any signal node to pull it into the focus lens; zoom the map."
+      },
+      {
+        id: "reader",
+        number: "04",
+        name: "Solar Reader",
+        short: "One signal at a time",
+        tag: "Immersive",
+        thesis: "One post occupies a calm central lens. Its author crowns the orbit, reactions sit inside it, and commenter avatars circle as moons. Navigation snaps between complete thoughts.",
+        best: "Media, longer writing, and low-stimulation reading.",
+        thread: "The post is the sun; selected comment moons reveal one reply at a time.",
+        gesture: "Swipe or use the side arrows; tap a moon to read its reply.",
+        tradeoff: "Low information density makes quick feed scanning slower.",
+        scores: { Readability: 4, Originality: 5, "Orbit fit": 4, Scalability: 2 },
+        matrix: ["Focused post", "Slow", "Comment moons", "Media reader", "Optional mode"],
+        help: "Use arrows or swipe horizontally. Tap a moon to reveal one reply."
+      }
+    ];
+
+    var posts = [
+      {
+        id: "river",
+        author: "Layla",
+        initials: "LA",
+        time: "8 min",
+        scope: "Circle",
+        kind: "circle",
+        text: "Golden hour by the river was unreal today. Anyone up for a late walk at 20:00?",
+        hearts: 18,
+        passes: 4,
+        colorA: "#d1748f",
+        colorB: "#7f4d91",
+        media: true,
+        topic: "river walk",
+        replies: [
+          ["Karim", "KA", "Count me in. I will bring tea.", "#e3975b", "#946537"],
+          ["Noor", "NO", "Yes — south bridge entrance?", "#55a9b3", "#347185"],
+          ["Mina", "MI", "I can make it just after eight.", "#9f86ed", "#6053a8"]
+        ]
+      },
+      {
+        id: "books",
+        author: "Karim",
+        initials: "KA",
+        time: "26 min",
+        scope: "Passed by Mina",
+        kind: "passed",
+        text: "Free little library is restocked: Arabic poetry, two graphic novels, and a very loved copy of Dune.",
+        hearts: 11,
+        passes: 7,
+        colorA: "#e3975b",
+        colorB: "#946537",
+        media: false,
+        topic: "book exchange",
+        replies: [
+          ["Sami", "SA", "Saving the poetry book for after work.", "#4eaa89", "#276b5a"],
+          ["Dalia", "DA", "I will bring two books tomorrow.", "#e185aa", "#8c4f82"]
+        ]
+      },
+      {
+        id: "bike",
+        author: "Noor",
+        initials: "NO",
+        time: "1 hr",
+        scope: "350 m away",
+        kind: "nearby",
+        text: "Blue bike found beside the tram stop. I moved it under the awning before the rain.",
+        hearts: 23,
+        passes: 13,
+        colorA: "#55a9b3",
+        colorB: "#347185",
+        media: false,
+        topic: "nearby help",
+        replies: [
+          ["Layla", "LA", "Sharing this with the building group.", "#d1748f", "#7f4d91"],
+          ["Omar", "OM", "I know the owner — messaging them now.", "#d78558", "#8f493e"]
+        ]
+      },
+      {
+        id: "soup",
+        author: "Mina",
+        initials: "MI",
+        time: "3 hr",
+        scope: "Circle",
+        kind: "circle",
+        text: "Made too much lentil soup again. Two jars are looking for a good home.",
+        hearts: 31,
+        passes: 3,
+        colorA: "#9f86ed",
+        colorB: "#6053a8",
+        media: false,
+        topic: "soup share",
+        replies: [
+          ["Dalia", "DA", "A jar would make my evening.", "#e185aa", "#8c4f82"],
+          ["Karim", "KA", "Trade you for fresh bread?", "#e3975b", "#946537"]
+        ]
+      }
+    ];
+
+    var people = [
+      { id: "layla", name: "Layla", initials: "LA", x: 50, y: 29, size: 36, count: 2, post: "river", a: "#d1748f", b: "#7f4d91" },
+      { id: "karim", name: "Karim", initials: "KA", x: 77, y: 41, size: 32, count: 1, post: "books", a: "#e3975b", b: "#946537" },
+      { id: "noor", name: "Noor", initials: "NO", x: 78, y: 70, size: 31, count: 3, post: "bike", a: "#55a9b3", b: "#347185" },
+      { id: "mina", name: "Mina", initials: "MI", x: 49, y: 78, size: 35, count: 1, post: "soup", a: "#9f86ed", b: "#6053a8" },
+      { id: "sami", name: "Sami", initials: "SA", x: 22, y: 68, size: 29, count: 0, post: "books", a: "#4eaa89", b: "#276b5a" },
+      { id: "dalia", name: "Dalia", initials: "DA", x: 21, y: 40, size: 30, count: 1, post: "soup", a: "#e185aa", b: "#8c4f82" }
+    ];
+
+    var state = {
+      active: 0,
+      theme: "dark",
+      motion: true,
+      compare: false,
+      showPeople: false,
+      filter: "all",
+      expanded: new Set(["river"]),
+      liked: new Set(),
+      selectedVoice: "layla",
+      constellationPost: "river",
+      constellationZoom: 1,
+      readerIndex: 0,
+      readerReply: null,
+      audience: "Circle",
+      composeReplyTo: null
+    };
+
+    var initialParams = new URLSearchParams(window.location.search);
+    var requestedConcept = initialParams.get("concept");
+    var requestedIndex = concepts.findIndex(function (concept) { return concept.id === requestedConcept; });
+    if (requestedIndex >= 0) state.active = requestedIndex;
+    if (initialParams.get("theme") === "light") state.theme = "light";
+    if (initialParams.get("motion") === "off") {
+      state.motion = false;
+      document.body.classList.add("motion-off");
+    }
+    if (initialParams.get("compare") === "1") state.compare = true;
+
+    var phone = document.getElementById("phone");
+    var toastTimer = null;
+    var composerInvoker = null;
+
+    function icon(name) {
+      return '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function avatar(item, extraClass) {
+      var a = item.colorA || item.a || "#6d8bf1";
+      var b = item.colorB || item.b || "#6945a8";
+      var initials = item.initials || item.name.slice(0, 2).toUpperCase();
+      return '<span class="avatar ' + (extraClass || "") + '" style="--av-a:' + a + ';--av-b:' + b + '">' + escapeHtml(initials) + '</span>';
+    }
+
+    function starsMarkup(seed) {
+      var out = "";
+      var n = 48;
+      for (var i = 0; i < n; i += 1) {
+        var x = (i * 47 + seed * 13) % 97;
+        var y = (i * 73 + seed * 17) % 96;
+        var size = (i % 4 === 0 ? 1.8 : (i % 3 === 0 ? 1.2 : .8));
+        var opacity = .18 + ((i * 19) % 55) / 100;
+        var duration = 2.8 + (i % 7) * .43;
+        var delay = -((i % 9) * .37);
+        out += '<i class="star" style="left:' + x + '%;top:' + y + '%;--s:' + size + 'px;--o:' + opacity + ';--d:' + duration + 's;--delay:' + delay + 's"></i>';
+      }
+      return out;
+    }
+
+    function commonShell(surface, concept, mini) {
+      var activeSignals = !state.showPeople || mini;
+      var actualSurface = activeSignals ? surface : renderPeopleBaseline();
+      var composer = mini ? "" : renderComposer();
+      var createAction = activeSignals
+        ? 'data-compose aria-label="Create a signal"'
+        : 'data-phone-toast="Create a group or announcement" aria-label="Create a group or announcement"';
+      return '' +
+        '<div class="stars">' + starsMarkup(concept.number.charCodeAt(1)) + '</div>' +
+        '<div class="ambient-bloom one"></div><div class="ambient-bloom two"></div>' +
+        '<div class="island"></div>' +
+        '<div class="statusbar"><span>9:41</span><span class="status-icons"><span class="cell-bars"><i></i><i></i><i></i></span><span class="wifi-mark"></span><span class="battery"><i></i></span></span></div>' +
+        '<div class="top-chrome">' +
+          '<button class="chrome-circle" type="button" data-phone-toast="Opens the classic all-chats list" aria-label="Open all chats">' + icon("list") + '</button>' +
+          '<span class="connection">Online · 4</span>' +
+          '<button class="chrome-circle create" type="button" ' + createAction + '>' + icon("plus") + '</button>' +
+        '</div>' +
+        '<div class="surface-switch" aria-label="Orbit surface">' +
+          '<button type="button" data-surface="people" aria-pressed="' + (!activeSignals) + '" class="' + (!activeSignals ? "is-active" : "") + '"><span class="tiny-orbit"></span>People</button>' +
+          '<button type="button" data-surface="signals" aria-pressed="' + activeSignals + '" class="' + (activeSignals ? "is-active" : "") + '">' + icon("feed") + 'Signals</button>' +
+        '</div>' +
+        '<section class="concept-surface">' + actualSurface + '</section>' +
+        '<div class="home-indicator"></div>' +
+        composer;
+    }
+
+    function renderComposer() {
+      var replyName = state.composeReplyTo ? state.composeReplyTo.author : null;
+      return '' +
+        '<button class="phone-scrim" type="button" tabindex="-1" data-close-compose aria-hidden="true" aria-label="Close composer"></button>' +
+        '<section class="composer-sheet" role="dialog" aria-modal="true" aria-hidden="true" inert aria-label="' + (replyName ? "Reply composer" : "New signal composer") + '">' +
+          '<div class="sheet-grabber"></div>' +
+          '<div class="sheet-head">' +
+            avatar({ initials: "YO", colorA: "#35bf70", colorB: "#17643c" }) +
+            '<div class="sheet-title"><strong>' + (replyName ? "Reply to " + escapeHtml(replyName) : "New signal") + '</strong><span>From you · expires in 3 days</span></div>' +
+            '<button class="sheet-close" type="button" data-close-compose aria-label="Close">' + icon("x") + '</button>' +
+          '</div>' +
+          '<textarea id="composeText" maxlength="320" placeholder="' + (replyName ? "Write a thoughtful reply…" : "Send something into your orbit…") + '"></textarea>' +
+          '<div class="audience-row" aria-label="Audience">' +
+            ["Circle", "Nearby", "Pick people"].map(function (audience) {
+              return '<button type="button" data-audience="' + audience + '" aria-pressed="' + (state.audience === audience) + '" class="' + (state.audience === audience ? "is-active" : "") + '">' + audience + '</button>';
+            }).join("") +
+          '</div>' +
+          '<div class="transmit-row"><span class="expires">Private by design · no public follower count</span><button class="transmit" type="button" data-transmit>' + icon("send") + 'Transmit</button></div>' +
+        '</section>';
+    }
+
+    function baselineNode(name, initials, x, y, size, a, b, unread) {
+      return '<button class="baseline-node" type="button" style="left:' + x + '%;top:' + y + '%;--node-size:' + size + 'px" data-phone-toast="Open chat with ' + name + '" aria-label="' + name + '">' +
+        avatar({ initials: initials, colorA: a, colorB: b }) + (unread ? '<i class="unread"></i>' : "") + '</button>';
+    }
+
+    function renderPeopleBaseline() {
+      var nodes = [
+        ["Layla", "LA", 50, 29.03, 38, "#d1748f", "#7f4d91", true],
+        ["Karim", "KA", 69.94, 43.52, 38, "#e3975b", "#946537", false],
+        ["Mina", "MI", 62.32, 66.96, 38, "#9f86ed", "#6053a8", false],
+        ["Sami", "SA", 37.68, 66.96, 38, "#4eaa89", "#276b5a", false],
+        ["Dalia", "DA", 30.06, 43.52, 38, "#e185aa", "#8c4f82", true],
+        ["Noor", "NO", 50, 12.9, 30, "#55a9b3", "#347185", true],
+        ["Omar", "OM", 76.23, 23.77, 30, "#d78558", "#8f493e", false],
+        ["Nadia", "NA", 87.1, 50, 30, "#778ed8", "#475795", false],
+        ["Yara", "YA", 76.23, 76.23, 30, "#e28b89", "#9f4d63", true],
+        ["Tariq", "TA", 50, 87.1, 30, "#77a063", "#52713f", false],
+        ["Sara", "SR", 23.77, 76.23, 30, "#b37ace", "#724e95", false],
+        ["Hadi", "HA", 12.9, 50, 30, "#c47a4c", "#824733", false],
+        ["Weekend", "WE", 23.77, 23.77, 30, "#5caea1", "#34746d", true]
+      ];
+      return '<div class="people-baseline">' +
+        '<div class="people-caption">today’s Orbit · people + groups</div>' +
+        '<div class="baseline-canvas">' +
+          '<div class="orbit-ring inner"></div><div class="orbit-ring outer"></div>' +
+          nodes.map(function (n) { return baselineNode.apply(null, n); }).join("") +
+          '<button class="baseline-node self" type="button" style="left:50%;top:50%;--node-size:48px" data-phone-toast="Open Settings" aria-label="Open Settings">' +
+            avatar({ initials: "YO", colorA: "#35bf70", colorB: "#17643c" }) +
+          '</button>' +
+          '<div class="overflow-node">+12</div>' +
+        '</div>' +
+        '<button class="people-find" type="button" data-phone-toast="Find someone in your Orbit" aria-label="Find">' + icon("search") + '</button>' +
+      '</div>';
+    }
+
+    function filteredPosts() {
+      if (state.filter === "all") return posts;
+      return posts.filter(function (post) { return post.kind === state.filter; });
+    }
+
+    function filtersMarkup() {
+      var filters = [
+        ["all", "All"],
+        ["nearby", "Nearby"],
+        ["passed", "Passed"]
+      ];
+      return '<div class="feed-filter">' +
+        filters.map(function (f) {
+          return '<button type="button" data-filter="' + f[0] + '" aria-pressed="' + (state.filter === f[0]) + '" class="' + (state.filter === f[0] ? "is-active" : "") + '">' + f[1] + '</button>';
+        }).join("") +
+        '<span class="surface-title">newest first</span>' +
+      '</div>';
+    }
+
+    function actionsMarkup(post, prefix) {
+      var liked = state.liked.has(post.id);
+      return '<div class="post-actions">' +
+        '<button type="button" data-like="' + post.id + '" aria-pressed="' + liked + '" class="' + (liked ? "is-liked" : "") + '" aria-label="Like">' + icon("heart") + '<span>' + (post.hearts + (liked ? 1 : 0)) + '</span></button>' +
+        '<button type="button" data-reply="' + post.id + '" aria-label="Reply">' + icon("reply") + '<span>' + post.replies.length + '</span></button>' +
+        '<button type="button" data-pass="' + post.id + '" aria-label="Pass along">' + icon("repeat") + '<span>' + post.passes + '</span></button>' +
+      '</div>';
+    }
+
+    function repliesMarkup(post) {
+      if (!state.expanded.has(post.id)) return "";
+      return '<div class="inline-branch">' +
+        post.replies.map(function (reply) {
+          return '<div class="branch-reply">' +
+            avatar({ initials: reply[1], colorA: reply[3], colorB: reply[4] }) +
+            '<div><strong>' + escapeHtml(reply[0]) + '</strong><br>' + escapeHtml(reply[2]) + '</div>' +
+          '</div>';
+        }).join("") +
+      '</div>';
+    }
+
+    function streamPost(post, index) {
+      var satellites = post.replies.slice(0, 3).map(function (reply) {
+        return '<span class="reply-satellite" aria-hidden="true">' +
+          avatar({ initials: reply[1], colorA: reply[3], colorB: reply[4] }) +
+        '</span>';
+      }).join("");
+      return '<article class="trail-post" style="--i:' + index + '">' +
+        '<button class="trail-anchor" type="button" data-phone-toast="Open ' + escapeHtml(post.author) + ' profile">' + avatar(post) + '</button>' +
+        '<div class="trail-body">' +
+          '<div class="post-meta"><span class="post-author">' + escapeHtml(post.author) + '</span><span class="post-time">' + post.time + '</span><span class="post-scope">' + escapeHtml(post.scope) + '</span></div>' +
+          '<p class="post-copy">' + escapeHtml(post.text) + '</p>' +
+          (post.media ? '<button class="media-swatch" type="button" data-phone-toast="Media expands edge-to-edge in the production viewer" aria-label="Open river photo"></button>' : "") +
+          actionsMarkup(post) +
+          repliesMarkup(post) +
+        '</div>' +
+        '<button class="reply-satellites" type="button" data-expand="' + post.id + '" aria-expanded="' + state.expanded.has(post.id) + '" aria-label="' + (state.expanded.has(post.id) ? "Collapse" : "Expand") + ' ' + post.replies.length + ' replies">' + satellites + '<span class="reply-count">' + post.replies.length + ' orbiting</span></button>' +
+      '</article>';
+    }
+
+    function renderStream() {
+      var visible = filteredPosts();
+      return filtersMarkup() +
+        '<div class="stream-scroll">' +
+          '<svg class="trajectory" viewBox="0 0 75 1000" preserveAspectRatio="none" aria-hidden="true"><path d="M29 0 C67 83,8 151,34 229 S72 361,27 444 S6 590,39 669 S66 805,23 1000"></path></svg>' +
+          '<div class="now-marker">right now · ' + visible.length + ' signals</div>' +
+          (visible.length ? visible.map(streamPost).join("") : '<p class="post-copy" style="margin:40px;text-align:center;color:var(--p-muted)">No signals in this lane yet.</p>') +
+        '</div>' +
+        '<button class="compose-orb" type="button" data-compose aria-label="Compose">' + icon("plus") + '</button>';
+    }
+
+    function voiceNode(person, inner) {
+      var segments = person.count > 1
+        ? "conic-gradient(var(--p-green) 0 58deg,transparent 58deg 78deg,var(--p-violet) 78deg 152deg,transparent 152deg 180deg,var(--p-teal) 180deg 244deg,transparent 244deg)"
+        : "conic-gradient(var(--p-green) 0 72deg,transparent 72deg)";
+      return '<button class="voice-node ' + (state.selectedVoice === person.id ? "is-selected" : "") + '" type="button" data-voice="' + person.id + '" aria-pressed="' + (state.selectedVoice === person.id) + '" style="left:' + person.x + '%;top:' + person.y + '%;--voice-size:' + person.size + 'px;--segments:' + segments + '" aria-label="' + person.name + ', ' + person.count + ' signals">' +
+        avatar(person) +
+        (person.count ? '<span class="voice-pulse">' + person.count + '</span>' : "") +
+        (inner ? '<span class="voice-label">' + person.name + '</span>' : "") +
+      '</button>';
+    }
+
+    function voicePeek() {
+      var person = people.find(function (item) { return item.id === state.selectedVoice; });
+      if (!person) return "";
+      var post = posts.find(function (item) { return item.id === person.post; });
+      return '<div class="voice-peek">' +
+        '<div class="peek-head">' + avatar(person) + '<strong>' + person.name + '</strong><span>' + post.time + '</span><button class="peek-close" type="button" data-close-voice aria-label="Close">' + icon("x") + '</button></div>' +
+        '<p class="peek-copy">' + escapeHtml(post.text) + '</p>' +
+        '<div class="peek-foot"><span>' + post.hearts + ' pulses · ' + post.replies.length + ' replies</span><button type="button" data-reply="' + post.id + '">Reply</button></div>' +
+      '</div>';
+    }
+
+    function renderVoices() {
+      return '<div class="voices-head">fresh halos · tap a person</div>' +
+        '<div class="voices-canvas ' + (state.selectedVoice ? "has-selection" : "") + '">' +
+          '<div class="orbit-ring inner"></div><div class="orbit-ring outer"></div>' +
+          people.map(function (person, index) { return voiceNode(person, index < 3); }).join("") +
+          '<button class="voice-node self" type="button" data-compose style="left:50%;top:52%" aria-label="Compose from your center">' +
+            avatar({ initials: "YO", colorA: "#35bf70", colorB: "#17643c" }) +
+            '<span class="compose-mini">+</span>' +
+          '</button>' +
+        '</div>' +
+        (state.selectedVoice ? voicePeek() : '<button class="all-signals" type="button" data-all-signals>' + icon("feed") + 'All signals</button>');
+    }
+
+    function constellationNode(post, x, y, size, color, nearby) {
+      return '<button class="signal-node ' + (state.constellationPost === post.id ? "is-selected" : "") + '" type="button" data-constellation="' + post.id + '" aria-pressed="' + (state.constellationPost === post.id) + '" style="left:' + x + '%;top:' + y + '%;--node:' + size + 'px;--node-color:' + color + '" aria-label="' + escapeHtml(post.topic) + '">' +
+        (nearby ? '<i class="nearby-halo"></i>' : "") +
+        avatar(post) +
+        '<span class="node-topic">' + escapeHtml(post.topic) + '</span>' +
+      '</button>';
+    }
+
+    function constellationLens() {
+      var post = posts.find(function (item) { return item.id === state.constellationPost; }) || posts[0];
+      var liked = state.liked.has(post.id);
+      return '<div class="constellation-lens">' +
+        '<div class="lens-meta">' + avatar(post) + '<strong>' + post.author + '</strong><span>' + post.time + ' · ' + post.scope + '</span></div>' +
+        '<p class="lens-copy">' + escapeHtml(post.text) + '</p>' +
+        '<div class="lens-actions">' +
+          '<button type="button" data-like="' + post.id + '" aria-pressed="' + liked + '" class="' + (liked ? "is-liked" : "") + '">' + icon("heart") + (post.hearts + (liked ? 1 : 0)) + '</button>' +
+          '<button type="button" data-reply="' + post.id + '">' + icon("reply") + post.replies.length + '</button>' +
+          '<button type="button" data-pass="' + post.id + '">' + icon("repeat") + post.passes + '</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderConstellation() {
+      return '<div class="constellation-toolbar">' +
+        '<div class="time-key"><span><i></i>&lt; 4 hr</span><span><i></i>today</span></div>' +
+        '<div class="zoom-controls"><button type="button" data-zoom="-1" aria-label="Zoom out">−</button><button type="button" data-zoom="1" aria-label="Zoom in">+</button></div>' +
+      '</div>' +
+      '<div class="constellation-space" style="--constellation-zoom:' + state.constellationZoom + '">' +
+        '<div class="time-ring now"></div><div class="time-ring today"></div><div class="time-ring older"></div>' +
+        '<span class="cluster-link" style="left:49%;top:44%;width:95px;transform:rotate(-52deg)"></span>' +
+        '<span class="cluster-link" style="left:50%;top:44%;width:112px;transform:rotate(28deg)"></span>' +
+        '<span class="cluster-link" style="left:49%;top:44%;width:128px;transform:rotate(139deg)"></span>' +
+        '<button class="constellation-you" type="button" data-compose aria-label="You">' + avatar({ initials: "YO", colorA: "#35bf70", colorB: "#17643c" }) + '</button>' +
+        constellationNode(posts[0], 70, 26, 54, "var(--p-teal)", false) +
+        constellationNode(posts[1], 82, 57, 44, "var(--p-violet)", false) +
+        constellationNode(posts[2], 24, 71, 50, "var(--p-green)", true) +
+        constellationNode(posts[3], 23, 31, 43, "#f472b6", false) +
+      '</div>' +
+      constellationLens();
+    }
+
+    function renderReader() {
+      var post = posts[state.readerIndex % posts.length];
+      var liked = state.liked.has(post.id);
+      var reply = state.readerReply == null ? null : post.replies[state.readerReply % post.replies.length];
+      return '<div class="reader-label">signal ' + (state.readerIndex + 1) + ' of ' + posts.length + ' · swipe to travel</div>' +
+        '<div class="reader-stage">' +
+          '<button class="reader-nav prev" type="button" data-reader="-1" aria-label="Previous">' + icon("arrow-left") + '</button>' +
+          '<div class="reader-orbit">' +
+            '<div class="reader-ring"></div><div class="reader-ring secondary"></div>' +
+            '<article class="solar-lens">' +
+              '<div class="solar-author">' + avatar(post) + '<strong>' + post.author + '</strong><span>' + post.time + ' · ' + post.scope + '</span></div>' +
+              '<p class="solar-copy">' + escapeHtml(post.text) + '</p>' +
+              (post.media ? '<button class="media-swatch solar-media" type="button" data-phone-toast="Open full-screen media" aria-label="Open media"></button>' : "") +
+              '<div class="solar-actions">' +
+                '<button type="button" data-like="' + post.id + '" aria-pressed="' + liked + '" class="' + (liked ? "is-liked" : "") + '">' + icon("heart") + (post.hearts + (liked ? 1 : 0)) + '</button>' +
+                '<button type="button" data-reply="' + post.id + '">' + icon("reply") + post.replies.length + '</button>' +
+                '<button type="button" data-pass="' + post.id + '">' + icon("repeat") + post.passes + '</button>' +
+              '</div>' +
+            '</article>' +
+            post.replies.slice(0, 3).map(function (item, index) {
+              return '<button class="reply-moon" type="button" data-reader-reply="' + index + '" aria-pressed="' + (state.readerReply === index) + '" aria-label="Reply from ' + item[0] + '">' + avatar({ initials: item[1], colorA: item[3], colorB: item[4] }) + '</button>';
+            }).join("") +
+            (reply ? '<div class="moon-reply"><strong>' + escapeHtml(reply[0]) + '</strong> · ' + escapeHtml(reply[2]) + '</div>' : "") +
+          '</div>' +
+          '<button class="reader-nav next" type="button" data-reader="1" aria-label="Next">' + icon("arrow-right") + '</button>' +
+          '<div class="reader-dots">' + posts.map(function (_, index) {
+            return '<button type="button" data-reader-index="' + index + '" aria-current="' + (index === state.readerIndex ? "true" : "false") + '" class="' + (index === state.readerIndex ? "is-active" : "") + '" aria-label="Signal ' + (index + 1) + '"></button>';
+          }).join("") + '</div>' +
+        '</div>';
+    }
+
+    function surfaceFor(id) {
+      if (id === "stream") return renderStream();
+      if (id === "voices") return renderVoices();
+      if (id === "constellation") return renderConstellation();
+      return renderReader();
+    }
+
+    function dataSelector(attribute, value) {
+      return "[" + attribute + "=" + JSON.stringify(String(value)) + "]";
+    }
+
+    function renderPhone(focusSelector) {
+      var concept = concepts[state.active];
+      phone.dataset.theme = state.theme;
+      phone.innerHTML = commonShell(surfaceFor(concept.id), concept, false);
+      phone.classList.toggle("composer-open", false);
+      composerInvoker = null;
+      document.getElementById("stageName").textContent = concept.number + " · " + concept.name;
+      document.getElementById("stageHelp").innerHTML = escapeHtml(concept.help) + ' Use <kbd>←</kbd> <kbd>→</kbd> to change concept.';
+      if (focusSelector) {
+        window.requestAnimationFrame(function () {
+          var nextFocus = phone.querySelector(focusSelector);
+          if (nextFocus) nextFocus.focus({ preventScroll: true });
+        });
+      }
+    }
+
+    function renderConceptList() {
+      document.getElementById("conceptList").innerHTML = concepts.map(function (concept, index) {
+        return '<button class="concept-choice ' + (index === state.active ? "is-active" : "") + '" type="button" data-concept="' + index + '" aria-pressed="' + (index === state.active) + '">' +
+          '<span class="concept-no">' + concept.number + '</span>' +
+          '<span><span class="concept-name">' + concept.name + '</span><span class="concept-sub">' + concept.short + '</span><span class="concept-tag">' + concept.tag + '</span></span>' +
+        '</button>';
+      }).join("");
+    }
+
+    function renderNotes() {
+      var concept = concepts[state.active];
+      document.getElementById("notesIndex").textContent = "OPTION " + concept.number;
+      document.getElementById("notesTitle").textContent = concept.name;
+      document.getElementById("notesThesis").textContent = concept.thesis;
+      document.getElementById("noteBest").textContent = concept.best;
+      document.getElementById("noteThread").textContent = concept.thread;
+      document.getElementById("noteGesture").textContent = concept.gesture;
+      document.getElementById("noteTradeoff").textContent = concept.tradeoff;
+      document.getElementById("recommendation").classList.toggle("is-visible", concept.id === "stream");
+      document.getElementById("scoreRows").innerHTML = Object.keys(concept.scores).map(function (name) {
+        var score = concept.scores[name];
+        return '<div class="score-row"><span>' + name + '</span><span class="score-track"><i style="--score:' + score + '"></i></span><b>' + score + '</b></div>';
+      }).join("");
+    }
+
+    function renderMatrix() {
+      document.getElementById("matrixBody").innerHTML = concepts.map(function (concept) {
+        var cells = concept.matrix;
+        return '<tr><td>' + concept.name + '</td>' +
+          cells.map(function (cell, index) { return '<td class="' + (index === 4 && concept.id === "stream" ? "pick-cell" : "") + '">' + cell + '</td>'; }).join("") +
+        '</tr>';
+      }).join("");
+    }
+
+    function renderCompare() {
+      document.getElementById("compareGrid").innerHTML = concepts.map(function (concept, index) {
+        var surface = surfaceFor(concept.id);
+        return '<article class="compare-card" tabindex="0" role="button" data-compare-concept="' + index + '" aria-label="Open ' + concept.name + '">' +
+          '<div class="mini-stage" inert aria-hidden="true"><div class="phone" data-theme="' + state.theme + '">' + commonShell(surface, concept, true) + '</div></div>' +
+          '<h3>' + concept.number + ' · ' + concept.name + '</h3>' +
+          '<p>' + concept.thesis.split(".")[0] + '.</p>' +
+          '<span class="mini-tag">' + concept.tag + '</span>' +
+        '</article>';
+      }).join("");
+    }
+
+    function renderAll() {
+      renderConceptList();
+      renderPhone();
+      renderNotes();
+      renderCompare();
+      syncToolbar();
+    }
+
+    function syncToolbar() {
+      var themeButton = document.getElementById("themeToggle");
+      themeButton.querySelector("span").textContent = state.theme === "dark" ? "Light phone" : "Dark phone";
+      themeButton.classList.toggle("is-on", state.theme === "light");
+      themeButton.setAttribute("aria-pressed", String(state.theme === "light"));
+      var motionButton = document.getElementById("motionToggle");
+      motionButton.querySelector("span").textContent = state.motion ? "Pause motion" : "Resume motion";
+      motionButton.classList.toggle("is-on", !state.motion);
+      motionButton.setAttribute("aria-pressed", String(!state.motion));
+      var compareButton = document.getElementById("compareToggle");
+      compareButton.classList.toggle("is-on", state.compare);
+      compareButton.setAttribute("aria-pressed", String(state.compare));
+    }
+
+    function setConcept(index) {
+      state.active = (index + concepts.length) % concepts.length;
+      state.showPeople = false;
+      state.readerReply = null;
+      renderAll();
+      window.requestAnimationFrame(function () {
+        var activeChoice = document.querySelector(dataSelector("data-concept", state.active));
+        if (activeChoice) activeChoice.focus({ preventScroll: true });
+      });
+    }
+
+    function setCompare(on) {
+      state.compare = on;
+      document.getElementById("workspace").hidden = on;
+      document.getElementById("compareSection").hidden = !on;
+      document.getElementById("compareToggle").querySelector("span").textContent = on ? "Focus view" : "Compare all";
+      if (on) renderCompare();
+      syncToolbar();
+      if (on) {
+        document.getElementById("compareSection").scrollIntoView({
+          block: "start",
+          behavior: state.motion ? "smooth" : "auto"
+        });
+      }
+    }
+
+    function showToast(message) {
+      var el = document.getElementById("toast");
+      el.textContent = message;
+      el.classList.add("is-visible");
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(function () { el.classList.remove("is-visible"); }, 1900);
+    }
+
+    function openComposer(replyPost, invoker) {
+      composerInvoker = invoker instanceof HTMLElement
+        ? invoker
+        : (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      state.composeReplyTo = replyPost || null;
+      var currentPhone = document.getElementById("phone");
+      var oldSheet = currentPhone.querySelector(".composer-sheet");
+      var oldScrim = currentPhone.querySelector(".phone-scrim");
+      if (oldSheet) oldSheet.remove();
+      if (oldScrim) oldScrim.remove();
+      currentPhone.insertAdjacentHTML("beforeend", renderComposer());
+      var sheet = currentPhone.querySelector(".composer-sheet");
+      sheet.removeAttribute("inert");
+      sheet.setAttribute("aria-hidden", "false");
+      setPhoneBackgroundInert(true);
+      currentPhone.classList.add("composer-open");
+      window.setTimeout(function () {
+        var input = document.getElementById("composeText");
+        if (input) input.focus();
+      }, 360);
+    }
+
+    function closeComposer() {
+      var sheet = phone.querySelector(".composer-sheet");
+      if (sheet) {
+        sheet.setAttribute("aria-hidden", "true");
+        sheet.setAttribute("inert", "");
+      }
+      setPhoneBackgroundInert(false);
+      phone.classList.remove("composer-open");
+      state.composeReplyTo = null;
+      if (composerInvoker && composerInvoker.isConnected) {
+        composerInvoker.focus({ preventScroll: true });
+      }
+      composerInvoker = null;
+    }
+
+    function setPhoneBackgroundInert(inert) {
+      Array.from(phone.children).forEach(function (child) {
+        if (child.classList.contains("composer-sheet") || child.classList.contains("phone-scrim")) return;
+        child.inert = inert;
+      });
+    }
+
+    function transmit() {
+      var input = document.getElementById("composeText");
+      var text = input ? input.value.trim() : "";
+      if (!text) {
+        showToast("Write something before transmitting.");
+        return;
+      }
+      if (state.composeReplyTo) {
+        state.composeReplyTo.replies.push(["You", "YO", text, "#35bf70", "#17643c"]);
+        state.expanded.add(state.composeReplyTo.id);
+        showToast("Reply joined the conversation orbit.");
+      } else {
+        posts.unshift({
+          id: "you-" + Date.now(),
+          author: "You",
+          initials: "YO",
+          time: "now",
+          scope: state.audience,
+          kind: state.audience === "Nearby" ? "nearby" : "circle",
+          text: text,
+          hearts: 0,
+          passes: 0,
+          colorA: "#35bf70",
+          colorB: "#17643c",
+          media: false,
+          topic: "your signal",
+          replies: []
+        });
+        state.active = 0;
+        state.filter = "all";
+        showToast("Signal transmitted to " + state.audience + ".");
+      }
+      state.composeReplyTo = null;
+      renderAll();
+    }
+
+    document.addEventListener("click", function (event) {
+      var target;
+
+      target = event.target.closest("[data-concept]");
+      if (target) {
+        setConcept(Number(target.dataset.concept));
+        return;
+      }
+
+      target = event.target.closest("[data-compare-concept]");
+      if (target) {
+        setCompare(false);
+        setConcept(Number(target.dataset.compareConcept));
+        return;
+      }
+
+      if (event.target.closest("[data-exit-compare]")) {
+        setCompare(false);
+        return;
+      }
+
+      var composeInvoker = event.target.closest("[data-compose]");
+      if (composeInvoker) {
+        if (!state.compare) openComposer(null, composeInvoker);
+        return;
+      }
+
+      if (event.target.closest("[data-close-compose]")) {
+        closeComposer();
+        return;
+      }
+
+      if (event.target.closest("[data-transmit]")) {
+        transmit();
+        return;
+      }
+
+      target = event.target.closest("[data-audience]");
+      if (target) {
+        state.audience = target.dataset.audience;
+        phone.querySelectorAll("[data-audience]").forEach(function (button) {
+          var selected = button.dataset.audience === state.audience;
+          button.classList.toggle("is-active", selected);
+          button.setAttribute("aria-pressed", String(selected));
+        });
+        return;
+      }
+
+      target = event.target.closest("[data-surface]");
+      if (target && !state.compare) {
+        var nextSurface = target.dataset.surface;
+        state.showPeople = nextSurface === "people";
+        renderPhone(dataSelector("data-surface", nextSurface));
+        return;
+      }
+
+      target = event.target.closest("[data-filter]");
+      if (target) {
+        var nextFilter = target.dataset.filter;
+        state.filter = nextFilter;
+        renderPhone(dataSelector("data-filter", nextFilter));
+        return;
+      }
+
+      target = event.target.closest("[data-like]");
+      if (target) {
+        var likedId = target.dataset.like;
+        if (state.liked.has(likedId)) state.liked.delete(likedId);
+        else state.liked.add(likedId);
+        renderPhone(dataSelector("data-like", likedId));
+        return;
+      }
+
+      target = event.target.closest("[data-expand]");
+      if (target) {
+        var expandedId = target.dataset.expand;
+        if (state.expanded.has(expandedId)) state.expanded.delete(expandedId);
+        else state.expanded.add(expandedId);
+        renderPhone(dataSelector("data-expand", expandedId));
+        return;
+      }
+
+      target = event.target.closest("[data-reply]");
+      if (target) {
+        var replyPost = posts.find(function (item) { return item.id === target.dataset.reply; });
+        openComposer(replyPost || null, target);
+        return;
+      }
+
+      target = event.target.closest("[data-pass]");
+      if (target) {
+        var passPost = posts.find(function (item) { return item.id === target.dataset.pass; });
+        if (passPost) {
+          passPost.passes += 1;
+          showToast("Passed along inside your circle.");
+          renderPhone(dataSelector("data-pass", passPost.id));
+        }
+        return;
+      }
+
+      target = event.target.closest("[data-voice]");
+      if (target) {
+        var selectedVoice = target.dataset.voice;
+        state.selectedVoice = selectedVoice;
+        renderPhone(dataSelector("data-voice", selectedVoice));
+        return;
+      }
+
+      if (event.target.closest("[data-close-voice]")) {
+        var closedVoice = state.selectedVoice;
+        state.selectedVoice = null;
+        renderPhone(dataSelector("data-voice", closedVoice));
+        return;
+      }
+
+      if (event.target.closest("[data-all-signals]")) {
+        setConcept(0);
+        return;
+      }
+
+      target = event.target.closest("[data-constellation]");
+      if (target) {
+        var focusedPost = target.dataset.constellation;
+        state.constellationPost = focusedPost;
+        renderPhone(dataSelector("data-constellation", focusedPost));
+        return;
+      }
+
+      target = event.target.closest("[data-zoom]");
+      if (target) {
+        var direction = Number(target.dataset.zoom);
+        state.constellationZoom = Math.min(1.22, Math.max(.78, state.constellationZoom + direction * .11));
+        renderPhone(dataSelector("data-zoom", direction));
+        return;
+      }
+
+      target = event.target.closest("[data-reader]");
+      if (target) {
+        var step = Number(target.dataset.reader);
+        state.readerIndex = (state.readerIndex + step + posts.length) % posts.length;
+        state.readerReply = null;
+        renderPhone(dataSelector("data-reader", step));
+        return;
+      }
+
+      target = event.target.closest("[data-reader-index]");
+      if (target) {
+        var readerIndex = Number(target.dataset.readerIndex);
+        state.readerIndex = readerIndex;
+        state.readerReply = null;
+        renderPhone(dataSelector("data-reader-index", readerIndex));
+        return;
+      }
+
+      target = event.target.closest("[data-reader-reply]");
+      if (target) {
+        var replyIndex = Number(target.dataset.readerReply);
+        state.readerReply = state.readerReply === replyIndex ? null : replyIndex;
+        renderPhone(dataSelector("data-reader-reply", replyIndex));
+        return;
+      }
+
+      target = event.target.closest("[data-phone-toast]");
+      if (target) {
+        showToast(target.dataset.phoneToast);
+      }
+    });
+
+    document.getElementById("themeToggle").addEventListener("click", function () {
+      state.theme = state.theme === "dark" ? "light" : "dark";
+      renderAll();
+    });
+
+    document.getElementById("motionToggle").addEventListener("click", function () {
+      state.motion = !state.motion;
+      document.body.classList.toggle("motion-off", !state.motion);
+      syncToolbar();
+    });
+
+    document.getElementById("compareToggle").addEventListener("click", function () {
+      setCompare(!state.compare);
+    });
+
+    document.addEventListener("keydown", function (event) {
+      var compareCard = event.target.closest && event.target.closest("[data-compare-concept]");
+      if (compareCard && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        setCompare(false);
+        setConcept(Number(compareCard.dataset.compareConcept));
+        return;
+      }
+      var composeOpen = phone.classList.contains("composer-open");
+      if (composeOpen && event.key === "Tab") {
+        var sheet = phone.querySelector(".composer-sheet");
+        var focusable = Array.from(sheet.querySelectorAll("button:not([disabled]), textarea:not([disabled])"));
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+      if (event.key === "Escape" && composeOpen) {
+        closeComposer();
+        return;
+      }
+      if (composeOpen || state.compare || event.target.matches("textarea, input")) return;
+      if (event.key === "ArrowRight") setConcept(state.active + 1);
+      if (event.key === "ArrowLeft") setConcept(state.active - 1);
+    });
+
+    var swipeStartX = null;
+    phone.addEventListener("pointerdown", function (event) {
+      if (concepts[state.active].id === "reader" && !phone.classList.contains("composer-open")) {
+        swipeStartX = event.clientX;
+      }
+    });
+    phone.addEventListener("pointerup", function (event) {
+      if (swipeStartX == null) return;
+      var distance = event.clientX - swipeStartX;
+      swipeStartX = null;
+      if (Math.abs(distance) > 55) {
+        state.readerIndex = (state.readerIndex + (distance < 0 ? 1 : -1) + posts.length) % posts.length;
+        state.readerReply = null;
+        renderPhone();
+      }
+    });
+
+    renderMatrix();
+    renderAll();
+    if (state.compare) setCompare(true);
+  </script>
+</body>
+</html>

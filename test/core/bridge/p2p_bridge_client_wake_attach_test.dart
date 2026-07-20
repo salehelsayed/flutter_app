@@ -9,7 +9,7 @@ import 'fake_bridge.dart';
 // recipient-issued wake-token when present, and omits the key entirely (byte-
 // identical to the pre-FDC-09 frame, NET-REL-07) when absent/empty.
 void main() {
-  Map<String, dynamic> _storePayload(FakeBridge bridge) {
+  Map<String, dynamic> storePayload(FakeBridge bridge) {
     final sent = bridge.sentMessages
         .map((m) => jsonDecode(m) as Map<String, dynamic>)
         .firstWhere((m) => m['cmd'] == 'inbox:store');
@@ -27,7 +27,7 @@ void main() {
       wakeToken: 'tok-for-B',
     );
 
-    final payload = _storePayload(bridge);
+    final payload = storePayload(bridge);
     expect(payload['wakeToken'], 'tok-for-B');
   });
 
@@ -38,7 +38,7 @@ void main() {
 
     await callP2PInboxStore(bridge, toPeerId: 'peerB', message: 'hello');
 
-    final payload = _storePayload(bridge);
+    final payload = storePayload(bridge);
     expect(payload.containsKey('wakeToken'), isFalse);
     // The raw frame must not contain the key at all.
     expect(bridge.sentMessages.single.contains('wakeToken'), isFalse);
@@ -55,7 +55,7 @@ void main() {
       wakeToken: '',
     );
 
-    final payload = _storePayload(bridge);
+    final payload = storePayload(bridge);
     expect(payload.containsKey('wakeToken'), isFalse);
   });
 }

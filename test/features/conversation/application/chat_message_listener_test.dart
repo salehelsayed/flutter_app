@@ -2387,7 +2387,7 @@ void main() {
         );
         expect(persisted.single.downloadStatus, 'pending');
         expect(emitted.last.media, isNotNull);
-        expect(emitted.last.media!.single.downloadStatus, 'pending');
+        expect(emitted.last.media.single.downloadStatus, 'pending');
 
         await sub.cancel();
         deniedListener.dispose();
@@ -2416,7 +2416,7 @@ void main() {
           MediaConversationKind.oneToOne,
         );
         expect(allowing.requests.single.storageOwner, MediaOwnerLane.direct);
-        expect(allowedEmitted.last.media!.single.downloadStatus, 'done');
+        expect(allowedEmitted.last.media.single.downloadStatus, 'done');
 
         allowedListener.dispose();
       },

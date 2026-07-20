@@ -548,13 +548,13 @@ class GroupConversationScreen extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: retentionAccent.withOpacity(
-          readableColors.isLightSurface ? 0.08 : 0.12,
+        color: retentionAccent.withValues(
+          alpha: readableColors.isLightSurface ? 0.08 : 0.12,
         ),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: retentionAccent.withOpacity(
-            readableColors.isLightSurface ? 0.24 : 0.20,
+          color: retentionAccent.withValues(
+            alpha: readableColors.isLightSurface ? 0.24 : 0.20,
           ),
         ),
       ),
@@ -609,11 +609,13 @@ class GroupConversationScreen extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: accent.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
+        color: accent.withValues(
+          alpha: readableColors.isLightSurface ? 0.08 : 0.12,
+        ),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: accent.withOpacity(
-            readableColors.isLightSurface ? 0.24 : 0.20,
+          color: accent.withValues(
+            alpha: readableColors.isLightSurface ? 0.24 : 0.20,
           ),
         ),
       ),

@@ -92,7 +92,7 @@ class _FrameTimingCollector {
 
 class _EventRecorder {
   final List<Map<String, dynamic>> events = <Map<String, dynamic>>[];
-  Stopwatch _stopwatch = Stopwatch();
+  final Stopwatch _stopwatch = Stopwatch();
 
   void start() {
     events.clear();
@@ -140,6 +140,7 @@ class _TrackingMessageRepository extends FakeMessageRepository
   final _EventRecorder recorder;
   final _changeController = StreamController<ConversationMessage>.broadcast();
 
+  @override
   Stream<ConversationMessage> get messageChanges => _changeController.stream;
 
   @override
@@ -369,7 +370,7 @@ class _HarnessEnvironment {
 }
 
 class _ConversationHost extends StatefulWidget {
-  const _ConversationHost({super.key, required this.env});
+  const _ConversationHost({required this.env});
 
   final _HarnessEnvironment env;
 

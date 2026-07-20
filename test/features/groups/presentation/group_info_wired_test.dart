@@ -46,8 +46,9 @@ import 'package:flutter_app/features/groups/application/group_pending_broadcast_
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
-Widget _localizedMaterialApp({required Widget home}) {
+Widget _localizedMaterialApp({required Widget home, Locale? locale}) {
   return MaterialApp(
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: home,
@@ -66,6 +67,14 @@ class FakeIdentityRepository implements IdentityRepository {
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
+  }
+}
+
+class _FailingDeleteGroupMessageRepository
+    extends InMemoryGroupMessageRepository {
+  @override
+  Future<int> deleteMessagesForGroup(String groupId) async {
+    throw StateError('strict local delete diagnostic');
   }
 }
 
@@ -3275,8 +3284,7 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         await _seedEditableGroup(groupRepo);
         var uploadCalls = 0;
-        final UploadGroupAvatarFn uploadAndStartRecovery =
-            ({
+        Future<GroupAvatarUpload?> uploadAndStartRecovery({
               required Bridge bridge,
               required String localFilePath,
               required String groupId,
@@ -3293,7 +3301,7 @@ void main() {
                   size: 4,
                 ),
               );
-            };
+            }
 
         await _pumpEditableGroupInfo(
           tester,
@@ -3537,8 +3545,7 @@ void main() {
         String? capturedGroupId;
         String? capturedLocalFilePath;
         List<String>? capturedAllowedPeers;
-        final UploadGroupAvatarFn captureUpload =
-            ({
+        Future<GroupAvatarUpload?> captureUpload({
               required Bridge bridge,
               required String localFilePath,
               required String groupId,
@@ -3555,7 +3562,7 @@ void main() {
                 mime: mime,
                 size: File(localFilePath).lengthSync(),
               );
-            };
+            }
 
         await _pumpEditableGroupInfo(
           tester,
@@ -4217,9 +4224,40 @@ void main() {
             joinedAt: DateTime.now().toUtc(),
           ),
         );
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-alice',
+            joinedUsername: 'Alice',
+            eventAt: DateTime.now().toUtc(),
+          ),
+        );
 
         final bridge = FakeBridge();
         final p2pService = FakeP2PService();
+        final pendingRows = <String, GroupPendingBroadcast>{};
+        final enqueuedKinds = <String>[];
+        setGroupPendingBroadcastEnqueueSink((broadcast) async {
+          enqueuedKinds.add(broadcast.kind);
+          pendingRows[broadcast.id] = broadcast;
+        });
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (groupId) async => pendingRows.values
+              .where((broadcast) => broadcast.groupId == groupId)
+              .toList(growable: false),
+          remove: (id) async {
+            pendingRows.remove(id);
+          },
+          discardForGroup: (groupId) async {
+            pendingRows.removeWhere(
+              (_, broadcast) => broadcast.groupId == groupId,
+            );
+          },
+        );
+        addTearDown(() {
+          setGroupPendingBroadcastEnqueueSink(null);
+          setGroupPendingBroadcastAccessSinks();
+        });
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -4271,6 +4309,11 @@ void main() {
         expect(bridge.commandLog, contains('group:updateConfig'));
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(enqueuedKinds, [
+          groupPendingBroadcastKindMemberRolePrepared,
+          groupPendingBroadcastKindMemberRoleUpdated,
+        ]);
+        expect(pendingRows, isEmpty);
 
         final publishMsg = bridge.sentMessages.firstWhere((message) {
           final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -4334,6 +4377,82 @@ void main() {
             newRole: MemberRole.admin,
           ),
         );
+      },
+    );
+
+    testWidgets(
+      'role update failure shows localized Arabic copy instead of diagnostic StateError text',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-alice',
+            joinedUsername: 'Alice',
+            eventAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = FakeBridge();
+        bridge.responses['payload.sign'] = {'ok': false};
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            locale: const Locale('ar'),
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await openRoleActionMenu(tester, 'peer-alice');
+        await tester.tap(
+          find.byKey(const ValueKey('group-member-toggle-admin-peer-alice')),
+        );
+        await pumpFrames(tester);
+        await confirmRoleChangeDialog(tester);
+
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-alice'))?.role,
+          MemberRole.writer,
+        );
+        expect(find.text('فشل تحديث دور العضو'), findsOneWidget);
+        expect(find.text('Failed to sign group transition audit'), findsNothing);
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 
@@ -4440,6 +4559,24 @@ void main() {
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
         await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
         await msgRepo.saveMessage(
           GroupMessage(
             id: 'msg-left-group',
@@ -4467,7 +4604,15 @@ void main() {
           ),
         );
 
-        final bridge = FakeBridge();
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:generateNextKey': {
+              'ok': true,
+              'groupKey': 'rotated-group-key',
+              'keyEpoch': 2,
+            },
+          },
+        );
 
         // Use a Navigator stack to verify popUntil(isFirst)
         await tester.pumpWidget(
@@ -4590,8 +4735,34 @@ void main() {
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
         await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
 
-        final bridge = FakeBridge();
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:generateNextKey': {
+              'ok': true,
+              'groupKey': 'rotated-group-key',
+              'keyEpoch': 2,
+            },
+          },
+        );
         bridge.responses['group:leave'] = {
           'ok': false,
           'errorCode': 'GROUP_ERROR',
@@ -4652,8 +4823,9 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
-        await _saveGroupReplayKey(groupRepo);
-        await _saveGroupReplayKey(groupRepo, generation: 2);
+        for (var generation = 1; generation <= 8; generation++) {
+          await _saveGroupReplayKey(groupRepo, generation: generation);
+        }
         await groupRepo.saveMember(
           makeMember(
             peerId: 'peer-admin',
@@ -4696,7 +4868,7 @@ void main() {
         bridge.responses['group:generateNextKey'] = {
           'ok': true,
           'groupKey': 'failed-leave-rotated-key',
-          'keyEpoch': 3,
+          'keyEpoch': 9,
         };
         final p2pService = FakeP2PService();
 
@@ -4763,10 +4935,17 @@ void main() {
         ]);
         final latestKey = await groupRepo.getLatestKey('group-1');
         expect(latestKey, isNotNull);
-        expect(latestKey!.keyGeneration, 2);
-        expect(latestKey.encryptedKey, 'test-group-key-2');
-        expect(await groupRepo.getKeyByGeneration('group-1', 1), isNotNull);
-        expect(await groupRepo.getKeyByGeneration('group-1', 3), isNull);
+        expect(latestKey!.keyGeneration, 8);
+        for (var generation = 1; generation <= 8; generation++) {
+          expect(
+            (await groupRepo.getKeyByGeneration(
+              'group-1',
+              generation,
+            ))?.encryptedKey,
+            'test-group-key-$generation',
+          );
+        }
+        expect(await groupRepo.getKeyByGeneration('group-1', 9), isNull);
         expect(find.byType(GroupInfoScreen), findsOneWidget);
         expect(find.text('Open Info'), findsNothing);
         expect(find.text('Failed to leave group'), findsOneWidget);
@@ -4988,6 +5167,60 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:leave')));
         expect(find.byType(GroupInfoScreen), findsNothing);
         expect(find.text('Open Info'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'dissolved local delete failure shows localized Arabic copy instead of diagnostic StateError text',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = _FailingDeleteGroupMessageRepository();
+        final group = makeAdminGroup().copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+          dissolvedBy: 'peer-admin',
+        );
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+
+        final bridge = FakeBridge();
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            locale: const Locale('ar'),
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await scrollToDeleteLocalGroupButton(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('group-delete-local-button')),
+        );
+        await pumpFrames(tester, count: 5);
+        await confirmDeleteLocalGroupDialog(tester);
+
+        expect(find.text('فشل حذف المجموعة محليًا'), findsOneWidget);
+        expect(find.text('strict local delete diagnostic'), findsNothing);
+        expect(await groupRepo.getGroup(group.id), isNotNull);
+        expect(await groupRepo.getLatestKey(group.id), isNotNull);
+        expect(await groupRepo.getMembers(group.id), isNotEmpty);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
       },
     );
 

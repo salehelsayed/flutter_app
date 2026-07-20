@@ -2,7 +2,7 @@
 ///
 /// Measures media upload latency, throughput, and stall detection.
 /// Two-node upload tests require CLI test peer via orchestrator.
-/// Run: flutter test integration_test/benchmark_media_harness.dart -d <DEVICE_ID>
+/// Run: `flutter test integration_test/benchmark_media_harness.dart -d <DEVICE_ID>`
 library;
 
 import 'dart:io';
@@ -93,7 +93,7 @@ Future<void> runMediaBenchmark(WidgetTester tester) async {
       testFile.writeAsBytesSync(List.filled(size, 0x42));
       final mediaId = 'bench-$label-${DateTime.now().millisecondsSinceEpoch}';
 
-      print('\n--- Uploading $label (${size} bytes) ---');
+      print('\n--- Uploading $label ($size bytes) ---');
       Map<String, dynamic>? uploadResult;
       Object? uploadError;
       final events = await captureFlowEventsUntil(

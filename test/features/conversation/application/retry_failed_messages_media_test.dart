@@ -1,14 +1,12 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
-import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
-import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../domain/repositories/fake_message_repository.dart';
 import '../../../core/services/fake_p2p_service.dart';

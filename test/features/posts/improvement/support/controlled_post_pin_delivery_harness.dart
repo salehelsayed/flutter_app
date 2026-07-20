@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
-import '../../../../shared/fakes/fake_p2p_network.dart';
 import '../../../../shared/fakes/fake_p2p_service_integration.dart';
 
 Future<void> drainPostPinDeliveryMicrotasks([int turns = 3]) async {

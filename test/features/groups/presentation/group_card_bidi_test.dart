@@ -42,7 +42,7 @@ void main() {
     );
   }
 
-  Text _textWidget(WidgetTester tester, String text) {
+  Text textWidget(WidgetTester tester, String text) {
     return tester.widget<Text>(find.text(text));
   }
 
@@ -59,7 +59,7 @@ void main() {
       expect(find.text(sender), findsOneWidget);
       expect(find.text(body), findsOneWidget);
       expect(find.text('$sender: $body'), findsNothing);
-      expect(_textWidget(tester, body).textDirection, TextDirection.rtl);
+      expect(textWidget(tester, body).textDirection, TextDirection.rtl);
     },
   );
 
@@ -76,7 +76,7 @@ void main() {
       expect(find.text(sender), findsOneWidget);
       expect(find.text(body), findsOneWidget);
       expect(find.text('$sender: $body'), findsNothing);
-      expect(_textWidget(tester, body).textDirection, TextDirection.ltr);
+      expect(textWidget(tester, body).textDirection, TextDirection.ltr);
     },
   );
 

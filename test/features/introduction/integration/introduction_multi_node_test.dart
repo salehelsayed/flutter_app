@@ -1351,7 +1351,7 @@ void main() {
         expect(initialAIntro2, isNotNull);
         expect(initialBIntro1!.id, isNot(equals(initialAIntro2!.id)));
         expect(initialBIntro1.status, IntroductionOverallStatus.pending);
-        expect(initialAIntro2!.status, IntroductionOverallStatus.pending);
+        expect(initialAIntro2.status, IntroductionOverallStatus.pending);
 
         final dSawAAccept = waitForIntroStatusChanged(userD, intro2Id);
         await userA.acceptIntro(intro2Id);

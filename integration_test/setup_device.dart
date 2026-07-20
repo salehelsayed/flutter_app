@@ -2,10 +2,11 @@
 ///
 /// Usage (run per-device with --dart-define):
 ///   flutter test integration_test/setup_device.dart \
-///     -d <device-id> --dart-define=USERNAME=a
+///     -d `<device-id>` --dart-define=USERNAME=a
 ///
 /// State is written to the real DB (identity.db) and iOS Keychain,
 /// so the normal app picks up the identity on next launch.
+library;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -152,8 +153,9 @@ void main() {
         if (oldVersion < 8) await runBlockColumnsMigration(db);
         if (oldVersion < 9) await runQuotedMessageIdMigration(db);
         if (oldVersion < 10) await runMediaAttachmentsMigration(db);
-        if (oldVersion < 42)
+        if (oldVersion < 42) {
           await runMediaAttachmentReliabilityColumnsMigration(db);
+        }
         if (oldVersion < 11) await runAvatarVersionMigration(db);
         if (oldVersion < 12) await runTransportColumnMigration(db);
         if (oldVersion < 13) await runWaveformColumnMigration(db);
@@ -184,8 +186,9 @@ void main() {
         if (oldVersion < 38) await runPostsRepostMediaCryptoMigration(db);
         if (oldVersion < 39) await runPostsPassAvatarSnapshotsMigration(db);
         if (oldVersion < 40) await runPostsRepostVisualMetricsMigration(db);
-        if (oldVersion < 41)
+        if (oldVersion < 41) {
           await runGroupMessageReliabilityColumnsMigration(db);
+        }
         if (oldVersion < 43) await runMessagesEditedAtMigration(db);
         if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
         if (oldVersion < 45) await runInboxStagingEntriesMigration(db);
@@ -196,8 +199,9 @@ void main() {
         if (oldVersion < 50) await runGroupsMuteColumnMigration(db);
         if (oldVersion < 51) await runPendingGroupInvitesMigration(db);
         if (oldVersion < 52) await runGroupsDissolveColumnsMigration(db);
-        if (oldVersion < 53)
+        if (oldVersion < 53) {
           await runGroupsBacklogRetentionColumnsMigration(db);
+        }
       },
     );
     print('[SETUP] Database opened');

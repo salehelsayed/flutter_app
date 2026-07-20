@@ -718,7 +718,7 @@ Future<void> main(List<String> args) async {
     // Print combined report
     print('\n${'═' * 70}');
     print('  ROUTING + GROUP SMOKE E2E — TWO-SIMULATOR REPORT');
-    print('${'═' * 70}');
+    print('═' * 70);
     print('  Passed: $_passed / ${_passed + _failed}');
     print('  Failed: $_failed / ${_passed + _failed}');
     print('');

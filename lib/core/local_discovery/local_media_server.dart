@@ -25,12 +25,11 @@ class MediaUploadResult {
 class _PendingTransfer {
   final MediaOffer offer;
   final DateTime createdAt;
-  bool isUploading;
+  bool isUploading = false;
 
   _PendingTransfer({
     required this.offer,
     required this.createdAt,
-    this.isUploading = false,
   });
 }
 
@@ -122,7 +121,7 @@ class LocalMediaServer {
     return true;
   }
 
-  /// Handle HTTP PUT /media/<id>. Streams body to temp file, verifies SHA-256.
+  /// Handle HTTP PUT `/media/<id>`. Streams body to temp file, verifies SHA-256.
   ///
   /// Returns a [MediaUploadResult] indicating success or failure.
   /// The HTTP response is written to [request.response] before returning.
@@ -429,7 +428,7 @@ class LocalMediaServer {
     }
   }
 
-  /// Move temp file to persistent media/<contactPeerId>/<id>.<ext> path.
+  /// Move temp file to persistent `media/<contactPeerId>/<id>.<ext>` path.
   /// Returns the new path, or null if the temp file doesn't exist.
   Future<String?> persistMedia(String mediaId, String contactPeerId) async {
     if (!_isSafePathSegment(mediaId) || !_isSafePathSegment(contactPeerId)) {

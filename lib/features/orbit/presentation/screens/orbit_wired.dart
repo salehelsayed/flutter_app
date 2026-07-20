@@ -46,9 +46,15 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/leave_group_and_delete_local_history_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
@@ -66,8 +72,10 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -90,6 +98,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_exit_recovery_sheet.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
@@ -334,6 +343,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   final Set<String> _changedGroupIds = <String>{};
   bool _refreshPendingIntroductionsOnPop = false;
   int _introLoadRequestId = 0;
+  LeaveGroupAndDeleteLocalHistoryUseCase? _groupExitAction;
+  bool _isGroupExitInFlight = false;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
@@ -496,6 +507,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         : OrbitViewMode.innerCircle;
     final hasGroupSurfaces =
         widget.groupRepository != null && widget.groupMessageRepository != null;
+    final groupRepo = widget.groupRepository;
+    if (groupRepo != null) {
+      _groupExitAction = LeaveGroupAndDeleteLocalHistoryUseCase(
+        bridge: widget.bridge,
+        groupRepo: groupRepo,
+        groupMessageRepo: widget.groupMessageRepository,
+        identityRepo: widget.identityRepo,
+        sendP2PMessage: (peerId, message) =>
+            widget.p2pService.sendMessage(peerId, message),
+        storeP2PMessageInInbox: (peerId, message) =>
+            widget.p2pService.storeInInbox(peerId, message),
+      );
+    }
     _activeGroupsLoaded = !hasGroupSurfaces;
     _archivedGroupsLoaded = !hasGroupSurfaces;
     _publishAllProjections();
@@ -2802,6 +2826,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onCreateGroup: _onCreateGroup,
       onArchiveGroup: _onArchiveGroup,
       onUnarchiveGroup: _onUnarchiveGroup,
+      onLeaveGroup: _onLeaveGroup,
       onDeleteGroup: _onDeleteGroup,
       onRetryStuckRejoinGroup: _onRetryStuckRejoinGroup,
       onLeaveStuckGroup: _onLeaveStuckGroup,
@@ -2865,42 +2890,407 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _onDeleteGroup(OrbitGroup group) async {
+  Future<GroupExitSnapshot?> _resolveFreshGroupExit(String groupId) async {
     final groupRepository = widget.groupRepository;
-    final groupMessageRepository = widget.groupMessageRepository;
-    if (groupRepository == null || groupMessageRepository == null) return;
-    final isDissolved = group.group.isDissolved;
+    if (groupRepository == null) return null;
+    final identity = await widget.identityRepo.loadIdentity();
+    if (identity == null) return null;
+    return resolveGroupExitSnapshot(
+      groupRepo: groupRepository,
+      groupId: groupId,
+      selfPeerId: identity.peerId,
+      messageRepo: widget.groupMessageRepository,
+      inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
+      loadPendingBroadcasts: loadGroupPendingBroadcasts,
+    );
+  }
 
+  Future<void> _onLeaveGroup(OrbitGroup group) async {
+    if (_isGroupExitInFlight) return;
+    _isGroupExitInFlight = true;
+    try {
+      final snapshot = await _resolveFreshGroupExit(group.group.id);
+      if (!mounted || snapshot == null) return;
+      if (snapshot.group == null) {
+        _markGroupChanged(group.group.id);
+        await _refreshOrbitGroup(group.group.id);
+        return;
+      }
+      await _dispatchFreshGroupExit(snapshot, confirmNormalLeave: true);
+    } finally {
+      _isGroupExitInFlight = false;
+    }
+  }
+
+  Future<void> _onDeleteGroup(OrbitGroup group) async {
+    if (_isGroupExitInFlight) return;
+    _isGroupExitInFlight = true;
+    try {
+      final snapshot = await _resolveFreshGroupExit(group.group.id);
+      if (!mounted || snapshot == null) return;
+      if (snapshot.group == null) {
+        _markGroupChanged(group.group.id);
+        await _refreshOrbitGroup(group.group.id);
+        return;
+      }
+      // A stale dissolved row may have become active (or vice versa). Dispatch
+      // from fresh state rather than trusting the swipe's captured OrbitGroup.
+      await _dispatchFreshGroupExit(snapshot, confirmNormalLeave: true);
+    } finally {
+      _isGroupExitInFlight = false;
+    }
+  }
+
+  Future<void> _dispatchFreshGroupExit(
+    GroupExitSnapshot snapshot, {
+    required bool confirmNormalLeave,
+  }) async {
+    final group = snapshot.group;
+    if (group == null) {
+      return;
+    }
+    switch (snapshot.disposition) {
+      case GroupExitDisposition.noOp:
+        _markGroupChanged(group.id);
+        await _refreshOrbitGroup(group.id);
+        return;
+      case GroupExitDisposition.deleteDissolvedLocally:
+        await _confirmDeleteDissolvedGroup(group.id);
+        return;
+      case GroupExitDisposition.soleAdminRecovery:
+      case GroupExitDisposition.pendingRoleSync:
+        await _showGroupExitRecovery(snapshot);
+        return;
+      case GroupExitDisposition.leave:
+        if (confirmNormalLeave) {
+          final l10n = AppLocalizations.of(context)!;
+          final confirmed = await showConfirmationDialog(
+            context: context,
+            title: l10n.orbit_leave_group,
+            description: l10n.orbit_leave_group_body,
+            confirmLabel: l10n.orbit_leave_group_action,
+          );
+          if (!confirmed || !mounted) return;
+
+          final finalSnapshot = await _resolveFreshGroupExit(group.id);
+          if (!mounted || finalSnapshot == null) return;
+          if (finalSnapshot.group == null) {
+            _markGroupChanged(group.id);
+            await _refreshOrbitGroup(group.id);
+            return;
+          }
+          if (finalSnapshot.disposition != GroupExitDisposition.leave) {
+            await _dispatchFreshGroupExit(
+              finalSnapshot,
+              confirmNormalLeave: false,
+            );
+            return;
+          }
+        }
+        await _runActiveGroupExit(group.id, openRecoveryWhenBlocked: true);
+        return;
+    }
+  }
+
+  Future<bool> _runActiveGroupExit(
+    String groupId, {
+    required bool openRecoveryWhenBlocked,
+  }) async {
+    final action = _groupExitAction;
+    if (action == null) return false;
+    final result = await action.call(groupId);
+    if (!mounted) return result.didLeave;
+    switch (result.status) {
+      case LeaveGroupAndDeleteLocalHistoryStatus.left:
+        _openRowNotifier.value = null;
+        _markGroupChanged(groupId);
+        await _refreshOrbitGroup(groupId);
+        return true;
+      case LeaveGroupAndDeleteLocalHistoryStatus.leftCleanupIncomplete:
+        _openRowNotifier.value = null;
+        _markGroupChanged(groupId);
+        await _refreshOrbitGroup(groupId);
+        if (mounted) {
+          _showSnackBar(
+            AppLocalizations.of(context)!.group_exit_cleanup_incomplete,
+          );
+        }
+        return true;
+      case LeaveGroupAndDeleteLocalHistoryStatus.blockedLastAdmin:
+        final refreshed = await _resolveFreshGroupExit(groupId);
+        if (openRecoveryWhenBlocked && mounted && refreshed != null) {
+          await _showGroupExitRecovery(refreshed);
+        }
+        return false;
+      case LeaveGroupAndDeleteLocalHistoryStatus.preworkFailed:
+      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveFailed:
+        _markGroupChanged(groupId);
+        await _refreshOrbitGroup(groupId);
+        if (mounted) {
+          _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+        }
+        return false;
+      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveUncertain:
+        _markGroupChanged(groupId);
+        await _refreshOrbitGroup(groupId);
+        if (mounted) {
+          _showSnackBar(
+            AppLocalizations.of(context)!.group_exit_leave_uncertain,
+          );
+        }
+        return false;
+    }
+  }
+
+  Future<void> _showGroupExitRecovery(GroupExitSnapshot snapshot) async {
+    final group = snapshot.group;
+    if (!mounted || group == null) return;
+    String? pendingSourceEventId;
+    for (final row in snapshot.pendingRoleBroadcasts) {
+      final sourceMessageId = row.sourceMessageId;
+      if (sourceMessageId != null) {
+        pendingSourceEventId = sourceMessageId;
+        break;
+      }
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => GroupExitRecoverySheet(
+        groupName: group.name,
+        candidates: snapshot.eligibleSuccessors,
+        pendingRoleSync: snapshot.hasPendingRoleSync,
+        onPromote: (candidate) async {
+          try {
+            final result = await changeGroupMemberRoleAndBroadcast(
+              bridge: widget.bridge,
+              groupRepo: widget.groupRepository!,
+              identityRepo: widget.identityRepo,
+              groupId: group.id,
+              memberPeerId: candidate.peerId,
+              role: MemberRole.admin,
+              messageRepo: widget.groupMessageRepository,
+              inviteDeliveryAttemptRepo:
+                  widget.groupInviteDeliveryAttemptRepository,
+              senderDeviceId: widget.p2pService.currentState.peerId,
+              sendP2PMessage: (peerId, message) =>
+                  widget.p2pService.sendMessage(peerId, message),
+            );
+            pendingSourceEventId = result.sourceEventId;
+            _markGroupChanged(group.id);
+            await _refreshOrbitGroup(group.id);
+            return switch (result.outcome) {
+              ChangeGroupMemberRoleAndBroadcastOutcome.readyToLeave =>
+                GroupExitPromotionUiResult.readyToLeave,
+              ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync =>
+                GroupExitPromotionUiResult.pendingSync,
+              ChangeGroupMemberRoleAndBroadcastOutcome.unchanged =>
+                GroupExitPromotionUiResult.failed,
+            };
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ORBIT_FL_GROUP_EXIT_PROMOTION_ERROR',
+              details: {'error': error.toString()},
+            );
+            return GroupExitPromotionUiResult.failed;
+          }
+        },
+        onRetryPendingSync: () async {
+          await drainGroupPendingBroadcastsForGroup(group.id);
+          final pending = await loadGroupPendingBroadcasts(group.id);
+          final exactSource = pendingSourceEventId;
+          if (exactSource != null &&
+              pending.any(
+                (row) =>
+                    isPendingGroupMemberRoleBroadcastKind(row.kind) &&
+                    row.sourceMessageId == exactSource,
+              )) {
+            return false;
+          }
+          return !pending.any(
+            (row) => isPendingGroupMemberRoleBroadcastKind(row.kind),
+          );
+        },
+        onContinueLeave: () =>
+            _runActiveGroupExit(group.id, openRecoveryWhenBlocked: false),
+        onDissolve: () async {
+          final committed = await _dissolveGroupFromOrbit(group.id);
+          if (committed && mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) unawaited(_confirmDeleteDissolvedGroup(group.id));
+            });
+          }
+          return committed;
+        },
+      ),
+    );
+  }
+
+  Future<bool> _dissolveGroupFromOrbit(String groupId) async {
+    final groupRepo = widget.groupRepository;
+    final messageRepo = widget.groupMessageRepository;
+    if (!mounted || groupRepo == null || messageRepo == null) return false;
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: isDissolved
-          ? 'Delete dissolved group?'
-          : AppLocalizations.of(context)!.orbit_leave_group,
-      description: isDissolved
-          ? 'This will remove the dissolved group and its local history from this device. This cannot be undone.'
-          : 'This will permanently leave the group and delete all messages. This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: l10n.group_info_dissolve_title,
+      description: l10n.group_info_dissolve_body,
+      confirmLabel: l10n.group_info_dissolve_action,
+    );
+    if (!confirmed || !mounted) return false;
+    DissolveGroupResult? result;
+    GroupModel? transitionGroup;
+    Object? transitionError;
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) throw StateError(l10n.group_info_no_identity);
+      final senderBinding = await resolveGroupSenderDeviceBinding(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        senderPeerId: identity.peerId,
+        preferredDeviceId: widget.p2pService.currentState.peerId,
+        preferredTransportPeerId: widget.p2pService.currentState.peerId,
+        senderPublicKey: identity.publicKey,
+      );
+      final (dissolveResult, dissolvedGroup) = await dissolveGroup(
+        bridge: widget.bridge,
+        groupRepo: groupRepo,
+        msgRepo: messageRepo,
+        groupId: groupId,
+        actorPeerId: identity.peerId,
+        actorUsername: identity.username,
+        actorPublicKey: identity.publicKey,
+        actorPrivateKey: identity.privateKey,
+        actorDeviceId: senderBinding.deviceId,
+        actorTransportPeerId: senderBinding.transportPeerId,
+        actorKeyPackageId: senderBinding.keyPackageId,
+      );
+      result = dissolveResult;
+      transitionGroup = dissolvedGroup;
+    } catch (error) {
+      transitionError = error;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DISSOLVE_GROUP_ERROR',
+        details: {'stage': 'transition', 'error': error.toString()},
+      );
+    }
+
+    GroupModel? fresh;
+    var commitReadSucceeded = false;
+    try {
+      fresh = await groupRepo.getGroup(groupId);
+      commitReadSucceeded = true;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DISSOLVE_GROUP_ERROR',
+        details: {'stage': 'commit_read', 'error': error.toString()},
+      );
+    }
+    // A successful repository read is the current membership authority. The
+    // transition return value describes the membership that was dissolved, but
+    // a same-id rejoin can already have materialized a new active group before
+    // this continuation resumes. Only fall back to the returned transition when
+    // the authoritative read itself was unavailable.
+    final committed = commitReadSucceeded
+        ? fresh?.isDissolved == true
+        : transitionGroup?.isDissolved == true;
+    if (!committed && transitionError != null) {
+      if (mounted) _showSnackBar(l10n.group_info_dissolve_failed);
+      return false;
+    }
+    Object? pendingCleanupError;
+    if (committed) {
+      try {
+        await discardGroupPendingBroadcasts(groupId);
+      } catch (error) {
+        pendingCleanupError = error;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_FL_DISSOLVE_GROUP_ERROR',
+          details: {'stage': 'pending_cleanup', 'error': error.toString()},
+        );
+      }
+    }
+    _markGroupChanged(groupId);
+    try {
+      await _refreshOrbitGroup(groupId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DISSOLVE_GROUP_ERROR',
+        details: {'stage': 'refresh', 'error': error.toString()},
+      );
+    }
+    if (!mounted) return committed;
+    final message = pendingCleanupError != null || transitionError != null
+        ? l10n.group_info_dissolved_recovery
+        : switch (result) {
+            DissolveGroupResult.success =>
+              committed
+                  ? l10n.group_dissolved
+                  : l10n.group_info_dissolve_failed,
+            DissolveGroupResult.bridgeError =>
+              committed
+                  ? l10n.group_info_dissolved_recovery
+                  : l10n.group_info_dissolve_failed,
+            DissolveGroupResult.alreadyDissolved =>
+              committed
+                  ? l10n.group_info_already_dissolved
+                  : l10n.group_info_dissolve_failed,
+            DissolveGroupResult.unauthorized =>
+              l10n.group_info_admins_only_dissolve,
+            DissolveGroupResult.notFound => l10n.group_info_not_found,
+            null => l10n.group_info_dissolve_failed,
+          };
+    _showSnackBar(message);
+    return committed;
+  }
+
+  Future<void> _confirmDeleteDissolvedGroup(String groupId) async {
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    if (!mounted || groupRepository == null || groupMessageRepository == null) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: l10n.group_info_delete_local_title,
+      description: l10n.group_info_delete_local_body,
+      confirmLabel: l10n.group_info_delete_local_action,
     );
     if (!confirmed || !mounted) return;
-
     try {
       await deleteGroupAndMessages(
         bridge: widget.bridge,
         groupRepo: groupRepository,
         groupMessageRepo: groupMessageRepository,
-        groupId: group.group.id,
+        groupId: groupId,
         deleteLocallyIfDissolved: true,
       );
       _openRowNotifier.value = null;
-      _markGroupChanged(group.group.id);
-      await _refreshOrbitGroup(group.group.id);
-    } catch (e) {
+      _markGroupChanged(groupId);
+      await _refreshOrbitGroup(groupId);
+    } catch (error) {
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_DELETE_GROUP_ERROR',
-        details: {'error': e.toString()},
+        details: {'error': error.toString()},
       );
+      if (mounted) _showSnackBar(l10n.group_info_delete_local_failed);
     }
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+    );
   }
 
   /// "Retry now" on a stuck (given-up) rejoin row: force the row eligible so the
@@ -2947,6 +3337,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         event: 'ORBIT_FL_STUCK_LEAVE_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+      }
     } finally {
       _markGroupChanged(group.group.id);
       await _refreshOrbitGroup(group.group.id);

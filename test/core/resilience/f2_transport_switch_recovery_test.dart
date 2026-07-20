@@ -3,11 +3,10 @@
 /// Tests verify that:
 /// - Switching from relay to WiFi does not leave a long sending gap
 /// - WiFi losing the race still results in one delivered message
+library;
 
-import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 import '../../features/conversation/integration/two_user_message_exchange_test.dart';
 

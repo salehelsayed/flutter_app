@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';

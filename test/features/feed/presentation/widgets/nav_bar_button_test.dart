@@ -10,7 +10,9 @@ void main() {
       final msg = details.exceptionAsString();
       if (msg.contains('Unable to load asset') ||
           msg.contains('SvgPicture') ||
-          msg.contains('ImageFilter')) return;
+          msg.contains('ImageFilter')) {
+        return;
+      }
       oldHandler?.call(details);
     };
     addTearDown(() => FlutterError.onError = oldHandler);

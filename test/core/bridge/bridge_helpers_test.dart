@@ -2,8 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 /// A simple in-memory mock bridge that records calls and returns
 /// pre-configured responses.

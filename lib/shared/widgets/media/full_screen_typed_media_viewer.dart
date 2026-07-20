@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -44,6 +47,7 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
     this.privacyMinimized = false,
     this.onFirstRenderedFrame,
     this.onPreFrameFailure,
+    this.onPostFrameFailure,
   }) : assert(
          (pictureInPictureControllerFactory == null) ==
              (loadPictureInPictureAuthorization == null),
@@ -88,6 +92,7 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
   /// covered and video remains paused until this future returns true.
   final Future<bool> Function()? onFirstRenderedFrame;
   final VoidCallback? onPreFrameFailure;
+  final VoidCallback? onPostFrameFailure;
 
   @override
   State<FullScreenTypedMediaViewer> createState() =>
@@ -112,6 +117,7 @@ class _FullScreenTypedMediaViewerState
   bool _dispatching = false;
   MediaViewerActionResult? _lastResult;
   bool _renderLifecycleSettled = false;
+  bool _postFrameFailureReported = false;
   Future<bool>? _renderAuthorization;
   MediaPictureInPictureController? _pictureInPictureController;
   final Map<String, GlobalKey<_TypedVideoPageState>> _videoPageKeys = {};
@@ -316,6 +322,7 @@ class _FullScreenTypedMediaViewerState
         accepted = await widget.onFirstRenderedFrame!.call();
       } catch (_) {
         accepted = false;
+        _reportPostFrameFailure();
       }
       _renderLifecycleSettled = true;
       return accepted;
@@ -326,6 +333,12 @@ class _FullScreenTypedMediaViewerState
     if (_renderLifecycleSettled) return;
     _renderLifecycleSettled = true;
     widget.onPreFrameFailure?.call();
+  }
+
+  void _reportPostFrameFailure() {
+    if (_postFrameFailureReported) return;
+    _postFrameFailureReported = true;
+    widget.onPostFrameFailure?.call();
   }
 
   Future<void> _dispatch(MediaViewerAction action) async {
@@ -495,13 +508,31 @@ class _FullScreenTypedMediaViewerState
           onPlaybackStateChanged: _onVideoPlaybackStateChanged,
         );
       case MediaViewerKind.image:
-      case MediaViewerKind.gif:
         return _TypedImagePage(
           item: item,
+          captureProtected:
+              widget.privacyMinimized &&
+              defaultTargetPlatform == TargetPlatform.iOS,
           onFirstRenderedFrame: widget.onFirstRenderedFrame == null
               ? null
               : _reportFirstRenderedFrame,
           onPreFrameFailure: _reportPreFrameFailure,
+          onPostFrameFailure: _reportPostFrameFailure,
+        );
+      case MediaViewerKind.gif:
+        return _TypedImagePage(
+          item: item,
+          // ImageIO renders the first GIF frame through the same protected
+          // native surface. A static preview is safer than leaking animation
+          // pixels through Flutter's ordinary image compositor.
+          captureProtected:
+              widget.privacyMinimized &&
+              defaultTargetPlatform == TargetPlatform.iOS,
+          onFirstRenderedFrame: widget.onFirstRenderedFrame == null
+              ? null
+              : _reportFirstRenderedFrame,
+          onPreFrameFailure: _reportPreFrameFailure,
+          onPostFrameFailure: _reportPostFrameFailure,
         );
     }
   }
@@ -661,13 +692,17 @@ class _MediaViewerActionResultChip extends StatelessWidget {
 class _TypedImagePage extends StatefulWidget {
   const _TypedImagePage({
     required this.item,
+    required this.captureProtected,
     required this.onFirstRenderedFrame,
     required this.onPreFrameFailure,
+    required this.onPostFrameFailure,
   });
 
   final MediaViewerItem item;
+  final bool captureProtected;
   final Future<bool> Function()? onFirstRenderedFrame;
   final VoidCallback onPreFrameFailure;
+  final VoidCallback onPostFrameFailure;
 
   @override
   State<_TypedImagePage> createState() => _TypedImagePageState();
@@ -693,11 +728,31 @@ class _TypedImagePageState extends State<_TypedImagePage> {
   Widget build(BuildContext context) {
     final path = widget.item.localPath;
     if (path == null) {
+      if (!_authorizationStarted) {
+        _authorizationStarted = true;
+        scheduleMicrotask(widget.onPreFrameFailure);
+      }
       return const Center(
         child: Icon(
           Icons.image_not_supported_outlined,
           size: 48,
           color: Color.fromRGBO(255, 255, 255, 0.25),
+        ),
+      );
+    }
+    if (widget.captureProtected) {
+      return InteractiveViewer(
+        child: SizedBox.expand(
+          child: _IosCaptureProtectedImage(
+            key: ValueKey(
+              'ios-private-image:${widget.item.owner?.dbValue ?? 'none'}:'
+              '${widget.item.messageId}:${widget.item.attachmentId}',
+            ),
+            path: path,
+            onFirstRenderedFrame: widget.onFirstRenderedFrame,
+            onPreFrameFailure: widget.onPreFrameFailure,
+            onPostFrameFailure: widget.onPostFrameFailure,
+          ),
         ),
       );
     }
@@ -711,7 +766,10 @@ class _TypedImagePageState extends State<_TypedImagePage> {
               scheduleMicrotask(_authorizeReveal);
             }
             if (widget.onFirstRenderedFrame == null || _revealed) return child;
-            return const ColoredBox(color: Colors.black);
+            return const ColoredBox(
+              key: ValueKey('typed-image-prereveal-cover'),
+              color: Colors.black,
+            );
           },
           errorBuilder: (context, error, stackTrace) {
             scheduleMicrotask(widget.onPreFrameFailure);
@@ -723,6 +781,156 @@ class _TypedImagePageState extends State<_TypedImagePage> {
           },
         ),
       ),
+    );
+  }
+}
+
+class _IosCaptureProtectedImage extends StatefulWidget {
+  const _IosCaptureProtectedImage({
+    super.key,
+    required this.path,
+    required this.onFirstRenderedFrame,
+    required this.onPreFrameFailure,
+    required this.onPostFrameFailure,
+  });
+
+  final String path;
+  final Future<bool> Function()? onFirstRenderedFrame;
+  final VoidCallback onPreFrameFailure;
+  final VoidCallback onPostFrameFailure;
+
+  @override
+  State<_IosCaptureProtectedImage> createState() =>
+      _IosCaptureProtectedImageState();
+}
+
+class _IosCaptureProtectedImageState extends State<_IosCaptureProtectedImage> {
+  static const _viewType = 'mknoon/private_capture_protected_image';
+  static const _operationTimeout = Duration(seconds: 15);
+
+  bool _started = false;
+  bool _revealed = false;
+  bool _failed = false;
+  bool _authorizationAccepted = false;
+  MethodChannel? _channel;
+  Timer? _creationWatchdog;
+
+  @override
+  void initState() {
+    super.initState();
+    _creationWatchdog = Timer(_operationTimeout, () {
+      if (mounted && !_started) {
+        _started = true;
+        _failClosed();
+      }
+    });
+  }
+
+  Future<void> _onPlatformViewCreated(int viewId) async {
+    if (_started || _failed || !mounted) return;
+    _started = true;
+    _creationWatchdog?.cancel();
+    _creationWatchdog = null;
+    final channel = MethodChannel('$_viewType/$viewId');
+    _channel = channel;
+    channel.setMethodCallHandler(_handleNativeCall);
+    try {
+      final prepared = await channel
+          .invokeMapMethod<Object?, Object?>('prepare')
+          .timeout(_operationTimeout);
+      if (!mounted || _failed) return;
+      if (!_isExactSuccess(prepared)) {
+        _failClosed();
+        return;
+      }
+
+      final accepted =
+          await (widget.onFirstRenderedFrame?.call() ??
+              Future<bool>.value(true));
+      if (!mounted || _failed || !accepted) return;
+      _authorizationAccepted = true;
+
+      final revealed = await channel
+          .invokeMapMethod<Object?, Object?>('reveal')
+          .timeout(_operationTimeout);
+      if (!mounted || _failed) return;
+      if (!_isExactSuccess(revealed)) {
+        _failClosed();
+        return;
+      }
+      if (_failed) return;
+      setState(() => _revealed = true);
+    } catch (_) {
+      if (mounted) _failClosed();
+    }
+  }
+
+  Future<Object?> _handleNativeCall(MethodCall call) async {
+    if (call.method != 'renderFailure' || call.arguments != null) {
+      throw MissingPluginException('Unsupported protected image callback');
+    }
+    if (!mounted) return const <String, Object?>{'ok': false};
+    _failClosed();
+    return const <String, Object?>{'ok': true};
+  }
+
+  void _failClosed() {
+    if (_failed) return;
+    _failed = true;
+    _creationWatchdog?.cancel();
+    _creationWatchdog = null;
+    if (_authorizationAccepted) {
+      widget.onPostFrameFailure();
+    } else {
+      widget.onPreFrameFailure();
+    }
+    if (mounted) setState(() {});
+  }
+
+  bool _isExactSuccess(Map<Object?, Object?>? envelope) =>
+      envelope?.length == 1 && envelope?['ok'] == true;
+
+  @override
+  void dispose() {
+    _channel?.setMethodCallHandler(null);
+    _channel = null;
+    _creationWatchdog?.cancel();
+    _creationWatchdog = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) {
+      return const Center(
+        child: Icon(
+          Icons.broken_image_outlined,
+          size: 48,
+          color: Color.fromRGBO(255, 255, 255, 0.25),
+        ),
+      );
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        UiKitView(
+          viewType: _viewType,
+          creationParams: <String, Object?>{'path': widget.path},
+          creationParamsCodec: const StandardMessageCodec(),
+          hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+          onPlatformViewCreated: _onPlatformViewCreated,
+        ),
+        if (_revealed)
+          const IgnorePointer(
+            key: ValueKey('ios-capture-protected-image-revealed'),
+            child: SizedBox.shrink(),
+          ),
+        if (!_revealed)
+          const ColoredBox(
+            key: ValueKey('ios-capture-protected-image-prereveal-cover'),
+            color: Colors.black,
+          ),
+      ],
     );
   }
 }

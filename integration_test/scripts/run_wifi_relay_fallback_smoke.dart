@@ -119,48 +119,6 @@ Future<void> _deviceWriteFile(String devicePath, String content) async {
   }
 }
 
-Future<String?> _deviceReadFile(String devicePath) async {
-  if (_androidDeviceId != null) {
-    final tmp = File(
-      '${Directory.systemTemp.path}/_adb_pull_${DateTime.now().millisecondsSinceEpoch}',
-    );
-    try {
-      final r = await Process.run(_adb(), [
-        '-s',
-        _androidDeviceId!,
-        'pull',
-        devicePath,
-        tmp.path,
-      ]);
-      if (r.exitCode != 0) return null;
-      return tmp.readAsStringSync();
-    } finally {
-      try {
-        tmp.deleteSync();
-      } catch (_) {}
-    }
-  } else {
-    final f = File(devicePath);
-    if (!f.existsSync()) return null;
-    return f.readAsStringSync();
-  }
-}
-
-Future<bool> _deviceFileExists(String devicePath) async {
-  if (_androidDeviceId != null) {
-    final r = await Process.run(_adb(), [
-      '-s',
-      _androidDeviceId!,
-      'shell',
-      'ls',
-      devicePath,
-    ]);
-    return r.exitCode == 0;
-  } else {
-    return File(devicePath).existsSync();
-  }
-}
-
 Future<String> _createDeviceTempDir(String deviceId) async {
   final ts = DateTime.now().millisecondsSinceEpoch;
   final deviceDir = '/data/local/tmp/e2e_smoke_$ts';
@@ -328,7 +286,7 @@ class TestPeer {
     final completer = Completer<Map<String, dynamic>>();
     _pending.add(completer);
 
-    final request = {'cmd': cmd, if (params != null) 'params': params};
+    final request = {'cmd': cmd, 'params': ?params};
 
     final line = jsonEncode(request);
     _log('CMD', line.length > 200 ? '${line.substring(0, 200)}...' : line);

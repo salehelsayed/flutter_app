@@ -17,13 +17,16 @@ void main() {
     String id = 'b1',
     String groupId = 'group-1',
     String? sourceMessageId = 'src-1',
+    String kind = 'group_metadata_updated',
+    String sysText = '{"__sys":"group_metadata_updated"}',
+    List<String> recipientPeerIds = const ['peer-alice', 'peer-bob'],
     DateTime? eventAt,
   }) => GroupPendingBroadcast(
     id: id,
     groupId: groupId,
-    kind: 'group_metadata_updated',
-    sysText: '{"__sys":"group_metadata_updated"}',
-    recipientPeerIds: const ['peer-alice', 'peer-bob'],
+    kind: kind,
+    sysText: sysText,
+    recipientPeerIds: recipientPeerIds,
     eventAt: eventAt ?? DateTime.utc(2026, 6, 17, 9),
     sourceMessageId: sourceMessageId,
     createdAt: DateTime.utc(2026, 6, 17, 9),
@@ -41,6 +44,8 @@ void main() {
       dbCountForGroup: (groupId) =>
           dbCountPendingGroupBroadcastsForGroup(db, groupId),
       dbDelete: (id) => dbDeletePendingGroupBroadcast(db, id),
+      dbDeleteForGroup: (groupId) =>
+          dbDeletePendingGroupBroadcastsForGroup(db, groupId),
     );
   });
 
@@ -71,6 +76,50 @@ void main() {
     expect(await repo.countForGroup('group-1'), 1);
   });
 
+  test('enqueue atomically activates a prepared member role row', () async {
+    await repo.enqueue(
+      broadcast(
+        id: 'prepared-id',
+        kind: groupPendingBroadcastKindMemberRolePrepared,
+        sysText: '{"phase":"prepared"}',
+        recipientPeerIds: const ['peer-old'],
+      ),
+    );
+    await repo.enqueue(
+      broadcast(
+        id: 'active-id',
+        kind: groupPendingBroadcastKindMemberRoleUpdated,
+        sysText: '{"phase":"active"}',
+        recipientPeerIds: const ['peer-new'],
+      ),
+    );
+
+    final rows = await repo.forGroup('group-1');
+    expect(rows, hasLength(1));
+    expect(rows.single.id, 'active-id');
+    expect(rows.single.kind, groupPendingBroadcastKindMemberRoleUpdated);
+    expect(rows.single.sysText, '{"phase":"active"}');
+    expect(rows.single.recipientPeerIds, ['peer-new']);
+  });
+
+  test('concurrent prepared and active enqueue settles active', () async {
+    final prepared = broadcast(
+      id: 'prepared-id',
+      kind: groupPendingBroadcastKindMemberRolePrepared,
+    );
+    final active = broadcast(
+      id: 'active-id',
+      kind: groupPendingBroadcastKindMemberRoleUpdated,
+    );
+
+    await Future.wait([repo.enqueue(prepared), repo.enqueue(active)]);
+
+    final rows = await repo.forGroup('group-1');
+    expect(rows, hasLength(1));
+    expect(rows.single.id, 'active-id');
+    expect(rows.single.kind, groupPendingBroadcastKindMemberRoleUpdated);
+  });
+
   test('distinct sourceMessageId enqueues separate rows', () async {
     await repo.enqueue(broadcast(id: 'b1', sourceMessageId: 'src-1'));
     await repo.enqueue(broadcast(id: 'b2', sourceMessageId: 'src-2'));
@@ -82,6 +131,19 @@ void main() {
     await repo.remove('b1');
     expect(await repo.countForGroup('group-1'), 0);
     expect(await repo.forGroup('group-1'), isEmpty);
+  });
+
+  test('removeForGroup deletes only the target group rows', () async {
+    await repo.enqueue(broadcast(id: 'b1', groupId: 'group-1'));
+    await repo.enqueue(
+      broadcast(id: 'b2', groupId: 'group-1', sourceMessageId: 'src-2'),
+    );
+    await repo.enqueue(broadcast(id: 'b3', groupId: 'group-2'));
+
+    await repo.removeForGroup('group-1');
+
+    expect(await repo.forGroup('group-1'), isEmpty);
+    expect((await repo.forGroup('group-2')).map((row) => row.id), ['b3']);
   });
 
   test('all returns rows across groups', () async {

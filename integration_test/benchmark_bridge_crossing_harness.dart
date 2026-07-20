@@ -3,7 +3,7 @@
 /// Measures the raw round-trip latency of Dart→Go→Dart bridge calls
 /// using the real MethodChannel and Go native library.
 /// Collects BRIDGE_CALL_TIMING events from FLOW log for accurate measurement.
-/// Run: flutter test integration_test/benchmark_bridge_crossing_harness.dart -d <DEVICE_ID>
+/// Run: `flutter test integration_test/benchmark_bridge_crossing_harness.dart -d <DEVICE_ID>`
 library;
 
 import 'dart:convert';

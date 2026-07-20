@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_test/flutter_test.dart';

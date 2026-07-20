@@ -9,7 +9,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 
@@ -829,7 +828,7 @@ void main() {
   group('v2 encrypted', () {
     /// Builds a v2 encrypted envelope with the payload as "ciphertext".
     /// The fake bridge will return the payload JSON as plaintext on decrypt.
-    String _v2Message(
+    String v2Message(
       Map<String, dynamic> payload, {
       String? msgId,
       String? ts,
@@ -853,7 +852,7 @@ void main() {
       final payload = _validPayload();
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
 
-      final message = _makeChatMessage(_v2Message(payload));
+      final message = _makeChatMessage(v2Message(payload));
       final (result, request, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -875,7 +874,7 @@ void main() {
       final payload = _validPayload();
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
 
-      final message = _makeChatMessage(_v2Message(payload));
+      final message = _makeChatMessage(v2Message(payload));
       await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -896,7 +895,7 @@ void main() {
         'errorMessage': 'decryption failed',
       };
 
-      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final message = _makeChatMessage(v2Message(_validPayload()));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -914,7 +913,7 @@ void main() {
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
       bridge.verifyResult = false;
 
-      final message = _makeChatMessage(_v2Message(payload));
+      final message = _makeChatMessage(v2Message(payload));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -933,7 +932,7 @@ void main() {
         'plaintext': jsonEncode(_validPayload()),
       };
 
-      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final message = _makeChatMessage(v2Message(_validPayload()));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -1000,7 +999,7 @@ void main() {
       const dupeId = 'duplicate-msg-id';
       final seenIds = <String>{dupeId};
 
-      final message = _makeChatMessage(_v2Message(payload, msgId: dupeId));
+      final message = _makeChatMessage(v2Message(payload, msgId: dupeId));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -1022,7 +1021,7 @@ void main() {
           .toUtc()
           .subtract(const Duration(hours: 25))
           .toIso8601String();
-      final message = _makeChatMessage(_v2Message(payload, ts: oldTs));
+      final message = _makeChatMessage(v2Message(payload, ts: oldTs));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -1043,7 +1042,7 @@ void main() {
           .toUtc()
           .add(const Duration(minutes: 10))
           .toIso8601String();
-      final message = _makeChatMessage(_v2Message(payload, ts: futureTs));
+      final message = _makeChatMessage(v2Message(payload, ts: futureTs));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
@@ -1099,7 +1098,7 @@ void main() {
         bridge.decryptResponse = {'ok': true};
         // No 'plaintext' key at all
 
-        final message = _makeChatMessage(_v2Message(_validPayload()));
+        final message = _makeChatMessage(v2Message(_validPayload()));
         final (result, _, _) = await handleIncomingMessage(
           message: message,
           bridge: bridge,
@@ -1118,7 +1117,7 @@ void main() {
       () async {
         bridge.decryptResponse = {'ok': true, 'plaintext': 12345};
 
-        final message = _makeChatMessage(_v2Message(_validPayload()));
+        final message = _makeChatMessage(v2Message(_validPayload()));
         final (result, _, _) = await handleIncomingMessage(
           message: message,
           bridge: bridge,
@@ -1135,7 +1134,7 @@ void main() {
     test('v2 malformed decrypt: empty plaintext → invalidMessage', () async {
       bridge.decryptResponse = {'ok': true, 'plaintext': ''};
 
-      final message = _makeChatMessage(_v2Message(_validPayload()));
+      final message = _makeChatMessage(v2Message(_validPayload()));
       final (result, _, _) = await handleIncomingMessage(
         message: message,
         bridge: bridge,

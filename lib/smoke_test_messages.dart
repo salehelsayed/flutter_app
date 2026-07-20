@@ -1,7 +1,10 @@
+// ignore_for_file: avoid_print
 /// Smoke test for messages database layer.
 /// Run with: flutter run -t lib/smoke_test_messages.dart
 ///
 /// Opens database, runs migrations, inserts messages, queries, verifies round-trip.
+library;
+
 
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';

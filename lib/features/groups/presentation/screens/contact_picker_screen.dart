@@ -100,8 +100,10 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
                         ignoring: false,
                         child: AbsorbPointer(
                           child: Container(
-                            color: readableColors.overlayScrim.withOpacity(
-                              readableColors.isLightSurface ? 0.18 : 0.30,
+                            color: readableColors.overlayScrim.withValues(
+                              alpha: readableColors.isLightSurface
+                                  ? 0.18
+                                  : 0.30,
                             ),
                             child: Center(
                               child: CircularProgressIndicator(

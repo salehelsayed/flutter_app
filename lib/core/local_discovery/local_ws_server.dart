@@ -385,18 +385,18 @@ class LocalWsServer {
 
   Map<String, Object?> _legacyAckFrame(String? nonce) => {
     'ack': true,
-    if (nonce != null) 'nonce': nonce,
+    'nonce': ?nonce,
   };
 
   Map<String, Object?> _committedAckFrame(String? nonce) => {
     'ack': true,
     'committed': true,
-    if (nonce != null) 'nonce': nonce,
+    'nonce': ?nonce,
   };
 
   Map<String, Object?> _nackFrame(String? nonce, String reason) => {
     'ack': false,
-    if (nonce != null) 'nonce': nonce,
+    'nonce': ?nonce,
     'reason': reason,
   };
 

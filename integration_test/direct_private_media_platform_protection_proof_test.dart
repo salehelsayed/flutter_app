@@ -222,6 +222,55 @@ Widget _app(Widget home, {GlobalKey<NavigatorState>? navigatorKey}) =>
       home: home,
     );
 
+Future<void> _pumpUntilPrivateImageRevealed(WidgetTester tester) async {
+  const coverKeys = <ValueKey<String>>[
+    ValueKey<String>('typed-image-prereveal-cover'),
+    ValueKey<String>('ios-capture-protected-image-prereveal-cover'),
+  ];
+  bool hasCover() =>
+      coverKeys.any((key) => find.byKey(key).evaluate().isNotEmpty);
+
+  for (var frame = 0; frame < 200 && hasCover(); frame++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  for (final key in coverKeys) {
+    expect(
+      find.byKey(key),
+      findsNothing,
+      reason: 'capture proof must run only after the private image is revealed',
+    );
+  }
+  if (Platform.isIOS) {
+    expect(
+      find.byKey(
+        const ValueKey<String>('ios-capture-protected-image-revealed'),
+      ),
+      findsOneWidget,
+      reason: 'iOS proof requires the native reveal acknowledgement',
+    );
+  }
+}
+
+Future<void> _holdForSystemCaptureProof(
+  WidgetTester tester,
+  PrivateMediaProtectionCoordinator coordinator,
+  String phase,
+) async {
+  const holdMs = int.fromEnvironment(
+    'MKNOON_PRIVATE_MEDIA_CAPTURE_HOLD_MS',
+    defaultValue: 0,
+  );
+  if (holdMs <= 0) return;
+  final state = await coordinator.debugGetState();
+  debugPrint(
+    '[PRIVATE_MEDIA_CAPTURE_PROOF] phase=$phase '
+    'activeOwnerCount=${state['activeOwnerCount']} '
+    'holdMs=$holdMs',
+  );
+  await Future<void>.delayed(Duration(milliseconds: holdMs));
+  await tester.pump();
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -235,7 +284,7 @@ void main() {
       final image = File('${directory.path}/private.png')
         ..writeAsBytesSync(
           base64Decode(
-            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            'iVBORw0KGgoAAAANSUhEUgAAAEAAAABAAQMAAACQp+OdAAAAA1BMVEX/AP804Oa6AAAAD0lEQVQoz2NgGAWjgHwAAAJAAAGMxat3AAAAAElFTkSuQmCC',
           ),
         );
       final brokenImage = File('${directory.path}/broken.png')
@@ -268,7 +317,9 @@ void main() {
       expect(viewOnceGrant!.canEnterPictureInPicture, isFalse);
       final active = await coordinator.debugGetState();
       expect(active['activeOwnerCount'], 1);
-      if (Platform.isAndroid) expect(active['secureApplied'], isTrue);
+      if (Platform.isAndroid) {
+        expect(active['secureApplied'], isTrue);
+      }
 
       final viewOnceRoute = navigatorKey.currentState!.push<void>(
         MaterialPageRoute<void>(
@@ -283,7 +334,14 @@ void main() {
         find.byKey(const ValueKey('direct-private-media-viewer')),
         findsOneWidget,
       );
+      await _pumpUntilPrivateImageRevealed(tester);
+      expect(
+        find.byKey(const ValueKey('direct-private-media-viewer')),
+        findsOneWidget,
+      );
+      expect(viewOnceGrant.protectionReleased, isFalse);
       expect(viewOnce.lane.firstFrames, 1);
+      await _holdForSystemCaptureProof(tester, coordinator, 'view_once_open');
       await tester.tap(find.byIcon(Icons.arrow_back).first);
       await tester.pumpAndSettle();
       await viewOnceRoute;
@@ -299,15 +357,54 @@ void main() {
         final grant = await protected.controller.prepare(_identity);
         expect(grant, isNotNull);
         expect(grant!.canEnterPictureInPicture, isFalse);
-        await protected.controller.settle(
-          grant,
-          DirectPrivateMediaExitReason.close,
-        );
+        if (attempt == 0) {
+          final route = navigatorKey.currentState!.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => DirectPrivateMediaViewer(
+                grant: grant,
+                controller: protected.controller,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await _pumpUntilPrivateImageRevealed(tester);
+          expect(
+            find.byKey(const ValueKey('direct-private-media-viewer')),
+            findsOneWidget,
+          );
+          expect(grant.protectionReleased, isFalse);
+          await _holdForSystemCaptureProof(
+            tester,
+            coordinator,
+            'protected_open',
+          );
+          await tester.tap(find.byIcon(Icons.arrow_back).first);
+          await tester.pumpAndSettle();
+          await route;
+        } else {
+          await protected.controller.settle(
+            grant,
+            DirectPrivateMediaExitReason.close,
+          );
+        }
         expect(
           protected.lane.target.state,
           PrivateMediaLifecycleState.available,
         );
       }
+
+      final ordinaryControlRoute = navigatorKey.currentState!.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            body: SizedBox.expand(child: Image.file(image, fit: BoxFit.fill)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _holdForSystemCaptureProof(tester, coordinator, 'ordinary_control');
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      await ordinaryControlRoute;
 
       final disappearing = _controller(
         protection: coordinator,

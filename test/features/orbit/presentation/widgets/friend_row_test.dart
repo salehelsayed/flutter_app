@@ -39,7 +39,7 @@ void main() {
       home: Scaffold(body: child),
     );
 
-    Text _textFor(WidgetTester tester, String text) {
+    Text textFor(WidgetTester tester, String text) {
       final finder = find.byWidgetPredicate(
         (widget) => widget is Text && widget.data == text,
         description: 'Text("$text")',
@@ -99,7 +99,7 @@ void main() {
         ),
       );
 
-      expect(_textFor(tester, lastActivity).textDirection, TextDirection.rtl);
+      expect(textFor(tester, lastActivity).textDirection, TextDirection.rtl);
     });
 
     testWidgets('Arabic-first mixed lastActivity drives RTL', (tester) async {
@@ -114,7 +114,7 @@ void main() {
         ),
       );
 
-      expect(_textFor(tester, lastActivity).textDirection, TextDirection.rtl);
+      expect(textFor(tester, lastActivity).textDirection, TextDirection.rtl);
     });
 
     testWidgets('English-first mixed lastActivity drives LTR', (tester) async {
@@ -129,7 +129,7 @@ void main() {
         ),
       );
 
-      expect(_textFor(tester, lastActivity).textDirection, TextDirection.ltr);
+      expect(textFor(tester, lastActivity).textDirection, TextDirection.ltr);
     });
 
     testWidgets('media-only voice note shows a localized label', (tester) async {
@@ -237,7 +237,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(_textFor(tester, 'رسالة صوتية').textDirection, TextDirection.rtl);
+      expect(textFor(tester, 'رسالة صوتية').textDirection, TextDirection.rtl);
     });
   });
 

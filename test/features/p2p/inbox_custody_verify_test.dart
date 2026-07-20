@@ -20,7 +20,6 @@
 // the receiver acks — never on the sender's custody re-store, never on a bare
 // retrieve.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';

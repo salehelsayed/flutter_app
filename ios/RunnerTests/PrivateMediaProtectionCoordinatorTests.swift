@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 import XCTest
@@ -28,7 +29,10 @@ final class PrivateMediaProtectionCoordinatorTests: XCTestCase {
     center.post(name: UIApplication.userDidTakeScreenshotNotification, object: nil)
     XCTAssertTrue(cover.superview === window)
     XCTAssertEqual(events.map { $0["event"] as? String }, ["screenshot"])
-    XCTAssertEqual(PrivateMediaProtectionCoordinator.screenshotHandlingClaim, "detection")
+    XCTAssertEqual(
+      PrivateMediaProtectionCoordinator.screenshotHandlingClaim,
+      "detection"
+    )
 
     assertSuccess(coordinator, method: "exit", arguments: owner("first"), active: true)
     XCTAssertTrue(cover.superview === window)
@@ -37,6 +41,56 @@ final class PrivateMediaProtectionCoordinatorTests: XCTestCase {
 
     center.post(name: UIApplication.userDidTakeScreenshotNotification, object: nil)
     XCTAssertEqual(events.count, 1, "observers must be removed after the last owner exits")
+  }
+
+  func testCaptureProtectedImageViewConfiguresCaptureExcludedLayer() {
+    let view = PrivateMediaCaptureProtectedImageView(
+      frame: CGRect(x: 0, y: 0, width: 320, height: 640)
+    )
+
+    XCTAssertTrue(view.displayLayer.preventsCapture)
+    XCTAssertEqual(view.displayLayer.videoGravity, .resizeAspect)
+    XCTAssertEqual(view.displayLayer.backgroundColor, UIColor.black.cgColor)
+    XCTAssertFalse(view.displayLayer.preventsDisplaySleepDuringVideoPlayback)
+  }
+
+  func testCaptureProtectedImageSampleBufferIsImmediateAndIOSurfaceBacked() throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(
+      size: CGSize(width: 32, height: 16),
+      format: format
+    ).image { context in
+      UIColor.magenta.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "private-media-\(UUID().uuidString).png"
+    )
+    try XCTUnwrap(image.pngData()).write(to: url, options: .atomic)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let sampleBuffer = try XCTUnwrap(
+      PrivateMediaCaptureProtectedImageSampleBuffer.make(path: url.path)
+    )
+    let pixelBuffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(sampleBuffer))
+    XCTAssertTrue(CMSampleBufferIsValid(sampleBuffer))
+    XCTAssertEqual(CVPixelBufferGetWidth(pixelBuffer), 32)
+    XCTAssertEqual(CVPixelBufferGetHeight(pixelBuffer), 16)
+    XCTAssertNotNil(CVPixelBufferGetIOSurface(pixelBuffer))
+    XCTAssertNotNil(
+      CVBufferGetAttachment(pixelBuffer, kCVImageBufferCGColorSpaceKey, nil)
+    )
+
+    let attachments = try XCTUnwrap(
+      CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+        as? [[CFString: Any]]
+    )
+    XCTAssertEqual(attachments.count, 1)
+    XCTAssertEqual(
+      attachments[0][kCMSampleAttachmentKey_DisplayImmediately] as? Bool,
+      true
+    )
   }
 
   func testCaptureAndLifecycleCoverUntilLastOwnerRestorationAndTeardown() {
@@ -154,7 +208,10 @@ final class PrivateMediaProtectionCoordinatorTests: XCTestCase {
 
     assertSuccess(coordinator, method: "enter", arguments: owner(secret), active: true)
     let state = debugState(coordinator)
-    XCTAssertEqual(Set(state.keys), Set(["coverVisible", "captureActive", "activeOwnerCount"]))
+    XCTAssertEqual(
+      Set(state.keys),
+      Set(["coverVisible", "captureActive", "activeOwnerCount"])
+    )
     XCTAssertFalse(String(describing: state).contains(secret))
 
     let injected = invoke(

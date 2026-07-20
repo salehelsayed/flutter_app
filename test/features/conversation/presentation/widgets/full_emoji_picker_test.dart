@@ -9,12 +9,10 @@ void main() {
   group('FullEmojiPicker', () {
     testWidgets('renders grid of emojis', (tester) async {
       // Build a widget that shows the picker
-      late BuildContext savedContext;
       await tester.pumpWidget(
         MaterialApp(
           home: Builder(
             builder: (context) {
-              savedContext = context;
               return Scaffold(
                 body: ElevatedButton(
                   onPressed: () => showFullEmojiPicker(context),

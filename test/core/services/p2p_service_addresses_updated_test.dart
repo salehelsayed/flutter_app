@@ -1,11 +1,8 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
-import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
@@ -127,11 +124,6 @@ void main() {
   test('addresses:updated with empty circuit does not trigger FCM re-registration', () async {
     await service.startNodeCore('AAAA', 'test-peer-id');
 
-    // Track calls to inbox:register_token by checking bridge calls.
-    var registerTokenCalled = false;
-    final originalSend = fakeBridge.send;
-    // We can't override send on the fake, but we can check that registerPushToken
-    // is NOT called by verifying no state change triggers it.
     // With empty circuit addresses and no prior FCM token, nothing should happen.
     fakeBridge.onAddressesUpdated!([], []);
 

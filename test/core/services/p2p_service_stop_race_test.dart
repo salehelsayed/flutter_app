@@ -532,11 +532,6 @@ void main() {
 
         expect(service.currentState.isStarted, isTrue);
 
-        // Note the status call count BEFORE stopping.
-        // startNode -> startNodeCore -> warmBackground -> delayed callback etc.
-        // may have already triggered some calls.
-        final statusCountBeforeStop = bridge.nodeStatusCallCount;
-
         // Stop the node BEFORE the 30s health check timer fires.
         service.stopNode();
         async.flushMicrotasks();

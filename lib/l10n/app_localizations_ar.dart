@@ -586,6 +586,70 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_leave_group => 'مغادرة المجموعة وحذفها؟';
 
   @override
+  String get orbit_leave_action => 'مغادرة';
+
+  @override
+  String get orbit_leave_group_body =>
+      'تؤدي المغادرة إلى إزالة هذه المجموعة وسجلها من هذا الجهاز. لا يمكن التراجع عن ذلك.';
+
+  @override
+  String get orbit_leave_group_action => 'مغادرة وحذف';
+
+  @override
+  String get group_exit_only_admin_title => 'أنت المشرف الوحيد';
+
+  @override
+  String group_exit_only_admin_body(String groupName) {
+    return 'تحتاج المجموعة إلى مشرف واحد على الأقل قبل أن تتمكن من المغادرة. اختر ما يجب أن يحدث لـ $groupName.';
+  }
+
+  @override
+  String get group_exit_choose_admin => 'اختيار مشرف آخر';
+
+  @override
+  String get group_exit_choose_admin_body =>
+      'بعد ذلك يمكنك المغادرة وإزالة هذه المجموعة من هذا الجهاز.';
+
+  @override
+  String get group_exit_dissolve_for_everyone => 'حل المجموعة للجميع';
+
+  @override
+  String get group_exit_keep_group => 'الاحتفاظ بالمجموعة';
+
+  @override
+  String get group_exit_keep_and_close_semantics =>
+      'الاحتفاظ بالمجموعة والإغلاق';
+
+  @override
+  String get group_exit_no_eligible_successor =>
+      'انتظر انضمام شخص، أو قم بحل المجموعة.';
+
+  @override
+  String get group_exit_choose_member => 'اختيار عضو';
+
+  @override
+  String get group_exit_continue_to_leave => 'المتابعة للمغادرة';
+
+  @override
+  String get group_exit_stay_in_group => 'البقاء في المجموعة';
+
+  @override
+  String get group_exit_admin_sync_pending_title =>
+      'لا يزال تغيير المشرف قيد المزامنة';
+
+  @override
+  String get group_exit_admin_sync_pending_body =>
+      'انتظر حتى تكتمل مزامنة تغيير المشرف الموقّع قبل المغادرة.';
+
+  @override
+  String get group_exit_leave_uncertain =>
+      'ربما اكتمل طلب المغادرة. حدّث المجموعة قبل المحاولة مرة أخرى.';
+
+  @override
+  String get group_exit_cleanup_incomplete =>
+      'لقد غادرت المجموعة، ولكن تعذرت إزالة سجلها المحلي بالكامل.';
+
+  @override
   String get conversation_hint => 'اكتب شيئًا...';
 
   @override
@@ -3197,6 +3261,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get private_media_ios_capture_limit =>
       'لا يستطيع iOS منع لقطات الشاشة بشكل موثوق؛ يُكتشف الالتقاط وتُحجب الوسائط الخاصة أو يُغلق عرضها';
+
+  @override
+  String get private_media_ios_image_capture_limit =>
+      'تُخفى هذه الصورة المحمية في لقطات الشاشة وتسجيلات الشاشة أثناء فتحها';
 
   @override
   String get private_media_general_capture_limit =>

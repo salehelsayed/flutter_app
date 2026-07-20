@@ -296,6 +296,31 @@
   },
   "orbit_delete_chat": "Delete chat?",
   "orbit_leave_group": "Leave & delete group?",
+  "orbit_leave_action": "Leave",
+  "orbit_leave_group_body": "Leaving removes this group and its history from this device. This cannot be undone.",
+  "orbit_leave_group_action": "Leave & Delete",
+  "group_exit_only_admin_title": "You’re the only admin",
+  "group_exit_only_admin_body": "A group needs at least one admin before you can leave. Choose what should happen to {groupName}.",
+  "@group_exit_only_admin_body": {
+    "placeholders": {
+      "groupName": {
+        "type": "String"
+      }
+    }
+  },
+  "group_exit_choose_admin": "Choose another admin",
+  "group_exit_choose_admin_body": "Then you can leave and remove this group from this device.",
+  "group_exit_dissolve_for_everyone": "Dissolve for everyone",
+  "group_exit_keep_group": "Keep group",
+  "group_exit_keep_and_close_semantics": "Keep group and close",
+  "group_exit_no_eligible_successor": "Wait for someone to join, or dissolve the group.",
+  "group_exit_choose_member": "Choose a member",
+  "group_exit_continue_to_leave": "Continue to leave",
+  "group_exit_stay_in_group": "Stay in group",
+  "group_exit_admin_sync_pending_title": "Admin change is still syncing",
+  "group_exit_admin_sync_pending_body": "Wait for the signed admin change to finish syncing before you leave.",
+  "group_exit_leave_uncertain": "The leave request may have completed. Refresh the group before trying again.",
+  "group_exit_cleanup_incomplete": "You left the group, but its local history could not be fully removed.",
   "conversation_hint": "Write something...",
   "conversation_voice_fail": "Failed to send voice message.",
   "conversation_voice_limit_reached": "Recording reached the 5-minute limit.",
@@ -1711,6 +1736,7 @@
   "private_media_unsupported": "Update Mknoon to view this private media, or delete it",
   "private_media_android_capture_limit": "Screenshots and screen recording are blocked only while this private route is open",
   "private_media_ios_capture_limit": "iOS cannot reliably prevent screenshots; capture is detected and private media is covered/dismissed",
+  "private_media_ios_image_capture_limit": "This protected image is hidden in screenshots and screen recordings while open",
   "private_media_general_capture_limit": "Another device or camera can still photograph the screen",
   "private_media_sheet_title_photo": "How should {name} see this photo?",
   "@private_media_sheet_title_photo": {"placeholders": {"name": {"type": "String"}}},

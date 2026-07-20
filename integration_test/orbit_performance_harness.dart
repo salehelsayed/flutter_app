@@ -171,9 +171,7 @@ class _OrbitHostState extends State<_OrbitHost> {
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: const Scaffold(
-        body: Center(child: Text('Orbit Perf Home')),
-      ),
+      home: const Scaffold(body: Center(child: Text('Orbit Perf Home'))),
     );
   }
 }
@@ -264,6 +262,7 @@ class _OrbitRouteScreenState extends State<_OrbitRouteScreen> {
       onCreateGroup: (_) {},
       onArchiveGroup: (_) {},
       onUnarchiveGroup: (_) {},
+      onLeaveGroup: (_) {},
       onDeleteGroup: (_) {},
     );
   }
@@ -277,19 +276,13 @@ Future<void> _pumpFrames(WidgetTester tester, {required int count}) async {
 
 Future<void> _pumpHost(WidgetTester tester, _OrbitScenario scenario) async {
   await tester.pumpWidget(
-    _OrbitHost(
-      key: ValueKey('host-${scenario.id}'),
-      scenario: scenario,
-    ),
+    _OrbitHost(key: ValueKey('host-${scenario.id}'), scenario: scenario),
   );
   await _pumpFrames(tester, count: 10);
   expect(find.text('Orbit Perf Home'), findsOneWidget);
 }
 
-Future<void> _runScenario(
-  WidgetTester tester,
-  _OrbitScenario scenario,
-) async {
+Future<void> _runScenario(WidgetTester tester, _OrbitScenario scenario) async {
   final hostState = tester.state<_OrbitHostState>(find.byType(_OrbitHost));
 
   developer.Timeline.instantSync(
@@ -336,26 +329,27 @@ Future<void> _runScenario(
 }
 
 Map<String, dynamic> _timelineEventSummary(Map<String, dynamic> timeline) {
-  final events = (timeline['traceEvents'] as List<dynamic>? ?? const <dynamic>[])
-      .whereType<Map<String, dynamic>>()
-      .toList(growable: false);
-  int countContains(String needle) => events
-      .where((event) => '${event['name'] ?? ''}'.contains(needle))
-      .length;
+  final events =
+      (timeline['traceEvents'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+  int countContains(String needle) =>
+      events.where((event) => '${event['name'] ?? ''}'.contains(needle)).length;
 
-  final interestingNames = events
-      .map((event) => '${event['name'] ?? ''}')
-      .where(
-        (name) =>
-            name.contains('RenderCustomPaint') ||
-            name.contains('BackdropFilter') ||
-            name.contains('ShaderMask') ||
-            name.contains('SceneDisplayLag') ||
-            name.contains('orbit_perf_phase'),
-      )
-      .toSet()
-      .toList()
-    ..sort();
+  final interestingNames =
+      events
+          .map((event) => '${event['name'] ?? ''}')
+          .where(
+            (name) =>
+                name.contains('RenderCustomPaint') ||
+                name.contains('BackdropFilter') ||
+                name.contains('ShaderMask') ||
+                name.contains('SceneDisplayLag') ||
+                name.contains('orbit_perf_phase'),
+          )
+          .toSet()
+          .toList()
+        ..sort();
 
   return <String, dynamic>{
     'eventCount': events.length,
@@ -495,12 +489,13 @@ void registerOrbitPerf() {
 
         // Enter edit + one knob drag (best-effort — report-only).
         final viz = tester.getRect(find.byType(OrbitalVisualization));
-        final g = await tester.startGesture(Offset(viz.left - 6, viz.center.dy));
+        final g = await tester.startGesture(
+          Offset(viz.left - 6, viz.center.dy),
+        );
         await tester.pump(const Duration(milliseconds: 620));
         await g.up();
         await _pumpFrames(tester, count: 4);
-        final handle =
-            find.byKey(const ValueKey('orbit-handle-spacingScale'));
+        final handle = find.byKey(const ValueKey('orbit-handle-spacingScale'));
         if (handle.evaluate().isNotEmpty) {
           await tester.drag(handle, const Offset(0, -40));
           await _pumpFrames(tester, count: 8);

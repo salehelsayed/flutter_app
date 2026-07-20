@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';

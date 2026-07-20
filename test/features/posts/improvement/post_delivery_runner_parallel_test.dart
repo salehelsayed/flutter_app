@@ -580,23 +580,17 @@ class _ControlledP2PService extends FakeP2PService {
 
 class _PeerPolicy {
   final Completer<void>? sendGate;
-  final Completer<void>? inboxGate;
+  final Completer<void>? inboxGate = null;
   final Duration? sendDelay;
-  final bool? sendResult;
-  final bool? storeInInboxResult;
-  final bool throwOnSend;
-  final bool throwOnInbox;
-  final bool requireDiscoverAndDialBeforeSend;
+  final bool? sendResult = null;
+  final bool? storeInInboxResult = null;
+  final bool throwOnSend = false;
+  final bool throwOnInbox = false;
+  final bool requireDiscoverAndDialBeforeSend = false;
 
   const _PeerPolicy({
     this.sendGate,
-    this.inboxGate,
     this.sendDelay,
-    this.sendResult,
-    this.storeInInboxResult,
-    this.throwOnSend = false,
-    this.throwOnInbox = false,
-    this.requireDiscoverAndDialBeforeSend = false,
   });
 }
 

@@ -332,10 +332,9 @@ class _ControlledP2PService extends FakeP2PService {
 
 class _PeerPolicy {
   final Completer<void>? sendGate;
-  final bool requireDiscoverAndDialBeforeSend;
+  final bool requireDiscoverAndDialBeforeSend = false;
 
   const _PeerPolicy({
     this.sendGate,
-    this.requireDiscoverAndDialBeforeSend = false,
   });
 }

@@ -97,7 +97,7 @@ class KeyExchangeRetrier {
       emitFlowEvent(
         layer: 'FL',
         event: 'KEY_EXCHANGE_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
-        details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+        details: {'operation': operation, 'peerId': ?peerId},
       );
     }
     return allowed;

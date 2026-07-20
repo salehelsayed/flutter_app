@@ -14,4 +14,13 @@ abstract class GroupPendingBroadcastRepository {
   Future<int> countForGroup(String groupId);
 
   Future<void> remove(String id);
+
+  /// Removes every obsolete broadcast owned by one committed left/dissolved
+  /// group. The fallback remains strictly target-scoped.
+  Future<void> removeForGroup(String groupId) async {
+    final pending = await forGroup(groupId);
+    for (final broadcast in pending) {
+      await remove(broadcast.id);
+    }
+  }
 }

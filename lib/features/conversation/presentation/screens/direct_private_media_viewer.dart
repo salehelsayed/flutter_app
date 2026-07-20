@@ -235,6 +235,14 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
       canEnterPictureInPicture: false,
       protection: const MediaViewerProtection(isProtected: true),
     );
+    final isIosCapturePlatform =
+        widget.capturePlatformOverride == TargetPlatform.iOS ||
+        (widget.capturePlatformOverride == null && Platform.isIOS);
+    final captureLimitCopy = isIosCapturePlatform
+        ? item.kind == MediaViewerKind.video
+              ? l10n.private_media_ios_capture_limit
+              : l10n.private_media_ios_image_capture_limit
+        : l10n.private_media_android_capture_limit;
 
     return PopScope(
       canPop: _allowPop,
@@ -261,6 +269,8 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
               onPreFrameFailure: () => _coverAndClose(
                 DirectPrivateMediaExitReason.preFrameDecodeFailure,
               ),
+              onPostFrameFailure: () =>
+                  _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure),
             ),
             Positioned(
               left: 12,
@@ -277,11 +287,7 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      (widget.capturePlatformOverride == TargetPlatform.iOS ||
-                              (widget.capturePlatformOverride == null &&
-                                  Platform.isIOS))
-                          ? l10n.private_media_ios_capture_limit
-                          : l10n.private_media_android_capture_limit,
+                      captureLimitCopy,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white54,

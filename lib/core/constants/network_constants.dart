@@ -2,6 +2,7 @@
 ///
 /// These constants define the infrastructure endpoints for
 /// the decentralized identity system.
+library;
 
 /// Rendezvous point multiaddress for P2P connections.
 ///
@@ -10,5 +11,5 @@
 ///
 /// Format: /dns/{domain}/tcp/{port}/wss/p2p/{peerId}
 /// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
-const String RENDEZVOUS_ADDRESS =
+const String rendezvousAddress =
     '/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';

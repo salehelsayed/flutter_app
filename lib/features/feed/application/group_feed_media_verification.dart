@@ -204,17 +204,16 @@ void _emitGroupFeedMediaVerifyEvent({
       'pathKind': appOwnedMediaPathKind(resolvedPath ?? attachment.localPath),
       'storedPathKind': appOwnedMediaPathKind(attachment.localPath),
       'fileExists': fileExists,
-      if (fileBytes != null) 'fileBytes': fileBytes,
+      'fileBytes': ?fileBytes,
       'expectedSizeBytes': attachment.size,
       'hasContentHash': GroupMediaIntegrityPolicy.validateRequiredContentHash(
         attachment.contentHash,
       ).isValid,
       'hasEncryptionMetadata': attachment.hasEncryptionMetadata,
       'status': attachment.downloadStatus,
-      if (reason != null) 'reason': reason,
-      if (contentHashScope != null) 'contentHashScope': contentHashScope,
-      if (plaintextHashValidationSkipped != null)
-        'plaintextHashValidationSkipped': plaintextHashValidationSkipped,
+      'reason': ?reason,
+      'contentHashScope': ?contentHashScope,
+      'plaintextHashValidationSkipped': ?plaintextHashValidationSkipped,
       'deleteAttempted': deleteAttempted,
     },
   );

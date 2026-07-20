@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 Future<void> runPostsPassAvatarSnapshotsMigration(Database db) async {

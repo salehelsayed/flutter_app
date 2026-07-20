@@ -1,6 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 // Helper that constructs a minimal MessageRepositoryImpl wired to an in-memory
@@ -24,7 +22,7 @@ MessageRepositoryImpl _buildRepo({
     dbCountTotalUnreadExcludingArchived: () async => 0,
     dbDeleteMessagesForContact: (cp) async => 0,
     dbDeleteMessage: (id) async => 0,
-    dbExistsMessageByContent: (_, __, ___, ____) async => false,
+    dbExistsMessageByContent: (_, _, _, _) async => false,
     dbLoadMessagesPage: (cp, {int limit = 50, String? beforeTimestamp}) async =>
         [],
     dbLoadFailedOutgoingMessages: () async => [],

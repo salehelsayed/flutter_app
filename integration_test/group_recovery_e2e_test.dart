@@ -245,7 +245,7 @@ Map<String, dynamic> _relayInboxMessage({
   return {
     'from': sender.deviceId,
     'message': message,
-    if (timestamp != null) 'timestamp': timestamp,
+    'timestamp': ?timestamp,
   };
 }
 

@@ -19,18 +19,23 @@ FAILED=0
 # is verifiable (dumpsys / devicectl read it back). A build from a dirty tree
 # carries .dN (N = dirty file count). Freshness gate: artifacts must be newer
 # than this marker file, or a silently-reused stale artifact is refused.
+# Dev-environment rule: we always build the CURRENT WORKING TREE. The sha/dirty
+# suffix is a descriptive label only — no build or verify step depends on commit
+# identity. Verification checks the per-run timestamp, so every deploy run
+# (including dirty rebuilds at the same commit) is distinct and verifiable.
 GIT_SHA=$(git rev-parse --short HEAD)
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 GIT_DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
-GIT_COMMITS=$(git rev-list --count HEAD)
+RUN_STAMP=$(date +%y%m%d%H%M%S)
 BUILD_NAME="1.0.0-${GIT_SHA}"
 [ "$GIT_DIRTY" != "0" ] && BUILD_NAME="${BUILD_NAME}.d${GIT_DIRTY}"
+BUILD_NAME="${BUILD_NAME}.t${RUN_STAMP}"
 FRESH_MARK=$(mktemp)
-# iOS sanitizes CFBundleShortVersionString to digits/dots, so the sha string
-# cannot be verified there; CFBundleVersion (numeric commit count) is the iOS
-# carrier. Android versionName keeps the readable sha; Android versionCode is
+# iOS sanitizes CFBundleShortVersionString to digits/dots, so the label string
+# cannot be verified there; CFBundleVersion (numeric run timestamp) is the iOS
+# carrier. Android versionName keeps the readable label; Android versionCode is
 # deliberately NOT touched (a raised versionCode would block later E2E installs).
-note "PROVENANCE sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY commits=$GIT_COMMITS build_name=$BUILD_NAME ios_bundle_version=$GIT_COMMITS date=$(date '+%Y-%m-%d %H:%M:%S')"
+note "PROVENANCE tree=current-working-tree sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY build_name=$BUILD_NAME ios_bundle_version=$RUN_STAMP date=$(date '+%Y-%m-%d %H:%M:%S')"
 
 ios_installed_bundle_version() { # $1=udid — prints installed CFBundleVersion for BUNDLE_ID
   local json; json=$(mktemp)
@@ -61,11 +66,24 @@ fi
 echo "== Building iOS release app"
 APP=build/ios/iphoneos/Runner.app
 if ! flutter build ios --release --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
-    --build-name="$BUILD_NAME" --build-number="$GIT_COMMITS" \
+    --build-name="$BUILD_NAME" --build-number="$RUN_STAMP" \
     || [ ! -d "$APP" ]; then
   note "IOS FAILED(build)"; APP=""; FAILED=1
 elif [ ! "$APP/Runner" -nt "$FRESH_MARK" ]; then
   note "IOS FAILED(stale-artifact: $APP/Runner predates this build run)"; APP=""; FAILED=1
+fi
+
+# Binary-content gate: if ios/Runner/GoMknoon.xcframework was missing at
+# pod-install time, the Podfile silently drops the GoMknoon pod and
+# `#if canImport(GoMknoon)` compiles the whole bridge out — the build SUCCEEDS
+# but every bridge call fails on device ("Failed to generate identity",
+# 2026-07-19). The linked Go library is ~tens of MB; a bridge-less Runner is
+# under 1 MB and has no Bridge symbols.
+if [ -n "$APP" ]; then
+  GO_SYMS=$(strings "$APP/Runner" 2>/dev/null | grep -ci "BridgeGenerateIdentity" || true)
+  if [ "${GO_SYMS:-0}" -lt 1 ]; then
+    note "IOS FAILED(binary-gate: Go bridge not linked into Runner — run 'cd ios && pod install' [restores GoMknoon pod] and rebuild)"; APP=""; FAILED=1
+  fi
 fi
 
 # --- 3. iPhones: install (in-place update) -> launch -> VERIFY stamped version.
@@ -93,7 +111,9 @@ PY
     note "IPHONES FAILED(none paired — plug in, unlock, tap Trust, rerun)"
     FAILED=1
   fi
-  for UDID in "${DEVICES[@]}"; do
+  # ${DEVICES[@]+...}: macOS bash 3.2 + set -u aborts on expanding an empty
+  # array, which killed the script here and silently skipped the Pixel phase.
+  for UDID in ${DEVICES[@]+"${DEVICES[@]}"}; do
     echo "== iPhone $UDID: install (update in place, data kept)"
     if ! xcrun devicectl device install app --device "$UDID" "$APP"; then
       note "$UDID FAILED(install — unlocked and reachable?)"; FAILED=1; continue
@@ -103,10 +123,10 @@ PY
       note "$UDID FAILED(launch — is the phone unlocked?)"; FAILED=1; continue
     fi
     GOT=$(ios_installed_bundle_version "$UDID")
-    if [ "$GOT" = "$GIT_COMMITS" ]; then
-      note "$UDID OK $BUILD_NAME bundleVersion=$GIT_COMMITS (verified)"
+    if [ "$GOT" = "$RUN_STAMP" ]; then
+      note "$UDID OK $BUILD_NAME bundleVersion=$RUN_STAMP (verified)"
     else
-      note "$UDID FAILED(verify: installed bundleVersion '$GOT' != built '$GIT_COMMITS')"; FAILED=1
+      note "$UDID FAILED(verify: installed bundleVersion '$GOT' != built '$RUN_STAMP')"; FAILED=1
     fi
   done
 fi

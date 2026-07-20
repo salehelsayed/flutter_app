@@ -104,11 +104,7 @@ void main() {
     });
 
     test('assertBudget fails when p95 exceeds budget', () {
-      final values = [10, 20, 30, 40, 50, 60, 70, 80, 90, 600];
-      // p95 = avg(values[8], values[9]) = avg(90, 600) = 345
-      // Wait, let's recalculate: rank = 0.95 * 9 = 8.55
-      // avg(values[8], values[9]) = avg(90, 600) = 345
-      // This is < 500, so we need bigger values
+      // rank = 0.95 * 9 = 8.55 → p95 = avg(values[8], values[9]) = 950 > 500
       final bigValues = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
       // p95: rank = 0.95 * 9 = 8.55 → avg(900, 1000) = 950
       expect(

@@ -367,7 +367,7 @@ class TestPeer {
     final completer = Completer<Map<String, dynamic>>();
     _pending.add(completer);
 
-    final request = {'cmd': cmd, if (params != null) 'params': params};
+    final request = {'cmd': cmd, 'params': ?params};
 
     final line = jsonEncode(request);
     _log('CMD', line.length > 200 ? '${line.substring(0, 200)}...' : line);
@@ -460,7 +460,7 @@ class TestPeer {
     }
   }
 
-  List<_IncomingProof> incomingProofSnapshot() =>
+  List<_IncomingProof> _incomingProofSnapshot() =>
       List<_IncomingProof>.from(_incomingProof);
 
   /// Sends a command and asserts ok:true.
@@ -1487,7 +1487,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
       final retainedE8Proof = e8Message == null
           ? _matchingIncomingProof(
-              peer.incomingProofSnapshot(),
+              peer._incomingProofSnapshot(),
               fromPeerId: flutterPeerId,
               contentMatches: (_) => true,
               proofMatches: (proof) =>
@@ -2030,7 +2030,7 @@ void main(List<String> args) async {
         final msgs = await peer.commandOk('get_messages');
         peer.retainCollectorMessages(msgs, source: 'collector:post-verify');
         final verifyResults = _verifyCliReceivedMessages(
-          peer.incomingProofSnapshot(),
+          peer._incomingProofSnapshot(),
           peer.lastFlutterPeerId ??
               await _readFlutterPeerId(paths) ??
               'unknown',
@@ -2116,10 +2116,11 @@ void main(List<String> args) async {
     var orchFailed = 0;
     for (final r in orchResults) {
       final status = r.passed ? 'PASS' : 'FAIL';
-      if (r.passed)
+      if (r.passed) {
         orchPassed++;
-      else
+      } else {
         orchFailed++;
+      }
       _log('ORCH', '  ${r.name}: $status — ${r.detail}');
     }
     _log('ORCH', '----------------------------------------');

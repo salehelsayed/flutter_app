@@ -279,7 +279,9 @@ void main() {
       final activeNormalGrant = normalGrant!;
       final normalActive = await coordinator.debugGetState();
       expect(normalActive['activeOwnerCount'], 1);
-      if (Platform.isAndroid) expect(normalActive['secureApplied'], isTrue);
+      if (Platform.isAndroid) {
+        expect(normalActive['secureApplied'], isTrue);
+      }
 
       final normalRoute = navigatorKey.currentState!.push<void>(
         MaterialPageRoute<void>(
@@ -318,7 +320,7 @@ void main() {
       expect(
         find.text(
           Platform.isIOS
-              ? l10n.private_media_ios_capture_limit
+              ? l10n.private_media_ios_image_capture_limit
               : l10n.private_media_android_capture_limit,
         ),
         findsOneWidget,

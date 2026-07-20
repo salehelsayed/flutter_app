@@ -116,7 +116,7 @@ Future<SendContactRequestResult> sendContactRequest({
     if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
-    'rv': RENDEZVOUS_ADDRESS,
+    'rv': rendezvousAddress,
     'ts': timestamp,
     'un': sanitizedUsername,
     if (wakeToken != null && wakeToken.isNotEmpty) 'wt': wakeToken,

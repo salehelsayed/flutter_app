@@ -1,4 +1,3 @@
-import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_test/flutter_test.dart';

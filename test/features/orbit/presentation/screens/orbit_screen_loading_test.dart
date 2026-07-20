@@ -169,6 +169,7 @@ void main() {
         onCreateGroup: (_) {},
         onArchiveGroup: (_) {},
         onUnarchiveGroup: (_) {},
+        onLeaveGroup: (_) {},
         onDeleteGroup: (_) {},
         viewMode: viewMode,
         activeTab: activeTab,
@@ -294,91 +295,91 @@ void main() {
     );
 
     testWidgets(
-        'daylight lagoon keeps visible orbit content readable and TC-203-16 '
-        'all-chats view renders no Close Friends header text', (
-      tester,
-    ) async {
-      suppressOverflowErrors();
-      suppressNavAssetErrors();
-      setPhoneSurface(tester);
+      'daylight lagoon keeps visible orbit content readable and TC-203-16 '
+      'all-chats view renders no Close Friends header text',
+      (tester) async {
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        setPhoneSurface(tester);
 
-      await tester.pumpWidget(
-        buildOrbitScreen(
-          backgroundPreference: BackgroundPreference.daylightLagoon,
-          friends: [
-            makeFriend(
-              id: 'friend-1',
-              username: 'Riley Lagoon',
-              lastActivity: 'مرحبا from a bright background',
-            ),
-          ],
-          groups: [makeGroup(id: 'g-readable', name: 'Readable Group')],
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            backgroundPreference: BackgroundPreference.daylightLagoon,
+            friends: [
+              makeFriend(
+                id: 'friend-1',
+                username: 'Riley Lagoon',
+                lastActivity: 'مرحبا from a bright background',
+              ),
+            ],
+            groups: [makeGroup(id: 'g-readable', name: 'Readable Group')],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
-      expect(find.text('Riley Lagoon'), findsOneWidget);
-      expect(find.text('Readable Group'), findsOneWidget);
+        expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+        expect(find.text('Riley Lagoon'), findsOneWidget);
+        expect(find.text('Readable Group'), findsOneWidget);
 
-      final colors = BackgroundReadableColors.representativeLight;
-      expectTextContrast(
-        textColorFor(tester, 'Riley Lagoon')!,
-        colors.surfaceSubtle,
-      );
-      expectTextContrast(
-        textColorFor(tester, 'Readable Group')!,
-        colors.surfaceSubtle,
-      );
-      expectTextContrast(
-        textColorFor(tester, 'مرحبا from a bright background')!,
-        colors.surfaceSubtle,
-      );
+        final colors = BackgroundReadableColors.representativeLight;
+        expectTextContrast(
+          textColorFor(tester, 'Riley Lagoon')!,
+          colors.surfaceSubtle,
+        );
+        expectTextContrast(
+          textColorFor(tester, 'Readable Group')!,
+          colors.surfaceSubtle,
+        );
+        expectTextContrast(
+          textColorFor(tester, 'مرحبا from a bright background')!,
+          colors.surfaceSubtle,
+        );
 
-      // 203 B5: the 'Close Friends' header text was removed from the
-      // all-chats view (with the FriendsListHeader widget itself).
-      expect(find.text('Close Friends'), findsNothing);
+        // 203 B5: the 'Close Friends' header text was removed from the
+        // all-chats view (with the FriendsListHeader widget itself).
+        expect(find.text('Close Friends'), findsNothing);
 
-      final chevronIcons = tester.widgetList<Icon>(
-        find.byIcon(Icons.chevron_right),
-      );
-      expect(
-        chevronIcons.map((icon) => icon.color),
-        contains(colors.iconMuted),
-      );
-    });
+        final chevronIcons = tester.widgetList<Icon>(
+          find.byIcon(Icons.chevron_right),
+        );
+        expect(
+          chevronIcons.map((icon) => icon.color),
+          contains(colors.iconMuted),
+        );
+      },
+    );
 
     testWidgets(
-        'TC-203-15 Inner-Circle view: no Close Friends caption, no search '
-        'affordance (daylight)', (
-      tester,
-    ) async {
-      suppressOverflowErrors();
-      suppressNavAssetErrors();
-      setPhoneSurface(tester);
+      'TC-203-15 Inner-Circle view: no Close Friends caption, no search '
+      'affordance (daylight)',
+      (tester) async {
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        setPhoneSurface(tester);
 
-      await tester.pumpWidget(
-        buildOrbitScreen(
-          viewMode: OrbitViewMode.innerCircle,
-          backgroundPreference: BackgroundPreference.daylightLagoon,
-          friends: [
-            makeFriend(
-              id: 'friend-1',
-              username: 'Riley Lagoon',
-              lastActivity: 'مرحبا from a bright background',
-            ),
-          ],
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            viewMode: OrbitViewMode.innerCircle,
+            backgroundPreference: BackgroundPreference.daylightLagoon,
+            friends: [
+              makeFriend(
+                id: 'friend-1',
+                username: 'Riley Lagoon',
+                lastActivity: 'مرحبا from a bright background',
+              ),
+            ],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+        expect(find.byType(DaylightLagoonBackground), findsOneWidget);
 
-      // 203 B5: the Inner-Circle caption was removed with its ARB key, and
-      // still no all-chats search affordance is mounted on this view.
-      expect(find.text('Close Friends'), findsNothing);
-      expect(find.byType(OrbitSearchTrigger), findsNothing);
-    });
+        // 203 B5: the Inner-Circle caption was removed with its ARB key, and
+        // still no all-chats search affordance is mounted on this view.
+        expect(find.text('Close Friends'), findsNothing);
+        expect(find.byType(OrbitSearchTrigger), findsNothing);
+      },
+    );
 
     testWidgets(
       'TC-197-11: inner-circle surface seats a provided group as a ring node',
@@ -545,8 +546,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pump(const Duration(milliseconds: 600));
 
-        final screen =
-            tester.view.physicalSize / tester.view.devicePixelRatio;
+        final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
         final navRect = tester.getRect(find.byType(FeedNavigationBar));
         final searchRect = tester.getRect(find.byType(OrbitSearchTrigger));
         final lastGroupRect = tester.getRect(find.text('Group 15'));
@@ -565,33 +565,30 @@ void main() {
       },
     );
 
-    testWidgets(
-      'search dock lifts above the persistent nav',
-      (tester) async {
-        suppressOverflowErrors();
-        suppressNavAssetErrors();
-        setPhoneSurface(tester);
+    testWidgets('search dock lifts above the persistent nav', (tester) async {
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      setPhoneSurface(tester);
 
-        await tester.pumpWidget(
-          buildOrbitScreen(
-            searchActive: true,
-            activeTab: 'orbit',
-            onSwitchView: (_) {},
-            feedUnreadCountListenable: ValueNotifier<int>(2),
-            searchDockAnimation: const AlwaysStoppedAnimation(1.0),
-            searchTriggerAnimation: const AlwaysStoppedAnimation(0.0),
-          ),
-        );
-        await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          searchActive: true,
+          activeTab: 'orbit',
+          onSwitchView: (_) {},
+          feedUnreadCountListenable: ValueNotifier<int>(2),
+          searchDockAnimation: const AlwaysStoppedAnimation(1.0),
+          searchTriggerAnimation: const AlwaysStoppedAnimation(0.0),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
 
-        final navRect = tester.getRect(find.byType(FeedNavigationBar));
-        final searchDockRect = tester.getRect(find.byType(OrbitSearchDock));
+      final navRect = tester.getRect(find.byType(FeedNavigationBar));
+      final searchDockRect = tester.getRect(find.byType(OrbitSearchDock));
 
-        // No close button in persistent mode; the dock simply clears the nav.
-        expect(find.byType(OrbitCloseButton), findsNothing);
-        expect(searchDockRect.bottom, lessThanOrEqualTo(navRect.top));
-      },
-    );
+      // No close button in persistent mode; the dock simply clears the nav.
+      expect(find.byType(OrbitCloseButton), findsNothing);
+      expect(searchDockRect.bottom, lessThanOrEqualTo(navRect.top));
+    });
 
     testWidgets(
       'TC-201-04 expanded find pill is full-width and clears the persistent nav',
@@ -619,19 +616,29 @@ void main() {
         await tester.pump();
 
         final screen = tester.getRect(find.byType(OrbitScreen));
-        final pill =
-            tester.getRect(find.byKey(const ValueKey('orbit-find-pill')));
+        final pill = tester.getRect(
+          find.byKey(const ValueKey('orbit-find-pill')),
+        );
         // HEAD-red: on HEAD the expanded pill is a 200px right-anchored box,
         // not a full-width bar.
-        expect(pill.left - screen.left, closeTo(16, 2),
-            reason: 'expanded pill spans full width (left inset 16)');
-        expect(screen.right - pill.right, closeTo(16, 2),
-            reason: 'expanded pill spans full width (right inset 16)');
+        expect(
+          pill.left - screen.left,
+          closeTo(16, 2),
+          reason: 'expanded pill spans full width (left inset 16)',
+        );
+        expect(
+          screen.right - pill.right,
+          closeTo(16, 2),
+          reason: 'expanded pill spans full width (right inset 16)',
+        );
         // Nav-clearance: the widened pill must not sit under the persistent nav
         // band at zero safe-area (needs the bottomClearance wiring).
         final nav = tester.getRect(find.byType(FeedNavigationBar));
-        expect(pill.overlaps(nav), isFalse,
-            reason: 'the pill clears the persistent Feed/Orbit nav band');
+        expect(
+          pill.overlaps(nav),
+          isFalse,
+          reason: 'the pill clears the persistent Feed/Orbit nav band',
+        );
       },
     );
   });

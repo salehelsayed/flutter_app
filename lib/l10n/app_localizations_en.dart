@@ -566,6 +566,69 @@ class AppLocalizationsEn extends AppLocalizations {
   String get orbit_leave_group => 'Leave & delete group?';
 
   @override
+  String get orbit_leave_action => 'Leave';
+
+  @override
+  String get orbit_leave_group_body =>
+      'Leaving removes this group and its history from this device. This cannot be undone.';
+
+  @override
+  String get orbit_leave_group_action => 'Leave & Delete';
+
+  @override
+  String get group_exit_only_admin_title => 'You’re the only admin';
+
+  @override
+  String group_exit_only_admin_body(String groupName) {
+    return 'A group needs at least one admin before you can leave. Choose what should happen to $groupName.';
+  }
+
+  @override
+  String get group_exit_choose_admin => 'Choose another admin';
+
+  @override
+  String get group_exit_choose_admin_body =>
+      'Then you can leave and remove this group from this device.';
+
+  @override
+  String get group_exit_dissolve_for_everyone => 'Dissolve for everyone';
+
+  @override
+  String get group_exit_keep_group => 'Keep group';
+
+  @override
+  String get group_exit_keep_and_close_semantics => 'Keep group and close';
+
+  @override
+  String get group_exit_no_eligible_successor =>
+      'Wait for someone to join, or dissolve the group.';
+
+  @override
+  String get group_exit_choose_member => 'Choose a member';
+
+  @override
+  String get group_exit_continue_to_leave => 'Continue to leave';
+
+  @override
+  String get group_exit_stay_in_group => 'Stay in group';
+
+  @override
+  String get group_exit_admin_sync_pending_title =>
+      'Admin change is still syncing';
+
+  @override
+  String get group_exit_admin_sync_pending_body =>
+      'Wait for the signed admin change to finish syncing before you leave.';
+
+  @override
+  String get group_exit_leave_uncertain =>
+      'The leave request may have completed. Refresh the group before trying again.';
+
+  @override
+  String get group_exit_cleanup_incomplete =>
+      'You left the group, but its local history could not be fully removed.';
+
+  @override
   String get conversation_hint => 'Write something...';
 
   @override
@@ -3136,6 +3199,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get private_media_ios_capture_limit =>
       'iOS cannot reliably prevent screenshots; capture is detected and private media is covered/dismissed';
+
+  @override
+  String get private_media_ios_image_capture_limit =>
+      'This protected image is hidden in screenshots and screen recordings while open';
 
   @override
   String get private_media_general_capture_limit =>

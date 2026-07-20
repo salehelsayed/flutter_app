@@ -77,13 +77,13 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
           ),
         ),
         child: Text(
           l10n.group_read_only_admin_only,
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.35)),
+          style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.35)),
         ),
       );
     }
@@ -94,7 +94,7 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
           ),
         ),
         child: ClipRRect(
@@ -105,10 +105,10 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
               color: Colors.transparent,
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.06),
+                  color: Colors.white.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
+                    color: Colors.white.withValues(alpha: 0.08),
                     width: 0.5,
                   ),
                 ),
@@ -131,7 +131,7 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
                             context,
                           )!.group_message_hint,
                           hintStyle: TextStyle(
-                            color: Colors.white.withOpacity(0.3),
+                            color: Colors.white.withValues(alpha: 0.3),
                           ),
                           border: InputBorder.none,
                           // The rounded Container above paints the fill; the

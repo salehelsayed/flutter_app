@@ -5,6 +5,7 @@
 /// - group send path survives relay A loss
 /// - resume during partial failover remains consistent
 /// - runtime feature flags can disable new recovery behaviors intentionally
+library;
 
 import 'dart:async';
 
@@ -19,8 +20,6 @@ import '../../core/bridge/fake_bridge.dart';
 import '../../core/services/fake_p2p_service.dart' as service_fakes;
 import '../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../shared/fakes/fake_p2p_network.dart';
-import '../../shared/fakes/fake_p2p_service_integration.dart'
-    as integration_fakes;
 import '../../shared/fakes/group_test_user.dart';
 import '../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../shared/fakes/in_memory_group_repository.dart';
@@ -167,7 +166,7 @@ void main() {
       );
 
       // Bob drains inbox and the messages are injected.
-      final bobP2P = bob.p2pService as integration_fakes.FakeP2PService;
+      final bobP2P = bob.p2pService;
       final drained = await bobP2P.drainOfflineInboxCount();
       expect(drained, greaterThanOrEqualTo(2));
 

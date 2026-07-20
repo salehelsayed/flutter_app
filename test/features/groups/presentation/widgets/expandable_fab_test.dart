@@ -12,7 +12,7 @@ void main() {
       tappedItems = [];
     });
 
-    List<ExpandableFabItem> _items() => [
+    List<ExpandableFabItem> items() => [
           ExpandableFabItem(
             label: 'New Group',
             icon: Icons.group_outlined,
@@ -36,7 +36,7 @@ void main() {
             children: [
               const SizedBox.expand(),
               ExpandableFab(
-                items: _items(),
+                items: items(),
                 anchor: anchor,
                 fabSize: fabSize,
                 safeAreaPadding: safeAreaPadding,

@@ -16,7 +16,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../../shared/fakes/in_memory_introduction_repository.dart';
@@ -166,7 +165,7 @@ ChatMessage _makeContactRequestMessage({
   String? mlkem,
 }) {
   final payload = SplayTreeMap<String, dynamic>.from({
-    if (mlkem != null) 'mlkem': mlkem,
+    'mlkem': ?mlkem,
     'ns': peerId,
     'pk': publicKey,
     'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
@@ -802,7 +801,7 @@ void main() {
   // v2 encrypted contact request
   // ---------------------------------------------------------------------------
   group('v2 encrypted', () {
-    ChatMessage _makeV2Message({
+    ChatMessage makeV2Message({
       String peerId = _testPeerId,
       String publicKey = _testPublicKey,
       String? from,
@@ -810,7 +809,7 @@ void main() {
       String? msgId,
     }) {
       final payload = SplayTreeMap<String, dynamic>.from({
-        if (mlkem != null) 'mlkem': mlkem,
+        'mlkem': ?mlkem,
         'ns': peerId,
         'pk': publicKey,
         'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
@@ -860,7 +859,7 @@ void main() {
       final requests = <ContactRequestModel>[];
       v2Listener.requestStream.listen(requests.add);
 
-      streamController.add(_makeV2Message());
+      streamController.add(makeV2Message());
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(requests.length, equals(1));
@@ -960,7 +959,7 @@ void main() {
 
         // message.from is 'unknown' — peerId must come from decrypted payload
         streamController.add(
-          _makeV2Message(from: 'unknown', mlkem: 'newMlKemKey'),
+          makeV2Message(from: 'unknown', mlkem: 'newMlKemKey'),
         );
         await Future.delayed(const Duration(milliseconds: 200));
 
@@ -1000,7 +999,7 @@ void main() {
       v2Listener.contactKeyUpdatedStream.listen(updates.add);
 
       // message.from matches peerId — normal v2 case
-      streamController.add(_makeV2Message(mlkem: 'newMlKemKey'));
+      streamController.add(makeV2Message(mlkem: 'newMlKemKey'));
       await Future.delayed(const Duration(milliseconds: 200));
 
       expect(updates.length, equals(1));
@@ -1027,7 +1026,7 @@ void main() {
         v2Listener.requestStream.listen(requests.add);
 
         // message.from is 'unknown' — peerId extracted from decrypted payload
-        streamController.add(_makeV2Message(from: 'unknown'));
+        streamController.add(makeV2Message(from: 'unknown'));
         await Future.delayed(const Duration(milliseconds: 200));
 
         expect(requests.length, equals(1));
@@ -1095,7 +1094,7 @@ void main() {
 
         const msgId = 'intro-recovery-msg';
         streamController.add(
-          _makeV2Message(msgId: msgId, mlkem: 'recovered-mlkem-key'),
+          makeV2Message(msgId: msgId, mlkem: 'recovered-mlkem-key'),
         );
         await Future.delayed(const Duration(milliseconds: 200));
 
@@ -1157,13 +1156,13 @@ void main() {
         v2Listener.requestStream.listen(requests.add);
         v2Listener.contactKeyUpdatedStream.listen(updates.add);
 
-        streamController.add(_makeV2Message(msgId: 'repair-msg-1'));
+        streamController.add(makeV2Message(msgId: 'repair-msg-1'));
         await Future.delayed(const Duration(milliseconds: 200));
 
-        streamController.add(_makeV2Message(msgId: 'repair-msg-1'));
+        streamController.add(makeV2Message(msgId: 'repair-msg-1'));
         await Future.delayed(const Duration(milliseconds: 200));
 
-        streamController.add(_makeV2Message(msgId: 'repair-msg-2'));
+        streamController.add(makeV2Message(msgId: 'repair-msg-2'));
         await Future.delayed(const Duration(milliseconds: 200));
 
         expect(requests, isEmpty);

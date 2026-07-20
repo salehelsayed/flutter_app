@@ -2,7 +2,7 @@
 ///
 /// Measures ACK round-trip latency with a real test peer.
 /// Requires CLI test peer via orchestrator.
-/// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios L
+/// Run: `dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios L`
 library;
 
 import 'package:flutter_test/flutter_test.dart';

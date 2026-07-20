@@ -179,7 +179,7 @@ Future<bool> _allowsPostFollowOnNetworkSideEffects({
     emitFlowEvent(
       layer: 'FL',
       event: 'PENDING_POST_FOLLOW_ON_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
-      details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+      details: {'operation': operation, 'peerId': ?peerId},
     );
   }
   return allowed;

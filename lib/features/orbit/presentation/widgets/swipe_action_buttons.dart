@@ -115,50 +115,93 @@ class DeleteActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final label = AppLocalizations.of(context)!.orbit_delete_action;
+    return _ExitActionButton(
+      label: label,
+      icon: Icons.delete_outline,
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFDC2626).withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+    );
+  }
+}
+
+/// "Leave" action for active groups. It is intentionally separate from Delete
+/// so the swipe consequence is explicit before confirmation.
+class LeaveActionButton extends StatelessWidget {
+  const LeaveActionButton({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ExitActionButton(
+      label: AppLocalizations.of(context)!.orbit_leave_action,
+      icon: Icons.logout,
+      onTap: onTap,
+    );
+  }
+}
+
+class _ExitActionButton extends StatelessWidget {
+  const _ExitActionButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: label,
+      button: true,
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFDC2626).withValues(alpha: 0.4),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: const Icon(
-              Icons.delete_outline,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          const SizedBox(height: 2),
-          SizedBox(
-            width: 48,
-            child: Text(
-              AppLocalizations.of(context)!.orbit_delete_action,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
+                child: Icon(icon, color: Colors.white, size: 20),
               ),
-            ),
+              const SizedBox(height: 2),
+              SizedBox(
+                width: 48,
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

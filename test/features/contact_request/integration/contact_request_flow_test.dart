@@ -2,6 +2,7 @@
 ///
 /// Verifies end-to-end: incoming message -> parse -> verify sig -> store ->
 /// accept/decline -> contact created or request declined.
+library;
 
 import 'dart:collection';
 import 'dart:convert';
@@ -41,7 +42,7 @@ String buildContactRequestEnvelope({
 
   // Build unsigned payload (sorted keys for deterministic signature)
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
-    if (mlKem != null) 'mlkem': mlKem,
+    'mlkem': ?mlKem,
     'ns': peerId,
     'pk': pk,
     'rv': '/dns4/relay/tcp/443/p2p/relay',

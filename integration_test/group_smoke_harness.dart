@@ -7,7 +7,8 @@
 /// `gsmoke_${runId}_*` namespace.
 ///
 /// Launch via orchestrator:
-///   dart run integration_test/scripts/run_routing_smoke_e2e.dart -d <alice>,<bob>
+///   `dart run integration_test/scripts/run_routing_smoke_e2e.dart -d <alice>,<bob>`
+library;
 
 import 'dart:async';
 

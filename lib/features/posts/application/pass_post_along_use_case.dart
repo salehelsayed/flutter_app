@@ -246,7 +246,7 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   // Phase 4: Prepare repost-owned encrypted media before building envelope.
   List<PostMediaAttachmentModel> repostMedia = renderablePost.media;
   Map<String, PostMediaCryptoEntry>? mediaKeys;
-  if (renderablePost.media.isNotEmpty && bridge != null) {
+  if (renderablePost.media.isNotEmpty) {
     final prepareFn = prepareRepostMediaFn ?? _prepareRepostMedia;
     final prepResult = await prepareFn(
       bridge: bridge,

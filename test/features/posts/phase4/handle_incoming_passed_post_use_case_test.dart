@@ -1081,7 +1081,7 @@ Map<String, Object?> _postPassJson({
       if (includeThreadMetadata)
         'shared_to_count_baseline':
             sharedToCountBaseline ?? repostTotalBaseline,
-      if (recipientCount != null) 'recipient_count': recipientCount,
+      'recipient_count': ?recipientCount,
       'original_snapshot': <String, Object?>{
         'post_id': 'post-1',
         'author_peer_id': 'peer-sarah',
@@ -1095,8 +1095,7 @@ Map<String, Object?> _postPassJson({
         'text': 'Lost dog near Neckar bridge.',
         'media_kind': mediaKind,
         'media': media,
-        if (originalAuthorAvatarBase64 != null)
-          'original_author_avatar_base64': originalAuthorAvatarBase64,
+        'original_author_avatar_base64': ?originalAuthorAvatarBase64,
         'keep_available': false,
         'expires_at': '2026-03-18T10:15:30.000Z',
       },

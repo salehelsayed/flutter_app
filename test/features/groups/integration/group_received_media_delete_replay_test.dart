@@ -8,7 +8,6 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/groups/application/group_media_deletion_journal_reconciler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;

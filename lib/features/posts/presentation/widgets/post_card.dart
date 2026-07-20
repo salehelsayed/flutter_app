@@ -116,7 +116,7 @@ class PostCard extends StatelessWidget {
                         foregroundDecoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: authorColor.withOpacity(0.27),
+                            color: authorColor.withValues(alpha: 0.27),
                             width: 2,
                           ),
                         ),
@@ -687,10 +687,10 @@ class _Badge extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final backgroundColor = isPrimary
-        ? PostCard._friendBadgeColor.withOpacity(0.13)
+        ? PostCard._friendBadgeColor.withValues(alpha: 0.13)
         : readableColors.surfaceSubtle;
     final borderColor = isPrimary
-        ? PostCard._friendBadgeColor.withOpacity(0.20)
+        ? PostCard._friendBadgeColor.withValues(alpha: 0.20)
         : readableColors.border.withValues(alpha: 0.72);
     final textColor = isPrimary
         ? PostCard._friendBadgeColor

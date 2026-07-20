@@ -1,7 +1,5 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../core/bridge/fake_bridge.dart';

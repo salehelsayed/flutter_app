@@ -63,6 +63,7 @@ Widget buildOrbitScreenHarness({
       onCreateGroup: (_) {},
       onArchiveGroup: (_) {},
       onUnarchiveGroup: (_) {},
+      onLeaveGroup: (_) {},
       onDeleteGroup: (_) {},
       viewMode: viewMode,
       onToggleView: onToggleView,

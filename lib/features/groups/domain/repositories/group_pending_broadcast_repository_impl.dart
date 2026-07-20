@@ -9,6 +9,7 @@ class GroupPendingBroadcastRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadAll;
   final Future<int> Function(String groupId) dbCountForGroup;
   final Future<void> Function(String id) dbDelete;
+  final Future<void> Function(String groupId)? dbDeleteForGroup;
 
   GroupPendingBroadcastRepositoryImpl({
     required this.dbInsert,
@@ -16,6 +17,7 @@ class GroupPendingBroadcastRepositoryImpl
     required this.dbLoadAll,
     required this.dbCountForGroup,
     required this.dbDelete,
+    this.dbDeleteForGroup,
   });
 
   @override
@@ -39,4 +41,17 @@ class GroupPendingBroadcastRepositoryImpl
 
   @override
   Future<void> remove(String id) => dbDelete(id);
+
+  @override
+  Future<void> removeForGroup(String groupId) async {
+    final deleteForGroup = dbDeleteForGroup;
+    if (deleteForGroup != null) {
+      await deleteForGroup(groupId);
+      return;
+    }
+    final pending = await forGroup(groupId);
+    for (final broadcast in pending) {
+      await remove(broadcast.id);
+    }
+  }
 }

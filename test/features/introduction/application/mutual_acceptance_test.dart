@@ -20,7 +20,7 @@ void main() {
   late PassthroughCryptoBridge bridge;
   final now = DateTime.now().toUtc().toIso8601String();
 
-  ContactModel _makeContact(String peerId, String username) {
+  ContactModel makeContact(String peerId, String username) {
     return ContactModel(
       peerId: peerId,
       publicKey: 'pk-$peerId',
@@ -63,8 +63,8 @@ void main() {
     bridge = PassthroughCryptoBridge();
 
     // Add contacts for introducer and other party
-    contactRepo.addTestContact(_makeContact('peer-A', 'Alice'));
-    contactRepo.addTestContact(_makeContact('peer-C', 'Charlie'));
+    contactRepo.addTestContact(makeContact('peer-A', 'Alice'));
+    contactRepo.addTestContact(makeContact('peer-C', 'Charlie'));
   });
 
   group('mutual acceptance', () {
@@ -246,8 +246,8 @@ void main() {
       // Create a second p2p service for peer-C to verify delivery
       final p2pC = FakeP2PService(peerId: 'peer-C', network: network);
       final contactRepoC = InMemoryContactRepository();
-      contactRepoC.addTestContact(_makeContact('peer-A', 'Alice'));
-      contactRepoC.addTestContact(_makeContact('peer-B', 'Bob'));
+      contactRepoC.addTestContact(makeContact('peer-A', 'Alice'));
+      contactRepoC.addTestContact(makeContact('peer-B', 'Bob'));
 
       network.resetCounters();
 
@@ -323,7 +323,7 @@ void main() {
             createdAt: now,
           ),
         );
-        contactRepo.addTestContact(_makeContact('peer-D', 'Dana'));
+        contactRepo.addTestContact(makeContact('peer-D', 'Dana'));
 
         // B accepts both
         await acceptIntroduction(

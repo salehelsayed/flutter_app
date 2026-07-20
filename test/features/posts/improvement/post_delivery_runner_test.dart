@@ -655,14 +655,13 @@ class _PolicyFakeP2PService extends FakeP2PService {
 class _PeerPolicy {
   final bool? sendResult;
   final bool? storeInInboxResult;
-  final bool throwOnSend;
+  final bool throwOnSend = false;
   final bool throwOnInbox;
   final bool requireDiscoverAndDialBeforeSend;
 
   const _PeerPolicy({
     this.sendResult,
     this.storeInInboxResult,
-    this.throwOnSend = false,
     this.throwOnInbox = false,
     this.requireDiscoverAndDialBeforeSend = false,
   });

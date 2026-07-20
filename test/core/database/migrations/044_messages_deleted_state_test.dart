@@ -1,3 +1,4 @@
+// ignore_for_file: file_names
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';

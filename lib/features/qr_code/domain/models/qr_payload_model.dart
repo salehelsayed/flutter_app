@@ -81,7 +81,7 @@ class QRPayloadModel {
     String? mlkem,
   }) {
     return SplayTreeMap<String, dynamic>.from({
-      if (mlkem != null) 'mlkem': mlkem,
+      'mlkem': ?mlkem,
       'ns': ns,
       'pk': pk,
       'rv': rv,

@@ -23,6 +23,7 @@ class VoluntaryLeaveBroadcastResult {
   final List<String> remainingPeerIds;
   final GroupKeyInfo? rotatedKey;
   final VoluntaryLeaveBroadcastSkipReason? skipReason;
+  final Map<String, dynamic>? livePublishResult;
 
   /// True when the member left but could NOT rotate the group key because the
   /// leaver lacks the `rotateKeys` permission and/or is not the group creator.
@@ -36,6 +37,7 @@ class VoluntaryLeaveBroadcastResult {
     required this.remainingPeerIds,
     this.rotatedKey,
     this.skipReason,
+    this.livePublishResult,
     this.rotationDeferred = false,
   });
 
@@ -67,6 +69,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   GroupMessageRepository? msgRepo,
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
   Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
+  void Function(String messageId)? onTimelineMessageSaved,
 }) async {
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
@@ -140,9 +143,10 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   );
   if (msgRepo != null) {
     await msgRepo.saveMessage(leaveTimelineMessage);
+    onTimelineMessageSaved?.call(leaveTimelineMessage.id);
   }
 
-  await callGroupPublish(
+  final livePublishResult = await callGroupPublish(
     bridge,
     groupId: group.id,
     text: sysText,
@@ -215,9 +219,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
         layer: 'FL',
         event: 'GROUP_VOLUNTARY_LEAVE_ROTATION_DEFERRED',
         details: {
-          'groupId': group.id.length > 8
-              ? group.id.substring(0, 8)
-              : group.id,
+          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
         },
       );
     }
@@ -228,6 +230,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
     remainingPeerIds: remainingPeerIds,
     rotatedKey: rotatedKey,
     skipReason: null,
+    livePublishResult: livePublishResult,
     rotationDeferred: rotationDeferred,
   );
 }

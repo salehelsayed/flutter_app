@@ -30,13 +30,11 @@ import '../../../shared/fakes/in_memory_message_repository.dart';
 /// scope is not a coverage gap for finding 09.
 class _SlowWritingBridge extends Bridge {
   final Duration delay;
-  final List<int> bytes;
-  bool writeFile;
+  final List<int> bytes = const [1, 2, 3];
+  bool writeFile = true;
 
   _SlowWritingBridge({
     required this.delay,
-    this.bytes = const [1, 2, 3],
-    this.writeFile = true,
   });
 
   @override

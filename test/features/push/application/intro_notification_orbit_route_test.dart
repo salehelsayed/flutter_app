@@ -315,6 +315,7 @@ class _IntroOrbitHarnessState extends State<_IntroOrbitHarness> {
       onCreateGroup: (_) {},
       onArchiveGroup: (_) {},
       onUnarchiveGroup: (_) {},
+      onLeaveGroup: (_) {},
       onDeleteGroup: (_) {},
       activeTab: widget.appShellController.activeTab,
       onSwitchView: _onSwitchView,

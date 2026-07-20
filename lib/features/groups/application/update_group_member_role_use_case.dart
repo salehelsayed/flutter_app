@@ -8,7 +8,9 @@ import 'package:flutter_app/features/groups/application/group_role_update_author
 // Single canonical source for these shared membership-mutation messages to
 // avoid the duplicate-declaration ambiguity between add/remove use cases.
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart'
-    show groupMembershipMutationDissolvedMessage, staleGroupMembershipEventMessage;
+    show
+        groupMembershipMutationDissolvedMessage,
+        staleGroupMembershipEventMessage;
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -32,6 +34,7 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
   required MemberRole role,
   required String selfPeerId,
   DateTime? eventAt,
+  Future<void> Function()? beforeCommit,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -60,7 +63,9 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
   // membership lock so concurrent add/remove/role mutations cannot lose
   // updates on the admin-count math or the watermark. The recovery gate stays
   // outside the lock, mirroring add/remove.
-  return runGroupMembershipMutationLocked<({DateTime eventAt, String eventId})?>(
+  return runGroupMembershipMutationLocked<
+    ({DateTime eventAt, String eventId})?
+  >(
     groupId: groupId,
     action: () async {
       final group = await groupRepo.getGroup(groupId);
@@ -201,6 +206,11 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
       final updatedMyRole = memberPeerId == selfPeerId
           ? (role == MemberRole.admin ? GroupRole.admin : GroupRole.member)
           : group.myRole;
+
+      // Extracted signed role transitions use this final in-lock check to
+      // revalidate external join evidence after signing but before the first
+      // role/config/watermark write.
+      await beforeCommit?.call();
 
       await groupRepo.updateMemberRole(groupId, memberPeerId, role);
       if (updatedMyRole != group.myRole) {

@@ -8,7 +8,8 @@
 /// The two sides coordinate via shared signal files.
 ///
 /// Launch via orchestrator:
-///   dart run integration_test/scripts/run_routing_smoke_e2e.dart -d <alice>,<bob>
+///   `dart run integration_test/scripts/run_routing_smoke_e2e.dart -d <alice>,<bob>`
+library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -398,8 +399,9 @@ void _runAlice() {
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
         final msgs = await messageRepo.getMessagesForContact(bobPeerId);
-        if (msgs.any((m) => m.isIncoming && m.text.contains(substring)))
+        if (msgs.any((m) => m.isIncoming && m.text.contains(substring))) {
           return true;
+        }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
       return false;
@@ -783,16 +785,16 @@ void _runAlice() {
       'throughputKBps': (upload1mbMs ?? 0) > 0
           ? (1024 * 1000 / upload1mbMs!).round()
           : 0,
-      if (s12Error1mb != null) 'error': s12Error1mb,
-      if (s12StreamTiming1mb != null) 'streamOpenTiming1mb': s12StreamTiming1mb,
+      'error': ?s12Error1mb,
+      'streamOpenTiming1mb': ?s12StreamTiming1mb,
       'upload5mbMs': upload5mbMs,
       'ok5mb': s12Ok5mb,
       'sizeBytes5mb': 5 * 1024 * 1024,
       'throughput5mbKBps': (upload5mbMs ?? 0) > 0
           ? (5 * 1024 * 1000 / upload5mbMs!).round()
           : 0,
-      if (s12Error5mb != null) 'error5mb': s12Error5mb,
-      if (s12StreamTiming5mb != null) 'streamOpenTiming5mb': s12StreamTiming5mb,
+      'error5mb': ?s12Error5mb,
+      'streamOpenTiming5mb': ?s12StreamTiming5mb,
     });
     await _signals.waitForSignal('s12_verified');
 

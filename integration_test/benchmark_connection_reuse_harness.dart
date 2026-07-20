@@ -2,7 +2,8 @@
 ///
 /// Measures how often the fast path carries traffic.
 /// Requires CLI test peer via orchestrator for two-node sends.
-/// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios J
+/// Run: `dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios J`
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 

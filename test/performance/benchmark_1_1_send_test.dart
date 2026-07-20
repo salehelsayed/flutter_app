@@ -1,12 +1,9 @@
-import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
-import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../core/bridge/fake_bridge.dart';
 import '../shared/fakes/fake_p2p_network.dart';
-import '../shared/fakes/fake_p2p_service_integration.dart';
 import '../shared/fakes/test_user.dart';
 import 'benchmark_harness.dart';
 import 'timing_test_bridge.dart';

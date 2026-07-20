@@ -58,15 +58,11 @@ void main() {
     testWidgets(
       'reveals Block, Delete, Archive on swipe left (active, not blocked)',
       (tester) async {
-        bool blockCalled = false;
-        bool deleteCalled = false;
-        bool archiveCalled = false;
-
         await tester.pumpWidget(
           buildSwipeableRow(
-            onBlock: () => blockCalled = true,
-            onDelete: () => deleteCalled = true,
-            onArchive: () => archiveCalled = true,
+            onBlock: () {},
+            onDelete: () {},
+            onArchive: () {},
           ),
         );
 

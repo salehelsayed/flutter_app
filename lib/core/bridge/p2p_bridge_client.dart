@@ -466,7 +466,7 @@ Future<Map<String, dynamic>> callP2PNodeStatus(Bridge bridge) async {
 ///
 /// Parameters:
 ///   - [bridge]: The Bridge instance
-///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId>)
+///   - [namespace]: Optional namespace (defaults to `mknoon:chat:<peerId>`)
 ///   - [serverAddresses]: Optional list of rendezvous server addresses
 ///
 /// Returns: `{ "ok": true, "registered": true, "namespace": "..." }`
@@ -484,8 +484,8 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
   final request = {
     'cmd': 'rendezvous:register',
     'payload': {
-      if (namespace != null) 'namespace': namespace,
-      if (serverAddresses != null) 'serverAddresses': serverAddresses,
+      'namespace': ?namespace,
+      'serverAddresses': ?serverAddresses,
     },
   };
 
@@ -505,7 +505,7 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
 ///
 /// Parameters:
 ///   - [bridge]: The Bridge instance
-///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId>)
+///   - [namespace]: Optional namespace (defaults to `mknoon:chat:<peerId>`)
 ///   - [serverAddresses]: Optional list of rendezvous server addresses
 ///
 /// Returns: `{ "ok": true, "unregistered": true }`
@@ -523,8 +523,8 @@ Future<Map<String, dynamic>> callP2PRendezvousUnregister(
   final request = {
     'cmd': 'rendezvous:unregister',
     'payload': {
-      if (namespace != null) 'namespace': namespace,
-      if (serverAddresses != null) 'serverAddresses': serverAddresses,
+      'namespace': ?namespace,
+      'serverAddresses': ?serverAddresses,
     },
   };
 
@@ -545,7 +545,7 @@ Future<Map<String, dynamic>> callP2PRendezvousUnregister(
 /// Parameters:
 ///   - [bridge]: The Bridge instance
 ///   - [peerId]: Optional specific peer ID to discover
-///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId> if peerId provided)
+///   - [namespace]: Optional namespace (defaults to `mknoon:chat:<peerId>` if peerId provided)
 ///   - [serverAddresses]: Optional list of rendezvous server addresses
 ///   - [timeoutMs]: Optional discovery timeout in milliseconds
 ///
@@ -566,10 +566,10 @@ Future<Map<String, dynamic>> callP2PRendezvousDiscover(
   final request = {
     'cmd': 'rendezvous:discover',
     'payload': {
-      if (peerId != null) 'peerId': peerId,
-      if (namespace != null) 'namespace': namespace,
-      if (serverAddresses != null) 'serverAddresses': serverAddresses,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'peerId': ?peerId,
+      'namespace': ?namespace,
+      'serverAddresses': ?serverAddresses,
+      'timeoutMs': ?timeoutMs,
     },
   };
 
@@ -621,8 +621,8 @@ Future<Map<String, dynamic>> callP2PPeerDial(
     'cmd': 'peer:dial',
     'payload': {
       'peerId': peerId,
-      if (addresses != null) 'addresses': addresses,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'addresses': ?addresses,
+      'timeoutMs': ?timeoutMs,
       'preferQuic': preferQuic,
     },
   };
@@ -757,7 +757,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
     'payload': {
       'toPeerId': toPeerId,
       'message': message,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'timeoutMs': ?timeoutMs,
       if (wakeToken != null && wakeToken.isNotEmpty) 'wakeToken': wakeToken,
     },
   };
@@ -843,7 +843,7 @@ Future<Map<String, dynamic>> callP2PInboxUnregisterToken(
   final request = {
     'cmd': 'inbox:unregister_token',
     'payload': {
-      if (serverAddresses != null) 'serverAddresses': serverAddresses,
+      'serverAddresses': ?serverAddresses,
     },
   };
 
@@ -873,12 +873,12 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_RETRIEVE_REQUEST',
-    details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
+    details: {'timeoutMs': ?timeoutMs},
   );
 
   final request = {
     'cmd': 'inbox:retrieve',
-    'payload': <String, dynamic>{if (timeoutMs != null) 'timeoutMs': timeoutMs},
+    'payload': <String, dynamic>{'timeoutMs': ?timeoutMs},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -908,12 +908,12 @@ Future<Map<String, dynamic>> callP2PInboxRetrievePending(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_RETRIEVE_PENDING_REQUEST',
-    details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
+    details: {'timeoutMs': ?timeoutMs},
   );
 
   final request = {
     'cmd': 'inbox:retrieve_pending',
-    'payload': <String, dynamic>{if (timeoutMs != null) 'timeoutMs': timeoutMs},
+    'payload': <String, dynamic>{'timeoutMs': ?timeoutMs},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -947,7 +947,7 @@ Future<Map<String, dynamic>> callP2PInboxAck(
     event: 'P2P_INBOX_ACK_REQUEST',
     details: {
       'entryCount': entryIds.length,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'timeoutMs': ?timeoutMs,
     },
   );
 
@@ -955,7 +955,7 @@ Future<Map<String, dynamic>> callP2PInboxAck(
     'cmd': 'inbox:ack',
     'payload': <String, dynamic>{
       'entryIds': entryIds,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'timeoutMs': ?timeoutMs,
     },
   };
 
@@ -1174,8 +1174,8 @@ Future<Map<String, dynamic>> callP2PLanMediaSend(
       'mime': mime,
       'filePath': filePath,
       'enc': enc,
-      if (encScheme != null) 'encScheme': encScheme,
-      if (durationMs != null) 'durationMs': durationMs,
+      'encScheme': ?encScheme,
+      'durationMs': ?durationMs,
     },
   };
 
@@ -1422,7 +1422,7 @@ Future<Map<String, dynamic>> callP2PMessageSend(
     'payload': {
       'peerId': peerId,
       'message': message,
-      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'timeoutMs': ?timeoutMs,
     },
   };
 

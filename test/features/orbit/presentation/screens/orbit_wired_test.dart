@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_ar.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -27,11 +28,14 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_b
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
@@ -388,6 +392,43 @@ void main() {
     await pumpOrbitFrames(tester);
   }
 
+  Future<void> seedOrdinaryGroupExitState({
+    required String groupId,
+    required String adminPeerId,
+    required DateTime joinedAt,
+  }) async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: testIdentity.peerId,
+        username: testIdentity.username,
+        role: MemberRole.writer,
+        publicKey: testIdentity.publicKey,
+        mlKemPublicKey: testIdentity.mlKemPublicKey,
+        joinedAt: joinedAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: adminPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-$adminPeerId',
+        mlKemPublicKey: 'mlkem-$adminPeerId',
+        joinedAt: joinedAt,
+      ),
+    );
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'group-key-$groupId',
+        createdAt: joinedAt,
+      ),
+    );
+  }
+
   Future<void> tapPendingGroupInviteAccept(
     WidgetTester tester,
     String groupId,
@@ -602,23 +643,24 @@ void main() {
     }
 
     testWidgets(
-        'TC-203-17 loads identity in orbit header without Close Friends text',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
+      'TC-203-17 loads identity in orbit header without Close Friends text',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
 
-      await tester.pumpWidget(buildOrbitWired());
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      // 203 B5: the wired identity anchor is the visualization itself — the
-      // close-friends chrome strings are gone from every Orbit view.
-      expect(find.byType(OrbitWired), findsOneWidget);
-      expect(find.byType(OrbitalVisualization), findsOneWidget);
-      expect(find.text('Close Friends'), findsNothing);
-    });
+        // 203 B5: the wired identity anchor is the visualization itself — the
+        // close-friends chrome strings are gone from every Orbit view.
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(find.byType(OrbitalVisualization), findsOneWidget);
+        expect(find.text('Close Friends'), findsNothing);
+      },
+    );
 
     testWidgets('loads active friends list', (tester) async {
       setLargeTestSurface(tester);
@@ -786,6 +828,17 @@ void main() {
             myRole: GroupRole.admin,
           ),
         );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'g-1',
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 3, 1),
+          ),
+        );
         final future = DateTime.now().toUtc().add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
           await groupRepo.recordGroupRejoinFailure(
@@ -826,6 +879,18 @@ void main() {
           find.byKey(const ValueKey('orbit-group-stuck-leave-g-1')),
           findsOneWidget,
         );
+
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-group-stuck-leave-g-1')),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(
+          find.text(AppLocalizationsEn().group_info_leave_failed),
+          findsOneWidget,
+        );
+        expect(await groupRepo.getGroup('g-1'), isNotNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
       },
     );
 
@@ -1832,51 +1897,52 @@ void main() {
 
     // 215 TC-02: a FAILED accept (addContact throws) must NOT open a chat —
     // navigation is gated on success/notPending.
-    testWidgets('accept failure (addContact error) does NOT open a conversation', (
-      tester,
-    ) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
+    testWidgets(
+      'accept failure (addContact error) does NOT open a conversation',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
 
-      final request = ContactRequestModel(
-        peerId: 'requester-peer-id',
-        publicKey: 'requester-pk',
-        rendezvous: '/dns4/relay',
-        username: 'Charlie',
-        signature: 'req-sig',
-        receivedAt: DateTime.now().toUtc().toIso8601String(),
-        status: ContactRequestStatus.pending,
-      );
-      contactRequestRepo.seed([request]);
-      contactRepo.throwOnAddContact = true;
+        final request = ContactRequestModel(
+          peerId: 'requester-peer-id',
+          publicKey: 'requester-pk',
+          rendezvous: '/dns4/relay',
+          username: 'Charlie',
+          signature: 'req-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        );
+        contactRequestRepo.seed([request]);
+        contactRepo.throwOnAddContact = true;
 
-      final fakeRequestListener = _FakeContactRequestListener(
-        requestRepo: contactRequestRepo,
-        contactRepo: contactRepo,
-        bridge: bridge,
-      );
+        final fakeRequestListener = _FakeContactRequestListener(
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
 
-      await tester.pumpWidget(
-        buildOrbitWired(contactRequestListener: fakeRequestListener),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(
+          buildOrbitWired(contactRequestListener: fakeRequestListener),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      fakeRequestListener.emitRequest(request);
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        fakeRequestListener.emitRequest(request);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      await tester.tap(find.text('Accept'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump();
+        await tester.tap(find.text('Accept'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
 
-      // The accept RAN (dialog dismissed) but no chat opened — distinguishes
-      // "no-nav" from "accept never fired".
-      expect(find.text('Accept'), findsNothing);
-      expect(find.byType(ConversationWired), findsNothing);
-    });
+        // The accept RAN (dialog dismissed) but no chat opened — distinguishes
+        // "no-nav" from "accept never fired".
+        expect(find.text('Accept'), findsNothing);
+        expect(find.byType(ConversationWired), findsNothing);
+      },
+    );
 
     // 215 TC-08: an already-accepted request (notPending) still opens the chat,
     // falling back to request.toContactModel() when the contact isn't cached.
@@ -2192,267 +2258,322 @@ void main() {
     // ---- 202 trailing-flush refresh coalescer ----
 
     testWidgets(
-        'TC-202-07 a same-peer event burst coalesces to ONE snapshot load and publish',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      final spyContactRepo = _SpyContactRepository();
-      final spyMessageRepo = _SpyMessageRepository();
-      spyContactRepo.seed([testContact]);
-      final fakeChatListener = _FakeChatMessageListener(
-        messageRepo: spyMessageRepo,
-        contactRepo: spyContactRepo,
-      );
-      await tester.pumpWidget(buildOrbitWired(
-        chatMessageListener: fakeChatListener,
-        contactRepository: spyContactRepo,
-        messageRepository: spyMessageRepo,
-      ));
-      await pumpOrbitFrames(tester);
-      await switchToAllChats(tester);
-      spyContactRepo.resetTracking();
-      spyMessageRepo.resetTracking();
-      // 3 incoming messages for the SAME peer, back-to-back (no pump between).
-      for (var i = 0; i < 3; i++) {
-        fakeChatListener.emitIncomingMessage(ConversationMessage(
-          id: 'burst-$i',
-          contactPeerId: 'contact-peer-id',
-          text: 'burst $i',
-          senderPeerId: 'contact-peer-id',
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          isIncoming: true,
-          status: 'delivered',
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-        ));
-      }
-      await pumpOrbitFrames(tester); // 100ms steps flush the 32ms window
-      expect(spyContactRepo.getContactCallCountByPeerId, {'contact-peer-id': 1});
-    });
-
-    testWidgets(
-        'TC-202-08 a same-group event burst coalesces to one snapshot + one rejoin load',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      final spyGroupRepo = _SpyGroupRepository();
-      final spyGroupMsgRepo = _SpyGroupMessageRepository();
-      await spyGroupRepo.saveGroup(GroupModel(
-        id: 'g-1',
-        name: 'Alpha Group',
-        type: GroupType.chat,
-        topicName: 'topic-g-1',
-        createdAt: DateTime.utc(2026, 3, 1),
-        createdBy: 'peer-admin',
-        myRole: GroupRole.admin,
-      ));
-      await tester.pumpWidget(buildOrbitWired(
-        groupRepository: spyGroupRepo,
-        groupMessageRepository: spyGroupMsgRepo,
-      ));
-      await pumpOrbitFrames(tester);
-      await switchToAllChats(tester);
-      spyGroupRepo.resetTracking();
-      spyGroupMsgRepo.resetTracking();
-      for (var i = 0; i < 3; i++) {
-        final m = GroupMessage(
-          id: 'gm-$i',
-          groupId: 'g-1',
-          senderPeerId: 'peer-bob',
-          senderUsername: 'Bob',
-          text: 'burst $i',
-          timestamp: DateTime.utc(2026, 3, 2),
-          isIncoming: true,
-          createdAt: DateTime.utc(2026, 3, 2),
+      'TC-202-07 a same-peer event burst coalesces to ONE snapshot load and publish',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
         );
-        await spyGroupMsgRepo.saveMessage(m);
-        groupMessageStreamController.add(m);
-      }
-      await pumpOrbitFrames(tester);
-      expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
-      expect(spyGroupRepo.loadGroupRejoinStatesCallCount, 1);
-    });
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+        // 3 incoming messages for the SAME peer, back-to-back (no pump between).
+        for (var i = 0; i < 3; i++) {
+          fakeChatListener.emitIncomingMessage(
+            ConversationMessage(
+              id: 'burst-$i',
+              contactPeerId: 'contact-peer-id',
+              text: 'burst $i',
+              senderPeerId: 'contact-peer-id',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              isIncoming: true,
+              status: 'delivered',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          );
+        }
+        await pumpOrbitFrames(tester); // 100ms steps flush the 32ms window
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+      },
+    );
 
     testWidgets(
-        'TC-202-09d disposing mid-coalesce-window leaves no pending timer',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      final spyContactRepo = _SpyContactRepository();
-      final spyMessageRepo = _SpyMessageRepository();
-      spyContactRepo.seed([testContact]);
-      final fakeChatListener = _FakeChatMessageListener(
-        messageRepo: spyMessageRepo,
-        contactRepo: spyContactRepo,
-      );
-      await tester.pumpWidget(buildOrbitWired(
-        chatMessageListener: fakeChatListener,
-        contactRepository: spyContactRepo,
-        messageRepository: spyMessageRepo,
-      ));
-      await pumpOrbitFrames(tester);
-      await switchToAllChats(tester);
-      // Open the 32ms window, then tear the widget down WITHIN it.
-      fakeChatListener.emitIncomingMessage(ConversationMessage(
-        id: 'pending-1',
-        contactPeerId: 'contact-peer-id',
-        text: 'x',
-        senderPeerId: 'contact-peer-id',
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-        status: 'delivered',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-      ));
-      await tester.pump(const Duration(milliseconds: 5)); // enqueue + arm timer
-      await tester.pumpWidget(const SizedBox()); // dispose WITHIN the window
-      expect(tester.takeException(), isNull);
-      // The harness's end-of-test pending-timer check now runs: a coalescer
-      // timer that outlived dispose (naive impl) fails here; the fix cancels it.
-    });
+      'TC-202-08 a same-group event burst coalesces to one snapshot + one rejoin load',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMsgRepo = _SpyGroupMessageRepository();
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMsgRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
+        spyGroupRepo.resetTracking();
+        spyGroupMsgRepo.resetTracking();
+        for (var i = 0; i < 3; i++) {
+          final m = GroupMessage(
+            id: 'gm-$i',
+            groupId: 'g-1',
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'burst $i',
+            timestamp: DateTime.utc(2026, 3, 2),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 3, 2),
+          );
+          await spyGroupMsgRepo.saveMessage(m);
+          groupMessageStreamController.add(m);
+        }
+        await pumpOrbitFrames(tester);
+        expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+        expect(spyGroupRepo.loadGroupRejoinStatesCallCount, 1);
+      },
+    );
 
     testWidgets(
-        'TC-202-10 the three OrbitScreen animations are identical across OrbitWired rebuilds',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      final shell = AppShellController(); // defaults to feed
-      await tester.pumpWidget(buildOrbitWired(
-        appShellController: shell,
-        feedUnreadCountListenable: ValueNotifier<int>(0),
-      ));
-      await pumpOrbitFrames(tester, count: 6);
-      OrbitScreen orbitScreen() =>
-          tester.widget<OrbitScreen>(find.byType(OrbitScreen));
-      final c1 = orbitScreen().collapseAnimation;
-      final d1 = orbitScreen().searchDockAnimation;
-      final t1 = orbitScreen().searchTriggerAnimation;
-      shell.switchTo(AppShellTab.orbit); // REAL feed→orbit transition → setState
-      await pumpOrbitFrames(tester, count: 6);
-      final c2 = orbitScreen().collapseAnimation;
-      final d2 = orbitScreen().searchDockAnimation;
-      final t2 = orbitScreen().searchTriggerAnimation;
-      expect(identical(c1, c2), isTrue,
-          reason: 'collapseAnimation is per-State');
-      expect(identical(d1, d2), isTrue,
-          reason: 'searchDockAnimation is per-State');
-      expect(identical(t1, t2), isTrue,
-          reason: 'searchTriggerAnimation is per-State');
-    });
+      'TC-202-09d disposing mid-coalesce-window leaves no pending timer',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
+        // Open the 32ms window, then tear the widget down WITHIN it.
+        fakeChatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'pending-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'x',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        await tester.pump(
+          const Duration(milliseconds: 5),
+        ); // enqueue + arm timer
+        await tester.pumpWidget(const SizedBox()); // dispose WITHIN the window
+        expect(tester.takeException(), isNull);
+        // The harness's end-of-test pending-timer check now runs: a coalescer
+        // timer that outlived dispose (naive impl) fails here; the fix cancels it.
+      },
+    );
 
     testWidgets(
-        'TC-212-06 floated trigger is tap-inert while the dock is open',
-        (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      suppressNavAssetErrors();
-      identityRepo.seed(testIdentity);
-      contactRepo.seed([testContact]);
-      final shell = AppShellController();
-      await tester.pumpWidget(buildOrbitWired(
-        appShellController: shell,
-        feedUnreadCountListenable: ValueNotifier<int>(0),
-      ));
-      await pumpOrbitFrames(tester, count: 6);
-      shell.switchTo(AppShellTab.orbit);
-      await pumpOrbitFrames(tester, count: 6);
-      await switchToAllChats(tester);
-
-      await tester.tap(find.byType(OrbitSearchTrigger));
-      // Dock slide 560ms + trigger reverse 340ms.
-      await pumpOrbitFrames(tester, count: 8);
-
-      final dockField = find.byType(TextField);
-      expect(dockField, findsOneWidget, reason: 'the search dock opened');
-      expect(
-        tester.widget<TextField>(dockField).focusNode!.hasFocus,
-        isTrue,
-        reason: 'the dock field took focus',
-      );
-
-      // The trigger stays mounted but fully faded...
-      expect(find.byType(OrbitSearchTrigger), findsOneWidget);
-      final fade = tester.widget<Opacity>(find
-          .ancestor(
-            of: find.byType(OrbitSearchTrigger),
-            matching: find.byType(Opacity),
-          )
-          .first);
-      expect(fade.opacity, 0.0, reason: 'the trigger fades out as the dock opens');
-
-      // ...and tap-inert: the floated builder keeps the IgnorePointer(t < 0.5)
-      // clause at the new home, so the invisible trigger never swallows taps.
-      // (While the dock is open it also paints OVER the corner band — trigger
-      // layer declared before the dock layer — so those pixels belong to the
-      // dock's own controls; the inertness lock is this structural clause.)
-      final ignore = tester.widget<IgnorePointer>(find
-          .ancestor(
-            of: find.byType(OrbitSearchTrigger),
-            matching: find.byType(IgnorePointer),
-          )
-          .first);
-      expect(ignore.ignoring, isTrue,
-          reason: 'the hidden trigger must not swallow taps');
-
-      // A tap at the faded trigger passes through without touching it: no
-      // exception, trigger untouched and still mounted.
-      await tester.tap(find.byType(OrbitSearchTrigger), warnIfMissed: false);
-      await tester.pump();
-      expect(tester.takeException(), isNull);
-      expect(find.byType(OrbitSearchTrigger), findsOneWidget);
-    });
+      'TC-202-10 the three OrbitScreen animations are identical across OrbitWired rebuilds',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final shell = AppShellController(); // defaults to feed
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shell,
+            feedUnreadCountListenable: ValueNotifier<int>(0),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        OrbitScreen orbitScreen() =>
+            tester.widget<OrbitScreen>(find.byType(OrbitScreen));
+        final c1 = orbitScreen().collapseAnimation;
+        final d1 = orbitScreen().searchDockAnimation;
+        final t1 = orbitScreen().searchTriggerAnimation;
+        shell.switchTo(
+          AppShellTab.orbit,
+        ); // REAL feed→orbit transition → setState
+        await pumpOrbitFrames(tester, count: 6);
+        final c2 = orbitScreen().collapseAnimation;
+        final d2 = orbitScreen().searchDockAnimation;
+        final t2 = orbitScreen().searchTriggerAnimation;
+        expect(
+          identical(c1, c2),
+          isTrue,
+          reason: 'collapseAnimation is per-State',
+        );
+        expect(
+          identical(d1, d2),
+          isTrue,
+          reason: 'searchDockAnimation is per-State',
+        );
+        expect(
+          identical(t1, t2),
+          isTrue,
+          reason: 'searchTriggerAnimation is per-State',
+        );
+      },
+    );
 
     testWidgets(
-        'TC-212-07 scroll-down hides the floated trigger; scroll-up restores '
-        'it', (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      suppressNavAssetErrors();
-      identityRepo.seed(testIdentity);
-      contactRepo.seed(List.generate(
-        24,
-        (i) => testContact.copyWith(
-          peerId: 'scroll-peer-$i',
-          username: 'Friend$i',
-        ),
-      ));
-      final shell = AppShellController();
-      await tester.pumpWidget(buildOrbitWired(
-        appShellController: shell,
-        feedUnreadCountListenable: ValueNotifier<int>(0),
-      ));
-      await pumpOrbitFrames(tester, count: 6);
-      shell.switchTo(AppShellTab.orbit);
-      await pumpOrbitFrames(tester, count: 6);
-      await switchToAllChats(tester);
+      'TC-212-06 floated trigger is tap-inert while the dock is open',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final shell = AppShellController();
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shell,
+            feedUnreadCountListenable: ValueNotifier<int>(0),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        shell.switchTo(AppShellTab.orbit);
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
-      double triggerOpacity() => tester
-          .widget<Opacity>(find
+        await tester.tap(find.byType(OrbitSearchTrigger));
+        // Dock slide 560ms + trigger reverse 340ms.
+        await pumpOrbitFrames(tester, count: 8);
+
+        final dockField = find.byType(TextField);
+        expect(dockField, findsOneWidget, reason: 'the search dock opened');
+        expect(
+          tester.widget<TextField>(dockField).focusNode!.hasFocus,
+          isTrue,
+          reason: 'the dock field took focus',
+        );
+
+        // The trigger stays mounted but fully faded...
+        expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+        final fade = tester.widget<Opacity>(
+          find
               .ancestor(
                 of: find.byType(OrbitSearchTrigger),
                 matching: find.byType(Opacity),
               )
-              .first)
-          .opacity;
+              .first,
+        );
+        expect(
+          fade.opacity,
+          0.0,
+          reason: 'the trigger fades out as the dock opens',
+        );
 
-      expect(triggerOpacity(), 1.0, reason: 'visible before any scroll');
+        // ...and tap-inert: the floated builder keeps the IgnorePointer(t < 0.5)
+        // clause at the new home, so the invisible trigger never swallows taps.
+        // (While the dock is open it also paints OVER the corner band — trigger
+        // layer declared before the dock layer — so those pixels belong to the
+        // dock's own controls; the inertness lock is this structural clause.)
+        final ignore = tester.widget<IgnorePointer>(
+          find
+              .ancestor(
+                of: find.byType(OrbitSearchTrigger),
+                matching: find.byType(IgnorePointer),
+              )
+              .first,
+        );
+        expect(
+          ignore.ignoring,
+          isTrue,
+          reason: 'the hidden trigger must not swallow taps',
+        );
 
-      // Scroll down past the 100px threshold → the trigger fades out (the
-      // AnimatedBuilder(searchTriggerAnimation) wrapper drives the floated
-      // layer exactly as it drove the inline slot).
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
-      await tester.pump();
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
-      await pumpOrbitFrames(tester, count: 6);
-      expect(triggerOpacity(), 0.0, reason: 'hidden after down-scroll');
+        // A tap at the faded trigger passes through without touching it: no
+        // exception, trigger untouched and still mounted.
+        await tester.tap(find.byType(OrbitSearchTrigger), warnIfMissed: false);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+      },
+    );
 
-      // Scroll back up → restored.
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, 600));
-      await pumpOrbitFrames(tester, count: 6);
-      expect(triggerOpacity(), 1.0, reason: 'restored after up-scroll');
-    });
+    testWidgets(
+      'TC-212-07 scroll-down hides the floated trigger; scroll-up restores '
+      'it',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed(
+          List.generate(
+            24,
+            (i) => testContact.copyWith(
+              peerId: 'scroll-peer-$i',
+              username: 'Friend$i',
+            ),
+          ),
+        );
+        final shell = AppShellController();
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shell,
+            feedUnreadCountListenable: ValueNotifier<int>(0),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        shell.switchTo(AppShellTab.orbit);
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        double triggerOpacity() => tester
+            .widget<Opacity>(
+              find
+                  .ancestor(
+                    of: find.byType(OrbitSearchTrigger),
+                    matching: find.byType(Opacity),
+                  )
+                  .first,
+            )
+            .opacity;
+
+        expect(triggerOpacity(), 1.0, reason: 'visible before any scroll');
+
+        // Scroll down past the 100px threshold → the trigger fades out (the
+        // AnimatedBuilder(searchTriggerAnimation) wrapper drives the floated
+        // layer exactly as it drove the inline slot).
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+        await tester.pump();
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(triggerOpacity(), 0.0, reason: 'hidden after down-scroll');
+
+        // Scroll back up → restored.
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, 600));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(triggerOpacity(), 1.0, reason: 'restored after up-scroll');
+      },
+    );
 
     testWidgets('create-group route result refreshes only the affected group', (
       tester,
@@ -2565,7 +2686,957 @@ void main() {
       expect(find.text('Bob'), findsWidgets);
     });
 
-    testWidgets('deleting one Orbit group preserves friends and other groups', (
+    testWidgets(
+      'active Leave and dissolved Delete dispatch distinct exit branches',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 12);
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-active-exit',
+            name: 'Active Exit Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-active-exit',
+            createdAt: now,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await seedOrdinaryGroupExitState(
+          groupId: 'g-active-exit',
+          adminPeerId: 'peer-admin',
+          joinedAt: now,
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-active-exit',
+            groupId: 'g-active-exit',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Active history',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-dissolved-exit',
+            name: 'Dissolved Exit Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-dissolved-exit',
+            createdAt: now.subtract(const Duration(minutes: 1)),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-dissolved-exit',
+            groupId: 'g-dissolved-exit',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Dissolved history',
+            timestamp: now.subtract(const Duration(minutes: 1)),
+            isIncoming: true,
+            createdAt: now.subtract(const Duration(minutes: 1)),
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final activeCenter = tester.getCenter(find.text('Active Exit Group'));
+        await tester.flingFrom(activeCenter, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text(l10n.orbit_leave_action), findsOneWidget);
+        expect(find.text(l10n.orbit_delete_action), findsNothing);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await tester.pump();
+        expect(find.text(l10n.orbit_leave_group), findsOneWidget);
+        expect(find.text(l10n.orbit_leave_group_body), findsOneWidget);
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(await groupRepo.getGroup('g-active-exit'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-active-exit'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+
+        final dissolvedCenter = tester.getCenter(
+          find.text('Dissolved Exit Group'),
+        );
+        await tester.flingFrom(dissolvedCenter, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text(l10n.orbit_delete_action), findsOneWidget);
+        expect(find.text(l10n.orbit_leave_action), findsNothing);
+        await tester.tap(find.text(l10n.orbit_delete_action));
+        await tester.pump();
+        expect(find.text(l10n.group_info_delete_local_title), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_body), findsOneWidget);
+        await tester.tap(find.text(l10n.group_info_delete_local_action));
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(await groupRepo.getGroup('g-dissolved-exit'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-dissolved-exit'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+          reason: 'dissolved local deletion must not issue another leave',
+        );
+      },
+    );
+
+    testWidgets(
+      'first sole-admin Leave opens recovery without destructive work',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 13);
+        const groupId = 'g-sole-admin-exit';
+        const groupName = 'Sole Admin Group';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-without-join-evidence',
+            username: 'Waiting Member',
+            role: MemberRole.writer,
+            publicKey: 'waiting-pk',
+            mlKemPublicKey: 'waiting-mlkem',
+            joinedAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-sole-admin-exit',
+            groupId: groupId,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            text: 'Retained history',
+            timestamp: now,
+            isIncoming: false,
+            createdAt: now,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text(l10n.orbit_leave_group), findsNothing);
+        expect(find.text(l10n.group_exit_only_admin_title), findsOneWidget);
+        expect(
+          find.text(l10n.group_exit_only_admin_body(groupName)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-exit-no-candidate')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(l10n.group_exit_no_eligible_successor),
+          findsOneWidget,
+        );
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(await groupMsgRepo.getMessage('gm-sole-admin-exit'), isNotNull);
+
+        await tester.tap(find.text(l10n.group_exit_keep_group));
+        await pumpOrbitFrames(tester, count: 4);
+        expect(find.text(l10n.group_exit_only_admin_title), findsNothing);
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(await groupMsgRepo.getMessage('gm-sole-admin-exit'), isNotNull);
+      },
+    );
+
+    testWidgets(
+      'failed or stale successor promotion stays visible and never leaves',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 14);
+        const groupId = 'g-stale-successor';
+        const groupName = 'Stale Successor Group';
+        const successorPeerId = 'peer-stale-successor';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: successorPeerId,
+            username: 'Successor',
+            role: MemberRole.writer,
+            publicKey: 'successor-pk',
+            mlKemPublicKey: 'successor-mlkem',
+            joinedAt: now,
+          ),
+        );
+        final joinEvidence = buildMemberJoinedTimelineMessage(
+          groupId: groupId,
+          joinedPeerId: successorPeerId,
+          joinedUsername: 'Successor',
+          eventAt: now.add(const Duration(minutes: 1)),
+        );
+        await groupMsgRepo.saveMessage(joinEvidence);
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-stale-successor-history',
+            groupId: groupId,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            text: 'History must remain',
+            timestamp: now,
+            isIncoming: false,
+            createdAt: now,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.byKey(const ValueKey('group-exit-choose-admin')));
+        await tester.pump();
+        await tester.tap(
+          find.byKey(
+            const ValueKey('group-exit-candidate-peer-stale-successor'),
+          ),
+        );
+        await tester.pump();
+
+        // The row was eligible when the sheet opened, but its authoritative
+        // joined evidence disappears before the destructive role commit.
+        await groupMsgRepo.deleteMessage(joinEvidence.id);
+        await tester.tap(find.byKey(const ValueKey('group-exit-promote')));
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text(l10n.group_exit_choose_member), findsOneWidget);
+        expect(
+          find.byKey(
+            const ValueKey('group-exit-candidate-peer-stale-successor'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text(groupName), findsOneWidget);
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await groupMsgRepo.getMessage('gm-stale-successor-history'),
+          isNotNull,
+        );
+        expect(
+          (await groupRepo.getMember(groupId, successorPeerId))?.role,
+          MemberRole.writer,
+        );
+        expect(
+          bridge.commandLog,
+          isNot(
+            contains(
+              anyOf(
+                'payload.sign',
+                'group:updateConfig',
+                'group:publish',
+                'group:leave',
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    testWidgets(
+      'active exit prework failure stays in group and shows localized retry',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 15);
+        const groupId = 'g-prework-failure';
+        const groupName = 'Prework Failure Group';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: 'peer-admin-prework',
+            myRole: GroupRole.member,
+          ),
+        );
+        await seedOrdinaryGroupExitState(
+          groupId: groupId,
+          adminPeerId: 'peer-admin-prework',
+          joinedAt: now,
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-prework-history',
+            groupId: groupId,
+            senderPeerId: 'peer-admin-prework',
+            senderUsername: 'Admin',
+            text: 'History survives failed prework',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+        bridge.responses['group:inboxStore'] = {
+          'ok': false,
+          'errorCode': 'INBOX_FAILED',
+        };
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await tester.pump();
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.text(l10n.group_info_leave_failed), findsOneWidget);
+        expect(find.text(groupName), findsOneWidget);
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await groupRepo.getMember(groupId, testIdentity.peerId),
+          isNotNull,
+        );
+        expect((await groupRepo.getLatestKey(groupId))?.keyGeneration, 1);
+        expect(
+          (await groupMsgRepo.getMessagesPage(groupId)).map((row) => row.id),
+          ['gm-prework-history'],
+          reason: 'tentative member_removed history must be rolled back',
+        );
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
+    testWidgets(
+      'normal exit confirms once and last-admin race reopens guidance',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 16);
+        const groupId = 'g-final-admin-race';
+        const groupName = 'Final Admin Race Group';
+        const peerAdminId = 'peer-admin-race';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        final selfMember = GroupMember(
+          groupId: groupId,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+          joinedAt: now,
+        );
+        final peerAdmin = GroupMember(
+          groupId: groupId,
+          peerId: peerAdminId,
+          username: 'Peer Admin',
+          role: MemberRole.admin,
+          publicKey: 'peer-admin-race-pk',
+          mlKemPublicKey: 'peer-admin-race-mlkem',
+          joinedAt: now,
+        );
+        await groupRepo.saveMember(selfMember);
+        await groupRepo.saveMember(peerAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-$groupId',
+            createdAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: groupId,
+            joinedPeerId: peerAdminId,
+            joinedUsername: 'Peer Admin',
+            eventAt: now.add(const Duration(minutes: 1)),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-final-admin-race-history',
+            groupId: groupId,
+            senderPeerId: peerAdminId,
+            senderUsername: 'Peer Admin',
+            text: 'Race-safe history',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await tester.pump();
+
+        expect(find.text(l10n.orbit_leave_group), findsOneWidget);
+        expect(find.text(l10n.orbit_leave_group_body), findsOneWidget);
+        expect(find.text(l10n.orbit_leave_group_action), findsOneWidget);
+
+        // Both authoritative admin rows change while confirmation is open.
+        // The final re-read therefore sees the zero-admin race, not the stale
+        // two-admin snapshot that originally justified normal leave.
+        await groupRepo.saveMember(
+          selfMember.copyWith(role: MemberRole.writer),
+        );
+        await groupRepo.saveMember(peerAdmin.copyWith(role: MemberRole.writer));
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text(l10n.orbit_leave_group), findsNothing);
+        expect(find.text(l10n.group_exit_only_admin_title), findsOneWidget);
+        expect(
+          find.text(l10n.group_exit_only_admin_body(groupName)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-exit-choose-admin')),
+          findsOneWidget,
+        );
+        expect(
+          (await groupRepo.getMembers(
+            groupId,
+          )).where((member) => member.role == MemberRole.admin),
+          isEmpty,
+        );
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await groupMsgRepo.getMessage('gm-final-admin-race-history'),
+          isNotNull,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        await tester.tap(find.text(l10n.group_exit_keep_group));
+        await pumpOrbitFrames(tester, count: 4);
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+      },
+    );
+
+    testWidgets(
+      'sole admin dissolve preserves history before optional local delete',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 17);
+        const groupId = 'g-sole-admin-dissolve';
+        const groupName = 'Sole Admin Dissolve Group';
+        const memberPeerId = 'peer-dissolve-member';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: memberPeerId,
+            username: 'Member',
+            role: MemberRole.writer,
+            publicKey: 'dissolve-member-pk',
+            mlKemPublicKey: 'dissolve-member-mlkem',
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-$groupId',
+            createdAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-dissolve-retained-history',
+            groupId: groupId,
+            senderPeerId: memberPeerId,
+            senderUsername: 'Member',
+            text: 'Retain this history after dissolve',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+
+        final pendingRows = <GroupPendingBroadcast>[
+          GroupPendingBroadcast(
+            id: 'pending-dissolve-target',
+            groupId: groupId,
+            kind: 'group_metadata_updated',
+            sysText: '{"kind":"pending"}',
+            recipientPeerIds: const [memberPeerId],
+            eventAt: now,
+            sourceMessageId: 'pending-dissolve-source',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ];
+        var discardSawCommittedDissolve = false;
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (targetGroupId) async => pendingRows
+              .where((row) => row.groupId == targetGroupId)
+              .toList(growable: false),
+          discardForGroup: (targetGroupId) async {
+            discardSawCommittedDissolve =
+                (await groupRepo.getGroup(targetGroupId))?.isDissolved == true;
+            pendingRows.removeWhere((row) => row.groupId == targetGroupId);
+          },
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastAccessSinks(
+            loadForGroup: null,
+            discardForGroup: null,
+          ),
+        );
+        bridge.responses['group:inboxStore'] = {
+          'ok': false,
+          'errorCode': 'INBOX_RECOVERY_GAP',
+        };
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.text(l10n.group_exit_only_admin_title), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('group-exit-dissolve')));
+        await tester.pump();
+        expect(find.text(l10n.group_info_dissolve_title), findsOneWidget);
+        expect(find.text(l10n.group_info_dissolve_body), findsOneWidget);
+        await tester.tap(find.text(l10n.group_info_dissolve_action));
+        await pumpOrbitFrames(tester, count: 12);
+
+        final dissolved = await groupRepo.getGroup(groupId);
+        expect(dissolved, isNotNull);
+        expect(dissolved!.isDissolved, isTrue);
+        expect(discardSawCommittedDissolve, isTrue);
+        expect(pendingRows, isEmpty);
+        final retainedHistory = await groupMsgRepo.getMessagesPage(groupId);
+        expect(
+          retainedHistory.map((row) => row.id),
+          contains('gm-dissolve-retained-history'),
+        );
+        final dissolveTimeline = retainedHistory.singleWhere(
+          (row) => row.id.startsWith('sys-group_dissolved:$groupId:'),
+        );
+        expect(dissolveTimeline.inboxStored, isFalse);
+        expect(dissolveTimeline.inboxRetryPayload, isNotNull);
+        expect(find.text(l10n.group_info_dissolved_recovery), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_title), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_body), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_action), findsOneWidget);
+        expect(bridge.commandLog, contains('payload.sign'));
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+
+        await tester.tap(find.text(l10n.btn_cancel));
+        await pumpOrbitFrames(tester, count: 4);
+        expect((await groupRepo.getGroup(groupId))?.isDissolved, isTrue);
+        expect(
+          await groupMsgRepo.getMessage('gm-dissolve-retained-history'),
+          isNotNull,
+        );
+        expect(
+          (await groupMsgRepo.getMessagesPage(groupId))
+              .where(
+                (row) => row.id.startsWith('sys-group_dissolved:$groupId:'),
+              )
+              .length,
+          1,
+        );
+      },
+    );
+
+    testWidgets(
+      'dissolve exception after durable commit still cleans up and offers local delete',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        groupRepo = _CommitThenThrowDissolveGroupRepository();
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 19);
+        const groupId = 'g-dissolve-commit-then-throw';
+        const groupName = 'Committed Dissolve Group';
+        const memberPeerId = 'peer-committed-dissolve-member';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: memberPeerId,
+            username: 'Member',
+            role: MemberRole.writer,
+            publicKey: 'committed-dissolve-member-pk',
+            mlKemPublicKey: 'committed-dissolve-member-mlkem',
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-$groupId',
+            createdAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-commit-then-throw-history',
+            groupId: groupId,
+            senderPeerId: memberPeerId,
+            text: 'Delete only after the optional confirmation',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+
+        final pendingRows = <GroupPendingBroadcast>[
+          GroupPendingBroadcast(
+            id: 'pending-commit-then-throw',
+            groupId: groupId,
+            kind: 'group_metadata_updated',
+            sysText: '{}',
+            recipientPeerIds: const [memberPeerId],
+            eventAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ];
+        var discardSawCommittedDissolve = false;
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (targetGroupId) async => pendingRows
+              .where((row) => row.groupId == targetGroupId)
+              .toList(growable: false),
+          discardForGroup: (targetGroupId) async {
+            discardSawCommittedDissolve =
+                (await groupRepo.getGroup(targetGroupId))?.isDissolved == true;
+            pendingRows.removeWhere((row) => row.groupId == targetGroupId);
+          },
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastAccessSinks(
+            loadForGroup: null,
+            discardForGroup: null,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.byKey(const ValueKey('group-exit-dissolve')));
+        await tester.pump();
+        await tester.tap(find.text(l10n.group_info_dissolve_action));
+        await pumpOrbitFrames(tester, count: 12);
+
+        expect((await groupRepo.getGroup(groupId))?.isDissolved, isTrue);
+        expect(discardSawCommittedDissolve, isTrue);
+        expect(pendingRows, isEmpty);
+        expect(
+          flowEvents.any(
+            (event) =>
+                event['event'] == 'ORBIT_FL_DISSOLVE_GROUP_ERROR' &&
+                (event['details'] as Map?)?['stage'] == 'transition',
+          ),
+          isTrue,
+        );
+        expect(find.text(l10n.group_info_dissolved_recovery), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_title), findsOneWidget);
+        expect(
+          await groupMsgRepo.getMessage('gm-commit-then-throw-history'),
+          isNotNull,
+        );
+
+        await tester.tap(find.text(l10n.group_info_delete_local_action));
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(await groupRepo.getGroup(groupId), isNull);
+        expect(
+          await groupMsgRepo.getMessage('gm-commit-then-throw-history'),
+          isNull,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'post-dissolve active reactivation preserves its pending rows and skips local delete',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 19, 20);
+        const groupId = 'g-dissolve-reactivated';
+        const groupName = 'Reactivated Dissolve Group';
+        const memberPeerId = 'peer-reactivated-member';
+        final pendingRows = <GroupPendingBroadcast>[];
+        groupRepo = _ReactivateAfterDissolveGroupRepository(
+          onReactivated: () {
+            pendingRows.add(
+              GroupPendingBroadcast(
+                id: 'pending-reactivated-membership',
+                groupId: groupId,
+                kind: 'group_metadata_updated',
+                sysText: '{"membership":"reactivated"}',
+                recipientPeerIds: const [memberPeerId],
+                eventAt: now.add(const Duration(minutes: 1)),
+                sourceMessageId: 'reactivated-pending-source',
+                createdAt: now.add(const Duration(minutes: 1)),
+                updatedAt: now.add(const Duration(minutes: 1)),
+              ),
+            );
+          },
+        );
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: memberPeerId,
+            username: 'Member',
+            role: MemberRole.writer,
+            publicKey: 'reactivated-member-pk',
+            mlKemPublicKey: 'reactivated-member-mlkem',
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-$groupId',
+            createdAt: now,
+          ),
+        );
+
+        var discardCalls = 0;
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (targetGroupId) async => pendingRows
+              .where((row) => row.groupId == targetGroupId)
+              .toList(growable: false),
+          discardForGroup: (targetGroupId) async {
+            discardCalls++;
+            pendingRows.removeWhere((row) => row.groupId == targetGroupId);
+          },
+        );
+        addTearDown(() => setGroupPendingBroadcastAccessSinks());
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.byKey(const ValueKey('group-exit-dissolve')));
+        await tester.pump();
+        await tester.tap(find.text(l10n.group_info_dissolve_action));
+        await pumpOrbitFrames(tester, count: 12);
+
+        final current = await groupRepo.getGroup(groupId);
+        expect(current, isNotNull);
+        expect(current!.isDissolved, isFalse);
+        expect(current.name, '$groupName (rejoined)');
+        expect(pendingRows.map((row) => row.id), [
+          'pending-reactivated-membership',
+        ]);
+        expect(discardCalls, 0);
+        expect(find.text(l10n.group_info_dissolve_failed), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_title), findsNothing);
+        expect(find.text(l10n.group_info_delete_local_action), findsNothing);
+      },
+    );
+
+    testWidgets('leaving one Orbit group preserves friends and other groups', (
       tester,
     ) async {
       setLargeTestSurface(tester);
@@ -2592,6 +3663,11 @@ void main() {
           createdBy: 'peer-admin',
           myRole: GroupRole.member,
         ),
+      );
+      await seedOrdinaryGroupExitState(
+        groupId: 'g-delete-one',
+        adminPeerId: 'peer-admin',
+        joinedAt: now,
       );
       await groupRepo.saveGroup(
         GroupModel(
@@ -2642,9 +3718,11 @@ void main() {
       await tester.flingFrom(center, const Offset(-350, 0), 1000);
       await pumpOrbitFrames(tester, count: 6);
 
-      await tester.tap(find.text('Delete').first);
+      final l10n = AppLocalizationsEn();
+      await tester.tap(find.text(l10n.orbit_leave_action));
       await tester.pump();
-      await tester.tap(find.text('Delete').last);
+      expect(find.text(l10n.orbit_leave_group), findsOneWidget);
+      await tester.tap(find.text(l10n.orbit_leave_group_action));
       await pumpOrbitFrames(tester, count: 8);
 
       expect(find.text('Delete One Group'), findsNothing);
@@ -2663,11 +3741,11 @@ void main() {
     });
 
     testWidgets(
-      'user-B scenario: deleting one Orbit group keeps both 1:1 chat threads with friends intact',
+      'user-B scenario: leaving one Orbit group keeps both 1:1 chat threads with friends intact',
       (tester) async {
         // Mirrors the user-reported scenario: B is mutual friends with A and C,
         // accepted A's group invite, exchanged group messages, then swipes
-        // delete on the group from Orbit. After delete, B must still have both
+        // Leave on the group from Orbit. After leave, B must still have both
         // 1:1 chat threads (with A and C) including every prior DM row.
         setLargeTestSurface(tester);
         suppressOverflowErrors();
@@ -2766,6 +3844,22 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await seedOrdinaryGroupExitState(
+          groupId: 'game-night',
+          adminPeerId: friendA.peerId,
+          joinedAt: now,
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'game-night',
+            peerId: friendC.peerId,
+            username: friendC.username,
+            role: MemberRole.writer,
+            publicKey: friendC.publicKey,
+            mlKemPublicKey: friendC.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-1',
@@ -2822,15 +3916,16 @@ void main() {
         expect(aliceMessagesBefore.map((m) => m.id).toList(), aliceDmIds);
         expect(charlieMessagesBefore.map((m) => m.id).toList(), charlieDmIds);
 
-        // -- act: swipe-left on the group row, tap Delete, confirm dialog.
+        // -- act: swipe-left on the group row, tap Leave, confirm dialog.
         final groupCenter = tester.getCenter(find.text('Game Night'));
         await tester.flingFrom(groupCenter, const Offset(-350, 0), 1000);
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(find.text('Delete').first);
+        final l10n = AppLocalizationsEn();
+        await tester.tap(find.text(l10n.orbit_leave_action));
         await tester.pump();
-        // Confirmation dialog appears; tap its Delete action.
-        await tester.tap(find.text('Delete').last);
+        // Confirmation dialog appears; tap its destructive leave action.
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
         await pumpOrbitFrames(tester, count: 8);
 
         // -- assert UI: group is gone, friends still visible.
@@ -2925,10 +4020,12 @@ void main() {
         await tester.flingFrom(center, const Offset(-350, 0), 1000);
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(find.text('Delete').first);
+        final l10n = AppLocalizationsEn();
+        await tester.tap(find.text(l10n.orbit_delete_action));
         await tester.pump();
-        expect(find.text('Delete dissolved group?'), findsOneWidget);
-        await tester.tap(find.text('Delete').last);
+        expect(find.text(l10n.group_info_delete_local_title), findsOneWidget);
+        expect(find.text(l10n.group_info_delete_local_body), findsOneWidget);
+        await tester.tap(find.text(l10n.group_info_delete_local_action));
         await pumpOrbitFrames(tester, count: 8);
 
         expect(find.text('Dissolved One Group'), findsNothing);
@@ -3624,9 +4721,7 @@ void main() {
         await pumpOrbitFrames(tester, count: 10);
 
         final ask = find.byKey(
-          const ValueKey(
-            'pending-group-invite-ask-new-grp-orbit-ask-live',
-          ),
+          const ValueKey('pending-group-invite-ask-new-grp-orbit-ask-live'),
         );
         expect(ask, findsOneWidget);
         await tester.ensureVisible(ask);
@@ -3775,79 +4870,69 @@ void main() {
       },
     );
 
-    testWidgets(
-      'accept feedback for a missing invite is localized under ar',
-      (tester) async {
-        setLargeTestSurface(tester);
-        suppressOverflowErrors();
-        identityRepo.seed(testIdentity);
-        final invite = makePendingInvite(
-          groupId: 'grp-missing-ar',
-          groupName: 'Missing Invite',
-        );
-        await pendingInviteRepo.savePendingInvite(invite);
-        bridge.responses['group:inboxRetrieveCursor'] = {
-          'ok': true,
-          'messages': <Map<String, dynamic>>[],
-          'cursor': '',
-        };
+    testWidgets('accept feedback for a missing invite is localized under ar', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final invite = makePendingInvite(
+        groupId: 'grp-missing-ar',
+        groupName: 'Missing Invite',
+      );
+      await pendingInviteRepo.savePendingInvite(invite);
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': true,
+        'messages': <Map<String, dynamic>>[],
+        'cursor': '',
+      };
 
-        final groupInviteListener = _FakeGroupInviteListener(
-          joinedStream: joinedGroupInviteController.stream,
-          pendingStream: pendingInviteController.stream,
-          pendingInviteRepo: pendingInviteRepo,
-        );
-        final feedUnreadCountListenable = ValueNotifier<int>(0);
-        addTearDown(feedUnreadCountListenable.dispose);
-        final shellController = AppShellController(
-          initialTab: AppShellTab.orbit,
-        );
-        addTearDown(shellController.dispose);
+      final groupInviteListener = _FakeGroupInviteListener(
+        joinedStream: joinedGroupInviteController.stream,
+        pendingStream: pendingInviteController.stream,
+        pendingInviteRepo: pendingInviteRepo,
+      );
+      final feedUnreadCountListenable = ValueNotifier<int>(0);
+      addTearDown(feedUnreadCountListenable.dispose);
+      final shellController = AppShellController(initialTab: AppShellTab.orbit);
+      addTearDown(shellController.dispose);
 
-        await tester.pumpWidget(
-          buildOrbitWired(
-            groupInviteListener: groupInviteListener,
-            initialFilterTab: 'intros',
-            appShellController: shellController,
-            feedUnreadCountListenable: feedUnreadCountListenable,
-            locale: const Locale('ar'),
-          ),
-        );
-        await pumpOrbitFrames(tester, count: 6);
+      await tester.pumpWidget(
+        buildOrbitWired(
+          groupInviteListener: groupInviteListener,
+          initialFilterTab: 'intros',
+          appShellController: shellController,
+          feedUnreadCountListenable: feedUnreadCountListenable,
+          locale: const Locale('ar'),
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
 
-        final inviteRow = find.byKey(
-          ValueKey('pending-group-invite-${invite.groupId}'),
-        );
-        expect(inviteRow, findsOneWidget);
+      final inviteRow = find.byKey(
+        ValueKey('pending-group-invite-${invite.groupId}'),
+      );
+      expect(inviteRow, findsOneWidget);
 
-        // Delete only the repository row. Orbit's cached projection remains
-        // visible until Accept drives the notFound outcome and reloads it.
-        await pendingInviteRepo.deletePendingInvite(invite.groupId);
-        expect(
-          await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNull,
-        );
-        expect(inviteRow, findsOneWidget);
+      // Delete only the repository row. Orbit's cached projection remains
+      // visible until Accept drives the notFound outcome and reloads it.
+      await pendingInviteRepo.deletePendingInvite(invite.groupId);
+      expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
+      expect(inviteRow, findsOneWidget);
 
-        await tapPendingGroupInviteAccept(tester, invite.groupId);
-        await pumpOrbitFrames(tester, count: 10);
+      await tapPendingGroupInviteAccept(tester, invite.groupId);
+      await pumpOrbitFrames(tester, count: 10);
 
-        expect(
-          find.text(
-            AppLocalizationsAr().group_invite_no_longer_available,
-          ),
-          findsOneWidget,
-        );
-        expect(find.text('Invite no longer available'), findsNothing);
-        expect(
-          find.byKey(
-            ValueKey('pending-group-invite-outcome-${invite.groupId}'),
-          ),
-          findsOneWidget,
-        );
-        expect(find.byType(SnackBar), findsNothing);
-      },
-    );
+      expect(
+        find.text(AppLocalizationsAr().group_invite_no_longer_available),
+        findsOneWidget,
+      );
+      expect(find.text('Invite no longer available'), findsNothing);
+      expect(
+        find.byKey(ValueKey('pending-group-invite-outcome-${invite.groupId}')),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBar), findsNothing);
+    });
 
     testWidgets(
       'TC-31 thrown accept stays on a retryable live row after reload without '
@@ -3875,9 +4960,7 @@ void main() {
         await pumpOrbitFrames(tester, count: 20);
 
         expect(
-          find.byKey(
-            ValueKey('pending-group-invite-retry-${invite.groupId}'),
-          ),
+          find.byKey(ValueKey('pending-group-invite-retry-${invite.groupId}')),
           findsOneWidget,
         );
         expect(find.text('Failed to accept invite'), findsOneWidget);
@@ -3918,9 +5001,7 @@ void main() {
 
         expect(
           find.descendant(
-            of: find.byKey(
-              ValueKey('pending-group-invite-${invite.groupId}'),
-            ),
+            of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
             matching: find.text('Waiting for key'),
           ),
           findsOneWidget,
@@ -5347,8 +6428,11 @@ void main() {
           );
           await pumpOrbitFrames(tester, count: 6);
           expect(dockF, findsOneWidget);
-          expect(navButtons(tester)[1].badgeCount, 2,
-              reason: 'orbit nav badge = unseen (raw before dismissal)');
+          expect(
+            navButtons(tester)[1].badgeCount,
+            2,
+            reason: 'orbit nav badge = unseen (raw before dismissal)',
+          );
 
           await dismissDock(tester);
 
@@ -5372,8 +6456,10 @@ void main() {
           );
           expect(intros, hasLength(1));
           expect(intros.single.status, IntroductionOverallStatus.pending);
-          expect(await pendingInviteRepo.getPendingInvite('grp-dock'),
-              isNotNull);
+          expect(
+            await pendingInviteRepo.getPendingInvite('grp-dock'),
+            isNotNull,
+          );
         },
       );
 
@@ -5404,8 +6490,11 @@ void main() {
           );
           await pumpOrbitFrames(tester, count: 6);
           expect(dockF, findsOneWidget);
-          expect(seenRepo.markAllSeenCalls, 0,
-              reason: 'mounting alone must not write the store');
+          expect(
+            seenRepo.markAllSeenCalls,
+            0,
+            reason: 'mounting alone must not write the store',
+          );
 
           await dismissDock(tester);
           expect(remnantF, findsOneWidget);
@@ -5424,8 +6513,11 @@ void main() {
           await pumpOrbitFrames(tester, count: 6);
           expect(remnantF, findsOneWidget);
           expect(dockF, findsNothing);
-          expect(seenRepo.markAllSeenCalls, 1,
-              reason: 'remount must not re-write the store');
+          expect(
+            seenRepo.markAllSeenCalls,
+            1,
+            reason: 'remount must not re-write the store',
+          );
         },
       );
 
@@ -5503,8 +6595,11 @@ void main() {
             find.byType(FriendsFilterToggle),
           );
           expect(toggle.introsCount, 3);
-          expect(find.text('3 items pending'), findsOneWidget,
-              reason: 'list banner copy stays raw');
+          expect(
+            find.text('3 items pending'),
+            findsOneWidget,
+            reason: 'list banner copy stays raw',
+          );
         },
       );
 
@@ -5666,7 +6761,10 @@ void main() {
         );
         expect(spyContactRepo.getContactCallCountByPeerId, isEmpty);
         expect(spyGroupRepo.getGroupCallCountById, isEmpty);
-        expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, isEmpty);
+        expect(
+          spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId,
+          isEmpty,
+        );
 
         // --- Re-activation: replay exactly one PER-REASON refresh. ---
         shellController.switchTo(AppShellTab.orbit);
@@ -6325,6 +7423,53 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
     getUnreadCountForContactCallCountByPeerId.clear();
     getConversationThreadSummariesCallCount = 0;
     getConversationThreadSummaryCallCountByPeerId.clear();
+  }
+}
+
+class _CommitThenThrowDissolveGroupRepository extends InMemoryGroupRepository {
+  var _didThrowAfterCommit = false;
+
+  @override
+  Future<void> updateGroup(GroupModel group) async {
+    await super.updateGroup(group);
+    if (group.isDissolved && !_didThrowAfterCommit) {
+      _didThrowAfterCommit = true;
+      throw StateError('forced post-commit dissolve failure');
+    }
+  }
+}
+
+class _ReactivateAfterDissolveGroupRepository extends InMemoryGroupRepository {
+  _ReactivateAfterDissolveGroupRepository({required this.onReactivated});
+
+  final void Function() onReactivated;
+  GroupModel? _reactivatedGroup;
+
+  @override
+  Future<void> updateGroup(GroupModel group) async {
+    await super.updateGroup(group);
+    if (group.isDissolved && _reactivatedGroup == null) {
+      _reactivatedGroup = group.copyWith(
+        name: '${group.name} (rejoined)',
+        isDissolved: false,
+        dissolvedAt: null,
+        dissolvedBy: null,
+        lastMembershipEventAt: (group.lastMembershipEventAt ?? group.createdAt)
+            .add(const Duration(minutes: 1)),
+      );
+    }
+  }
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    final reactivated = _reactivatedGroup;
+    if (reactivated != null && reactivated.id == id) {
+      _reactivatedGroup = null;
+      await super.updateGroup(reactivated);
+      onReactivated();
+      return reactivated;
+    }
+    return super.getGroup(id);
   }
 }
 

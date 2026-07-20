@@ -10,11 +10,9 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
-import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -25,7 +23,6 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
@@ -240,8 +237,8 @@ class _TrackingMessageRepository extends FakeMessageRepository
 class _TrackingChatMessageListener extends ChatMessageListener {
   _TrackingChatMessageListener({
     required this.recorder,
-    required MessageRepository messageRepo,
-    required ContactRepository contactRepo,
+    required super.messageRepo,
+    required super.contactRepo,
   }) : _incomingController = StreamController<ConversationMessage>.broadcast(
          onListen: () => recorder.mark('incoming_listener_attached'),
          onCancel: () => recorder.mark('incoming_listener_detached'),
@@ -252,8 +249,6 @@ class _TrackingChatMessageListener extends ChatMessageListener {
        ),
        super(
          chatMessageStream: const Stream.empty(),
-         messageRepo: messageRepo,
-         contactRepo: contactRepo,
        );
 
   final _EventRecorder recorder;
@@ -319,20 +314,16 @@ class _TrackingReactionRepository extends FakeReactionRepository {
 class _TrackingReactionListener extends ReactionListener {
   _TrackingReactionListener({
     required this.recorder,
-    required MessageRepository messageRepo,
-    required _TrackingReactionRepository reactionRepo,
-    required ContactRepository contactRepo,
-    required Bridge bridge,
+    required super.messageRepo,
+    required _TrackingReactionRepository super.reactionRepo,
+    required super.contactRepo,
+    required super.bridge,
   }) : _changeController = StreamController<ReactionChange>.broadcast(
          onListen: () => recorder.mark('reaction_listener_attached'),
          onCancel: () => recorder.mark('reaction_listener_detached'),
        ),
        super(
          reactionStream: const Stream.empty(),
-         messageRepo: messageRepo,
-         reactionRepo: reactionRepo,
-         contactRepo: contactRepo,
-         bridge: bridge,
          getOwnMlKemSecretKey: () async => null,
        );
 

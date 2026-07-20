@@ -1,10 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import '../../../../test/shared/fakes/in_memory_group_repository.dart';
 import '../../../../test/shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../test/core/bridge/fake_bridge.dart';
@@ -25,6 +27,354 @@ void main() {
   });
 
   group('deleteGroupAndMessages', () {
+    test(
+      'strict local-only cleanup refuses active state and clears dissolved local state',
+      () async {
+        final now = DateTime.now().toUtc();
+        final missingRepo = InMemoryGroupRepository();
+        await expectLater(
+          deleteGroupAndMessages(
+            bridge: bridge,
+            groupRepo: missingRepo,
+            groupMessageRepo: groupMessageRepo,
+            groupId: groupId,
+            deleteLocallyIfDissolved: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Active Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.member,
+            createdAt: now,
+          ),
+        );
+        await expectLater(
+          deleteGroupAndMessages(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupMessageRepo: groupMessageRepo,
+            groupId: groupId,
+            deleteLocallyIfDissolved: true,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              strictDissolvedLocalDeleteRequiredMessage,
+            ),
+          ),
+        );
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+
+        final observedDissolved = (await groupRepo.getGroup(groupId))!.copyWith(
+          isDissolved: true,
+          dissolvedAt: now,
+          dissolvedBy: 'creator-peer',
+        );
+        final flippingRepo = _FlippingGroupRepository(
+          observed: observedDissolved,
+          committed: (await groupRepo.getGroup(groupId))!,
+        );
+        final flipMessageRepo = InMemoryGroupMessageRepository();
+        await flipMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'state-flip-message',
+            groupId: groupId,
+            senderPeerId: 'creator-peer',
+            text: 'preserve on stale state',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: true,
+          ),
+        );
+        await expectLater(
+          deleteGroupAndMessages(
+            bridge: bridge,
+            groupRepo: flippingRepo,
+            groupMessageRepo: flipMessageRepo,
+            groupId: groupId,
+            deleteLocallyIfDissolved: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(
+          await flipMessageRepo.getMessage('state-flip-message'),
+          isNotNull,
+        );
+        expect(flippingRepo.destructiveWriteCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        await groupRepo.updateGroup(
+          (await groupRepo.getGroup(groupId))!.copyWith(
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'creator-peer',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'creator-peer',
+            role: MemberRole.admin,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'key',
+            createdAt: now,
+          ),
+        );
+        await groupRepo.recordGroupRejoinFailure(
+          groupId,
+          nextEligibleAt: now.add(const Duration(hours: 1)),
+        );
+        await groupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'strict-local-message',
+            groupId: groupId,
+            senderPeerId: 'creator-peer',
+            text: 'history',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: true,
+          ),
+        );
+        final pending = <GroupPendingBroadcast>[
+          GroupPendingBroadcast(
+            id: 'target-pending',
+            groupId: groupId,
+            kind: 'member_role_updated',
+            sysText: '{}',
+            recipientPeerIds: const ['peer-b'],
+            eventAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+          GroupPendingBroadcast(
+            id: 'other-pending',
+            groupId: 'other-group',
+            kind: 'group_metadata_updated',
+            sysText: '{}',
+            recipientPeerIds: const ['peer-c'],
+            eventAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ];
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (id) async =>
+              pending.where((row) => row.groupId == id).toList(),
+          discardForGroup: (id) async =>
+              pending.removeWhere((row) => row.groupId == id),
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastAccessSinks(
+            loadForGroup: null,
+            discardForGroup: null,
+          ),
+        );
+
+        await deleteGroupAndMessages(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupMessageRepo: groupMessageRepo,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        );
+        expect(await groupRepo.getGroup(groupId), isNull);
+        expect(await groupRepo.getMembers(groupId), isEmpty);
+        expect(await groupRepo.getLatestKey(groupId), isNull);
+        expect(
+          await groupMessageRepo.getMessage('strict-local-message'),
+          isNull,
+        );
+        expect(
+          await groupRepo.loadGroupRejoinStates(),
+          isNot(contains(groupId)),
+        );
+        expect(pending.map((row) => row.id), ['other-pending']);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Dissolved again',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.admin,
+            createdAt: now,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'creator-peer',
+          ),
+        );
+        pending.add(
+          GroupPendingBroadcast(
+            id: 'failure-pending',
+            groupId: groupId,
+            kind: 'member_role_updated',
+            sysText: '{}',
+            recipientPeerIds: const ['peer-b'],
+            eventAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+        await expectLater(
+          deleteGroupAndMessages(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupMessageRepo: _DeleteFailingMessageRepository(),
+            groupId: groupId,
+            deleteLocallyIfDissolved: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(pending.map((row) => row.id), [
+          'other-pending',
+          'failure-pending',
+        ]);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
+    test(
+      'strict local-only cleanup remains retryable across non-cascading cleanup failures',
+      () async {
+        final now = DateTime.utc(2026, 7, 19, 18);
+        final retryingGroupRepo = _RetryableStrictCleanupGroupRepository();
+        await retryingGroupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Retryable dissolved group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.admin,
+            createdAt: now,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'creator-peer',
+          ),
+        );
+        await retryingGroupRepo.recordGroupRejoinFailure(
+          groupId,
+          nextEligibleAt: now.add(const Duration(hours: 1)),
+        );
+        await groupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'retryable-cleanup-message',
+            groupId: groupId,
+            senderPeerId: 'creator-peer',
+            text: 'safe to remove idempotently',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: true,
+          ),
+        );
+
+        final pending = <GroupPendingBroadcast>[
+          GroupPendingBroadcast(
+            id: 'retryable-cleanup-pending',
+            groupId: groupId,
+            kind: 'group_metadata_updated',
+            sysText: '{}',
+            recipientPeerIds: const ['peer-b'],
+            eventAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ];
+        var discardCalls = 0;
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (id) async =>
+              pending.where((row) => row.groupId == id).toList(),
+          discardForGroup: (id) async {
+            discardCalls++;
+            if (discardCalls == 1) {
+              throw StateError('forced pending cleanup failure');
+            }
+            pending.removeWhere((row) => row.groupId == id);
+          },
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastAccessSinks(
+            loadForGroup: null,
+            discardForGroup: null,
+          ),
+        );
+
+        Future<void> runStrictDelete() => deleteGroupAndMessages(
+          bridge: bridge,
+          groupRepo: retryingGroupRepo,
+          groupMessageRepo: groupMessageRepo,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        );
+
+        await expectLater(runStrictDelete(), throwsA(isA<StateError>()));
+        expect(
+          (await retryingGroupRepo.getGroup(groupId))?.isDissolved,
+          isTrue,
+        );
+        expect(
+          await retryingGroupRepo.loadGroupRejoinStates(),
+          contains(groupId),
+        );
+        expect(retryingGroupRepo.deleteGroupCalls, 0);
+        expect(discardCalls, 0);
+
+        // Failed group deletion is still before the pending-row commit
+        // boundary, so its target row must remain untouched.
+        await expectLater(runStrictDelete(), throwsA(isA<StateError>()));
+        expect(
+          (await retryingGroupRepo.getGroup(groupId))?.isDissolved,
+          isTrue,
+        );
+        expect(await retryingGroupRepo.loadGroupRejoinStates(), isEmpty);
+        expect(pending, hasLength(1));
+        expect(retryingGroupRepo.deleteGroupCalls, 1);
+        expect(discardCalls, 0);
+
+        // A post-delete queue failure restores only the dissolved row, so the
+        // next strict invocation remains authorized and idempotent.
+        await expectLater(runStrictDelete(), throwsA(isA<StateError>()));
+        expect(
+          (await retryingGroupRepo.getGroup(groupId))?.isDissolved,
+          isTrue,
+        );
+        expect(
+          await groupMessageRepo.getMessage('retryable-cleanup-message'),
+          isNull,
+        );
+        expect(pending, hasLength(1));
+        expect(retryingGroupRepo.deleteGroupCalls, 2);
+        expect(discardCalls, 1);
+
+        await runStrictDelete();
+
+        expect(await retryingGroupRepo.getGroup(groupId), isNull);
+        expect(await retryingGroupRepo.loadGroupRejoinStates(), isEmpty);
+        expect(pending, isEmpty);
+        expect(retryingGroupRepo.deleteGroupCalls, 3);
+        expect(discardCalls, 2);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
     test('leaves group then deletes its messages', () async {
       // Save a group and some messages
       final now = DateTime.now().toUtc();
@@ -452,5 +802,72 @@ class _FailingGroupMessageRepository extends InMemoryGroupMessageRepository {
   @override
   Future<int> deleteMessagesForGroup(String groupId) async {
     throw Exception('DB error');
+  }
+}
+
+class _DeleteFailingMessageRepository extends InMemoryGroupMessageRepository {
+  @override
+  Future<int> deleteMessagesForGroup(String groupId) async {
+    throw StateError('forced strict cleanup failure');
+  }
+}
+
+class _RetryableStrictCleanupGroupRepository extends InMemoryGroupRepository {
+  var _failRejoinCleanup = true;
+  var _failDelete = true;
+  var deleteGroupCalls = 0;
+
+  @override
+  Future<void> clearGroupRejoinState(String groupId) async {
+    if (_failRejoinCleanup) {
+      _failRejoinCleanup = false;
+      throw StateError('forced rejoin cleanup failure');
+    }
+    await super.clearGroupRejoinState(groupId);
+  }
+
+  @override
+  Future<void> deleteGroup(String id) async {
+    deleteGroupCalls++;
+    if (_failDelete) {
+      _failDelete = false;
+      throw StateError('forced group delete failure');
+    }
+    await super.deleteGroup(id);
+  }
+}
+
+class _FlippingGroupRepository extends InMemoryGroupRepository {
+  _FlippingGroupRepository({required this.observed, required this.committed});
+
+  final GroupModel observed;
+  final GroupModel committed;
+  var _readCount = 0;
+  var destructiveWriteCount = 0;
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    _readCount++;
+    return _readCount == 1 ? observed : committed;
+  }
+
+  @override
+  Future<void> removeAllMembers(String groupId) async {
+    destructiveWriteCount++;
+  }
+
+  @override
+  Future<void> removeAllKeys(String groupId) async {
+    destructiveWriteCount++;
+  }
+
+  @override
+  Future<void> deleteGroup(String id) async {
+    destructiveWriteCount++;
+  }
+
+  @override
+  Future<void> clearGroupRejoinState(String groupId) async {
+    destructiveWriteCount++;
   }
 }

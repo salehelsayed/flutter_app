@@ -1000,6 +1000,114 @@ abstract class AppLocalizations {
   /// **'Leave & delete group?'**
   String get orbit_leave_group;
 
+  /// No description provided for @orbit_leave_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get orbit_leave_action;
+
+  /// No description provided for @orbit_leave_group_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Leaving removes this group and its history from this device. This cannot be undone.'**
+  String get orbit_leave_group_body;
+
+  /// No description provided for @orbit_leave_group_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave & Delete'**
+  String get orbit_leave_group_action;
+
+  /// No description provided for @group_exit_only_admin_title.
+  ///
+  /// In en, this message translates to:
+  /// **'You’re the only admin'**
+  String get group_exit_only_admin_title;
+
+  /// No description provided for @group_exit_only_admin_body.
+  ///
+  /// In en, this message translates to:
+  /// **'A group needs at least one admin before you can leave. Choose what should happen to {groupName}.'**
+  String group_exit_only_admin_body(String groupName);
+
+  /// No description provided for @group_exit_choose_admin.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose another admin'**
+  String get group_exit_choose_admin;
+
+  /// No description provided for @group_exit_choose_admin_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Then you can leave and remove this group from this device.'**
+  String get group_exit_choose_admin_body;
+
+  /// No description provided for @group_exit_dissolve_for_everyone.
+  ///
+  /// In en, this message translates to:
+  /// **'Dissolve for everyone'**
+  String get group_exit_dissolve_for_everyone;
+
+  /// No description provided for @group_exit_keep_group.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep group'**
+  String get group_exit_keep_group;
+
+  /// No description provided for @group_exit_keep_and_close_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep group and close'**
+  String get group_exit_keep_and_close_semantics;
+
+  /// No description provided for @group_exit_no_eligible_successor.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for someone to join, or dissolve the group.'**
+  String get group_exit_no_eligible_successor;
+
+  /// No description provided for @group_exit_choose_member.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a member'**
+  String get group_exit_choose_member;
+
+  /// No description provided for @group_exit_continue_to_leave.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue to leave'**
+  String get group_exit_continue_to_leave;
+
+  /// No description provided for @group_exit_stay_in_group.
+  ///
+  /// In en, this message translates to:
+  /// **'Stay in group'**
+  String get group_exit_stay_in_group;
+
+  /// No description provided for @group_exit_admin_sync_pending_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Admin change is still syncing'**
+  String get group_exit_admin_sync_pending_title;
+
+  /// No description provided for @group_exit_admin_sync_pending_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for the signed admin change to finish syncing before you leave.'**
+  String get group_exit_admin_sync_pending_body;
+
+  /// No description provided for @group_exit_leave_uncertain.
+  ///
+  /// In en, this message translates to:
+  /// **'The leave request may have completed. Refresh the group before trying again.'**
+  String get group_exit_leave_uncertain;
+
+  /// No description provided for @group_exit_cleanup_incomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'You left the group, but its local history could not be fully removed.'**
+  String get group_exit_cleanup_incomplete;
+
   /// No description provided for @conversation_hint.
   ///
   /// In en, this message translates to:
@@ -5269,6 +5377,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'iOS cannot reliably prevent screenshots; capture is detected and private media is covered/dismissed'**
   String get private_media_ios_capture_limit;
+
+  /// No description provided for @private_media_ios_image_capture_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'This protected image is hidden in screenshots and screen recordings while open'**
+  String get private_media_ios_image_capture_limit;
 
   /// No description provided for @private_media_general_capture_limit.
   ///

@@ -208,7 +208,7 @@ class GroupReactionDetailsSheet extends StatelessWidget {
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: participants.length,
-                separatorBuilder: (_, __) =>
+                separatorBuilder: (_, _) =>
                     Divider(height: 1, color: readableColors.divider),
                 itemBuilder: (context, index) {
                   final participant = participants[index];

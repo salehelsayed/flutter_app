@@ -7,12 +7,12 @@
 /// This test wires up the full stack per user:
 ///   FakeP2PService → IncomingMessageRouter → ReactionListener → ReactionRepository
 ///   (chat messages also routed through IncomingMessageRouter → ChatMessageListener)
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/test_user.dart';

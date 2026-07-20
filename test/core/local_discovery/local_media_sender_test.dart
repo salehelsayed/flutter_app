@@ -23,7 +23,7 @@ void main() {
     });
 
     /// Create a test file with deterministic content.
-    Future<(File, String, int)> _createTestFile(int size) async {
+    Future<(File, String, int)> createTestFile(int size) async {
       final random = Random(42);
       final bytes = List<int>.generate(size, (_) => random.nextInt(256));
       final file = File('${tempDir.path}/test_file.bin');
@@ -40,7 +40,7 @@ void main() {
     /// [putStatusCode] is the HTTP status to respond with.
     /// [sendMediaUploaded] if true, sends media_uploaded after PUT succeeds.
     /// [putDelay] optional delay before responding to PUT.
-    Future<(HttpServer, int)> _startMockReceiver({
+    Future<(HttpServer, int)> startMockReceiver({
       void Function(WebSocket ws, Map<String, dynamic> offer)? onOffer,
       void Function(List<int> body)? onPutBody,
       int putStatusCode = HttpStatus.ok,
@@ -192,7 +192,7 @@ void main() {
     }
 
     /// Connect a WS client and return (ws, broadcastStream).
-    Future<(WebSocket, Stream<dynamic>)> _connectWs(int port) async {
+    Future<(WebSocket, Stream<dynamic>)> connectWs(int port) async {
       final ws = await WebSocket.connect('ws://localhost:$port');
       final broadcast = StreamController<dynamic>.broadcast();
       ws.listen(
@@ -210,18 +210,18 @@ void main() {
       () async {
         // The caller hands over the encrypted artifact; sha256 must cover
         // those (cipher)bytes and the PUT must stream them verbatim.
-        final (artifact, ciphertextHash, _) = await _createTestFile(2048);
+        final (artifact, ciphertextHash, _) = await createTestFile(2048);
         final artifactBytes = await artifact.readAsBytes();
 
         Map<String, dynamic>? receivedOffer;
         List<int>? putBody;
-        final (server, _) = await _startMockReceiver(
+        final (server, _) = await startMockReceiver(
           onOffer: (ws, offer) => receivedOffer = offer,
           onPutBody: (body) => putBody = body,
         );
         addTearDown(() => server.close(force: true));
 
-        final (ws, ackStream) = await _connectWs(server.port);
+        final (ws, ackStream) = await connectWs(server.port);
         addTearDown(() => ws.close());
 
         final ok = await sender.sendMedia(
@@ -257,15 +257,15 @@ void main() {
 
     test('plaintext offer still carries waveform and filename', () async {
       // Legacy pin: unflagged offers keep today's metadata.
-      final (file, _, _) = await _createTestFile(512);
+      final (file, _, _) = await createTestFile(512);
 
       Map<String, dynamic>? receivedOffer;
-      final (server, _) = await _startMockReceiver(
+      final (server, _) = await startMockReceiver(
         onOffer: (ws, offer) => receivedOffer = offer,
       );
       addTearDown(() => server.close(force: true));
 
-      final (ws, ackStream) = await _connectWs(server.port);
+      final (ws, ackStream) = await connectWs(server.port);
       addTearDown(() => ws.close());
 
       await sender.sendMedia(
@@ -289,16 +289,16 @@ void main() {
     });
 
     test('computes SHA-256 of file before sending offer', () async {
-      final (file, expectedHash, size) = await _createTestFile(1024);
+      final (file, expectedHash, size) = await createTestFile(1024);
 
       Map<String, dynamic>? receivedOffer;
-      final (server, port) = await _startMockReceiver(
+      final (server, port) = await startMockReceiver(
         onOffer: (ws, offer) {
           receivedOffer = offer;
         },
       );
 
-      final (ws, ackStream) = await _connectWs(port);
+      final (ws, ackStream) = await connectWs(port);
 
       await sender.sendMedia(
         host: 'localhost',
@@ -323,16 +323,16 @@ void main() {
     test(
       'sends media_offer via WS with all required fields including nonce',
       () async {
-        final (file, _, _) = await _createTestFile(512);
+        final (file, _, _) = await createTestFile(512);
 
         Map<String, dynamic>? receivedOffer;
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           onOffer: (ws, offer) {
             receivedOffer = offer;
           },
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         await sender.sendMedia(
           host: 'localhost',
@@ -375,13 +375,13 @@ void main() {
           ..writeAsBytesSync(List<int>.filled(256, 0x47));
 
         Map<String, dynamic>? receivedOffer;
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           onOffer: (ws, offer) {
             receivedOffer = offer;
           },
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         await sender.sendMedia(
           host: 'localhost',
@@ -408,16 +408,16 @@ void main() {
     test(
       'uploads file via HTTP PUT with Bearer token and correct Content-Length',
       () async {
-        final (file, _, size) = await _createTestFile(2048);
+        final (file, _, size) = await createTestFile(2048);
 
         List<int>? receivedBody;
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           onPutBody: (body) {
             receivedBody = body;
           },
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -447,13 +447,13 @@ void main() {
     test(
       'returns true when media_uploaded received with matching nonce',
       () async {
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           sendMediaUploaded: true,
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -484,14 +484,14 @@ void main() {
         debugSetFlowEventSink(events.add);
         addTearDown(() => debugSetFlowEventSink(null));
 
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           sendMediaUploadedBeforeResponse: true,
           putDelay: const Duration(milliseconds: 50),
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -531,14 +531,14 @@ void main() {
         debugSetFlowEventSink(events.add);
         addTearDown(() => debugSetFlowEventSink(null));
 
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           sendMediaUploaded: false,
           closeWsBeforeMediaUploaded: true,
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -575,7 +575,7 @@ void main() {
     test(
       'returns false on offer timeout (no media_offer_accepted)',
       () async {
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
         // Start a server that never sends media_offer_accepted.
         final httpServer = await HttpServer.bind(
@@ -592,7 +592,7 @@ void main() {
               .catchError((_) {});
         });
 
-        final (ws, ackStream) = await _connectWs(httpServer.port);
+        final (ws, ackStream) = await connectWs(httpServer.port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -615,14 +615,14 @@ void main() {
     );
 
     test('returns false on upload HTTP error', () async {
-      final (file, _, _) = await _createTestFile(256);
+      final (file, _, _) = await createTestFile(256);
 
-      final (server, port) = await _startMockReceiver(
+      final (server, port) = await startMockReceiver(
         putStatusCode: HttpStatus.internalServerError,
         sendMediaUploaded: false,
       );
 
-      final (ws, ackStream) = await _connectWs(port);
+      final (ws, ackStream) = await connectWs(port);
 
       final result = await sender.sendMedia(
         host: 'localhost',
@@ -645,13 +645,13 @@ void main() {
     test(
       'returns false on media_uploaded timeout',
       () async {
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           sendMediaUploaded: false, // Never send media_uploaded.
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final result = await sender.sendMedia(
           host: 'localhost',
@@ -674,8 +674,8 @@ void main() {
     );
 
     test('returns false when file does not exist', () async {
-      final (server, port) = await _startMockReceiver();
-      final (ws, ackStream) = await _connectWs(port);
+      final (server, port) = await startMockReceiver();
+      final (ws, ackStream) = await connectWs(port);
 
       final result = await sender.sendMedia(
         host: 'localhost',
@@ -696,11 +696,11 @@ void main() {
     });
 
     test('returns false quickly on explicit media_offer_rejected', () async {
-      final (file, _, _) = await _createTestFile(256);
+      final (file, _, _) = await createTestFile(256);
 
-      final (server, port) = await _startMockReceiver(rejectOffer: true);
+      final (server, port) = await startMockReceiver(rejectOffer: true);
 
-      final (ws, ackStream) = await _connectWs(port);
+      final (ws, ackStream) = await connectWs(port);
 
       final stopwatch = Stopwatch()..start();
       final result = await sender.sendMedia(
@@ -726,14 +726,14 @@ void main() {
     test(
       'returns false quickly on explicit media_failed after upload',
       () async {
-        final (file, _, _) = await _createTestFile(256);
+        final (file, _, _) = await createTestFile(256);
 
-        final (server, port) = await _startMockReceiver(
+        final (server, port) = await startMockReceiver(
           sendMediaUploaded: false,
           sendMediaFailed: true,
         );
 
-        final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await connectWs(port);
 
         final stopwatch = Stopwatch()..start();
         final result = await sender.sendMedia(
@@ -759,8 +759,8 @@ void main() {
 
     test('concurrent sends do not cross-match nonce when accepted/uploaded '
         'events arrive swapped', () async {
-      final (fileA, _, _) = await _createTestFile(512);
-      final (fileB, _, _) = await _createTestFile(768);
+      final (fileA, _, _) = await createTestFile(512);
+      final (fileB, _, _) = await createTestFile(768);
 
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final port = server.port;
@@ -844,7 +844,7 @@ void main() {
             .catchError((_) {});
       });
 
-      final (ws, ackStream) = await _connectWs(port);
+      final (ws, ackStream) = await connectWs(port);
 
       final results = await Future.wait([
         sender.sendMedia(

@@ -153,7 +153,7 @@ void main() {
   });
 
   group('ThreadFeedItem computed properties', () {
-    ThreadMessage _msg({
+    ThreadMessage msg0({
       required String id,
       bool isUnread = false,
       bool isIncoming = true,
@@ -179,11 +179,11 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg(id: 'm1'), // read incoming
-            _msg(id: 'm2', isIncoming: false), // sent
-            _msg(id: 'm3', isUnread: true), // unread incoming
-            _msg(id: 'm4', isUnread: true), // unread incoming
-            _msg(id: 'm5', isUnread: true, isIncoming: false), // unread sent
+            msg0(id: 'm1'), // read incoming
+            msg0(id: 'm2', isIncoming: false), // sent
+            msg0(id: 'm3', isUnread: true), // unread incoming
+            msg0(id: 'm4', isUnread: true), // unread incoming
+            msg0(id: 'm5', isUnread: true, isIncoming: false), // unread sent
           ],
         );
 
@@ -201,11 +201,11 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1', isUnread: true),
-          _msg(id: 'm2', isUnread: true),
-          _msg(id: 'm3', isUnread: true),
-          _msg(id: 'm4', isUnread: true),
-          _msg(id: 'm5', isUnread: true),
+          msg0(id: 'm1', isUnread: true),
+          msg0(id: 'm2', isUnread: true),
+          msg0(id: 'm3', isUnread: true),
+          msg0(id: 'm4', isUnread: true),
+          msg0(id: 'm5', isUnread: true),
         ],
       );
 
@@ -222,8 +222,8 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1', isUnread: true),
-          _msg(id: 'm2', isUnread: true),
+          msg0(id: 'm1', isUnread: true),
+          msg0(id: 'm2', isUnread: true),
         ],
       );
 
@@ -239,9 +239,9 @@ void main() {
           contactPeerId: 'peer1',
           contactUsername: 'Alice',
           messages: [
-            _msg(id: 'm1'), // read
-            _msg(id: 'm2'), // read
-            _msg(id: 'm3', isUnread: true), // unread
+            msg0(id: 'm1'), // read
+            msg0(id: 'm2'), // read
+            msg0(id: 'm3', isUnread: true), // unread
           ],
         );
 
@@ -256,8 +256,8 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1', isUnread: true),
-          _msg(id: 'm2', isUnread: true),
+          msg0(id: 'm1', isUnread: true),
+          msg0(id: 'm2', isUnread: true),
         ],
       );
 
@@ -270,7 +270,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg(id: 'm1')],
+        messages: [msg0(id: 'm1')],
         conversationState: ConversationState.unread,
       );
       expect(unread.isOpenMode, isTrue);
@@ -280,7 +280,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg(id: 'm1')],
+        messages: [msg0(id: 'm1')],
         conversationState: ConversationState.active,
       );
       expect(active.isOpenMode, isTrue);
@@ -290,7 +290,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg(id: 'm1')],
+        messages: [msg0(id: 'm1')],
         conversationState: ConversationState.read,
       );
       expect(read.isOpenMode, isFalse);
@@ -300,7 +300,7 @@ void main() {
         timestamp: DateTime(2026, 2, 9),
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
-        messages: [_msg(id: 'm1')],
+        messages: [msg0(id: 'm1')],
         conversationState: ConversationState.replied,
       );
       expect(replied.isOpenMode, isFalse);
@@ -313,10 +313,10 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1'), // incoming
-          _msg(id: 'm2', isIncoming: false), // sent
-          _msg(id: 'm3'), // incoming
-          _msg(id: 'm4', isIncoming: false), // sent (latest)
+          msg0(id: 'm1'), // incoming
+          msg0(id: 'm2', isIncoming: false), // sent
+          msg0(id: 'm3'), // incoming
+          msg0(id: 'm4', isIncoming: false), // sent (latest)
         ],
       );
       expect(withSent.lastSentMessage?.id, 'm4');
@@ -327,8 +327,8 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1'),
-          _msg(id: 'm2'),
+          msg0(id: 'm1'),
+          msg0(id: 'm2'),
         ],
       );
       expect(noSent.lastSentMessage, isNull);
@@ -341,9 +341,9 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1'),
-          _msg(id: 'm2', isIncoming: false),
-          _msg(id: 'm3'), // latestMessage
+          msg0(id: 'm1'),
+          msg0(id: 'm2', isIncoming: false),
+          msg0(id: 'm3'), // latestMessage
         ],
       );
       // Always returns latest message regardless of direction
@@ -355,8 +355,8 @@ void main() {
         contactPeerId: 'peer1',
         contactUsername: 'Alice',
         messages: [
-          _msg(id: 'm1'),
-          _msg(id: 'm2'),
+          msg0(id: 'm1'),
+          msg0(id: 'm2'),
         ],
       );
       expect(noSent.collapsedPreviewMessage.id, 'm2');
@@ -364,7 +364,7 @@ void main() {
   });
 
   group('recentInteractionMessages', () {
-    ThreadMessage _msg({
+    ThreadMessage msg0({
       required String id,
       bool isUnread = false,
       bool isIncoming = true,
@@ -379,7 +379,7 @@ void main() {
       );
     }
 
-    ThreadFeedItem _thread(List<ThreadMessage> messages) {
+    ThreadFeedItem thread(List<ThreadMessage> messages) {
       return ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9),
@@ -391,23 +391,23 @@ void main() {
     }
 
     test('empty thread returns empty list', () {
-      final item = _thread([]);
+      final item = thread([]);
       expect(item.recentInteractionMessages, isEmpty);
     });
 
     test('1 unread incoming returns it', () {
-      final item = _thread([_msg(id: 'm1', isUnread: true)]);
+      final item = thread([msg0(id: 'm1', isUnread: true)]);
       expect(item.recentInteractionMessages.length, 1);
       expect(item.recentInteractionMessages[0].id, 'm1');
     });
 
     test('3 read + 2 unread returns from first unread onward', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-        _msg(id: 'm3'),
-        _msg(id: 'm4', isUnread: true),
-        _msg(id: 'm5', isUnread: true),
+      final item = thread([
+        msg0(id: 'm1'),
+        msg0(id: 'm2'),
+        msg0(id: 'm3'),
+        msg0(id: 'm4', isUnread: true),
+        msg0(id: 'm5', isUnread: true),
       ]);
       final result = item.recentInteractionMessages;
       expect(result.length, 2);
@@ -416,11 +416,11 @@ void main() {
     });
 
     test('1 unread + 2 sent after returns all 3', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2', isUnread: true),
-        _msg(id: 'm3', isIncoming: false),
-        _msg(id: 'm4', isIncoming: false),
+      final item = thread([
+        msg0(id: 'm1'),
+        msg0(id: 'm2', isUnread: true),
+        msg0(id: 'm3', isIncoming: false),
+        msg0(id: 'm4', isIncoming: false),
       ]);
       final result = item.recentInteractionMessages;
       expect(result.length, 3);
@@ -430,25 +430,25 @@ void main() {
     });
 
     test('5 unread returns all 5', () {
-      final item = _thread([
-        _msg(id: 'm1', isUnread: true),
-        _msg(id: 'm2', isUnread: true),
-        _msg(id: 'm3', isUnread: true),
-        _msg(id: 'm4', isUnread: true),
-        _msg(id: 'm5', isUnread: true),
+      final item = thread([
+        msg0(id: 'm1', isUnread: true),
+        msg0(id: 'm2', isUnread: true),
+        msg0(id: 'm3', isUnread: true),
+        msg0(id: 'm4', isUnread: true),
+        msg0(id: 'm5', isUnread: true),
       ]);
       expect(item.recentInteractionMessages.length, 5);
     });
 
     test('0 unread, 7 total returns last 3 (maxPreview)', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-        _msg(id: 'm3'),
-        _msg(id: 'm4'),
-        _msg(id: 'm5'),
-        _msg(id: 'm6'),
-        _msg(id: 'm7'),
+      final item = thread([
+        msg0(id: 'm1'),
+        msg0(id: 'm2'),
+        msg0(id: 'm3'),
+        msg0(id: 'm4'),
+        msg0(id: 'm5'),
+        msg0(id: 'm6'),
+        msg0(id: 'm7'),
       ]);
       final result = item.recentInteractionMessages;
       expect(result.length, 3);
@@ -458,19 +458,19 @@ void main() {
     });
 
     test('0 unread, 2 total returns both', () {
-      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2')]);
+      final item = thread([msg0(id: 'm1'), msg0(id: 'm2')]);
       expect(item.recentInteractionMessages.length, 2);
     });
 
     test(
       'interleaved: read, sent, unread, sent, unread → from first unread',
       () {
-        final item = _thread([
-          _msg(id: 'm1'), // read incoming
-          _msg(id: 'm2', isIncoming: false), // sent
-          _msg(id: 'm3', isUnread: true), // unread incoming
-          _msg(id: 'm4', isIncoming: false), // sent
-          _msg(id: 'm5', isUnread: true), // unread incoming
+        final item = thread([
+          msg0(id: 'm1'), // read incoming
+          msg0(id: 'm2', isIncoming: false), // sent
+          msg0(id: 'm3', isUnread: true), // unread incoming
+          msg0(id: 'm4', isIncoming: false), // sent
+          msg0(id: 'm5', isUnread: true), // unread incoming
         ]);
         final result = item.recentInteractionMessages;
         expect(result.length, 3);
@@ -479,12 +479,12 @@ void main() {
     );
 
     test('only sent, 5 total returns last 3', () {
-      final item = _thread([
-        _msg(id: 'm1', isIncoming: false),
-        _msg(id: 'm2', isIncoming: false),
-        _msg(id: 'm3', isIncoming: false),
-        _msg(id: 'm4', isIncoming: false),
-        _msg(id: 'm5', isIncoming: false),
+      final item = thread([
+        msg0(id: 'm1', isIncoming: false),
+        msg0(id: 'm2', isIncoming: false),
+        msg0(id: 'm3', isIncoming: false),
+        msg0(id: 'm4', isIncoming: false),
+        msg0(id: 'm5', isIncoming: false),
       ]);
       final result = item.recentInteractionMessages;
       expect(result.length, 3);
@@ -492,14 +492,14 @@ void main() {
     });
 
     test('only 1 message returns that message', () {
-      final item = _thread([_msg(id: 'm1')]);
+      final item = thread([msg0(id: 'm1')]);
       expect(item.recentInteractionMessages.length, 1);
       expect(item.recentInteractionMessages[0].id, 'm1');
     });
   });
 
   group('hasEarlierInteractionHistory', () {
-    ThreadMessage _msg({
+    ThreadMessage msg0({
       required String id,
       bool isUnread = false,
       bool isIncoming = true,
@@ -514,7 +514,7 @@ void main() {
       );
     }
 
-    ThreadFeedItem _thread(List<ThreadMessage> messages) {
+    ThreadFeedItem thread(List<ThreadMessage> messages) {
       return ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9),
@@ -526,43 +526,43 @@ void main() {
     }
 
     test('empty thread returns false', () {
-      expect(_thread([]).hasEarlierInteractionHistory, isFalse);
+      expect(thread([]).hasEarlierInteractionHistory, isFalse);
     });
 
     test('all unread from start returns false', () {
-      final item = _thread([
-        _msg(id: 'm1', isUnread: true),
-        _msg(id: 'm2', isUnread: true),
+      final item = thread([
+        msg0(id: 'm1', isUnread: true),
+        msg0(id: 'm2', isUnread: true),
       ]);
       expect(item.hasEarlierInteractionHistory, isFalse);
     });
 
     test('read messages before first unread returns true', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-        _msg(id: 'm3', isUnread: true),
+      final item = thread([
+        msg0(id: 'm1'),
+        msg0(id: 'm2'),
+        msg0(id: 'm3', isUnread: true),
       ]);
       expect(item.hasEarlierInteractionHistory, isTrue);
     });
 
     test('0 unread, more than maxPreview returns true', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-        _msg(id: 'm3'),
-        _msg(id: 'm4'),
+      final item = thread([
+        msg0(id: 'm1'),
+        msg0(id: 'm2'),
+        msg0(id: 'm3'),
+        msg0(id: 'm4'),
       ]);
       expect(item.hasEarlierInteractionHistory, isTrue);
     });
 
     test('0 unread, exactly maxPreview returns false', () {
-      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2'), _msg(id: 'm3')]);
+      final item = thread([msg0(id: 'm1'), msg0(id: 'm2'), msg0(id: 'm3')]);
       expect(item.hasEarlierInteractionHistory, isFalse);
     });
 
     test('0 unread, less than maxPreview returns false', () {
-      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2')]);
+      final item = thread([msg0(id: 'm1'), msg0(id: 'm2')]);
       expect(item.hasEarlierInteractionHistory, isFalse);
     });
   });

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -27,6 +26,7 @@ class _FakeP2PService implements P2PService {
     _stateController.add(state);
   }
 
+  @override
   void dispose() => _stateController.close();
 
   // Stubs — noSuchMethod covers all abstract members not used by the widget.

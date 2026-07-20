@@ -33,7 +33,7 @@ class _InstrumentedBridge extends FakeBridge {
 
   final _Clock _clock;
 
-  /// Pages keyed by '<groupId>:<cursor>'. Empty cursor = first page.
+  /// Pages keyed by `'<groupId>:<cursor>'`. Empty cursor = first page.
   final Map<String, List<Map<String, dynamic>>> _pages = {};
   final Map<String, String> _nextCursor = {};
 

@@ -1,5 +1,8 @@
+// ignore_for_file: avoid_print
 /// Smoke test entry point that auto-generates identity.
 /// Run with: flutter run -t lib/smoke_test_main.dart
+library;
+
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -73,7 +76,7 @@ void main() async {
     print('[SMOKE] Database initialized');
 
     print('[SMOKE] Step 2: Create repository...');
-    final repository = IdentityRepositoryImpl(
+    IdentityRepositoryImpl(
       dbLoadIdentityRow: () => dbLoadIdentityRow(db),
       dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
       secureKeyStore: secureKeyStore,

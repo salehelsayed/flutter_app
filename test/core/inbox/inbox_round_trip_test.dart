@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,9 +8,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../shared/fakes/fake_p2p_network.dart';
-import '../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../shared/fakes/test_user.dart';
-import '../../shared/fakes/in_memory_message_repository.dart';
 
 /// Minimal Bridge that handles message.decrypt with a pre-canned response.
 class _FakeDecryptBridge implements Bridge {

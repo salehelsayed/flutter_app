@@ -44,7 +44,7 @@ void main() {
   }
 
   group('GroupRow', () {
-    Text _textFor(WidgetTester tester, String text) {
+    Text textFor(WidgetTester tester, String text) {
       final finder = find.byWidgetPredicate(
         (widget) => widget is Text && widget.data == text,
         description: 'Text("$text")',
@@ -73,7 +73,7 @@ void main() {
         expect(find.text('Alice'), findsOneWidget);
         expect(find.text('مرحبا Hello 123'), findsOneWidget);
         expect(
-          _textFor(tester, 'مرحبا Hello 123').textDirection,
+          textFor(tester, 'مرحبا Hello 123').textDirection,
           TextDirection.rtl,
         );
         expect(find.text('2'), findsOneWidget);
@@ -102,7 +102,7 @@ void main() {
         expect(find.text('نور'), findsOneWidget);
         expect(find.text('Hello مرحبا 123'), findsOneWidget);
         expect(
-          _textFor(tester, 'Hello مرحبا 123').textDirection,
+          textFor(tester, 'Hello مرحبا 123').textDirection,
           TextDirection.ltr,
         );
         expect(find.text('Announce'), findsOneWidget);

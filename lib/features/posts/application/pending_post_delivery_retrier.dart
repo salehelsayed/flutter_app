@@ -368,7 +368,7 @@ Future<bool> _allowsPostDeliveryNetworkSideEffects({
     emitFlowEvent(
       layer: 'FL',
       event: blockedEvent,
-      details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+      details: {'operation': operation, 'peerId': ?peerId},
     );
   }
   return allowed;

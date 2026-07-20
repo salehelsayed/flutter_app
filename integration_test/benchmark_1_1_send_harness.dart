@@ -2,17 +2,14 @@
 ///
 /// Measures cold vs warm send latency with a real Go CLI test peer.
 /// Requires orchestrator to start the test peer and provide fixture file.
-/// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios A
+/// Run: `dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios A`
 library;
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 
 import '../test/shared/fakes/in_memory_message_repository.dart';

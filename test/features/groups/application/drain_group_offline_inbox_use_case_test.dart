@@ -663,11 +663,9 @@ class _DelayedCursorInboxBridge extends _CursorInboxBridge {
 }
 
 class _ConcurrencyTrackingCursorInboxBridge extends _CursorInboxBridge {
-  _ConcurrencyTrackingCursorInboxBridge({
-    this.delay = const Duration(milliseconds: 30),
-  });
+  _ConcurrencyTrackingCursorInboxBridge();
 
-  final Duration delay;
+  final Duration delay = const Duration(milliseconds: 30);
   int activeRetrieves = 0;
   int maxActiveRetrieves = 0;
 

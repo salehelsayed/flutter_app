@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -20,6 +21,48 @@ buildGroupPendingBroadcastRePush({
   required Future<IdentityModel?> Function() loadIdentity,
 }) {
   return (broadcast) async {
+    if (broadcast.kind == groupPendingBroadcastKindMemberRolePrepared) {
+      // This check must precede every await. A runner that loaded the prepared
+      // row before activation must not later delete the activated row as stale.
+      if (isGroupRolePreparationInFlight(broadcast.id)) return false;
+      final preparedMember = _preparedRoleMember(broadcast.sysText);
+      if (preparedMember == null) return false;
+      final currentMember = await groupRepo.getMember(
+        broadcast.groupId,
+        preparedMember.peerId,
+      );
+      final currentGroup = await groupRepo.getGroup(broadcast.groupId);
+      final sourceEventId = broadcast.sourceMessageId;
+      final hasExactCommitProof =
+          sourceEventId != null &&
+          currentGroup?.lastMembershipEventId == sourceEventId &&
+          currentGroup?.lastMembershipEventAt != null &&
+          currentGroup!.lastMembershipEventAt!.toUtc().isAtSameMomentAs(
+            broadcast.eventAt.toUtc(),
+          );
+      if (!hasExactCommitProof ||
+          currentMember?.role.toValue() != preparedMember.role) {
+        final watermarkAt = currentGroup?.lastMembershipEventAt?.toUtc();
+        final watermarkId = currentGroup?.lastMembershipEventId;
+        final isSuperseded =
+            sourceEventId != null &&
+            watermarkAt != null &&
+            (watermarkAt.isAfter(broadcast.eventAt.toUtc()) ||
+                (watermarkAt.isAtSameMomentAs(broadcast.eventAt.toUtc()) &&
+                    watermarkId != null &&
+                    watermarkId.compareTo(sourceEventId) > 0));
+        if (isSuperseded) {
+          // A newer authoritative membership event makes this prepared row
+          // obsolete. It is safe to clear without publishing stale state.
+          return true;
+        }
+        // Role equality alone is not commit proof: the local role write occurs
+        // before native config and the durable membership watermark. Retain
+        // every ambiguous partial state so exit remains fail-closed.
+        return false;
+      }
+    }
+
     final identity = await loadIdentity();
     if (identity == null) return false;
 
@@ -84,4 +127,21 @@ buildGroupPendingBroadcastRePush({
     );
     return true;
   };
+}
+
+({String peerId, String role})? _preparedRoleMember(String sysText) {
+  try {
+    final payload = jsonDecode(sysText);
+    if (payload is! Map<String, dynamic>) return null;
+    final member = payload['member'];
+    if (member is! Map<String, dynamic>) return null;
+    final peerId = (member['peerId'] as String?)?.trim();
+    final role = (member['role'] as String?)?.trim();
+    if (peerId == null || peerId.isEmpty || role == null || role.isEmpty) {
+      return null;
+    }
+    return (peerId: peerId, role: role);
+  } catch (_) {
+    return null;
+  }
 }
