@@ -1,0 +1,7 @@
+interface:
+  display_name: "TDD Plan"
+  short_description: "Project-adapted, source-grounded TDD plans"
+  default_prompt: "Use $tdd-plan to create a source-grounded TDD implementation plan for this request using this repository's own conventions."
+
+policy:
+  allow_implicit_invocation: false

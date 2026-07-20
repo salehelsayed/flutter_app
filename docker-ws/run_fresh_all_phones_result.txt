@@ -1,3 +1,6 @@
-00008030-001A6D2801BB802E OK
-00008150-001C3C6A3684401C FAILED(install)
-00008101-000E2C263EA1001E FAILED(install)
+PROVENANCE tree=current-working-tree sha=ad073dd39 branch=new-orbit dirty_files=1 build_name=1.0.0-ad073dd39.d1.t260720143348 ios_bundle_version=260720143348 date=2026-07-20 14:33:48
+MODE usb-wired-only (iPhone filter: pairingState=paired AND transportType=wired; WiFi/unreachable iPhones untouched)
+00008030-001A6D2801BB802E OK 1.0.0-ad073dd39.d1.t260720143348 bundleVersion=260720143348 (verified)
+21071FDF600CSC OK 1.0.0-ad073dd39.d1.t260720143348 (verified)
+00008110-00184D622289801E OK 1.0.0-ad073dd39.d1.t260720143348 bundleVersion=260720143348 (verified)
+00008110-00184D622289801E OK 1.0.0-ad073dd39.d7.t260720153522 bundleVersion=260720153522 (verified)

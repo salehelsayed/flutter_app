@@ -1,109 +1,225 @@
 ---
 name: tdd-review
-description: Audit an EXISTING TDD implementation plan (docs/tdd/NN-*.md, or a bare NN) BEFORE it is executed. Verifies the plan's root cause + cited line-targets + sibling open-sites against real source, adversarially verifies the plan's #1 technical bet (domain/library/dependency facts), scores it on 5 dimensions (goal clarity · agile compartmentalization · precision/anti-drift · up-front evaluation criteria · tests-verify-the-goal), sweeps for the recurring material blockers review keeps finding after the fact (rollback-brick, missed sibling sites, off-target line numbers, un-verifiable perf gates, migration atomicity), surfaces the genuinely user-owned decisions for explicit sign-off, and emits a scored report + a numbered fix-list. Chains after /tdd-plan and before execution. Trigger: /tdd-review
-disable-model-invocation: true
-argument-hint: "[path to a TDD plan (docs/tdd/NN-*.md) or a bare NN]"
+description: "Run an independent, source-grounded counterexample audit of an existing TDD implementation plan before execution. Discover repository and Graphify conventions; verify evidence, causal tests, scope, gates, real boundaries, compatibility, and reversibility; then report ready, plan-fixes-required, or not-ready."
 ---
 
-# TDD Plan Auditor
+# TDD Review
 
-You are auditing an existing **TDD implementation plan** — deciding whether it is **safe and correct to execute** — for: **$ARGUMENTS**
+## Overview
 
-This is the adversarial counterpart to `/tdd-plan`. `/tdd-plan` *writes* the plan; `/tdd-review` tries to *break* it before any execution time is spent. A plan that reads well can still (a) misidentify its root cause, (b) cite line numbers that don't do what it claims, (c) miss a sibling code path that silently breaks, (d) ship a change that can't be proven to have worked, or (e) brick user data on a rollback. Those are the misses this skill exists to catch.
+Audit an existing TDD plan from a fresh adversarial angle before code is
+written. `$tdd-plan` constructs a contract; `$tdd-review` treats that contract
+as a set of claims and tries to falsify its load-bearing facts, tests, gates,
+scope, and closure proof.
 
-**A plan is "ready to execute" only when all of these hold — this is the definition you are auditing against:**
-1. **Root cause + every cited `file:line` is verified in real source** — not asserted, not remembered. The plan's factual scaffolding is true.
-2. **The plan's #1 technical bet is domain-verified** — the load-bearing assumption (a library behavior, a crypto property, an OS-callback ordering, a wire-format claim) is confirmed against docs/dependency source, not hoped.
-3. **Every sibling surface is enumerated** — all callers / open-sites / adjacent features that the change touches, especially the one that does NOT inherit the change automatically.
-4. **"Good" is defined up front with one hard number** — the goal is a measurable outcome with a single pre-committed pass/fail threshold and a captured baseline, and a real test (not a manual eyeball) guards it.
-5. **The user-owned decisions are surfaced for explicit sign-off** — release-risk, the single "done" number, and any de-scope calls are decided by the user, not defaulted silently.
+Do not recreate the planner's full checklist or rewrite the plan by default.
+Produce a concise, evidence-backed delta: what is false, what can pass for the
+wrong reason, what is missing, and what remains sound.
 
-Be **source-grounded and proof-honest**: ground claims in real source before trusting them, and treat "fast tests green" as insufficient for any OS-boundary / crypto / cross-process / external-system claim — those need the real environment.
+Default to read-only work. Static source/manifests/gate inspection and an
+authorized read-only Graphify query are permitted. Do not execute tests,
+gates, benchmarks, Graphify builds/updates, or environment scenarios; refresh
+Graphify; edit the plan; write a fix-list; update an index; or save project
+memory unless the user explicitly authorizes that action.
 
-The decision rules, the recurring-blocker sweep, and the workflow/report/fix-list skeletons live in bundled reference files — **READ them at the steps below; do not work from memory:**
-- `references/review-dimensions.md` — the 5 dimensions: what GOOD looks like, the failure smells, the scoring bands, and the verify-prompts each dimension raises.
-- `references/evergreen-blindspots.md` — the material blockers review keeps finding AFTER the fact; sweep EVERY plan for these regardless of what it enumerates.
-- `references/audit-workflow.md` — the multi-agent audit recipe (agent roles + JSON schemas), the report template, the fix-list template, and the AskUserQuestion decision set.
+## Invocation Guard
 
----
+Proceed only when the current user message affirmatively names `$tdd-review`.
+Task similarity, an existing plan, a prior recommendation, or invocation of
+`$tdd-plan` is not permission. Permission for `$tdd-review` does not authorize
+another skill.
 
-## Step 0 — Resolve the plan
+## Required References
 
-Decide what `$ARGUMENTS` is:
-- **A path** (`docs/tdd/218-*.md`) or a **bare number** (`218`) → that is the plan under audit. READ it in full.
-- **Empty** → look for the most recently modified `docs/tdd/NN-*-tdd-plan.md` (or the project's plan location); confirm with the user before proceeding.
-- **A free-text plan pasted inline** → audit it in place; there is no file to reference by `file:line`, so note that in the report.
+Read these bundled files at the named steps:
 
-Record: plan number `NN`, its stated goal in one sentence, its type (bug / feature / perf / migration), and whether it declares a **real-environment-proof / migration / OS-boundary** leg (those raise the bar — fast-tests-green is not closure).
+- `references/project-discovery.md`: read in Step 0.
+- `references/review-dimensions.md`: read before applying the five lenses.
+- `references/evergreen-blindspots.md`: read before the risk-trigger sweep.
+- `references/audit-workflow.md`: read before selecting workers and before
+  emitting a report or fix-list.
 
----
+## Step 0 - Resolve Repository Conventions And The Plan
 
-## Step 1 — Ground truth & claim inventory
+Read `references/project-discovery.md` and all applicable repository
+instructions. Resolve and record the repository root plus the selected plan
+root, defaulting to `<repository-root>/docs/tdd/`. Interpret relative paths
+from the repository root, not the current shell directory.
 
-Before judging quality, establish what is TRUE. Read the plan and pull out its **factual load-bearing claims** into a checklist:
-- the **root cause** (what line does what, and why that produces the symptom),
-- every cited **`file:line`** the plan tells the executor to edit,
-- the **caller / sibling-site count** ("N callers inherit this", "these are all the open-sites"),
-- the **baseline metric** (the "was ~Xms" / "currently fails because" number),
-- the **#1 technical bet** (the one assumption the whole payoff rests on).
+Resolve the input:
 
-Read the primary source files the plan names (the entrypoint, the migration, the seam) so you carry the real ground truth into the audit. You are looking for the gap between what the plan *says* the code does and what it *actually* does.
+- Explicit path: read the named plan in full.
+- Bare identifier: use the documented selected plan root, otherwise
+  `<repository-root>/docs/tdd/`, and match the exact identifier/stem under its
+  naming convention. Exclude indexes, fix-lists, review reports, session files,
+  and other non-plan artifacts. On zero matches, perform one targeted plan-file
+  search; on multiple matches, ask one focused question.
+- Pasted plan: audit it in place and note that plan-file line links are absent.
+- Empty request: identify the most recently modified actual TDD plan in the
+  selected root, excluding indexes/fix-lists/reports/session artifacts, and
+  confirm it with the user before auditing.
 
----
+Record the plan's declared status, classification, type, highest proof
+boundary, and risk triggers. Respect `implementation-ready`,
+`evidence-gated`, `acceptance-only`, `stale-already-covered`, and
+`prerequisite-blocked` when present. Normalize a legacy or differently
+formatted plan into a conceptual Test Contract without demanding format-only
+edits.
 
-## Step 2 — Run the audit (multi-agent, source-grounded)
+If the request or repository policy authorizes Graphify, follow the adapter in
+`references/project-discovery.md`. Reuse a plan's graph snapshot only as
+anchors and verify every load-bearing fact in current source. Otherwise use
+targeted source discovery and record `Graphify: N/A - not authorized or
+unavailable`. If stale or missing output blocks navigation, use source and
+report the limitation. Do not refresh during a read-only review.
 
-READ `references/audit-workflow.md` now and author the audit as a **Workflow** (invoking this skill is the explicit opt-in to the Workflow tool; if Workflow is unavailable or you want a quick pass, run the same roles as parallel `Explore` subagents). The recipe:
+## Step 1 - Extract The Load-Bearing Contract
 
-- **Phase Verify (parallel):**
-  1. **Factual / root-cause verifier** — independently confirm/refute each claim from Step 1 against real source, with `file:line` evidence. Explicitly *count the sibling sites yourself* (grep every caller / open-site) — the plan's count is frequently an undercount, and the site that does NOT inherit the change is the bug.
-  2. **Domain-risk verifier** — adversarially verify the plan's #1 bet using WebSearch AND by reading the actual dependency/library/native source. The plan's *stated* top risk is often a misconception, and its *documented fallback* is often unsound — check both.
-- **Phase Assess (parallel):** one agent per dimension in `references/review-dimensions.md`. Each returns a verdict (strong/adequate/weak), a 0–100 score, strengths, gaps (each tagged material/moderate/nit with a concrete fix), and up to 3 verify-prompts for the user.
-- **Phase Critique:** a completeness critic reads ALL prior outputs and returns: blind spots none of them raised, contradictions between them, the ranked top material risks, and a ready-to-execute verdict (yes / yes-with-tightening / no).
+Extract only claims whose failure would change the implementation seam, proof
+level, scope, closure verdict, or release decision:
 
-Force the **evergreen blind-spot sweep** (`references/evergreen-blindspots.md`) into the critic's prompt: every plan must be checked for those recurring classes even if the plan never mentions them.
+- confirmed cause for a bug, confirmed gap for new behavior, or source/test
+  proof for stale/already-covered work;
+- each behavior, named proof, honest baseline, expected GREEN outcome,
+  meaningful counterfactual/mutation for causal or preservation contracts (or
+  source-backed `N/A`), literal command or reproducible proof procedure, and
+  discovery/registration where applicable;
+- preservation sentinels, hard exclusions, accepted differences, deferred
+  owners, and stop-if conditions;
+- intended implementation seam plus plausible wrappers, direct operations,
+  alternate entrypoints, and lifecycle paths;
+- highest-risk technical mechanism and fallback;
+- triggered persistence, schema/format, external-service, network,
+  process/thread/worker, browser, native/OS, device/hardware, security,
+  compatibility, migration, destructive, or irreversible claims;
+- quantitative baseline, sample method, and threshold only when the goal is
+  genuinely quantitative;
+- product or release decisions that source cannot resolve;
+- focused/affected/broad gate cadence according to repository policy.
 
----
+Verify every load-bearing citation. Spot-check supporting citations unless a
+contradiction makes them material. Search both the shared wrapper and plausible
+direct/raw operation for bypasses, including API, UI, CLI, worker, scheduler,
+callback, startup, generated, plugin, native, or alternate-configuration paths
+when relevant. Do not enumerate unrelated adjacent features for ceremony.
 
-## Step 3 — Cross-check the linchpins yourself
+## Step 2 - Run The Counterexample Audit
 
-The workflow returns findings; agents can be wrong. Before you report a **material** finding as fact, **verify its linchpin in source yourself** (grep / read the exact lines). In practice the two highest-value self-checks are:
-- the **sibling-site claim** ("there's a 5th open-site that doesn't inherit") — grep it, read the call, confirm the mode/secret/path.
-- the **off-target line claim** ("editing `:NN` would break X, because `:NN` actually keys a different thing") — read `:NN` and confirm what it operates on.
+Read all three audit references. Use the bounded topology in
+`references/audit-workflow.md`:
 
-Only promote a finding to **material** once you have `file:line` proof. Downgrade anything you cannot confirm to "plausible — verify at execution".
+- one fresh factual/counterexample verifier by default when agents are
+  available;
+- one domain specialist only for an uncertain dependency, platform, protocol,
+  security, or external technical bet;
+- one boundary/reversibility specialist only for migration, destructive or
+  irreversible data, compatibility, process/runtime, OS/device, external
+  service, or real-environment risk;
+- main-agent synthesis and linchpin verification.
 
----
+Use at most three workers. Never assign one worker per review lens. If agents
+are unavailable, perform the same independent passes sequentially.
 
-## Step 4 — Score, rank, and sweep
+Try to answer five questions:
 
-Assemble:
-- the **dimension scorecard** (table: dimension → verdict → score),
-- whether the **core bet is verified sound** (the good-news line — say it plainly if it is),
-- the **material blockers, ranked** (most severe first), each with its `file:line` proof and concrete fix,
-- **what the plan does WELL** (keep-these) — an audit that only lists faults is not trustworthy,
-- the result of the **evergreen sweep**: for each recurring class in `references/evergreen-blindspots.md`, state "hit" (with the finding) or "clear / N-A".
+1. Can the Test Contract pass with a no-op, wrong handler/event/entity,
+   unrelated failure, partial update, stale cache, or inert mutation?
+2. Is the claimed cause, gap, stale disposition, or highest-risk bet false or
+   unresolved?
+3. Does a real caller, entrypoint, configuration, or lifecycle path bypass the
+   planned seam?
+4. Would the literal commands or procedures discover and execute the named
+   proof, and does the closure level exercise the boundary actually claimed?
+5. Could rollback, destructive effects, compatibility, concurrency, ordering,
+   retry, duplicate work, restart, or an unresolved user decision invalidate
+   the plan?
 
-Give an overall verdict: **ready / ready-with-tightening / not-ready**.
+Broad-suite success does not replace focused causality. Judge gate breadth and
+cadence against the destination repository's actual policy rather than
+importing one from another project.
 
----
+## Step 3 - Self-Verify Material Findings
 
-## Step 5 — Surface the user-owned decisions (do not default silently)
+Do not promote a worker result, graph inference, or suspicion directly to a
+blocker. Verify its linchpin in current source, tests, gate definitions,
+manifests, or authoritative version-matched dependency documentation:
 
-Some findings resolve to a **recommendation** (you have the evidence — state it). Others are genuinely the **user's call** and change what the revised plan should say. Per `references/audit-workflow.md`, ask the user — via **AskUserQuestion** — the decisions that are theirs, typically:
-- **release-risk strategy** for any one-way / irreversible change (forward-compat-first release · kill-switch + staged rollout · accept-the-risk),
-- **the single hard "done" number** for the goal metric (pick from concrete options),
-- **the next action** (revise the plan in place · findings only · findings + a written fix-list).
+- false cause/current gap or stale classification;
+- vacuous baseline, GREEN assertion, mutation, negative assertion, or event
+  discriminator;
+- bypass site or off-target symbol/line;
+- missing/incorrect discovery, registration, working directory, or command;
+- rollback, migration, compatibility, concurrency, or real-boundary hazard.
 
-Keep it to the 2–3 decisions that actually gate finalization. Do not ask about things you can verify yourself or that have an obvious default.
+Classify unproven concerns `unresolved - verify before execution`, not factual
+errors. Never claim RED/GREEN evidence that was not run. By default, verify
+command definitions, selectors, discovery, and registration statically; do not
+run tests, gates, benchmarks, builds, or environment proof. If the user
+authorizes live diagnostic proof, report its results separately from the
+source audit and disclose artifacts or external state it touched.
 
----
+## Step 4 - Decide The Verdict
 
-## Step 6 — Emit the report + (if chosen) the fix-list
+Use exactly one verdict:
 
-Present the report from Step 4 in the chat (scored table, verified core-bet line, ranked blockers, keep-these, evergreen-sweep result, verdict). Then honor the Step-5 next-action choice:
-- **Fix-list** → write `docs/tdd/NN-review-fixlist.md` using the template in `references/audit-workflow.md`: a header (verdict + locked decisions + verified facts), findings grouped by theme and numbered with an exact edit + why for each, and a priority order. Do NOT edit the plan itself unless the user chose "revise in place".
-- **Revise in place** → apply the fixes to `docs/tdd/NN-*.md` directly, then re-run the Step-4 sweep to confirm the blockers are closed.
-- **Findings only** → stop after the report.
+- `ready`: safe to begin the plan's declared execution or verification; no
+  required plan delta remains.
+- `plan-fixes-required`: the direction may be sound, but bounded plan edits
+  must land before execution.
+- `not-ready`: a core bet is refuted or unresolved, the required real-boundary
+  strategy is absent, a user decision blocks the contract, or replanning is
+  required.
 
-Finally, if the plan is indexed (`docs/tdd/00-INDEX.md`), note the audit verdict next to it. If the audit surfaced durable, non-obvious project knowledge (a verified root-cause correction, a rollback hazard, a sibling-site landmine), record it wherever this project keeps such notes — do not save what the plan or git already records.
+Also state:
+
+- core bet: `confirmed`, `refuted`, `unresolved`, or `N/A`;
+- disposition: `execute`, `apply-plan-fixes`, `verify-and-close-stale`, or
+  `replan`.
+
+Map findings deterministically:
+
+- any self-verified `blocker` or `block` -> `not-ready`;
+- otherwise any `plan-fix` or `tighten` -> `plan-fixes-required`;
+- only `clear`/`N/A` lenses plus optional notes -> `ready`.
+
+Use `execute` with `ready`, `apply-plan-fixes` with
+`plan-fixes-required`, `verify-and-close-stale` for an obsolete implementation
+plan, and `replan` for other `not-ready` results.
+
+For `stale-already-covered` and `acceptance-only`, judge the honesty and
+sufficiency of the verification contract. Do not demand invented RED tests,
+mutations, causes, or production edits. If an implementation-ready plan is
+proven already covered, use `not-ready` with `verify-and-close-stale` because
+obsolete production steps are unsafe to execute.
+
+For a correctly classified stale/already-covered or acceptance-only plan,
+`ready` plus `execute` means execute its verification contract only, never its
+production-edit steps.
+
+Apply the five lens states as `clear`, `tighten`, `block`, or `N/A`. Do not emit
+numeric scores unless the user explicitly requests scoring.
+
+## Step 5 - Surface User-Owned Decisions
+
+Report findings first. Ask only decisions that materially change the contract
+and cannot be answered from source: product behavior, irreversible
+release/rollback strategy, accepted compatibility, or a genuinely quantitative
+threshold. Do not ask the user to choose facts, obvious source-backed fixes, or
+the next output format.
+
+If a required user decision remains open, state it under findings and use
+`not-ready` until it is resolved.
+
+## Step 6 - Emit Without Unrequested Writes
+
+Read `references/audit-workflow.md` and return its concise chat report by
+default. Findings name the plan target, evidence, counterexample/consequence,
+and smallest sufficient correction. Report blind-spot hits plus one summary
+for the remaining clear/N/A classes; emit a full table only when requested.
+
+Write a fix-list only when the user requests one. Unless repository
+instructions specify another location, place it beside the plan as
+`<plan-stem>-review-fixlist.md`. Edit the plan only on an explicit
+revise-in-place request; patch source-backed deltas and rerun the five lenses
+plus every triggered blind-spot class. Index, memory, Graphify, and other
+project writes require separate authorization.

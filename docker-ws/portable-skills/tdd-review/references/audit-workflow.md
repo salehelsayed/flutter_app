@@ -1,131 +1,227 @@
-# Audit Workflow · Report · Fix-List · Decisions (read in Steps 2, 5, 6)
+# Lean Audit Workflow And Output
 
-## 1. The multi-agent audit recipe
+Read this during review Steps 2, 4, 5, and 6.
 
-Author the audit as a **Workflow** (invoking this skill is the opt-in). Scale the fleet to the ask:
-- **Quick pass:** 5 dimension agents only (skip the domain-risk verifier + critic). For a sanity check or a small plan.
-- **Thorough (default):** 2 verifiers → 5 dimension assessors (parallel) → 1 completeness critic. This is the shape below.
-- If the Workflow tool is unavailable, run the same roles as parallel `Explore` subagents and synthesize by hand.
+## Bounded Audit Topology
 
-**Common prompt preamble for every agent** (embed verbatim): the plan path, the primary source file paths it references, the ground-truth facts you established in Step 1 ("already verified — build on it, don't re-litigate"), the project's proof reality (fast tests use fakes; crypto/OS-boundary/external-system legs need the real environment), and "return raw structured data — your output is consumed by an orchestrator, not shown to a human; cite `file:line` and plan line numbers."
+Default to one fresh factual/counterexample verifier plus main-agent synthesis.
+This preserves an independent angle without recreating a review committee.
 
-**Phase Verify (parallel), schema per agent = `VERIFY_SCHEMA`:**
-- *Factual/root-cause verifier* — confirm/refute each Step-1 claim against real source. MUST independently grep every caller/sibling open-site (B-2) and read every cited edit line (B-3).
-- *Domain-risk verifier* — WebSearch + read the dependency/library/native source to verify the plan's #1 bet AND its fallback (B-7). (Skip in quick pass.)
+Add specialists only on a real trigger:
 
-**Phase Assess (parallel), schema = `DIM_SCHEMA`:** one agent per dimension in `review-dimensions.md`.
+- **Domain specialist:** uncertain dependency, provider, platform, protocol,
+  security, or external technical bet.
+- **Boundary/reversibility specialist:** migration, one-way/destructive data,
+  rollback, compatibility, process/runtime, native/OS, browser, device,
+  hardware, distributed system, or external-environment proof.
 
-**Phase Critique, schema = `CRITIC_SCHEMA`:** one agent reads ALL prior outputs; force the `evergreen-blindspots.md` sweep into its prompt.
+Use at most three audit workers total: the core verifier plus the two
+conditional specialists. If agents are unavailable, run the same passes
+sequentially. Separate the fresh counterexample pass from synthesis so the
+planner's framing does not silently become the reviewer's conclusion.
 
-### JSON schemas (reuse verbatim)
-```
-DIM_SCHEMA = { dimension, verdict:enum[strong,adequate,weak], score_0_100:int,
-  strengths:[str], gaps:[{issue, severity:enum[material,moderate,nit], why_it_matters, concrete_fix}],
-  verify_prompts:[str] }   // up to 3 user yes/no decisions
+Common worker prompt:
 
-VERIFY_SCHEMA = { area, claims:[{claim, verdict:enum[confirmed,refuted,uncertain], evidence}],
-  material_errors:[str], summary }
-
-CRITIC_SCHEMA = { missing_dimensions:[str], contradictions:[str],
-  top_material_risks:[{risk, why, recommended_action}],
-  plan_is_ready_to_execute:enum[yes,yes-with-tightening,no], one_line_verdict }
-```
-
-### Pipeline note
-Dimension agents are independent → `parallel()` them. The critic needs ALL outputs → it comes after a barrier. Verifiers and dimensions can all run in the first fan-out; only the critic waits. Return `{verification, assessments, critique}`.
-
----
-
-## 2. Report template (present in chat, Step 6)
-
-```
-# Review: <plan file>
-
-## Verdict
-<one line>: core bet <verified sound / unverified / refuted>; <ready / ready-with-tightening / NOT ready>.
-Critic verdict: <yes / yes-with-tightening / no>.
-
-| Your criterion            | Dimension                 | Score | Verdict |
-| (1) Goal/decisions        | Goal clarity              |  NN   | …       |
-| (2) Agile/checkpoints     | Compartmentalization      |  NN   | …       |
-| (3) Precise/no-drift      | Anti-drift                |  NN   | …       |
-| (4) Eval criteria up front| Define "good"             |  NN   | …       |
-| (5) Tests verify the goal | Goal-verification         |  NN   | …       |
-
-## Is the core bet sound?
-<state plainly if verified — good news counts. Note the #1-risk misconception / unsound-fallback if found (B-7).>
-
-## Material blockers (ranked, each with file:line proof + fix)
-1. …  2. …  3. …
-
-## Evergreen sweep
-<table: B-1..B-10 → hit/clear → evidence → fix>
-
-## What the plan does WELL (keep these)
-<an audit that only lists faults isn't trustworthy — name the real strengths.>
+```text
+Audit this existing TDD plan before execution. Work from current source, tests,
+manifests, and gates; the plan and graph are claims/navigation, not ground
+truth. Try to construct a wrong implementation that still passes the Test
+Contract. Verify only load-bearing facts and plausible bypass sites. Return
+structured findings with plan row/section, current file:line or durable-symbol
+evidence, consequence, and smallest sufficient plan delta. Do not edit files,
+refresh graphs, execute tests/gates/benchmarks/environment campaigns, or write
+a fix-list.
 ```
 
-Lead with the verdict. Report the dimension scores. Rank blockers most-severe first. Always include "what it does well".
+When a technical bet cannot be verified locally, a domain specialist may use
+authoritative version-matched primary documentation if browsing is available
+and permitted. If it remains ambiguous, return `unresolved`; do not guess.
 
----
+## Finding Schema
 
-## 3. Fix-list template (write to `docs/tdd/NN-review-fixlist.md`, Step 6)
+Use this internal shape:
 
-Header block:
-```
-# NN Review — Fix-List (apply against `NN-<slug>-tdd-plan.md`)
-
-Source: <N-agent audit + source-verification>, <date>. Plan is <not/…> execution-ready; <core bet status>.
-
-Decisions locked with the user:
-- <release-risk decision>
-- <the single hard "done" number>
-
-Verified facts this list relies on (checked against source):
-- <claim> — <file:line>. ✅   (list the load-bearing ones you confirmed yourself in Step 3)
-```
-
-Then group findings by theme into lettered sections (§A, §B, …), each item = an ID + the **exact edit** + **why**:
-```
-## §A — <theme, e.g. Rollback safety>
-- **A1.** <the exact change to make in the plan / code, concrete enough to apply without re-deriving>. <one-line why.>
-- **A2.** …
+```text
+FINDING = {
+  plan_target,                 # section or Test Contract row
+  claim,
+  evidence_state: confirmed | refuted | unresolved,
+  counterexample,
+  evidence,
+  severity: blocker | plan-fix | note,
+  smallest_sufficient_delta
+}
 ```
 
-End with a **priority order**:
+Severity meanings:
+
+- `blocker`: core direction, required boundary, compatibility/release decision,
+  or load-bearing evidence is unsafe/unresolved and requires replanning or a
+  user decision.
+- `plan-fix`: a bounded correction is known and must land before execution.
+- `note`: useful tightening that does not make execution unsafe.
+
+The main agent deduplicates findings, resolves contradictions, applies all five
+lenses, runs the evergreen sweep, and self-verifies every blocker and plan-fix
+linchpin in current evidence.
+
+## Verdict Contract
+
+- `ready`: begin the declared execution or verification as written; only
+  optional notes remain.
+- `plan-fixes-required`: the direction is viable, but exact plan corrections
+  must land first.
+- `not-ready`: a blocker remains, including a refuted/unresolved core bet,
+  absent real-boundary strategy, incompatible rollback/release contract,
+  required user decision, or need to replan.
+
+State the core bet as `confirmed`, `refuted`, `unresolved`, or `N/A`.
+
+Also state one disposition: `execute`, `apply-plan-fixes`,
+`verify-and-close-stale`, or `replan`.
+
+Map the synthesis deterministically:
+
+- any self-verified `blocker` finding or `block` lens -> `not-ready`;
+- otherwise any `plan-fix` finding or `tighten` lens ->
+  `plan-fixes-required`;
+- only `clear`/`N/A` lenses and optional notes -> `ready`.
+
+Use `execute` with `ready`, `apply-plan-fixes` with
+`plan-fixes-required`, `verify-and-close-stale` for an obsolete implementation
+plan, and `replan` for other `not-ready` results.
+
+For stale/already-covered and acceptance-only plans, evaluate the verification
+contract rather than demanding implementation work. If review proves an
+implementation-ready plan obsolete, use `not-ready` plus
+`verify-and-close-stale`; obsolete production steps are unsafe. If the plan was
+already classified correctly, `ready` means its declared verification may run.
+In that case `execute` means execute verification only, never production edits.
+
+## Default Chat Report
+
+Present findings before background. Omit empty sections.
+
+```markdown
+# Review: <plan>
+
+Verdict: **<ready | plan-fixes-required | not-ready>**
+Plan classification: <classification>; core bet: <confirmed | refuted | unresolved | N/A>.
+Disposition: <execute | apply-plan-fixes | verify-and-close-stale | replan>.
+
+## Evidence Grounding / Limitations
+
+- Repository revision/state: <revision and material dirty state>.
+- Graphify: <identity/query/gaps, or N/A plus targeted-source fallback>.
+- Live commands: <not run by default, or separately authorized evidence and artifacts>.
+
+## Required Before Execution
+
+1. **[<blocker | plan-fix>] <short finding>.**
+   - Plan target: <section / Test Contract row>.
+   - Evidence: `<file:line or durable symbol>` - <fact>.
+   - Counterexample/consequence: <how the wrong plan can pass or fail>.
+   - Smallest sufficient delta: <exact plan correction>.
+
+## Non-Blocking Tightenings
+
+- <note, only when useful>.
+
+## What Remains Sound
+
+- <verified design worth preserving>.
+
+## Lens Summary
+
+- L1 Evidence: <clear | tighten | block | N/A>.
+- L2 Causality: <clear | tighten | block | N/A>.
+- L3 Bypasses/scope: <clear | tighten | block | N/A>.
+- L4 Commands/gates: <clear | tighten | block | N/A>.
+- L5 Boundary/reversibility: <clear | tighten | block | N/A>.
+
+## Blind-Spot Sweep
+
+- Hits: <B-N findings, or none>.
+- Remaining classes: <clear/N/A summary with noteworthy reasons>.
+
+## User Decisions
+
+- <only decisions that block or materially alter the contract>.
 ```
-## Priority order to apply
-1. <blockers that gate the whole ship model / would break a feature>
-2. <make the win verifiable + the migration non-bricking>
-3. <slice the work + make tests guard the goal>
-4. <specs, mechanism corrections, cleanup>
+
+Do not include numeric scores by default. For a concise report, list blind-spot
+hits and summarize the clear/N/A classes in one line. Emit a full B-1 through
+B-10 table only for a requested thorough report or fix-list.
+
+## Fix-List Template
+
+Write a fix-list only when explicitly requested. Unless the repository defines
+another convention, place it beside the plan as
+`<plan-stem>-review-fixlist.md`.
+
+```markdown
+# Review Fix-List - <Plan Identifier>
+
+Plan: `<plan path>`
+Verdict: <plan-fixes-required | not-ready>
+Core bet: <confirmed | refuted | unresolved | N/A>
+Disposition: <apply-plan-fixes | verify-and-close-stale | replan>
+
+## Verified Facts
+
+- <claim> - `<file:line or durable symbol>`.
+
+## Required Plan Deltas
+
+1. **R1 - <theme>**
+   - Target: <Test Contract row / plan section>.
+   - Evidence: `<file:line or durable symbol>` - <fact>.
+   - Change: <exact edit, without re-deriving>.
+   - Completion check: <what the revised plan must contain>.
+
+## Optional Tightenings
+
+- <non-blocking item, if any>.
+
+## User Decisions
+
+- <locked decision or unresolved blocker, if any>.
+
+## Apply Order
+
+1. <core/boundary/compatibility corrections>
+2. <causal-test and gate corrections>
+3. <scope and clarity tightenings>
 ```
 
-Rules: give a **plain-English gloss** for any project term the plan assumes ("Move = the account-migration feature" style); do NOT edit the plan file itself (unless the user chose "revise in place"); every material item cites the `file:line` that proves it.
+Every required item needs current evidence and the smallest sufficient delta.
+Reference Test Contract row IDs when available; use plan line numbers as
+support, not as the only durable locator.
 
----
+## User-Owned Decisions
 
-## 4. The user-owned decisions (AskUserQuestion, Step 5)
+Report the audit first, then ask only choices source cannot answer:
 
-Ask ONLY the 2–3 decisions that are genuinely the user's and that change what the revised plan says. Recommended set (adapt to the plan):
+- rollback/release strategy for a genuinely one-way change;
+- product-owned behavior, compatibility promise, or de-scope;
+- a quantitative threshold when several risk tolerances are valid.
 
-1. **Release-risk strategy** — only if the plan has a one-way/irreversible change (B-1). Options e.g.:
-   - *Forward-compat opener first* (ship a read-both release before the migrating one) — safest, costs a release cycle.
-   - *Kill-switch + staged rollout (+ keep backup N launches)* — no prior release needed.
-   - *Accept the risk* — small/controlled cohort; document the one-way boundary with a test.
+Do not ask for a number for ordinary binary behavior. Do not ask the user to
+choose obvious factual corrections or the output format; default output is the
+read-only chat report.
 
-2. **The single hard "done" number** for the goal metric (B-4). Offer concrete options, e.g.:
-   - *Ratio + absolute* (recommended): `new_p50 ≤ old_p50 / K` AND `new_p50 ≤ Xms`, N≥5 median, steady-state run — environment-robust.
-   - *Absolute only* — simpler, more environment-sensitive.
-   - *Ratio only* — environment-independent, no absolute floor.
+## Read-Only Boundary
 
-3. **Next action** — *revise the plan in place* · *findings only* · *findings + a written fix-list*.
-
-Do NOT ask about de-scopes you have `file:line` evidence for (state them as recommendations and let the user push back), or anything with an obvious default. Reserve the question budget for real forks.
-
----
-
-## 5. After the audit
-- Cross-check every **material** finding's linchpin in source yourself before reporting it as fact (Step 3). Downgrade unconfirmable findings to "plausible — verify at execution".
-- Record durable, non-obvious findings (verified root-cause corrections, rollback hazards, sibling-site landmines) wherever the project keeps such notes. Don't record what the plan or git already captures.
-- If the plan is indexed in `00-INDEX.md`, note the audit verdict next to it.
+- Do not edit the plan, Graphify output, memory, indexes, or review files by
+  default.
+- Statically inspect command definitions, selectors, discovery, registration,
+  source, tests, manifests, and gates. Do not execute tests, gates, benchmarks,
+  builds, Graphify builds/updates, or environment scenarios unless live proof
+  is explicitly requested or that diagnostic execution is separately
+  authorized.
+- When live proof is authorized, report it separately from source-review
+  evidence and disclose caches, snapshots, reports, artifacts, external state,
+  or other side effects it touched.
+- Write a fix-list or revise the plan only with explicit authorization.
+- After a revise-in-place request, patch only verified deltas and rerun all five
+  lenses plus every triggered blind-spot class.

@@ -1,0 +1,7 @@
+interface:
+  display_name: "TDD Review"
+  short_description: "Independent counterexample audits of TDD plans"
+  default_prompt: "Use $tdd-review to audit this TDD plan against the current repository before implementation."
+
+policy:
+  allow_implicit_invocation: false

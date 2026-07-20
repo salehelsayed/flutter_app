@@ -1,121 +1,233 @@
 ---
 name: tdd-plan
-description: "Generate a source-verified, tier-complete, harness-integrated TDD implementation plan from EITHER an existing plan/spec doc (docs/tdd/NN-*.md) OR a free-text description of a bug / feature / modification. Produces an adversarially-verified root cause, a RED test catalog, a Test Coverage Matrix (spec-case → tier → test file → mutation revert → acceptance gate → harness registration), literal acceptance-gate commands, and a sufficiency self-check. Chains into /tdd-review. Trigger: /tdd-plan"
-disable-model-invocation: true
-argument-hint: "[path to a spec doc  OR  a free-text description of a bug / feature / modification]"
+description: "Create source-grounded, project-adapted TDD implementation plans for bugs, features, modifications, migrations, and reliability gaps. Discover the repository's Graphify interface, test levels, fixtures, gates, and registration; map each behavior to causal proof or a justified real-boundary proof; and hand an execution-ready contract to implementation."
 ---
 
-# TDD Plan Generator
+# TDD Plan
 
-You are producing a **TDD implementation plan** for: **$ARGUMENTS**
+## Overview
 
-This skill designs both the fix and the tests. The plan it emits must be **sufficient**, which here has a precise meaning:
+Create a rollout-ready TDD implementation plan for the current repository.
+Design the change and its proof; do not claim RED, GREEN, mutation, benchmark,
+or environment evidence that has not actually been run. Planning names the
+expected baseline, GREEN outcome, counterfactual, gates, and registration.
+Execution later records the results.
 
-1. **Spec-case totality** — every behavior/test-case maps to ≥1 concrete test, named (file + test name), at the *right tier*.
-2. **Mutation-verifiable** — every behavior-bearing production edit has a test that goes **RED on HEAD for a documented reason** and GREEN after the fix; reverting the edit re-reds it. A test that cannot fail is not coverage.
-3. **Literal acceptance gates** — copy-paste commands for THIS project's test runner, with expected pass counts — never prose like "run the relevant suite".
-4. **Named harness-registration per test** — for every new test, state how it actually gets executed (auto-discovered by the runner's glob / added to a suite list / registered in a CI job / wired into a scenario runner). A test that runs in no gate is invisible coverage.
+This handoff uses `<repository-root>/docs/tdd/` as its default plan root. When
+the repository is `~/piqube`, that resolves to `~/piqube/docs/tdd/` regardless
+of the shell's current subdirectory.
 
-The decision rules and skeleton live in bundled reference files — **READ them at the steps below; do not work from memory**:
-- `references/tier-matrix.md` — spec→obligation mapping + tier-selection decision matrix + harness-registration rules
-- `references/sufficiency-checklist.md` — the yes/no gates the finished plan must pass
-- `references/plan-template.md` — the exact section skeleton to emit
+Use `references/sufficiency-checklist.md` as the single source of truth for
+plan sufficiency. Keep the plan's Done Criteria concise instead of copying the
+full checklist into every plan.
 
-This skill is **TDD-first**: RED tests are designed before any production edit, and every factual claim is grounded in real source before it is trusted.
+Invoking `$tdd-plan` does not authorize `$tdd-review` or an implementation
+skill. Use Graphify only when the destination repository permits implicit
+Graphify selection or the user also authorizes `$graphify`.
 
----
+## Invocation Guard
 
-## Step 0 — Resolve and classify the input
+Proceed only when the current user message affirmatively names `$tdd-plan`.
+Task similarity, a plan or issue document, a prior recommendation, or a request
+to continue/execute stored work is not invocation. Permission to use another
+skill does not authorize this one, and permission for `$tdd-plan` does not
+authorize another skill.
 
-Decide what `$ARGUMENTS` is:
+## Required References
 
-- **A path to an existing spec/plan doc** (e.g. `docs/tdd/134-foo.md`, or a bare `134`): READ it. It is your spec. **Reuse its NN number** for the plan filename (`NN-<slug>-tdd-plan.md`) so the plan sits next to its spec.
-- **Free-text description** of a bug / feature / modification: this is the raw intent. You do NOT need a spec doc first — you will ground it yourself in Step 1. Allocate the **next free number** from `docs/tdd/00-INDEX.md` (create the directory and index on first use).
-- **Too vague to be actionable** (no identifiable behavior, area, or symptom): ask exactly one focused clarifying question, then proceed. Do not guess a whole feature out of nothing.
+Read these bundled files at the named steps; do not work from memory:
 
-Record: type (`bug` | `feature improvement` | `new feature` | `modification`), affected area, the chosen plan number `NN`, and a short kebab-case `<slug>`.
+- `references/project-discovery.md`: read in Step 0.
+- `references/tier-matrix.md`: read while deriving proof and fixture
+  obligations.
+- `references/plan-template.md`: read before emitting the plan.
+- `references/sufficiency-checklist.md`: read for the blocking final check.
 
-> **Path convention:** this skill defaults to `docs/tdd/` for plans and the index. If the project already keeps plans elsewhere, use that location instead and keep it consistent.
+## Step 0 - Resolve Repository Conventions And Input
 
----
+Read `references/project-discovery.md`, then read the applicable repository
+instructions before browsing source. Resolve and record the repository root
+from those instructions and version-control/workspace evidence. Interpret all
+relative paths below from that root, not from the current shell directory.
 
-## Step 0.5 — Harness bootstrap (first use in a project, or when the harness map is stale)
+Resolve the input:
 
-The plan cannot contain literal gates without knowing how THIS project runs tests. If `docs/tdd/HARNESS.md` exists and looks current, read it and skip ahead. Otherwise discover and record:
+- Explicit spec, issue, or plan path: read it in full. Preserve a stable issue
+  or spec identifier in the output filename when one exists.
+- Bare identifier: resolve it using the repository's documented issue/spec
+  convention, then the default plan root. Ask one focused question only when
+  matches are ambiguous.
+- Free-text bug, feature, modification, migration, or reliability gap: ground
+  it directly; a separate spec is not required.
+- Too vague to identify an observable behavior, area, or symptom: ask one
+  focused question.
 
-- **Stack + test runner(s)** — the exact commands to run one test file, one named test, and the full suite (e.g. `pytest path::name`, `go test ./pkg -run Name`, `npx jest path -t "name"`, `flutter test path --plain-name '…'`).
-- **Test-directory conventions** — where unit / integration / e2e tests live, and which of those the runner auto-discovers by glob vs which require manual registration (a suite list, a CI job matrix entry, a tag, a scenario case in a runner script).
-- **CI / gate scripts** — any repo scripts or CI jobs that constitute "the gates" (lint, typecheck, test shards, e2e). The script wins over prose.
-- **Real-fixture facilities** — how the project spins up a real DB / real service / real environment in tests (testcontainers, in-memory engine, docker-compose, emulator), vs its fakes/mocks.
+Resolve the output directory independently from the filename:
 
-Write the findings to `docs/tdd/HARNESS.md` (one page: commands, conventions, registration rules) so later plans reuse it instead of re-discovering.
+- Directory: use an explicit output directory/file requested by the user;
+  otherwise use `<repository-root>/docs/tdd/`.
+- Filename: use an explicit filename, then a documented repository convention,
+  then `<stable-identifier>-<slug>-tdd-plan.md`, otherwise
+  `YYYY-MM-DD-<slug>-tdd-plan.md`.
+- On collision, insert `-2`, `-3`, and so on immediately before
+  `-tdd-plan.md`.
 
----
+Never overwrite a plan silently. Creating the resolved plan directory is part
+of the authorized plan write when it does not exist and repository policy does
+not forbid it. Use or update an index only when one already exists or
+repository instructions require it. Recheck the filename and index immediately
+before saving.
 
-## Step 1 — Source-verified grounding (verify → refute)
+Record the type (`bug`, `feature improvement`, `new feature`, `modification`,
+`migration`, or `reliability`), affected area, identifier/slug, intended plan
+path, classification, and highest required proof boundary.
 
-Never trust a claimed root cause or "this is broken" statement until it is confirmed in real code AND an adversarial pass has failed to refute it. Run a multi-agent **verify→refute** pass. The recommended vehicle is the **Workflow** tool — invoking it from this skill is an explicit opt-in. (If Workflow is unavailable, run the same roles as parallel `Explore` subagents instead.)
+Use these classifications when applicable:
 
-Require `file:line` evidence on every claim. When several agents need overlapping context, do one scouting pass first and embed its digest verbatim in every worker prompt — workers should not each re-derive the map.
+- `implementation-ready`
+- `evidence-gated`
+- `acceptance-only`
+- `stale-already-covered`
+- `prerequisite-blocked`
 
-**Phase A — Ground (parallel):**
-- **Locate the seam** — trace the end-to-end data/control flow for the behavior in real source. Return it with `file:line`, and keep a compact digest (anchors, files, gaps) for review and execution.
-- **Existing-test inventory** — what tests already cover this area (by tier), which pass today, and the explicit coverage *gaps*. Note which gates/suites already run them.
+## Step 1 - Ground And Classify Evidence
 
-**Phase B — Verify each finding (per claim):** confirm the symptom reproduces *on HEAD* for the stated mechanism, with `file:line`.
+When the request or repository policy authorizes Graphify, follow the adapter
+in `references/project-discovery.md` and use the destination repository's
+Graphify skill and commands, not a command copied from this bundle. Otherwise,
+use targeted source discovery and record `Graphify: N/A - not authorized or
+unavailable`. A graph is a compact navigation index, never proof.
 
-**Phase C — Refute (adversarial, per claim):** actively try to kill it — is it **already fixed** on HEAD? Is the root cause **wrong** (a different path produces the symptom)? Is it an **environment/build artifact** rather than a code bug? Default to "refuted" when uncertain. Only findings that survive C are trusted.
+Then verify in current source:
 
-**Phase D — Derive per-tier obligations:** for each *surviving* behavior, read `references/tier-matrix.md` and decide: required tier(s), fake-vs-real-fixture, and the harness-registration consequence. Also flag anything needing a schema/data migration or a real-environment proof.
+1. Locate the production seam and plausible callers or entrypoints. Cite
+   durable symbols plus `file:line` evidence.
+2. Inventory existing tests at every relevant repository-defined level, the
+   fixtures they use, and the gates or discovery rules that execute them.
+3. Discover literal focused, affected-suite, broad-suite, and static-quality
+   commands from source, manifests, task runners, or CI configuration.
+4. Classify every material finding:
+   - `confirmed`: current source plus a test, probe, or authoritative contract
+     supports it;
+   - `refuted`: contradictory evidence disproves it;
+   - `unresolved`: evidence is incomplete, so the plan remains evidence-gated.
+5. For a bug, identify a confirmed cause. For new behavior, identify the
+   current mechanism and confirmed gap without inventing a root cause.
+6. Read `references/tier-matrix.md` and derive the lowest causal proof level,
+   fixture, registration, compatibility, migration, and real-boundary
+   obligations.
 
-Synthesize: **(1)** confirmed findings (with the refuted ones listed as "do not re-introduce"), **(2)** per-behavior test obligations, **(3)** existing-coverage gaps, **(4)** migration/real-environment flags.
+Persist a compact `Project Convention Snapshot` and `Graph Grounding Snapshot`
+using the shapes in `references/project-discovery.md`. When Graphify did not
+run, the latter records the reason and targeted-source fallback. Record
+material refuted and unresolved findings.
 
----
+Use an independent refute pass when it can challenge a risky assumption; do
+not add roles for ceremony. If current HEAD already satisfies and tests the
+request, classify it `stale-already-covered`, name exact verification gates,
+and do not fabricate a RED, cause, production edit, or mutation obligation.
 
-## Step 2 — Build the Test Coverage Matrix
+## Step 2 - Build One Test Contract
 
-READ `references/tier-matrix.md` now. For **every** spec case / behavior, produce one matrix row with NO empty cells:
+For every spec case or grounded behavior, create one canonical row:
 
-| Spec case | Behavior props | Tier | Test file::name | RED reason on HEAD | Mutation that re-reds | Acceptance gate cmd | Harness registration |
+`Case | Behavior / invariant | Named test or proof | Level / fixture | Baseline -> GREEN | Counterfactual / mutation | Command / discovery / registration`
 
-- Pick the **lowest** tier that can still fail for the real reason; climb only when the boundary (OS callback, real persistence engine, real network peer, cross-process, real external service) physically demands it.
-- One spec case routinely yields **multiple rows** (unit floor → integration → real-environment proof). The unit/fast row is mandatory; the real-environment row is the closure gate for OS-boundary / cross-process / external-system specs.
-- Each row's **harness registration** must be concrete, in this project's terms (from `HARNESS.md`): `AUTO (runner glob)` | `add to <suite/CI job/list>` | `register scenario in <runner script>` | `tag + tag-filtered gate`.
-- **Run the blind-spot sweep before moving on** (the matrix only covers scenarios you enumerated): force the four evergreen classes in `references/sufficiency-checklist.md` → "Blind-spot sweep" — lifecycle/derived-state durability (reopen/restart), sibling-surface consistency, destructive-action side-effects, and invariant-re-verification under new transitions — adding a row for each that applies or recording a justified N/A. These are the misses review most often surfaces after the fact.
+Rules:
 
----
+- Map every behavior to a named automated test or a justified boundary/manual
+  proof when automation cannot exercise the real boundary.
+- Label behavior-changing rows with the honest baseline: causal RED, intended
+  compile-time gap, or boundary-only proof. State the expected GREEN result.
+- Label preservation-only coverage `GREEN sentinel`; do not pretend it is RED.
+- Name one meaningful counterfactual or mutation per distinct behavior
+  contract and the test expected to re-red. When direct mutation is unsafe or
+  unsupported, name an equivalent causal perturbation and why it is adequate.
+- Use the lowest repository-defined test level that can fail for the causal
+  reason. Add another level only when it proves a distinct obligation.
+- Require a production-equivalent fixture only when the claim depends on its
+  semantics: persistence, compatibility, provider behavior, process/runtime,
+  native/OS, browser, device, hardware, security, distributed coordination,
+  or another external boundary.
+- A manual proof needs an automation infeasibility or disproportionality reason
+  under repository policy, exact setup, operator steps, observable evidence,
+  success/failure interpretation, and an owner.
+- The final cell contains a literal focused command or independently
+  reproducible proof procedure plus concrete discovery/registration when
+  applicable: verified auto-discovery, manifest, suite, tag, build target, CI
+  job, matrix entry, dispatcher, or scenario registry.
+- Use `N/A - <reason>` instead of an empty cell. An unproven load-bearing row
+  keeps the plan evidence-gated.
+- One proof may cover multiple behaviors only when each assertion and causal
+  relationship is explicit.
 
-## Step 3 — Emit the plan
+Add detailed notes only for non-obvious setup, event/result discriminators,
+fault injection, compatibility direction, or relationships that do not fit in
+the table.
 
-READ `references/plan-template.md`. Fill **every** section from Steps 0–2. Write to:
+## Step 3 - Define Gate Strategy And Emit The Plan
 
-```
-docs/tdd/NN-<slug>-tdd-plan.md
-```
+Use proportionate gates based on repository policy:
 
-(reuse the spec's NN if chaining off one; else the next-free number). Add an entry to `docs/tdd/00-INDEX.md`.
+- focused causal tests;
+- exact preservation sentinels;
+- the nearest affected suite, lane, or package gate;
+- only the broader validation justified or mandated for this change.
 
-Hard rules while writing:
-- **RED tests first**: the RED Test Catalog precedes the implementation steps; each RED entry states the file, the shape/setup, *why it fails on HEAD*, the GREEN assertion, and the exact revert that re-reds it.
-- **Literal gates only** in the Acceptance Gates block — real, runnable commands with expected counts, using this project's runner.
-- **Scope guard** is a hard "Do not" list; out-of-scope items name the follow-up work that owns them.
-- Where two code paths return the same result, assert a **distinct observable discriminator** (a distinct log/flow event, metric, or side-effect — e.g. `EVENT_DEDUP_HIT` AND NOT `EVENT_FULL_FETCH`) so the test can actually distinguish them.
+An aggregate suite does not replace focused causality. If a full suite is cheap
+or required, it may be a per-plan gate. If it is expensive and owned by CI,
+integration, a batch, or release closure, name that owner and cadence instead
+of inventing a universal rule. Numeric counts belong only when the repository
+gate contract fixes them; otherwise state semantic outcomes such as selection,
+exit status, and zero relevant failures.
 
----
+Read `references/plan-template.md`, fill its core sections, create the resolved
+directory if needed, and save at the Step 0 path (normally
+`<repository-root>/docs/tdd/`). Update an existing required index after
+rechecking for collisions.
 
-## Step 4 — Sufficiency self-check (blocking)
+Keep these rules:
 
-READ `references/sufficiency-checklist.md` and run every gate against the emitted plan. **Any "No" means the plan is a draft — fix it before presenting.** In particular: no spec case without a tiered test; every fix has a re-red mutation; every schema/data-migration change has a test against the real persistence engine; OS-boundary / cross-process / external-system paths have a real-environment proof (not a fake standing in); every new test has a harness-registration step; the Test Coverage Matrix has zero empty cells in *tier*, *mutation*, *gate*, and *harness-registration*; and the **blind-spot sweep** has been run with a row or a justified N/A for each class — and no "Accepted Difference" / "stays unchanged" claim left as an untested assumption.
+- Put the Test Contract before implementation steps.
+- Put in-scope work, preservation obligations, hard `Do not` limits, accepted
+  differences, and deferred owners in one Scope Contract And Guard.
+- Give literal commands with working directories when relevant and semantic
+  outcomes.
+- Include `## Boundary Proof Profile` only for a real environment, external
+  system, compatibility matrix, process/runtime, native/OS, device/hardware,
+  or manual proof obligation.
+- Include migration/compatibility details only when triggered: actual source
+  versions or snapshots, real engine/codec/service, before/after assertions,
+  idempotency, rollback/recovery, and directionality as applicable.
+- Include quantitative baselines and thresholds only for genuinely
+  quantitative goals, using a comparable environment and sample method.
+- Append reviewer findings or execution results only when those phases have
+  actually run. Do not emit empty ceremony.
 
----
+## Step 4 - Blocking Sufficiency Check
 
-## Step 5 — Present and hand off
+Read and apply every gate in `references/sufficiency-checklist.md`. Any `No`
+leaves the plan `planning-draft` or `evidence-gated`. Patch structural gaps
+before presenting it; do not paper over a missing real-boundary strategy with a
+lower-level fake.
 
-Summarize for the user:
-- plan type + file path,
-- number of spec cases covered and matrix rows,
-- which tiers are involved and which rows are **manual-registration** vs auto-discovered,
-- migration flag (if any) and whether a real-environment proof is the closure gate,
-- the **next command to run** — typically the first RED gate.
+Planning records expected evidence, not execution completion. If the user
+separately authorizes a preliminary command during planning, label its result
+`preliminary`; it informs the plan but does not satisfy the later execution
+contract or mutation/closure record.
 
-Flag any finding that was **refuted** in Step 1 (so the user knows what was investigated and deliberately *not* planned), and any area where evidence was thin. Recommend running `/tdd-review` on the plan before executing it.
+## Step 5 - Handoff
+
+Summarize:
+
+- plan path, type, classification, status, and highest proof boundary;
+- behavior count and Test Contract row count;
+- test levels, real fixtures, manual proofs, and registration changes;
+- migration, compatibility, or quantitative obligations when present;
+- focused and preservation commands plus broader-gate cadence;
+- first expected causal RED command, or a source-backed `N/A` for stale,
+  acceptance-only, or boundary-only work;
+- confirmed, refuted, and unresolved findings.
+
+Offer `$tdd-review` as an independent counterexample audit. Run it only when
+the user explicitly requests that skill.

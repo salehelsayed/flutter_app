@@ -1,31 +1,95 @@
-# Portable /tdd-plan and /tdd-review skills
+# Codex TDD skills for piqube
 
-Stack-agnostic versions of the TDD planning + plan-audit skills. No dependency on graphify, /sims, Flutter, or any other project tooling — safe to drop into any repository.
+This bundle contains project-adapted versions of `$tdd-plan` and `$tdd-review`.
+They preserve the causal planning and counterexample-review method from the
+source skills without carrying over that unrelated project's framework,
+database, networking, mobile-device, gate-name, or layout assumptions. This
+handoff deliberately sets piqube's plan root to `docs/tdd/`.
+
+The intended destination is `~/piqube`. Plans default to:
+
+```text
+~/piqube/docs/tdd/
+```
+
+Graphify is not bundled. When its use is authorized, each skill reads piqube's
+own repository instructions and installed `$graphify` skill, then uses that
+project's query command, profiles, graph locations, and freshness policy. When
+it is not authorized or available, the skills use targeted source discovery
+and record that limitation.
 
 ## Install
 
-Copy both directories into the target project:
+Run the following from this bundle root (the directory containing this
+`README.md`, `tdd-plan/`, and `tdd-review/`). It first verifies the target
+checkout exists and neither skill is already installed, then fails closed
+instead of merging two skill versions:
 
 ```bash
-cp -r tdd-plan tdd-review <target-repo>/.claude/skills/
+test -d ~/piqube || { echo 'Missing target repository: ~/piqube' >&2; exit 1; }
+test ! -e ~/piqube/.agents/skills/tdd-plan || { echo 'tdd-plan already exists' >&2; exit 1; }
+test ! -e ~/piqube/.agents/skills/tdd-review || { echo 'tdd-review already exists' >&2; exit 1; }
+mkdir -p ~/piqube/.agents/skills
+mkdir -p ~/piqube/docs/tdd
+cp -R tdd-plan tdd-review ~/piqube/.agents/skills/
 ```
 
-They are then invocable as `/tdd-plan` and `/tdd-review` (both have `disable-model-invocation: true`, so they only run when you ask by name).
+If that Codex installation uses `~/.codex/skills/` instead of repository-local
+`.agents/skills/`, perform the same existence checks and copy the two complete
+directories there. Move aside an older version deliberately before copying;
+do not merge versions. Start a fresh Codex session if the skill catalog is only
+loaded at session start.
 
-## Conventions they create on first use
+## Invoke
 
-- `docs/tdd/` — plans live here as `NN-<slug>-tdd-plan.md`, indexed in `docs/tdd/00-INDEX.md`. Change the path in both SKILL.md files if your project prefers another location.
-- `docs/tdd/HARNESS.md` — written by /tdd-plan's Step 0.5 bootstrap on first run: the project's literal test commands, test-directory conventions, gate scripts, and test-registration rules. Later plans reuse it.
+Both skills are explicit-only:
 
-## Flow
-
+```text
+Use $tdd-plan to plan <bug, feature, or modification>.
+Use $tdd-review to audit docs/tdd/<plan-file>.md.
 ```
-/tdd-plan "<bug/feature description or spec path>"   → docs/tdd/NN-…-tdd-plan.md
-/tdd-review NN                                       → scored audit + fix-list / in-place revision
-(execute the plan)
+
+If piqube's policy allows Graphify to be selected implicitly for codebase work,
+those prompts are sufficient. If Graphify also requires explicit permission:
+
+```text
+Use $tdd-plan and $graphify to plan <request>.
+Use $tdd-review and $graphify to audit docs/tdd/<plan-file>.md.
 ```
 
-## Contents
+Invoking one TDD skill never invokes the other. Planning offers review at
+handoff; review runs only when the user names `$tdd-review`.
 
-- `tdd-plan/SKILL.md` + `references/` — tier matrix, sufficiency checklist, plan template
-- `tdd-review/SKILL.md` + `references/` — 5 review dimensions, evergreen blind-spot sweep (B-1..B-10), audit workflow + report/fix-list templates
+## Recommended repository policy
+
+Keep the invocation boundary explicit in piqube's `AGENTS.md`:
+
+```markdown
+- Graphify may be selected implicitly for codebase, architecture, impact, test
+  discovery, TDD-planning, and TDD-review work.
+- Invoke `$tdd-plan` and `$tdd-review` only when the current user message
+  affirmatively names that skill. Task similarity, a stored plan, a prior
+  recommendation, or invocation of the other skill is not permission.
+- Resolve TDD artifacts from the repository root under `docs/tdd/` unless the
+  user explicitly requests another output path.
+```
+
+## Runtime behavior
+
+- Plans are written under `<repository-root>/docs/tdd/` unless the user
+  explicitly requests a different output path. This is independent of the
+  shell's current subdirectory.
+- Existing issue/spec identifiers and documented naming conventions win. With
+  no convention, the fallback is
+  `docs/tdd/YYYY-MM-DD-<slug>-tdd-plan.md`; collisions receive `-2`, `-3`, and
+  so on.
+- An index is updated only when piqube already defines one or its instructions
+  require one.
+- Every plan records the repository conventions actually used. It records
+  Graphify anchors when Graphify ran, or a not-used/limitation disposition when
+  it did not. No command, test tier, fixture, or CI registration is guessed
+  from the source project.
+- `$tdd-review` is chat-only and read-only by default. It writes a fix-list or
+  revises a plan only when explicitly asked.
+
+See [PORTABILITY-CHECKLIST.md](PORTABILITY-CHECKLIST.md) before copying.
