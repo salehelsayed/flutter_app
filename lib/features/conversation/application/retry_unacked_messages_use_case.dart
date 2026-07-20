@@ -1,7 +1,14 @@
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// Retries outgoing messages stuck in 'sent' status by storing them
@@ -15,6 +22,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 Future<int> retryUnackedMessages({
   required MessageRepository messageRepo,
   required P2PService p2pService,
+  MediaAttachmentRepository? mediaAttachmentRepo,
   // 186 (FU-185-A): the anti-race window. The periodic pass keeps the default
   // 60s (a genuinely in-flight recent send may still get its ack); the
   // reconnect pass passes Duration.zero so a freshly-queued offline message
@@ -79,11 +87,122 @@ Future<int> retryUnackedMessages({
       continue;
     }
 
-    if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
+    final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
+    final isPrivateDeleteTombstone = isOutgoingPrivate && msg.isDeleted;
+    final privateDeleteRepository =
+        messageRepo is DirectPrivateDeleteForEveryoneRepository
+        ? messageRepo as DirectPrivateDeleteForEveryoneRepository
+        : null;
+    List<MediaAttachment>? privateAttachments;
+    if (isPrivateDeleteTombstone && privateDeleteRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_PRIVATE_DELETE_CAPABILITY_MISSING',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
+    }
+    if (isOutgoingPrivate && !isPrivateDeleteTombstone) {
+      if (mediaAttachmentRepo == null ||
+          messageRepo is! OutgoingDirectPrivateEnvelopeCustodyRepository ||
+          mediaAttachmentRepo is! OutgoingDirectPrivateMutationRepository) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_UNACKED_PRIVATE_SETTLEMENT_CAPABILITY_MISSING',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
+        continue;
+      }
+      try {
+        privateAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          msg.id,
+          owner: MediaOwnerLane.direct,
+        );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_UNACKED_PRIVATE_ATTACHMENT_LOAD_FAILED',
+          details: {
+            'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            'error': error.runtimeType.toString(),
+          },
+        );
+        continue;
+      }
+      if (privateAttachments.length > 1) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_UNACKED_PRIVATE_ATTACHMENT_IDENTITY_REFUSED',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
+        continue;
+      }
+    }
+
+    Future<bool> persistTransport({
+      required String status,
+      required String? transport,
+    }) async {
+      if (isPrivateDeleteTombstone) {
+        final target = normalizeOutgoingDeleteTombstoneVisibility(
+          msg.copyWith(status: status, transport: transport),
+        );
+        final settled = await privateDeleteRepository!
+            .settlePrivateDeleteForEveryoneTombstone(
+              tombstone: target,
+              expectedEnvelope: msg.wireEnvelope!,
+            );
+        if (settled == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_UNACKED_PRIVATE_DELETE_SETTLEMENT_REFUSED',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+              'status': status,
+            },
+          );
+        }
+        return settled != null;
+      }
+      if (isOutgoingPrivate) {
+        final outcome =
+            await settleOutgoingDirectPrivateTransportUnderLifecycleLock(
+              messageRepository: messageRepo,
+              mediaAttachmentRepository: mediaAttachmentRepo,
+              attachments: privateAttachments,
+              messageId: msg.id,
+              expectedEnvelope: msg.wireEnvelope!,
+              status: status,
+              transport: transport,
+              relayExpiresAt: null,
+            );
+        if (!outcome.accepted) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_UNACKED_PRIVATE_TRANSPORT_SETTLEMENT_REFUSED',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+              'status': status,
+            },
+          );
+        }
+        return outcome.accepted;
+      }
       await messageRepo.saveMessage(
         normalizeOutgoingDeleteTombstoneVisibility(
-          msg.copyWith(status: 'failed'),
+          msg.copyWith(status: status, transport: transport),
         ),
+      );
+      return true;
+    }
+
+    if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
+      await persistTransport(
+        status: 'failed',
+        // The private settlement helper requires failed rows to clear stale
+        // transport ownership. Ordinary rows retain the exact pre-existing
+        // transport, matching the former status-only copyWith/save behavior.
+        transport: isOutgoingPrivate ? null : msg.transport,
       );
       emitFlowEvent(
         layer: 'FL',
@@ -98,17 +217,20 @@ Future<int> retryUnackedMessages({
         msg.wireEnvelope!,
       );
       if (stored) {
-        await messageRepo.saveMessage(
-          normalizeOutgoingDeleteTombstoneVisibility(
-            msg.copyWith(status: 'inboxed', transport: 'inbox'),
-          ),
+        final persisted = await persistTransport(
+          status: 'inboxed',
+          transport: 'inbox',
         );
-        count++;
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_UNACKED_MESSAGE_INBOXED',
-          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-        );
+        if (persisted) {
+          count++;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_UNACKED_MESSAGE_INBOXED',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            },
+          );
+        }
       }
       // Not stored -> leave as 'sent', retry on next online transition
     } catch (e) {
@@ -132,3 +254,9 @@ Future<int> retryUnackedMessages({
 
   return count;
 }
+
+bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
+    !message.isIncoming &&
+    message.privateMediaPolicy.version == 1 &&
+    (message.privateMediaMode == PrivateMediaMode.protected ||
+        message.privateMediaMode == PrivateMediaMode.viewOnce);

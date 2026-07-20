@@ -1,6 +1,6 @@
 const String directPrivateMediaDeviceLocalJourneySchema =
     'plan234.direct-private-media-device-local-journey';
-const int directPrivateMediaDeviceLocalJourneyVersion = 2;
+const int directPrivateMediaDeviceLocalJourneyVersion = 3;
 
 class DirectPrivateMediaDeviceLocalJourneyValidation {
   DirectPrivateMediaDeviceLocalJourneyValidation(List<String> failures)
@@ -223,6 +223,29 @@ validateDirectPrivateMediaDeviceLocalJourneyArtifact(Object? artifact) {
         'ordinarySendPreserved',
         true,
         r'$.sender.observations',
+        failures,
+      );
+      _expectInt(
+        observations,
+        'pendingOpenTapCount',
+        1,
+        r'$.sender.observations',
+        failures,
+      );
+      _expectExactStringSequence(
+        observations,
+        'pendingOpenSqlStateSequence',
+        _pendingOpenSqlStateSequence,
+        r'$.sender.observations',
+        'the derived available -> opening -> viewing -> consumed sequence',
+        failures,
+      );
+      _expectExactStringSequence(
+        observations,
+        'pendingOpenProofSequence',
+        _pendingOpenProofSequence,
+        r'$.sender.observations',
+        'the exact causal sender pending-open proof sequence',
         failures,
       );
       _validateProductionConversationObservations(
@@ -573,6 +596,25 @@ void _expectInt(
   }
 }
 
+void _expectExactStringSequence(
+  Map<String, Object?> owner,
+  String key,
+  List<String> expected,
+  String path,
+  String expectedDescription,
+  List<String> failures,
+) {
+  if (!owner.containsKey(key)) return;
+  final value = owner[key];
+  if (value is! List ||
+      value.length != expected.length ||
+      value.indexed.any(
+        (entry) => entry.$2 is! String || entry.$2 != expected[entry.$1],
+      )) {
+    failures.add('$path.$key must equal $expectedDescription');
+  }
+}
+
 int? _positiveInt(
   Map<String, Object?> owner,
   String key,
@@ -751,8 +793,32 @@ const Set<String> _senderObservationKeys = <String>{
   'outerPrivateMediaPresent',
   'innerPrivateMediaPresent',
   'ordinarySendPreserved',
+  'pendingOpenTapCount',
+  'pendingOpenSqlStateSequence',
+  'pendingOpenProofSequence',
   ..._productionConversationObservationKeys,
 };
+
+const List<String> _pendingOpenSqlStateSequence = <String>[
+  'available',
+  'opening',
+  'viewing',
+  'consumed',
+];
+
+const List<String> _pendingOpenProofSequence = <String>[
+  'pending_sql_authority_verified',
+  'repository_mirror_seeded',
+  'open_tapped',
+  'opening_sql_observed',
+  'viewer_first_frame',
+  'viewing_sql_observed',
+  'viewer_back_tapped',
+  'conversation_route_resumed',
+  'consumed_sql_observed',
+  'attachment_cleanup_observed',
+  'pending_source_cleanup_observed',
+];
 
 const Set<String> _recipientObservationKeys = <String>{
   'fixtureDigest',

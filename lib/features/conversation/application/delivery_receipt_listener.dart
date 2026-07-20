@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 /// Listens to routed `'delivery_receipt'` envelopes and applies them to the
@@ -14,11 +15,13 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 class DeliveryReceiptListener {
   final Stream<ChatMessage> receiptStream;
   final MessageRepository messageRepo;
+  final MediaAttachmentRepository? mediaAttachmentRepo;
   StreamSubscription<ChatMessage>? _subscription;
 
   DeliveryReceiptListener({
     required this.receiptStream,
     required this.messageRepo,
+    this.mediaAttachmentRepo,
   });
 
   void start() {
@@ -35,6 +38,7 @@ class DeliveryReceiptListener {
           await handleDeliveryReceipt(
             message: message,
             messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
           );
         } catch (e) {
           emitFlowEvent(

@@ -1,6 +1,13 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -16,8 +23,10 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart' as shared;
 
 class FakeContactRepository implements ContactRepository {
   final List<String> deletedPeerIds = [];
@@ -269,6 +278,20 @@ class FakeReactionRepository implements ReactionRepository {
     deletedForContact.add(contactPeerId);
     operations?.add('reactions:$contactPeerId');
     return 4;
+  }
+}
+
+class BarrierReactionRepository extends FakeReactionRepository {
+  final Completer<void> entered = Completer<void>();
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<int> deleteReactionsForContact(String contactPeerId) async {
+    if (!entered.isCompleted) {
+      entered.complete();
+    }
+    await release.future;
+    return super.deleteReactionsForContact(contactPeerId);
   }
 }
 
@@ -672,6 +695,413 @@ void main() {
         expect(
           await fixture.rawAttachmentRow('att-unresolved'),
           unresolvedRowBefore,
+        );
+      },
+    );
+
+    test(
+      'private contact deletion terminalizes and cleans before parent removal',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const peerId = 'peer-private-contact';
+        const messageId = 'private-contact-message';
+        const attachmentId = 'private-contact-attachment';
+        await fixture.seedDirectParent(messageId, contactPeerId: peerId);
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'status': 'sending',
+            'is_incoming': 0,
+            'private_media_policy_version': 1,
+            'private_media_mode': 'view_once',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_revealed_at_ms': null,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+        await fixture.repo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 4,
+            mediaType: 'image',
+            localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-07-20T00:00:00.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'private_media_state': 'viewing',
+            'private_media_revealed_at_ms': 1100,
+            'private_media_clock_high_water_ms': 1100,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+        final contactRepo = FakeContactRepository();
+        final manager = shared.FakeMediaFileManager();
+
+        await deleteContactAndMessages(
+          contactRepo: contactRepo,
+          messageRepo: fixture.messageRepo,
+          peerId: peerId,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+        );
+
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+        expect(contactRepo.deletedPeerIds, <String>[peerId]);
+        expect(manager.deletedContactIds, <String>[peerId]);
+      },
+    );
+
+    test(
+      'private contact deletion preflights every transfer before any hide',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const peerId = 'peer-private-contact-transfer';
+        const messageIds = <String>[
+          'private-contact-transfer-first',
+          'private-contact-transfer-second',
+        ];
+        const attachmentIds = <String>[
+          'private-contact-transfer-first-att',
+          'private-contact-transfer-second-att',
+        ];
+        for (var index = 0; index < messageIds.length; index++) {
+          final messageId = messageIds[index];
+          final attachmentId = attachmentIds[index];
+          await fixture.seedDirectParent(
+            messageId,
+            contactPeerId: peerId,
+            timestamp: '2026-07-20T00:00:0$index.000Z',
+          );
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'status': 'sending',
+              'is_incoming': 0,
+              'private_media_policy_version': 1,
+              'private_media_mode': 'protected',
+              'private_media_state': 'available',
+              'private_media_received_at_ms': 1000,
+              'private_media_clock_high_water_ms': 1000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          if (index == 0) {
+            await fixture.repo.saveAttachment(
+              MediaAttachment(
+                id: attachmentId,
+                messageId: messageId,
+                mime: 'image/jpeg',
+                size: 4,
+                mediaType: 'image',
+                localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+                downloadStatus: 'upload_pending',
+                createdAt: '2026-07-20T00:00:00.000Z',
+                ownerLane: MediaOwnerLane.direct,
+              ),
+              owner: MediaOwnerLane.direct,
+            );
+          }
+        }
+        final transferToken = directPrivateMediaTransferRegistry.tryBegin(
+          attachmentIds.last,
+          messageId: messageIds.last,
+        );
+        expect(transferToken, isNotNull);
+        addTearDown(
+          () => directPrivateMediaTransferRegistry.end(
+            attachmentIds.last,
+            transferToken!,
+          ),
+        );
+        final contactRepo = FakeContactRepository();
+        final pendingDeletes = <String>[];
+        final manager = shared.FakeMediaFileManager()
+          ..onDeletePendingUploadDir = pendingDeletes.add;
+
+        await expectLater(
+          deleteContactAndMessages(
+            contactRepo: contactRepo,
+            messageRepo: fixture.messageRepo,
+            peerId: peerId,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+          ),
+          throwsStateError,
+        );
+
+        for (var index = 0; index < messageIds.length; index++) {
+          final message = await fixture.messageRepo.getMessage(
+            messageIds[index],
+          );
+          expect(message, isNotNull);
+          expect(message!.hiddenAt, isNull);
+          expect(
+            await fixture.rawAttachmentRow(attachmentIds[index]),
+            index == 0 ? isNotNull : isNull,
+          );
+        }
+        expect(contactRepo.deletedPeerIds, isEmpty);
+        expect(manager.deletedContactIds, isEmpty);
+        expect(pendingDeletes, isEmpty);
+      },
+    );
+
+    test(
+      'empty inventory rechecks a late private parent and transfer under the global lock',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const peerId = 'peer-late-private-contact';
+        const messageId = 'late-private-contact-message';
+        const attachmentId = 'late-private-contact-attachment';
+        final contactRepo = FakeContactRepository();
+        final pendingDeletes = <String>[];
+        final manager = shared.FakeMediaFileManager()
+          ..onDeletePendingUploadDir = pendingDeletes.add;
+
+        expect(
+          await fixture.messageRepo.getMessagesForContact(peerId),
+          isEmpty,
+        );
+
+        final lockEntered = Completer<void>();
+        final releaseLock = Completer<void>();
+        final lockBlocker = fixture.repo.lifecycleLock.synchronizedAll(
+          () async {
+            lockEntered.complete();
+            await releaseLock.future;
+          },
+        );
+        addTearDown(() async {
+          if (!releaseLock.isCompleted) {
+            releaseLock.complete();
+          }
+          await lockBlocker;
+        });
+        await lockEntered.future;
+
+        var deletionSettled = false;
+        final deletion = deleteContactAndMessages(
+          contactRepo: contactRepo,
+          messageRepo: fixture.messageRepo,
+          peerId: peerId,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+        ).whenComplete(() => deletionSettled = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(deletionSettled, isFalse);
+
+        // This parent and its transfer appear only after contact deletion has
+        // started. Inventory outside the global lock would miss both, then
+        // broad purges could erase their only durable custody authority.
+        await fixture.seedDirectParent(messageId, contactPeerId: peerId);
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'status': 'sending',
+            'is_incoming': 0,
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_revealed_at_ms': null,
+            'private_media_terminal_at_ms': null,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+        final pendingRelative =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            );
+        final pendingFile = File(
+          p.join(shared.FakeMediaFileManager.testRootPath, pendingRelative),
+        );
+        await pendingFile.parent.create(recursive: true);
+        await pendingFile.writeAsBytes(const <int>[1, 2, 3, 4]);
+        addTearDown(() async {
+          if (await pendingFile.exists()) {
+            await pendingFile.delete();
+          }
+        });
+        final secureKeyName = mediaAttachmentEncryptionKeyStoreName(
+          attachmentId,
+        );
+        await fixture.secureKeyStore.write(secureKeyName, 'late-secret-key');
+        final lateAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 4,
+          mediaType: 'image',
+          localPath: pendingRelative,
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-07-20T00:00:00.000Z',
+          encryptionKeyBase64: secureStoreReferenceForKey(secureKeyName),
+          encryptionNonce: 'bGF0ZS1ub25jZQ==',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.db.insert('media_attachments', lateAttachment.toMap());
+        final transferToken = directPrivateMediaTransferRegistry.tryBegin(
+          attachmentId,
+          messageId: messageId,
+        );
+        expect(transferToken, isNotNull);
+        addTearDown(
+          () => directPrivateMediaTransferRegistry.end(
+            attachmentId,
+            transferToken!,
+          ),
+        );
+
+        final deletionExpectation = expectLater(deletion, throwsStateError);
+        releaseLock.complete();
+        await deletionExpectation;
+        await lockBlocker;
+
+        final parent = await fixture.messageRepo.getMessage(messageId);
+        expect(parent, isNotNull);
+        expect(parent!.hiddenAt, isNull);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNotNull);
+        expect(await pendingFile.exists(), isTrue);
+        expect(
+          await fixture.secureKeyStore.read(secureKeyName),
+          'late-secret-key',
+        );
+        expect(contactRepo.deletedPeerIds, isEmpty);
+        expect(manager.deletedContactIds, isEmpty);
+        expect(pendingDeletes, isEmpty);
+      },
+    );
+
+    test(
+      'first private pending-row insert queues behind contact deletion and compensates after refusal',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const peerId = 'peer-first-row-contact-race';
+        const messageId = 'first-row-contact-race-message';
+        const attachmentId = 'first-row-contact-race-attachment';
+        await fixture.seedDirectParent(messageId, contactPeerId: peerId);
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'status': 'sending',
+            'is_incoming': 0,
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_revealed_at_ms': null,
+            'private_media_terminal_at_ms': null,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+
+        final reactionRepo = BarrierReactionRepository();
+        addTearDown(() {
+          if (!reactionRepo.release.isCompleted) {
+            reactionRepo.release.complete();
+          }
+        });
+        final pendingDeletes = <String>[];
+        final manager = shared.FakeMediaFileManager()
+          ..onDeletePendingUploadDir = pendingDeletes.add;
+        final contactRepo = FakeContactRepository();
+        final deletion = deleteContactAndMessages(
+          contactRepo: contactRepo,
+          messageRepo: fixture.messageRepo,
+          peerId: peerId,
+          mediaAttachmentRepo: fixture.repo,
+          reactionRepo: reactionRepo,
+          mediaFileManager: manager,
+        );
+        await reactionRepo.entered.future;
+        expect(pendingDeletes, contains(messageId));
+
+        // Seed the copied file only after contact deletion has completed its
+        // own pending-directory sweep, while it still owns the global lock.
+        final pendingRelative =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            );
+        final pendingFile = File(
+          p.join(shared.FakeMediaFileManager.testRootPath, pendingRelative),
+        );
+        await pendingFile.parent.create(recursive: true);
+        await pendingFile.writeAsBytes(const <int>[1, 2, 3, 4]);
+        addTearDown(() async {
+          if (await pendingFile.exists()) {
+            await pendingFile.delete();
+          }
+        });
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 4,
+          mediaType: 'image',
+          localPath: pendingRelative,
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-07-20T00:00:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+
+        var preparationSettled = false;
+        final preparation = fixture.repo
+            .prepareOutgoingDirectPrivatePendingAttachments(<MediaAttachment>[
+              attachment,
+            ])
+            .whenComplete(() => preparationSettled = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(preparationSettled, isFalse);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+
+        reactionRepo.release.complete();
+        await deletion;
+        final outcome = await preparation;
+        expect(outcome, OutgoingDirectPrivatePendingPreparationOutcome.refused);
+
+        // The typed refusal is the caller's authority to remove exactly the
+        // convention-owned file copied before it attempted publication.
+        await manager.deleteOwnedPendingUploadFilesForMessage(
+          messageId: messageId,
+          storedPaths: <String>[pendingRelative],
+        );
+
+        expect(contactRepo.deletedPeerIds, <String>[peerId]);
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(await pendingFile.exists(), isFalse);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          isFalse,
         );
       },
     );

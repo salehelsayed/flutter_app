@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,7 +12,10 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -19,6 +23,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -41,11 +46,36 @@ const _privateFixtureText = 'never disclose this caption';
 const _productionOutgoingFixtureId = 'p260-production-outgoing';
 const _productionIncomingFixtureId = 'p260-production-incoming';
 const _productionTerminalFixtureId = 'p260-production-terminal';
+const _pendingOpenFixtureId = 'p262-sender-pending';
+const _pendingOpenAttachmentId = 'p262-sender-pending-attachment';
+const _pendingOpenSqlStateSequence = <String>[
+  'available',
+  'opening',
+  'viewing',
+  'consumed',
+];
+const _pendingOpenProofSequence = <String>[
+  'pending_sql_authority_verified',
+  'repository_mirror_seeded',
+  'open_tapped',
+  'opening_sql_observed',
+  'viewer_first_frame',
+  'viewing_sql_observed',
+  'viewer_back_tapped',
+  'conversation_route_resumed',
+  'consumed_sql_observed',
+  'attachment_cleanup_observed',
+  'pending_source_cleanup_observed',
+];
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('instrumented Plan 234 device-local journey', (tester) async {
+    flowEventLoggingEnabled = false;
+    addTearDown(() {
+      flowEventLoggingEnabled = true;
+    });
     expect(_deviceId, isNotEmpty, reason: 'P234_DEVICE_ID is required');
     expect(
       _role,
@@ -57,7 +87,7 @@ void main() {
       tester,
     );
     final artifact = _role == 'sender'
-        ? _runSenderProof(productionConversation)
+        ? await _runSenderProof(tester, productionConversation)
         : await _runRecipientProof(productionConversation);
     final encoded = base64Url.encode(utf8.encode(jsonEncode(artifact)));
     // The runner captures exactly one marker and performs strict combined
@@ -397,9 +427,10 @@ Future<Map<String, Object?>> _runProductionConversationProof(
   }
 }
 
-Map<String, Object?> _runSenderProof(
+Future<Map<String, Object?>> _runSenderProof(
+  WidgetTester tester,
   Map<String, Object?> productionConversation,
-) {
+) async {
   final privatePayload = _privatePayload(
     id: _correlatedPrivateMessageId,
     policy: const PrivateMediaPolicy.viewOnce(),
@@ -437,6 +468,8 @@ Map<String, Object?> _runSenderProof(
   expect(inner['privateMedia'], {'version': 1, 'mode': 'view_once'});
   expect(ordinaryInner.containsKey('privateMedia'), isFalse);
 
+  final pendingOpen = await _runSenderPendingOpenProof(tester);
+
   return <String, Object?>{
     'role': 'sender',
     'deviceId': _deviceId,
@@ -447,9 +480,432 @@ Map<String, Object?> _runSenderProof(
       'outerPrivateMediaPresent': envelope.containsKey('privateMedia'),
       'innerPrivateMediaPresent': inner.containsKey('privateMedia'),
       'ordinarySendPreserved': !ordinaryInner.containsKey('privateMedia'),
+      ...pendingOpen,
       ...productionConversation,
     },
   };
+}
+
+Future<Map<String, Object?>> _runSenderPendingOpenProof(
+  WidgetTester tester,
+) async {
+  final tempRoot = await Directory.systemTemp.createTemp(
+    'p262-sender-pending-open-',
+  );
+  final databasePath = p.join(tempRoot.path, 'sender-pending-open.db');
+  final mediaFileManager = MediaFileManager();
+  final proofSequence = <String>[];
+  final sqlStateSequence = <String>[];
+  final protectionEvents = StreamController<Object?>();
+  sqlcipher.Database? database;
+  DirectPrivateMediaViewerController? controller;
+  String? pendingStoredPath;
+  String? pendingAbsolutePath;
+  var openTapCount = 0;
+  try {
+    final source = File(p.join(tempRoot.path, 'fixture.png'));
+    await source.writeAsBytes(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+        '+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+      flush: true,
+    );
+    expect(await source.length(), greaterThan(0));
+
+    pendingStoredPath = await mediaFileManager.copyToDurableStorage(
+      sourceFilePath: source.path,
+      messageId: _pendingOpenFixtureId,
+      attachmentId: _pendingOpenAttachmentId,
+      mime: 'image/png',
+    );
+    pendingAbsolutePath = await mediaFileManager.resolveStoredPath(
+      pendingStoredPath,
+    );
+    final pendingRoot = p.normalize(
+      await mediaFileManager.trustedPendingUploadRootPath(),
+    );
+    MediaFileManager.cacheDocumentsDir(p.dirname(pendingRoot));
+    expect(
+      p.normalize(pendingAbsolutePath),
+      p.join(
+        pendingRoot,
+        _pendingOpenFixtureId,
+        '$_pendingOpenAttachmentId.png',
+      ),
+    );
+    expect(await File(pendingAbsolutePath).length(), await source.length());
+
+    final parent = ConversationMessage(
+      id: _pendingOpenFixtureId,
+      contactPeerId: 'p262-contact',
+      senderPeerId: 'p262-own-peer',
+      text: '',
+      timestamp: '2026-07-20T10:00:00.000Z',
+      status: 'sent',
+      isIncoming: false,
+      createdAt: '2026-07-20T10:00:00.000Z',
+      transport: 'direct',
+      privateMediaPolicy: const PrivateMediaPolicy.protected(),
+      privateMediaState: PrivateMediaLifecycleState.available,
+    );
+    final attachment = MediaAttachment(
+      id: _pendingOpenAttachmentId,
+      messageId: parent.id,
+      mime: 'image/png',
+      size: await source.length(),
+      mediaType: 'image',
+      localPath: pendingStoredPath,
+      downloadStatus: 'upload_pending',
+      createdAt: '2026-07-20T10:00:00.000Z',
+      ownerLane: MediaOwnerLane.direct,
+    );
+
+    database = await _openProofDatabase(databasePath);
+    await dbInsertMessage(database, parent.toMap());
+    // Fixture-only raw SQL seed: the production guarded helper is
+    // intentionally incoming-only. The exact row is asserted before the
+    // in-memory repository mirror is populated.
+    await dbInsertMediaAttachment(database, attachment.toMap());
+
+    final exactParent = await database.query(
+      'messages',
+      columns: const <String>['id'],
+      where:
+          'id = ? AND is_incoming = 0 '
+          'AND private_media_policy_version = 1 '
+          "AND private_media_mode = 'protected' "
+          "AND private_media_state = 'available'",
+      whereArgs: const <Object?>[_pendingOpenFixtureId],
+    );
+    expect(exactParent, hasLength(1));
+    final exactPending = await database.query(
+      'media_attachments',
+      columns: const <String>['id'],
+      where:
+          'id = ? AND message_id = ? AND owner_lane = ? '
+          'AND local_path = ? AND download_status = ? AND size = ?',
+      whereArgs: <Object?>[
+        attachment.id,
+        parent.id,
+        MediaOwnerLane.direct.dbValue,
+        pendingStoredPath,
+        'upload_pending',
+        attachment.size,
+      ],
+    );
+    expect(exactPending, hasLength(1));
+
+    Future<String> readExactSqlState(String expected) async {
+      final rows = await database!.query(
+        'messages',
+        columns: const <String>['private_media_state'],
+        where:
+            'id = ? AND is_incoming = 0 '
+            'AND private_media_policy_version = 1 '
+            "AND private_media_mode = 'protected'",
+        whereArgs: const <Object?>[_pendingOpenFixtureId],
+        limit: 1,
+      );
+      expect(rows, hasLength(1));
+      final state = rows.single['private_media_state'];
+      expect(state, expected);
+      return state! as String;
+    }
+
+    sqlStateSequence.add(await readExactSqlState('available'));
+    proofSequence.add('pending_sql_authority_verified');
+
+    final attachmentRepository = _JourneyMediaAttachmentRepository(
+      currentDatabase: () {
+        final current = database;
+        if (current == null || !current.isOpen) {
+          throw StateError('p262 sender database is not open');
+        }
+        return current;
+      },
+    );
+    expect(
+      await attachmentRepository.getAttachmentsForMessage(
+        parent.id,
+        owner: MediaOwnerLane.direct,
+      ),
+      isEmpty,
+    );
+    attachmentRepository.seedAttachment(attachment);
+    proofSequence.add('repository_mirror_seeded');
+
+    final lifecycleRepository = _SqlLifecycleRepository(database);
+    final lifecycle = DirectPrivateMediaLifecycle(
+      messageRepository: lifecycleRepository,
+      mediaAttachmentRepository: attachmentRepository,
+      mediaFileManager: mediaFileManager,
+    );
+    var lifecycleNowMs = 1_753_003_200_000;
+    final lifecycleEngine = PrivateMediaLifecycleEngine(
+      adapter: lifecycle,
+      lifecycleLock: attachmentRepository.directPrivateMediaLifecycleLock,
+      nowMs: () => lifecycleNowMs++,
+    );
+    final protectionCoordinator = PrivateMediaProtectionCoordinator(
+      invokeMethod: (method, arguments) async => <String, Object?>{
+        'ok': true,
+        'protectionActive': method == 'enter',
+      },
+      nativeEvents: protectionEvents.stream,
+    );
+    controller = DirectPrivateMediaViewerController(
+      loadCurrentRows: (identity) async {
+        if (identity.messageId != parent.id ||
+            identity.attachmentId != attachment.id) {
+          return const DirectPrivateMediaCurrentRows(
+            parent: null,
+            attachment: null,
+          );
+        }
+        final parentRow = await dbLoadMessage(database!, parent.id);
+        final attachments = await attachmentRepository.getAttachmentsForMessage(
+          parent.id,
+          owner: MediaOwnerLane.direct,
+        );
+        return DirectPrivateMediaCurrentRows(
+          parent: parentRow == null
+              ? null
+              : ConversationMessage.fromMap(parentRow),
+          attachment: attachments.length == 1 ? attachments.single : null,
+        );
+      },
+      lifecycleEngine: lifecycleEngine,
+      protectionCoordinator: protectionCoordinator,
+    );
+
+    final navigatorKey = GlobalKey<NavigatorState>();
+    final launchCompleted = Completer<void>();
+    DirectPrivateMediaOpenResult? launchedResult;
+    var launchPhase = 'not_started';
+    String? launchFailureType;
+    Future<DirectPrivateMediaOpenResult> launchViewer(
+      DirectPrivateMediaViewerIdentity identity,
+      DirectPrivateMediaContinuityGuard continuityGuard,
+    ) async {
+      openTapCount += 1;
+      proofSequence.add('open_tapped');
+      try {
+        launchPhase = 'prepare';
+        final activeController = controller!;
+        final prepared = await activeController.prepareResult(
+          identity,
+          continuityGuard,
+        );
+        final grant = prepared.grant;
+        if (grant == null) {
+          throw StateError('p262 sender pending open was refused');
+        }
+        sqlStateSequence.add(await readExactSqlState('opening'));
+        proofSequence.add('opening_sql_observed');
+
+        final route = MaterialPageRoute<void>(
+          builder: (_) => DirectPrivateMediaViewer(
+            grant: grant,
+            controller: activeController,
+          ),
+        );
+        late final DirectPrivateMediaSettleResult settled;
+        try {
+          launchPhase = 'route_push';
+          await navigatorKey.currentState!.push<void>(route);
+          launchPhase = 'route_completed';
+          await route.completed;
+        } finally {
+          // The viewer starts settlement before its route completes. Calling
+          // the idempotent controller seam again is required to await that
+          // in-flight operation; `grant.settled` becomes true at operation
+          // start and does not itself mean `settleResult` is published yet.
+          launchPhase = 'settle';
+          settled = await activeController.settle(
+            grant,
+            DirectPrivateMediaExitReason.close,
+            releaseProtection: false,
+          );
+          launchPhase = 'release_protection';
+          await activeController.releaseProtectionOwner(grant);
+        }
+        launchPhase = 'result';
+        launchedResult = DirectPrivateMediaOpenResult.displayed(settled);
+        launchPhase = 'complete';
+        return launchedResult!;
+      } on Object catch (error) {
+        launchFailureType = error.runtimeType.toString();
+        rethrow;
+      } finally {
+        if (!launchCompleted.isCompleted) launchCompleted.complete();
+      }
+    }
+
+    Future<DirectPrivateMediaActionDecision> loadDecision(
+      String messageId,
+    ) async {
+      final row = await dbLoadMessage(database!, messageId);
+      final currentParent = row == null
+          ? null
+          : ConversationMessage.fromMap(row);
+      final attachments = await attachmentRepository.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
+      return DirectPrivateMediaActionEligibility.evaluate(
+        parent: currentParent,
+        attachment: attachments.length == 1 ? attachments.single : null,
+        expectedMessageId: messageId,
+        expectedAttachmentId: attachment.id,
+        requireIncoming: false,
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ConversationScreen(
+            contactPeerId: parent.contactPeerId,
+            contactUsername: 'Recipient',
+            connectionDate: 'July 20, 2026',
+            ownPeerId: parent.senderPeerId,
+            messages: <ConversationMessage>[
+              parent.copyWith(media: <MediaAttachment>[attachment]),
+            ],
+            onSend: (_) {},
+            onBack: () {},
+            initialLoadDone: true,
+            hasMoreOlderMessages: false,
+            onReactionSelected: (_, _) {},
+            onQuoteReply: (_) {},
+            onDeleteMessage: (_) {},
+            onOpenPrivateMediaResult: launchViewer,
+            onLoadPrivateParentDecision: loadDecision,
+          ),
+        ),
+      ),
+    );
+
+    final messageRow = find.byKey(const ValueKey('msg-$_pendingOpenFixtureId'));
+    final scopedOpen = find.descendant(
+      of: messageRow,
+      matching: find.byKey(const ValueKey('private-media-open')),
+    );
+    for (
+      var attempt = 0;
+      attempt < 80 && scopedOpen.evaluate().isEmpty;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(messageRow, findsOneWidget);
+    expect(scopedOpen, findsOneWidget);
+    await tester.tap(scopedOpen);
+
+    final viewer = find.byType(DirectPrivateMediaViewer);
+    var viewingObserved = false;
+    for (var attempt = 0; attempt < 120; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      final rows = await database.query(
+        'messages',
+        columns: const <String>['private_media_state'],
+        where: 'id = ?',
+        whereArgs: const <Object?>[_pendingOpenFixtureId],
+        limit: 1,
+      );
+      viewingObserved =
+          viewer.evaluate().length == 1 &&
+          rows.length == 1 &&
+          rows.single['private_media_state'] == 'viewing';
+      if (viewingObserved) break;
+    }
+    expect(viewingObserved, isTrue);
+    expect(
+      find.byKey(const ValueKey('direct-private-media-viewer')),
+      findsOneWidget,
+    );
+    proofSequence.add('viewer_first_frame');
+    sqlStateSequence.add(await readExactSqlState('viewing'));
+    proofSequence.add('viewing_sql_observed');
+
+    final viewerBack = find.descendant(
+      of: viewer,
+      matching: find.byIcon(Icons.arrow_back),
+    );
+    expect(viewerBack, findsOneWidget);
+    await tester.tap(viewerBack);
+    proofSequence.add('viewer_back_tapped');
+
+    for (var attempt = 0; attempt < 120; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (viewer.evaluate().isEmpty && launchCompleted.isCompleted) break;
+    }
+    await launchCompleted.future;
+    expect(viewer, findsNothing);
+    expect(find.byType(ConversationScreen), findsOneWidget);
+    expect(
+      launchFailureType,
+      isNull,
+      reason: 'pending viewer launch failed at $launchPhase',
+    );
+    expect(launchedResult?.wasDisplayed, isTrue);
+    proofSequence.add('conversation_route_resumed');
+
+    sqlStateSequence.add(await readExactSqlState('consumed'));
+    proofSequence.add('consumed_sql_observed');
+    final rowsAfterCleanup = await database.query(
+      'media_attachments',
+      columns: const <String>['id'],
+      where: 'id = ? AND message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[
+        attachment.id,
+        parent.id,
+        MediaOwnerLane.direct.dbValue,
+      ],
+    );
+    expect(rowsAfterCleanup, isEmpty);
+    expect(
+      await attachmentRepository.getAttachmentsForMessage(
+        parent.id,
+        owner: MediaOwnerLane.direct,
+      ),
+      isEmpty,
+    );
+    proofSequence.add('attachment_cleanup_observed');
+    expect(await File(pendingAbsolutePath).exists(), isFalse);
+    proofSequence.add('pending_source_cleanup_observed');
+
+    expect(openTapCount, 1);
+    expect(sqlStateSequence, _pendingOpenSqlStateSequence);
+    expect(proofSequence, _pendingOpenProofSequence);
+    return <String, Object?>{
+      'pendingOpenTapCount': openTapCount,
+      'pendingOpenSqlStateSequence': sqlStateSequence,
+      'pendingOpenProofSequence': proofSequence,
+    };
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    if (controller != null) await controller.dispose();
+    await protectionEvents.close();
+    if (database != null && database.isOpen) await database.close();
+    if (pendingStoredPath != null) {
+      await mediaFileManager.deleteOwnedPendingUploadFilesForMessage(
+        messageId: _pendingOpenFixtureId,
+        storedPaths: <String?>[pendingStoredPath],
+      );
+    }
+    if (pendingAbsolutePath != null &&
+        await File(pendingAbsolutePath).exists()) {
+      await File(pendingAbsolutePath).delete();
+    }
+    if (await tempRoot.exists()) await tempRoot.delete(recursive: true);
+  }
 }
 
 Future<Map<String, Object?>> _runRecipientProof(
@@ -1631,6 +2087,9 @@ class _JourneyMediaAttachmentRepository
             id: row['id'] as String,
             messageId: row['message_id'] as String,
             mime: row['mime'] as String,
+            size: (row['size'] as num).toInt(),
+            downloadStatus: row['download_status'] as String,
+            localPath: row['local_path'] as String?,
           ),
         )
         .toList(growable: false);

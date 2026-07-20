@@ -1,4 +1,6 @@
 import '../models/conversation_message.dart';
+import '../models/media_attachment.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
 /// Repository interface for managing conversation messages.
 abstract class MessageRepository {
@@ -148,6 +150,59 @@ abstract class MessageRepository {
 /// success, without polling or reloading the full conversation/feed snapshot.
 abstract class MessageRepositoryChangeSource {
   Stream<ConversationMessage> get messageChanges;
+}
+
+/// Exact column-only custody boundary for a key-rotating outgoing private
+/// media retry. Implementations requalify the visible direct parent and its
+/// convention-relative pending attachment in the same transaction as the
+/// envelope clear, without rewriting lifecycle or deletion state.
+abstract interface class OutgoingDirectPrivateEnvelopeCustodyRepository {
+  Future<bool> invalidateWireEnvelopeBeforePrivateUpload({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  });
+
+  /// Returns an envelope-less manual upload attempt to retryable `failed`
+  /// status only while the exact protected/view-once parent and convention-
+  /// owned pending attachment still exist. This never rewrites lifecycle,
+  /// deletion, attachment, or envelope state.
+  Future<bool> markOutgoingDirectPrivateUploadHandoffFailed({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  });
+
+  /// Persists the final encrypted envelope only while the exact outgoing
+  /// protected/view-once parent and its single attachment still carry the
+  /// matching completion/pending custody described by the caller.
+  Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>
+  commitOutgoingDirectPrivateWireEnvelope({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+  });
+
+  /// Settles only transport-owned columns after network/inbox work. The
+  /// implementation repeats the exact visible private-parent, handoff
+  /// envelope and lifecycle predicates in one DB CAS. Live media requires its
+  /// exact single attachment; a cleaned terminal parent requires zero.
+  /// Concurrent hide/delete/removal is reported as a no-op and must never
+  /// trigger a generic full-row fallback.
+  Future<OutgoingDirectPrivateTransportSettlementOutcome>
+  settleOutgoingDirectPrivateTransport({
+    required String messageId,
+
+    /// Exact live attachment identity, or null only for a durably consumed
+    /// parent whose terminal cleanup has removed its sole direct attachment.
+    required String? attachmentId,
+    required String expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+  });
 }
 
 /// Exact, post-commit signal for physical direct-message removals.

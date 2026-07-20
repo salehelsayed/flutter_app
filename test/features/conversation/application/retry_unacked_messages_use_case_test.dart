@@ -66,31 +66,28 @@ void main() {
       expect(count, 0);
     });
 
-    test(
-      'TC-186-01 threads olderThan to getUnackedOutgoingMessages '
-      '(default 60s; reconnect passes Duration.zero)',
-      () async {
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        );
+    test('TC-186-01 threads olderThan to getUnackedOutgoingMessages '
+        '(default 60s; reconnect passes Duration.zero)', () async {
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
 
-        // Default preserves the 60s anti-race window (all existing callers).
-        await retryUnackedMessages(
-          messageRepo: messageRepo,
-          p2pService: p2pService,
-        );
-        expect(messageRepo.lastUnackedOlderThan, const Duration(seconds: 60));
+      // Default preserves the 60s anti-race window (all existing callers).
+      await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
+      expect(messageRepo.lastUnackedOlderThan, const Duration(seconds: 60));
 
-        // 186: the reconnect pass drops the gate so a freshly-queued offline
-        // message is not skipped.
-        await retryUnackedMessages(
-          messageRepo: messageRepo,
-          p2pService: p2pService,
-          olderThan: Duration.zero,
-        );
-        expect(messageRepo.lastUnackedOlderThan, Duration.zero);
-      },
-    );
+      // 186: the reconnect pass drops the gate so a freshly-queued offline
+      // message is not skipped.
+      await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+        olderThan: Duration.zero,
+      );
+      expect(messageRepo.lastUnackedOlderThan, Duration.zero);
+    });
 
     test('marks inboxed via inbox and sets transport to inbox', () async {
       final msg = _makeSentMessage();
@@ -228,7 +225,7 @@ void main() {
       final msg = _makeSentMessage(
         wireEnvelope:
             '{"type":"chat_message","version":"1","payload":{"text":"legacy edit"}}',
-      ).copyWith(editedAt: '2026-01-01T00:05:00.000Z');
+      ).copyWith(editedAt: '2026-01-01T00:05:00.000Z', transport: 'direct');
       messageRepo.seed([msg]);
       messageRepo.unackedOutgoingOverride = [msg];
 
@@ -245,6 +242,7 @@ void main() {
       final saved = messageRepo.lastSavedMessage;
       expect(saved!.status, 'failed');
       expect(saved.editedAt, '2026-01-01T00:05:00.000Z');
+      expect(saved.transport, 'direct');
     });
 
     test(

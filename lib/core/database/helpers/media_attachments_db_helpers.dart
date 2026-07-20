@@ -2,14 +2,103 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../constants/retry_constants.dart';
 import '../../media/group_media_integrity_policy.dart';
+import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
+import '../../media/outgoing_direct_private_mutation_coordinator.dart';
 import '../../media/upload_media_outcome.dart';
 import '../../media/upload_retry_projection.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'group_messages_db_helpers.dart';
 import 'messages_db_helpers.dart';
+
+enum _OutgoingPrivateParentMutationAuthority {
+  ordinaryOrIncoming,
+  available,
+  activeLease,
+  terminal,
+  refused,
+}
+
+_OutgoingPrivateParentMutationAuthority
+_classifyOutgoingPrivateParentMutationAuthority(Map<String, Object?> parent) {
+  final incoming = ((parent['is_incoming'] as num?)?.toInt() ?? 0) != 0;
+  if (incoming) {
+    return _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming;
+  }
+  final version = (parent['private_media_policy_version'] as num?)?.toInt();
+  final mode = parent['private_media_mode'] as String?;
+  final legacyOrdinary = version == null && mode == null;
+  final ordinary = version == 0 && (mode == null || mode == 'ordinary');
+  // Sender one-more-look authority is intentionally limited to protected and
+  // view-once. Existing outgoing disappearing media keeps its established
+  // generic upload persistence/retry behavior; it must never inherit the
+  // sender-open CAS merely because it is also policy version 1.
+  final existingDisappearing = version == 1 && mode == 'disappearing';
+  if (legacyOrdinary || ordinary || existingDisappearing) {
+    return _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming;
+  }
+  if (version != 1 || (mode != 'protected' && mode != 'view_once')) {
+    return _OutgoingPrivateParentMutationAuthority.refused;
+  }
+  if (parent['hidden_at'] != null || parent['deleted_at'] != null) {
+    return _OutgoingPrivateParentMutationAuthority.terminal;
+  }
+  final state = parent['private_media_state'] as String?;
+  final terminalAt = parent['private_media_terminal_at_ms'];
+  if ((state == 'opening' || state == 'viewing') && terminalAt == null) {
+    return _OutgoingPrivateParentMutationAuthority.activeLease;
+  }
+  if (state == 'available' &&
+      parent['private_media_revealed_at_ms'] == null &&
+      terminalAt == null) {
+    return _OutgoingPrivateParentMutationAuthority.available;
+  }
+  return _OutgoingPrivateParentMutationAuthority.terminal;
+}
+
+String? _expectedPendingPathForMutation({
+  required String messageId,
+  required String attachmentId,
+  required String mime,
+}) {
+  if (messageId.isEmpty || attachmentId.isEmpty || mime.isEmpty) return null;
+  try {
+    return MediaFilePathConvention.relativePathForPendingUpload(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+bool _hasExactOutgoingPrivatePendingIdentity(
+  Map<String, Object?> row, {
+  required String messageId,
+}) {
+  final attachmentId = row['id'] as String? ?? '';
+  final mime = row['mime'] as String? ?? '';
+  final expected = _expectedPendingPathForMutation(
+    messageId: messageId,
+    attachmentId: attachmentId,
+    mime: mime,
+  );
+  return expected != null &&
+      row['message_id'] == messageId &&
+      row['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+      row['local_path'] == expected &&
+      ((row['size'] as num?)?.toInt() ?? 0) > 0;
+}
+
+bool _isExactOutgoingPrivatePendingMutationRow(
+  Map<String, Object?> row, {
+  required String messageId,
+}) =>
+    _hasExactOutgoingPrivatePendingIdentity(row, messageId: messageId) &&
+    row['download_status'] == kMediaDownloadStatusUploadPending;
 
 /// Atomically projects one direct attachment upload failure and its parent.
 ///
@@ -69,7 +158,7 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
 }) {
   return dbWriteTransaction(db, (txn) async {
     final parentRows = await txn.rawQuery(
-      'SELECT status, is_incoming FROM $parentTable WHERE id = ? LIMIT 1',
+      'SELECT * FROM $parentTable WHERE id = ? LIMIT 1',
       [messageId],
     );
     if (parentRows.isEmpty) {
@@ -82,8 +171,23 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
       return const UploadRetryProjectionResult.notApplied();
     }
 
+    final privateAuthority = ownerLane == MediaOwnerLane.direct
+        ? _classifyOutgoingPrivateParentMutationAuthority(parent)
+        : _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming;
+    switch (privateAuthority) {
+      case _OutgoingPrivateParentMutationAuthority.activeLease:
+        return const UploadRetryProjectionResult.notAppliedActiveLease();
+      case _OutgoingPrivateParentMutationAuthority.terminal:
+        return const UploadRetryProjectionResult.notAppliedTerminal();
+      case _OutgoingPrivateParentMutationAuthority.refused:
+        return const UploadRetryProjectionResult.notApplied();
+      case _OutgoingPrivateParentMutationAuthority.available:
+      case _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming:
+        break;
+    }
+
     final attachmentRows = await txn.rawQuery(
-      'SELECT upload_retry_count FROM media_attachments '
+      'SELECT * FROM media_attachments '
       'WHERE id = ? AND message_id = ? AND owner_lane = ? '
       "AND download_status = 'upload_pending' LIMIT 1",
       [attachmentId, messageId, ownerLane.dbValue],
@@ -91,9 +195,17 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
     if (attachmentRows.isEmpty) {
       return const UploadRetryProjectionResult.notApplied();
     }
+    final existingAttachment = attachmentRows.single;
+    if (privateAuthority == _OutgoingPrivateParentMutationAuthority.available &&
+        !_isExactOutgoingPrivatePendingMutationRow(
+          existingAttachment,
+          messageId: messageId,
+        )) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
 
     final currentCount =
-        (attachmentRows.single['upload_retry_count'] as num?)?.toInt() ?? 0;
+        (existingAttachment['upload_retry_count'] as num?)?.toInt() ?? 0;
     late final String attachmentStatus;
     late final int projectedCount;
     switch (disposition) {
@@ -116,16 +228,37 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
         break;
     }
 
+    final privateAttachmentPredicate =
+        privateAuthority == _OutgoingPrivateParentMutationAuthority.available
+        ? ' AND local_path = ? AND mime = ? AND size = ? '
+              'AND EXISTS (SELECT 1 FROM messages private_parent '
+              'WHERE private_parent.id = media_attachments.message_id '
+              'AND private_parent.is_incoming = 0 '
+              'AND private_parent.hidden_at IS NULL '
+              'AND private_parent.deleted_at IS NULL '
+              'AND private_parent.private_media_policy_version = 1 '
+              "AND private_parent.private_media_mode IN ('protected','view_once') "
+              "AND private_parent.private_media_state = 'available' "
+              'AND private_parent.private_media_revealed_at_ms IS NULL '
+              'AND private_parent.private_media_terminal_at_ms IS NULL)'
+        : '';
     final attachmentCount = await txn.rawUpdate(
       'UPDATE media_attachments SET download_status = ?, '
       'upload_retry_count = ? WHERE id = ? AND message_id = ? '
-      "AND owner_lane = ? AND download_status = 'upload_pending'",
+      "AND owner_lane = ? AND download_status = 'upload_pending'"
+      '$privateAttachmentPredicate',
       [
         attachmentStatus,
         projectedCount,
         attachmentId,
         messageId,
         ownerLane.dbValue,
+        if (privateAuthority ==
+            _OutgoingPrivateParentMutationAuthority.available) ...<Object?>[
+          existingAttachment['local_path'],
+          existingAttachment['mime'],
+          existingAttachment['size'],
+        ],
       ],
     );
     if (attachmentCount != 1) {
@@ -142,10 +275,19 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
       parentAllowedStatuses.length,
       '?',
     ).join(', ');
+    final privateParentPredicate =
+        privateAuthority == _OutgoingPrivateParentMutationAuthority.available
+        ? ' AND hidden_at IS NULL AND deleted_at IS NULL '
+              'AND private_media_policy_version = 1 '
+              "AND private_media_mode IN ('protected','view_once') "
+              "AND private_media_state = 'available' "
+              'AND private_media_revealed_at_ms IS NULL '
+              'AND private_media_terminal_at_ms IS NULL'
+        : '';
     final parentCount = await txn.rawUpdate(
       'UPDATE $parentTable SET status = ? WHERE id = ? '
       'AND COALESCE(is_incoming, 0) = 0 '
-      'AND status IN ($allowedStatusPlaceholders)',
+      'AND status IN ($allowedStatusPlaceholders)$privateParentPredicate',
       [
         terminal ? 'failed' : retryableParentStatus,
         messageId,
@@ -214,7 +356,7 @@ Future<bool> _dbRearmUploadRetryForManualRetry(
 
   return dbWriteTransaction(db, (txn) async {
     final parentRows = await txn.rawQuery(
-      'SELECT status, is_incoming FROM $parentTable WHERE id = ? LIMIT 1',
+      'SELECT * FROM $parentTable WHERE id = ? LIMIT 1',
       [messageId],
     );
     if (parentRows.isEmpty ||
@@ -222,10 +364,43 @@ Future<bool> _dbRearmUploadRetryForManualRetry(
         ((parentRows.single['is_incoming'] as num?)?.toInt() ?? 0) != 0) {
       return false;
     }
+    final privateAuthority = ownerLane == MediaOwnerLane.direct
+        ? _classifyOutgoingPrivateParentMutationAuthority(parentRows.single)
+        : _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming;
+    final parent = parentRows.single;
+    final rawEnvelope = parent['wire_envelope'];
+    final envelopeMissing =
+        rawEnvelope == null ||
+        rawEnvelope == '' ||
+        (rawEnvelope is List<int> && rawEnvelope.isEmpty);
+    final terminalTransportCustody =
+        ownerLane == MediaOwnerLane.direct &&
+        privateAuthority == _OutgoingPrivateParentMutationAuthority.terminal &&
+        parent['hidden_at'] == null &&
+        parent['deleted_at'] == null &&
+        ((parent['private_media_policy_version'] as num?)?.toInt() == 1) &&
+        (parent['private_media_mode'] == 'protected' ||
+            parent['private_media_mode'] == 'view_once') &&
+        parent['private_media_state'] == 'consumed' &&
+        parent['private_media_terminal_at_ms'] != null &&
+        envelopeMissing;
+    if (privateAuthority !=
+            _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming &&
+        privateAuthority != _OutgoingPrivateParentMutationAuthority.available &&
+        !terminalTransportCustody) {
+      return false;
+    }
 
+    final requiresExactPrivatePending =
+        privateAuthority == _OutgoingPrivateParentMutationAuthority.available ||
+        terminalTransportCustody;
+    final attachmentColumns = requiresExactPrivatePending
+        ? 'id, message_id, owner_lane, mime, size, local_path, '
+              'download_status, upload_retry_count'
+        : 'id, local_path, download_status, upload_retry_count';
     final rows = await txn.rawQuery(
-      'SELECT id, local_path, download_status, upload_retry_count '
-      'FROM media_attachments WHERE message_id = ? AND owner_lane = ?',
+      'SELECT $attachmentColumns FROM media_attachments '
+      'WHERE message_id = ? AND owner_lane = ?',
       [messageId, ownerLane.dbValue],
     );
     final unfinishedRows = rows
@@ -233,6 +408,17 @@ Future<bool> _dbRearmUploadRetryForManualRetry(
         .toList(growable: false);
     if (unfinishedRows.length != attachments.length ||
         unfinishedRows.any((row) => !expectedIds.contains(row['id']))) {
+      return false;
+    }
+    if (requiresExactPrivatePending &&
+        unfinishedRows.any(
+          (row) => !_isExactOutgoingPrivatePendingMutationRow(<String, Object?>{
+            ...row,
+            // Rearm accepts terminal upload failures at the exact pending
+            // identity; path authority is identical to upload_pending.
+            'download_status': kMediaDownloadStatusUploadPending,
+          }, messageId: messageId),
+        )) {
       return false;
     }
 
@@ -262,9 +448,25 @@ Future<bool> _dbRearmUploadRetryForManualRetry(
               'inbox_stored = 0, retry_attempt_count = 0, '
               'next_eligible_at = NULL'
         : 'status = ?, wire_envelope = NULL';
+    final privateParentPredicate = requiresExactPrivatePending
+        ? terminalTransportCustody
+              ? ' AND hidden_at IS NULL AND deleted_at IS NULL '
+                    'AND private_media_policy_version = 1 '
+                    "AND private_media_mode IN ('protected','view_once') "
+                    "AND private_media_state = 'consumed' "
+                    'AND private_media_terminal_at_ms IS NOT NULL '
+                    'AND (wire_envelope IS NULL OR LENGTH(wire_envelope) = 0)'
+              : ' AND hidden_at IS NULL AND deleted_at IS NULL '
+                    'AND private_media_policy_version = 1 '
+                    "AND private_media_mode IN ('protected','view_once') "
+                    "AND private_media_state = 'available' "
+                    'AND private_media_revealed_at_ms IS NULL '
+                    'AND private_media_terminal_at_ms IS NULL'
+        : '';
     final parentCount = await txn.rawUpdate(
       'UPDATE $parentTable SET $parentColumns WHERE id = ? '
-      "AND COALESCE(is_incoming, 0) = 0 AND status = 'failed'",
+      "AND COALESCE(is_incoming, 0) = 0 AND status = 'failed'"
+      '$privateParentPredicate',
       [retryableParentStatus, messageId],
     );
     if (parentCount != 1) {
@@ -463,6 +665,394 @@ Future<bool> dbSaveDirectPrivateMediaAttachmentGuarded(
   });
 }
 
+/// Classifies one outgoing direct-private upload completion without mutating
+/// either the attachment row or its secure key.
+///
+/// The classification and every durable identity read share one SQLite
+/// transaction. The repository additionally compares the hydrated secure-key
+/// value before accepting [OutgoingDirectPrivateCompletionQualification
+/// .identicalCommittedCandidate].
+Future<OutgoingDirectPrivateCompletionQualification>
+dbClassifyOutgoingDirectPrivateMediaCompletion(
+  Database db,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final messageId = completionRow['message_id'] as String? ?? '';
+    final attachmentId = completionRow['id'] as String? ?? '';
+    final parents = await txn.query(
+      'messages',
+      columns: const <String>[
+        'id',
+        'contact_peer_id',
+        'status',
+        'is_incoming',
+        'wire_envelope',
+        'hidden_at',
+        'deleted_at',
+        'private_media_policy_version',
+        'private_media_mode',
+        'private_media_state',
+        'private_media_revealed_at_ms',
+        'private_media_terminal_at_ms',
+      ],
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (parents.isEmpty) {
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    final parent = parents.single;
+    final isOutgoing = ((parent['is_incoming'] as num?)?.toInt() ?? 0) == 0;
+    final policyVersion = (parent['private_media_policy_version'] as num?)
+        ?.toInt();
+    final mode = parent['private_media_mode'] as String?;
+    final isOutgoingPrivateParent =
+        isOutgoing &&
+        policyVersion == 1 &&
+        (mode == 'protected' || mode == 'view_once');
+    final isOutgoingGenericParent =
+        isOutgoing &&
+        ((policyVersion == null && mode == null) ||
+            (policyVersion == 0 && (mode == null || mode == 'ordinary')) ||
+            (policyVersion == 1 && mode == 'disappearing'));
+    if (!isOutgoing || isOutgoingGenericParent) {
+      return OutgoingDirectPrivateCompletionQualification.notPrivateParent;
+    }
+    if (!isOutgoingPrivateParent) {
+      // Outgoing nonordinary/future-policy shapes are not generic-media
+      // authority. In particular, a v2+ protected parent must fail closed
+      // instead of falling through to an INSERT-capable repository save.
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    if (parent['hidden_at'] != null || parent['deleted_at'] != null) {
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+
+    final rows = await txn.query(
+      'media_attachments',
+      where: 'id = ? AND message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+      ],
+      limit: 1,
+    );
+    if (rows.isEmpty ||
+        !_outgoingPrivateCompletionConventionMatches(
+          parent: parent,
+          persistedRow: rows.single,
+          completionRow: completionRow,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        )) {
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    final row = rows.single;
+    final state = parent['private_media_state'] as String?;
+    final terminalAt = parent['private_media_terminal_at_ms'];
+    final pendingIdentity =
+        row['download_status'] == kMediaDownloadStatusUploadPending &&
+        row['local_path'] == expectedPendingLocalPath &&
+        row['mime'] == completionRow['mime'] &&
+        row['size'] == completionRow['size'];
+
+    if (state == 'available' &&
+        terminalAt == null &&
+        parent['private_media_revealed_at_ms'] == null) {
+      if (pendingIdentity) {
+        return OutgoingDirectPrivateCompletionQualification.availablePending;
+      }
+      if (_persistedCompletionFingerprintMatches(row, completionRow)) {
+        return OutgoingDirectPrivateCompletionQualification
+            .identicalCommittedCandidate;
+      }
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    if ((state == 'opening' || state == 'viewing') &&
+        terminalAt == null &&
+        pendingIdentity) {
+      return OutgoingDirectPrivateCompletionQualification.activeLeasePending;
+    }
+    final envelope = parent['wire_envelope'];
+    final envelopeMissing =
+        envelope == null ||
+        (envelope is String && envelope.isEmpty) ||
+        (envelope is List<int> && envelope.isEmpty);
+    if (state == 'consumed' &&
+        terminalAt != null &&
+        (parent['status'] == 'sending' || parent['status'] == 'failed') &&
+        envelopeMissing &&
+        pendingIdentity) {
+      return OutgoingDirectPrivateCompletionQualification
+          .transportOnlyTerminalCustody;
+    }
+    return OutgoingDirectPrivateCompletionQualification.refused;
+  });
+}
+
+/// Commits a complete uploaded attachment only while its exact outgoing
+/// private parent is still available and its exact pending row is unchanged.
+/// Parent qualification and the full-row update are one transaction.
+Future<bool> dbCommitOutgoingDirectPrivateMediaAvailableCompletion(
+  Database db,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final identity = await _loadOutgoingPrivateCompletionIdentity(
+      txn,
+      completionRow,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      requiredParentState: 'available',
+      requiredMode: null,
+    );
+    if (identity == null ||
+        identity.persistedRow['download_status'] !=
+            kMediaDownloadStatusUploadPending ||
+        identity.persistedRow['local_path'] != expectedPendingLocalPath) {
+      return false;
+    }
+    final updated = await txn.update(
+      'media_attachments',
+      _outgoingPrivateCompletionUpdate(completionRow),
+      where:
+          'id = ? AND message_id = ? AND owner_lane = ? '
+          'AND download_status = ? AND local_path = ? AND mime = ? '
+          'AND size = ? AND EXISTS (SELECT 1 FROM messages parent '
+          'WHERE parent.id = media_attachments.message_id '
+          'AND parent.is_incoming = 0 AND parent.hidden_at IS NULL '
+          'AND parent.deleted_at IS NULL '
+          'AND parent.private_media_policy_version = 1 '
+          "AND parent.private_media_mode IN ('protected','view_once') "
+          "AND parent.private_media_state = 'available' "
+          'AND parent.private_media_revealed_at_ms IS NULL '
+          'AND parent.private_media_terminal_at_ms IS NULL)',
+      whereArgs: <Object?>[
+        completionRow['id'],
+        completionRow['message_id'],
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusUploadPending,
+        expectedPendingLocalPath,
+        completionRow['mime'],
+        completionRow['size'],
+      ],
+    );
+    return updated == 1;
+  });
+}
+
+/// Settlement-owned atomic rollback/finalize for an outgoing pre-frame lease.
+///
+/// `opening -> available` and `upload_pending -> done/canonical` either both
+/// commit or both roll back. A trigger/constraint failure after the parent CAS
+/// therefore cannot expose an available parent with the stale pending row.
+Future<bool> dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion(
+  Database db,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+  required String mode,
+}) {
+  if (mode != 'protected' && mode != 'view_once') {
+    return Future<bool>.value(false);
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final identity = await _loadOutgoingPrivateCompletionIdentity(
+      txn,
+      completionRow,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      requiredParentState: 'opening',
+      requiredMode: mode,
+    );
+    if (identity == null ||
+        identity.persistedRow['download_status'] !=
+            kMediaDownloadStatusUploadPending ||
+        identity.persistedRow['local_path'] != expectedPendingLocalPath) {
+      return false;
+    }
+    final parentUpdated = await txn.rawUpdate(
+      "UPDATE messages SET private_media_state = 'available' "
+      'WHERE id = ? AND is_incoming = 0 AND hidden_at IS NULL '
+      'AND deleted_at IS NULL AND private_media_policy_version = 1 '
+      'AND private_media_mode = ? '
+      "AND private_media_state = 'opening' "
+      'AND private_media_revealed_at_ms IS NULL '
+      'AND private_media_terminal_at_ms IS NULL '
+      'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+      'WHERE attachment.id = ? AND attachment.message_id = messages.id '
+      'AND attachment.owner_lane = ? '
+      'AND attachment.download_status = ? AND attachment.local_path = ? '
+      'AND attachment.mime = ? AND attachment.size = ?)',
+      <Object?>[
+        completionRow['message_id'],
+        mode,
+        completionRow['id'],
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusUploadPending,
+        expectedPendingLocalPath,
+        completionRow['mime'],
+        completionRow['size'],
+      ],
+    );
+    if (parentUpdated != 1) return false;
+    final attachmentUpdated = await txn.update(
+      'media_attachments',
+      _outgoingPrivateCompletionUpdate(completionRow),
+      where:
+          'id = ? AND message_id = ? AND owner_lane = ? '
+          'AND download_status = ? AND local_path = ? AND mime = ? '
+          'AND size = ?',
+      whereArgs: <Object?>[
+        completionRow['id'],
+        completionRow['message_id'],
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusUploadPending,
+        expectedPendingLocalPath,
+        completionRow['mime'],
+        completionRow['size'],
+      ],
+    );
+    if (attachmentUpdated != 1) {
+      throw StateError('outgoing private completion identity changed');
+    }
+    return true;
+  });
+}
+
+Future<({Map<String, Object?> parent, Map<String, Object?> persistedRow})?>
+_loadOutgoingPrivateCompletionIdentity(
+  DatabaseExecutor txn,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+  required String requiredParentState,
+  required String? requiredMode,
+}) async {
+  final messageId = completionRow['message_id'] as String? ?? '';
+  final attachmentId = completionRow['id'] as String? ?? '';
+  final parents = await txn.query(
+    'messages',
+    where:
+        'id = ? AND is_incoming = 0 AND hidden_at IS NULL '
+        'AND deleted_at IS NULL AND private_media_policy_version = 1 '
+        "AND private_media_mode IN ('protected','view_once') "
+        'AND private_media_state = ? '
+        'AND private_media_revealed_at_ms IS NULL '
+        'AND private_media_terminal_at_ms IS NULL',
+    whereArgs: <Object?>[messageId, requiredParentState],
+    limit: 1,
+  );
+  if (parents.isEmpty ||
+      (requiredMode != null &&
+          parents.single['private_media_mode'] != requiredMode)) {
+    return null;
+  }
+  final rows = await txn.query(
+    'media_attachments',
+    where: 'id = ? AND message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[
+      attachmentId,
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+    ],
+    limit: 1,
+  );
+  if (rows.isEmpty ||
+      !_outgoingPrivateCompletionConventionMatches(
+        parent: parents.single,
+        persistedRow: rows.single,
+        completionRow: completionRow,
+        expectedPendingLocalPath: expectedPendingLocalPath,
+      )) {
+    return null;
+  }
+  return (parent: parents.single, persistedRow: rows.single);
+}
+
+bool _outgoingPrivateCompletionConventionMatches({
+  required Map<String, Object?> parent,
+  required Map<String, Object?> persistedRow,
+  required Map<String, Object?> completionRow,
+  required String expectedPendingLocalPath,
+}) {
+  final messageId = completionRow['message_id'] as String? ?? '';
+  final attachmentId = completionRow['id'] as String? ?? '';
+  final mime = completionRow['mime'] as String? ?? '';
+  final contactPeerId = parent['contact_peer_id'] as String? ?? '';
+  if (messageId.isEmpty ||
+      attachmentId.isEmpty ||
+      mime.isEmpty ||
+      contactPeerId.isEmpty ||
+      completionRow['owner_lane'] != MediaOwnerLane.direct.dbValue ||
+      completionRow['download_status'] != kMediaDownloadStatusDone ||
+      (completionRow['size'] as num?)?.toInt() == null ||
+      (completionRow['size'] as num).toInt() <= 0) {
+    return false;
+  }
+  final canonical = MediaFilePathConvention.relativePathForAttachment(
+    contactPeerId: contactPeerId,
+    blobId: attachmentId,
+    mime: mime,
+  );
+  final pending = MediaFilePathConvention.relativePathForPendingUpload(
+    messageId: messageId,
+    attachmentId: attachmentId,
+    mime: mime,
+  );
+  return completionRow['local_path'] == canonical &&
+      expectedPendingLocalPath == pending &&
+      persistedRow['message_id'] == messageId &&
+      persistedRow['id'] == attachmentId &&
+      persistedRow['owner_lane'] == MediaOwnerLane.direct.dbValue;
+}
+
+bool _persistedCompletionFingerprintMatches(
+  Map<String, Object?> persistedRow,
+  Map<String, Object?> completionRow,
+) {
+  const fields = <String>[
+    'id',
+    'message_id',
+    'owner_lane',
+    'local_path',
+    'download_status',
+    'mime',
+    'size',
+    'content_hash',
+    'thumbnail_hash',
+    'encryption_key_base64',
+    'encryption_nonce',
+    'encryption_scheme',
+  ];
+  return fields.every((field) => persistedRow[field] == completionRow[field]);
+}
+
+Map<String, Object?> _outgoingPrivateCompletionUpdate(
+  Map<String, Object?> completionRow,
+) {
+  return <String, Object?>{
+    'mime': completionRow['mime'],
+    'size': completionRow['size'],
+    'media_type': completionRow['media_type'],
+    'width': completionRow['width'],
+    'height': completionRow['height'],
+    'duration_ms': completionRow['duration_ms'],
+    'local_path': completionRow['local_path'],
+    'download_status': completionRow['download_status'],
+    'created_at': completionRow['created_at'],
+    'waveform': completionRow['waveform'],
+    'upload_retry_count': completionRow['upload_retry_count'] ?? 0,
+    'download_retry_count': completionRow['download_retry_count'] ?? 0,
+    'content_hash': completionRow['content_hash'],
+    'thumbnail_hash': completionRow['thumbnail_hash'],
+    'encryption_key_base64': completionRow['encryption_key_base64'],
+    'encryption_nonce': completionRow['encryption_nonce'],
+    'encryption_scheme': completionRow['encryption_scheme'],
+    'owner_lane': MediaOwnerLane.direct.dbValue,
+  };
+}
+
 /// Parent-qualified claim for a direct-private transfer. The parent clock and
 /// attachment claim are evaluated atomically; a terminal/hidden/expired parent
 /// cannot leave its row in `downloading`.
@@ -534,6 +1124,66 @@ Future<int> dbQualifyDirectPrivateMediaLocalReadyIfEligible(
     );
     return rows.isEmpty ? 0 : 1;
   });
+}
+
+/// Exact path-only repair for the deployed outgoing direct-private row whose
+/// completed upload retained an absolute pending-upload path.
+///
+/// The caller has already authorized the canonical regular file and exact
+/// size beneath the independently trusted media root while holding the
+/// attachment lifecycle lock. This statement rechecks every durable identity
+/// dimension and changes only `local_path`; it never promotes a pending row or
+/// fabricates completion/crypto metadata.
+Future<int> dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required String expectedStoredLocalPath,
+  required String canonicalLocalPath,
+  required String expectedContactPeerId,
+  required String expectedMime,
+  required int expectedSize,
+}) {
+  final expectedCanonical = MediaFilePathConvention.relativePathForAttachment(
+    contactPeerId: expectedContactPeerId,
+    blobId: attachmentId,
+    mime: expectedMime,
+  );
+  if (messageId.isEmpty ||
+      attachmentId.isEmpty ||
+      expectedStoredLocalPath.isEmpty ||
+      expectedStoredLocalPath == canonicalLocalPath ||
+      canonicalLocalPath != expectedCanonical ||
+      expectedContactPeerId.isEmpty ||
+      expectedMime.isEmpty ||
+      expectedSize <= 0) {
+    return Future<int>.value(0);
+  }
+  return db.rawUpdate(
+    'UPDATE media_attachments SET local_path = ? '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND download_status = ? AND local_path = ? AND mime = ? AND size = ? '
+    'AND EXISTS (SELECT 1 FROM messages parent '
+    'WHERE parent.id = media_attachments.message_id '
+    'AND parent.contact_peer_id = ? AND parent.is_incoming = 0 '
+    'AND parent.hidden_at IS NULL AND parent.deleted_at IS NULL '
+    'AND parent.private_media_policy_version = 1 '
+    "AND parent.private_media_mode IN ('protected','view_once') "
+    "AND parent.private_media_state = 'available' "
+    'AND parent.private_media_revealed_at_ms IS NULL '
+    'AND parent.private_media_terminal_at_ms IS NULL)',
+    <Object?>[
+      canonicalLocalPath,
+      attachmentId,
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+      kMediaDownloadStatusDone,
+      expectedStoredLocalPath,
+      expectedMime,
+      expectedSize,
+      expectedContactPeerId,
+    ],
+  );
 }
 
 /// Fresh parent + exact transfer-claim qualification used immediately before
@@ -835,6 +1485,425 @@ Future<int> dbCommitGroupPrivateMediaDownloadIfEligible(
   });
 }
 
+/// Applies the narrow metadata-only portion of an outgoing direct-private
+/// save. This is the authority boundary for generic failure/cancel writers:
+/// they may change only status/retry count while the exact convention-pending
+/// row and its parent remain `available` in this same transaction.
+///
+/// Active leases and terminal parents are typed no-ops. Ordinary/incoming
+/// parents are explicitly classified so the repository may retain its
+/// generic save behavior only for those parents.
+Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+dbApplyOutgoingDirectPrivateNonCompletionMutation(
+  Database db,
+  Map<String, Object?> row, {
+  bool missingParentIsOrdinary = false,
+}) {
+  return dbWriteTransaction(
+    db,
+    (txn) => _applyOutgoingDirectPrivateNonCompletionMutation(
+      txn,
+      row,
+      missingParentIsOrdinary: missingParentIsOrdinary,
+    ),
+  );
+}
+
+/// Inserts the first durable pending row for an outgoing protected/view-once
+/// upload only while its exact parent remains visible and `available`.
+///
+/// This is intentionally separate from both generic attachment persistence
+/// and non-completion mutation. A protected/view-once parent may reach this
+/// seam only after its pending file was copied to the convention-relative
+/// message/attachment path. Missing, terminal, active-lease, future-policy,
+/// malformed, or conflicting identities are refused without a generic
+/// fallback. Ordinary, incoming, and disappearing parents are classified as
+/// [OutgoingDirectPrivatePendingPreparationOutcome.notPrivateParent].
+Future<OutgoingDirectPrivatePendingPreparationOutcome>
+dbInsertOutgoingDirectPrivatePendingAttachmentIfEligible(
+  Database db,
+  Map<String, Object?> row,
+) => dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible(
+  db,
+  <Map<String, Object?>>[row],
+);
+
+/// Batch form of [dbInsertOutgoingDirectPrivatePendingAttachmentIfEligible].
+/// Every row is qualified and inserted in one write transaction, so a later
+/// malformed/conflicting attachment cannot leave an earlier row published as
+/// viewer authority.
+Future<OutgoingDirectPrivatePendingPreparationOutcome>
+dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible(
+  Database db,
+  List<Map<String, Object?>> rows,
+) {
+  return dbWriteTransaction(db, (txn) async {
+    if (rows.isEmpty) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    if (rows.any((row) => row['owner_lane'] != MediaOwnerLane.direct.dbValue)) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final messageIds = rows
+        .map((row) => row['message_id'] as String? ?? '')
+        .toSet();
+    final attachmentIds = rows.map((row) => row['id'] as String? ?? '').toSet();
+    if (messageIds.length != 1 ||
+        messageIds.single.isEmpty ||
+        attachmentIds.length != rows.length ||
+        attachmentIds.contains('')) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final messageId = messageIds.single;
+
+    final parentRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (parentRows.isEmpty) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final parent = parentRows.single;
+    final authority = _classifyOutgoingPrivateParentMutationAuthority(parent);
+    if (authority ==
+        _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming) {
+      // Parent policy, never attachment crypto metadata, selects the generic
+      // lane. Ordinary uploads may already carry their historical
+      // hash/key/nonce fields when their first row is persisted.
+      return OutgoingDirectPrivatePendingPreparationOutcome.notPrivateParent;
+    }
+    if (authority != _OutgoingPrivateParentMutationAuthority.available) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final contactPeerId = parent['contact_peer_id'] as String? ?? '';
+    for (final row in rows) {
+      final attachmentId = row['id'] as String? ?? '';
+      final mime = row['mime'] as String? ?? '';
+      if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
+            contactPeerId: contactPeerId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+          ) ||
+          MediaFilePathConvention.extensionFromMime(mime).isEmpty) {
+        return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+      }
+      bool completionFieldHasValue(String field) {
+        final value = row[field];
+        return value != null && (value is! String || value.trim().isNotEmpty);
+      }
+
+      if (const <String>[
+            'content_hash',
+            'thumbnail_hash',
+            'encryption_key_base64',
+            'encryption_nonce',
+            'encryption_scheme',
+          ].any(completionFieldHasValue) ||
+          !_isExactOutgoingPrivatePendingMutationRow(
+            row,
+            messageId: messageId,
+          )) {
+        return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+      }
+      final existingRows = await txn.query(
+        'media_attachments',
+        columns: const <String>['id'],
+        where: 'id = ?',
+        whereArgs: <Object?>[attachmentId],
+        limit: 1,
+      );
+      if (existingRows.isNotEmpty) {
+        return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+      }
+    }
+
+    // The parent query and insert share one SQLCipher write transaction. A
+    // concurrent lifecycle claim therefore cannot land between qualification
+    // and insertion. Repeating the positive parent predicate here also makes
+    // the write's authority explicit and protects alternate transaction
+    // implementations used by tests.
+    final stillAvailable = await txn.rawQuery(
+      'SELECT 1 FROM messages WHERE id = ? AND is_incoming = 0 '
+      'AND hidden_at IS NULL AND deleted_at IS NULL '
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      "AND private_media_state = 'available' "
+      'AND private_media_revealed_at_ms IS NULL '
+      'AND private_media_terminal_at_ms IS NULL LIMIT 1',
+      <Object?>[messageId],
+    );
+    if (stillAvailable.isEmpty) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+
+    for (final row in rows) {
+      await txn.insert('media_attachments', row);
+    }
+    return OutgoingDirectPrivatePendingPreparationOutcome.inserted;
+  });
+}
+
+/// Deletes the exact pending-path attachment set of one outgoing
+/// protected/view-once parent while it remains `available`.
+///
+/// This is the typed counterpart of generic message-level attachment
+/// deletion. It accepts only upload-pending/failure/cancel states that retain
+/// the convention-owned pending identity. Active leases and terminal parents
+/// are explicit no-ops; ordinary/incoming/disappearing parents are returned
+/// to the caller for their existing generic path.
+Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion(
+  Database db,
+  String messageId,
+) => dbWriteTransaction(db, (txn) async {
+  final qualification = await _qualifyOutgoingDirectPrivatePendingDeletion(
+    txn,
+    messageId,
+  );
+  return qualification.outcome;
+});
+
+Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible(
+  Database db,
+  String messageId,
+) {
+  return dbWriteTransaction(db, (txn) async {
+    final qualification = await _qualifyOutgoingDirectPrivatePendingDeletion(
+      txn,
+      messageId,
+    );
+    if (qualification.outcome !=
+        OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+      return qualification.outcome;
+    }
+    final deleted = await txn.rawDelete(
+      "DELETE FROM media_attachments WHERE message_id = ? AND owner_lane = ? "
+      "AND download_status IN ('upload_pending','upload_failed','upload_cancelled') "
+      'AND EXISTS (SELECT 1 FROM messages private_parent '
+      'WHERE private_parent.id = media_attachments.message_id '
+      'AND private_parent.is_incoming = 0 '
+      'AND private_parent.hidden_at IS NULL '
+      'AND private_parent.deleted_at IS NULL '
+      'AND private_parent.private_media_policy_version = 1 '
+      "AND private_parent.private_media_mode IN ('protected','view_once') "
+      "AND private_parent.private_media_state = 'available' "
+      'AND private_parent.private_media_revealed_at_ms IS NULL '
+      'AND private_parent.private_media_terminal_at_ms IS NULL)',
+      <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    );
+    if (deleted != qualification.rowCount) {
+      throw StateError(
+        'Outgoing private pending deletion qualification changed',
+      );
+    }
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.applied;
+  });
+}
+
+Future<
+  ({OutgoingDirectPrivateNonCompletionMutationOutcome outcome, int rowCount})
+>
+_qualifyOutgoingDirectPrivatePendingDeletion(
+  DatabaseExecutor txn,
+  String messageId,
+) async {
+  final parentRows = await txn.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  if (parentRows.isEmpty) {
+    return (
+      outcome: OutgoingDirectPrivateNonCompletionMutationOutcome.refused,
+      rowCount: 0,
+    );
+  }
+  final authority = _classifyOutgoingPrivateParentMutationAuthority(
+    parentRows.single,
+  );
+  switch (authority) {
+    case _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming:
+      return (
+        outcome:
+            OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent,
+        rowCount: 0,
+      );
+    case _OutgoingPrivateParentMutationAuthority.activeLease:
+      return (
+        outcome: OutgoingDirectPrivateNonCompletionMutationOutcome
+            .notAppliedActiveLease,
+        rowCount: 0,
+      );
+    case _OutgoingPrivateParentMutationAuthority.terminal:
+      return (
+        outcome: OutgoingDirectPrivateNonCompletionMutationOutcome.terminalNoOp,
+        rowCount: 0,
+      );
+    case _OutgoingPrivateParentMutationAuthority.refused:
+      return (
+        outcome: OutgoingDirectPrivateNonCompletionMutationOutcome.refused,
+        rowCount: 0,
+      );
+    case _OutgoingPrivateParentMutationAuthority.available:
+      break;
+  }
+
+  final rows = await txn.query(
+    'media_attachments',
+    where: 'message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+  );
+  const deletableStatuses = <String>{
+    kMediaDownloadStatusUploadPending,
+    'upload_failed',
+    'upload_cancelled',
+  };
+  if (rows.isEmpty ||
+      rows.any(
+        (row) =>
+            !_hasExactOutgoingPrivatePendingIdentity(
+              row,
+              messageId: messageId,
+            ) ||
+            !deletableStatuses.contains(row['download_status']),
+      )) {
+    return (
+      outcome: OutgoingDirectPrivateNonCompletionMutationOutcome.refused,
+      rowCount: 0,
+    );
+  }
+  return (
+    outcome: OutgoingDirectPrivateNonCompletionMutationOutcome.applied,
+    rowCount: rows.length,
+  );
+}
+
+Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+_applyOutgoingDirectPrivateNonCompletionMutation(
+  DatabaseExecutor txn,
+  Map<String, Object?> row, {
+  bool missingParentIsOrdinary = false,
+}) async {
+  if (row['owner_lane'] != MediaOwnerLane.direct.dbValue) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent;
+  }
+  final messageId = row['message_id'] as String? ?? '';
+  final attachmentId = row['id'] as String? ?? '';
+  if (messageId.isEmpty || attachmentId.isEmpty) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final parents = await txn.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  if (parents.isEmpty) {
+    return missingParentIsOrdinary
+        ? OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent
+        : OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final authority = _classifyOutgoingPrivateParentMutationAuthority(
+    parents.single,
+  );
+  switch (authority) {
+    case _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming:
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent;
+    case _OutgoingPrivateParentMutationAuthority.activeLease:
+      return OutgoingDirectPrivateNonCompletionMutationOutcome
+          .notAppliedActiveLease;
+    case _OutgoingPrivateParentMutationAuthority.terminal:
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.terminalNoOp;
+    case _OutgoingPrivateParentMutationAuthority.refused:
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    case _OutgoingPrivateParentMutationAuthority.available:
+      break;
+  }
+
+  final persistedRows = await txn.query(
+    'media_attachments',
+    where: 'id = ? AND message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[
+      attachmentId,
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+    ],
+    limit: 1,
+  );
+  if (persistedRows.isEmpty) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final persisted = persistedRows.single;
+  if (!_isExactOutgoingPrivatePendingMutationRow(
+    persisted,
+    messageId: messageId,
+  )) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final nextStatus = row['download_status'] as String?;
+  if (!const <String>{
+    kMediaDownloadStatusUploadPending,
+    'upload_failed',
+    'upload_cancelled',
+  }.contains(nextStatus)) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  const immutableFields = <String>[
+    'id',
+    'message_id',
+    'owner_lane',
+    'mime',
+    'size',
+    'local_path',
+    'content_hash',
+    'thumbnail_hash',
+    'encryption_key_base64',
+    'encryption_nonce',
+    'encryption_scheme',
+  ];
+  if (immutableFields.any((field) => persisted[field] != row[field])) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final retryCount = (row['upload_retry_count'] as num?)?.toInt() ?? 0;
+  if (retryCount < 0) {
+    return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+  }
+  final changed = await txn.rawUpdate(
+    'UPDATE media_attachments SET download_status = ?, '
+    'upload_retry_count = ? WHERE id = ? AND message_id = ? '
+    'AND owner_lane = ? AND download_status = ? AND local_path = ? '
+    'AND mime = ? AND size = ? '
+    'AND EXISTS (SELECT 1 FROM messages private_parent '
+    'WHERE private_parent.id = media_attachments.message_id '
+    'AND private_parent.is_incoming = 0 '
+    'AND private_parent.hidden_at IS NULL '
+    'AND private_parent.deleted_at IS NULL '
+    'AND private_parent.private_media_policy_version = 1 '
+    "AND private_parent.private_media_mode IN ('protected','view_once') "
+    "AND private_parent.private_media_state = 'available' "
+    'AND private_parent.private_media_revealed_at_ms IS NULL '
+    'AND private_parent.private_media_terminal_at_ms IS NULL)',
+    <Object?>[
+      nextStatus,
+      retryCount,
+      attachmentId,
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+      kMediaDownloadStatusUploadPending,
+      persisted['local_path'],
+      persisted['mime'],
+      persisted['size'],
+    ],
+  );
+  return changed == 1
+      ? OutgoingDirectPrivateNonCompletionMutationOutcome.applied
+      : OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+}
+
 /// The shared preserving-save merge body. MUST run inside a
 /// [dbWriteTransaction]; both the plain and the 235 group-guarded save reuse
 /// this exact logic so their preservation semantics can never drift.
@@ -864,6 +1933,23 @@ Future<void> _applyMediaAttachmentPreservingSave(
       '(${existing['owner_lane']}, ${existing['message_id']}) to '
       '(${row['owner_lane']}, ${row['message_id']})',
     );
+  }
+
+  final privateMutation =
+      await _applyOutgoingDirectPrivateNonCompletionMutation(
+        txn,
+        row,
+        // Low-level migration/fixture callers historically merge orphan rows.
+        // Production repository callers use the exported guard first, where a
+        // missing parent remains a refusal.
+        missingParentIsOrdinary: true,
+      );
+  if (privateMutation !=
+      OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent) {
+    // The guarded helper either committed the narrow available-state update
+    // or deliberately refused it. Never follow a private result with the
+    // INSERT/full-row generic merge below.
+    return;
   }
 
   final merged = Map<String, Object?>.from(row);
@@ -1041,6 +2127,60 @@ Future<List<Map<String, Object?>>> dbLoadMediaForMessage(
     );
     rethrow;
   }
+}
+
+/// Loads a bounded, newest-first set of outgoing direct-private completions
+/// whose canonical completion makes its convention pending source redundant
+/// and therefore eligible for retried plaintext cleanup.
+///
+/// The query is intentionally read-only and never accesses secure storage. It
+/// returns only the persisted secure-store reference as part of the complete
+/// attachment row; the repository must hydrate that reference and reject a
+/// missing key before emitting a candidate. The application lifecycle adapter
+/// independently requalifies the exact parent, attachment, canonical file,
+/// pending path, key material, and transfer lease under the repository
+/// lifecycle lock before unlinking anything.
+Future<List<Map<String, Object?>>>
+dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates(
+  Database db, {
+  int limit = 50,
+}) async {
+  if (limit <= 0) return const <Map<String, Object?>>[];
+  final boundedLimit = limit.clamp(1, 100);
+  return db.rawQuery(
+    '''
+      SELECT
+        attachment.*,
+        parent.contact_peer_id AS contact_peer_id
+      FROM media_attachments AS attachment
+      INNER JOIN messages AS parent ON parent.id = attachment.message_id
+      WHERE attachment.owner_lane = ?
+        AND attachment.download_status = 'done'
+        AND attachment.size > 0
+        AND attachment.local_path IS NOT NULL
+        AND attachment.local_path LIKE 'media/%'
+        AND attachment.content_hash IS NOT NULL
+        AND length(trim(attachment.content_hash)) > 0
+        AND attachment.encryption_key_base64 IS NOT NULL
+        AND length(trim(attachment.encryption_key_base64)) > 0
+        AND attachment.encryption_nonce IS NOT NULL
+        AND length(trim(attachment.encryption_nonce)) > 0
+        AND attachment.encryption_scheme IS NOT NULL
+        AND length(trim(attachment.encryption_scheme)) > 0
+        AND parent.is_incoming = 0
+        AND parent.hidden_at IS NULL
+        AND parent.deleted_at IS NULL
+        AND parent.private_media_policy_version = 1
+        AND parent.private_media_mode IN ('protected', 'view_once')
+        AND parent.private_media_state = 'available'
+        AND parent.private_media_revealed_at_ms IS NULL
+        AND parent.private_media_terminal_at_ms IS NULL
+      ORDER BY parent.created_at DESC, attachment.created_at DESC,
+        attachment.id DESC
+      LIMIT ?
+    ''',
+    <Object?>[MediaOwnerLane.direct.dbValue, boundedLimit],
+  );
 }
 
 /// Loads a single media attachment by blob/attachment ID.
@@ -1652,11 +2792,33 @@ Future<int> dbDeleteMediaForMessage(
   );
 
   try {
-    final count = await db.delete(
-      'media_attachments',
-      where: 'message_id = ? AND owner_lane = ?',
-      whereArgs: [messageId, ownerLane],
-    );
+    final count = await dbWriteTransaction(db, (txn) async {
+      if (ownerLane == MediaOwnerLane.direct.dbValue) {
+        final parents = await txn.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+          limit: 1,
+        );
+        if (parents.isNotEmpty) {
+          final authority = _classifyOutgoingPrivateParentMutationAuthority(
+            parents.single,
+          );
+          if (authority !=
+              _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming) {
+            // Private bulk deletion has no exact typed intent. Available-state
+            // cancellation/failure uses the narrow guarded writers above;
+            // terminal deletion uses dbDeleteDirectPrivateMediaAttachmentExact.
+            return 0;
+          }
+        }
+      }
+      return txn.delete(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: [messageId, ownerLane],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1696,7 +2858,11 @@ Future<int> dbDeleteMediaForContact(Database db, String contactPeerId) async {
     final count = await db.rawDelete(
       "DELETE FROM media_attachments WHERE owner_lane = 'direct' "
       'AND message_id IN '
-      '(SELECT id FROM messages WHERE contact_peer_id = ?)',
+      '(SELECT id FROM messages WHERE contact_peer_id = ? '
+      'AND (COALESCE(private_media_policy_version, 0) = 0 '
+      'OR (COALESCE(is_incoming, 0) = 0 '
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode = 'disappearing')))",
       [contactPeerId],
     );
 
@@ -1734,13 +2900,93 @@ Future<int> dbMarkUploadPendingAttachmentsFailedForMessage(
   );
 
   try {
-    final count = await db.update(
-      'media_attachments',
-      {'download_status': 'upload_failed'},
-      where:
-          "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
-      whereArgs: [messageId, ownerLane],
-    );
+    final count = await dbWriteTransaction(db, (txn) async {
+      if (ownerLane != MediaOwnerLane.direct.dbValue) {
+        return txn.update(
+          'media_attachments',
+          const <String, Object?>{'download_status': 'upload_failed'},
+          where:
+              "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+          whereArgs: <Object?>[messageId, ownerLane],
+        );
+      }
+      final parents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      if (parents.isEmpty) {
+        final pendingRows = await txn.query(
+          'media_attachments',
+          where:
+              "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+          whereArgs: <Object?>[messageId, ownerLane],
+        );
+        if (pendingRows.any(
+          (row) => _isExactOutgoingPrivatePendingMutationRow(
+            row,
+            messageId: messageId,
+          ),
+        )) {
+          return 0;
+        }
+        return txn.update(
+          'media_attachments',
+          const <String, Object?>{'download_status': 'upload_failed'},
+          where:
+              "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+          whereArgs: <Object?>[messageId, ownerLane],
+        );
+      }
+      final authority = _classifyOutgoingPrivateParentMutationAuthority(
+        parents.single,
+      );
+      if (authority ==
+          _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming) {
+        return txn.update(
+          'media_attachments',
+          const <String, Object?>{'download_status': 'upload_failed'},
+          where:
+              "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+          whereArgs: <Object?>[messageId, ownerLane],
+        );
+      }
+      if (authority != _OutgoingPrivateParentMutationAuthority.available) {
+        return 0;
+      }
+      final pendingRows = await txn.query(
+        'media_attachments',
+        where:
+            "message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+        whereArgs: <Object?>[messageId, ownerLane],
+      );
+      if (pendingRows.isEmpty ||
+          pendingRows.any(
+            (row) => !_isExactOutgoingPrivatePendingMutationRow(
+              row,
+              messageId: messageId,
+            ),
+          )) {
+        return 0;
+      }
+      return txn.rawUpdate(
+        "UPDATE media_attachments SET download_status = 'upload_failed' "
+        'WHERE message_id = ? AND owner_lane = ? '
+        "AND download_status = 'upload_pending' "
+        'AND EXISTS (SELECT 1 FROM messages private_parent '
+        'WHERE private_parent.id = media_attachments.message_id '
+        'AND private_parent.is_incoming = 0 '
+        'AND private_parent.hidden_at IS NULL '
+        'AND private_parent.deleted_at IS NULL '
+        'AND private_parent.private_media_policy_version = 1 '
+        "AND private_parent.private_media_mode IN ('protected','view_once') "
+        "AND private_parent.private_media_state = 'available' "
+        'AND private_parent.private_media_revealed_at_ms IS NULL '
+        'AND private_parent.private_media_terminal_at_ms IS NULL)',
+        <Object?>[messageId, ownerLane],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',

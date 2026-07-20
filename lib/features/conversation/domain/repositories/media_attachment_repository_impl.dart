@@ -1,9 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show mediaLocalPathIsTransient;
+import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -45,6 +54,9 @@ class MediaAttachmentRepositoryImpl
         DirectPrivateMediaDownloadStateRepository,
         DirectPrivateMediaAttachmentSaveRepository,
         DirectPrivateMediaCleanupRepository,
+        DirectPrivateCommittedPendingCleanupCandidateRepository,
+        DirectPrivateMediaLegacyPathRepairRepository,
+        OutgoingDirectPrivateMutationRepository,
         DirectPrivateMediaCleanupRuntime,
         GroupPrivateMediaDownloadStateRepository,
         GroupPrivateMediaCleanupRepository,
@@ -65,6 +77,8 @@ class MediaAttachmentRepositoryImpl
     String ownerLane,
   )
   dbLoadMediaForMessages;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates;
   final Future<void> Function(
     String id,
     String localPath,
@@ -169,6 +183,16 @@ class MediaAttachmentRepositoryImpl
   final Future<int> Function({
     required String messageId,
     required String attachmentId,
+    required String expectedStoredLocalPath,
+    required String canonicalLocalPath,
+    required String expectedContactPeerId,
+    required String expectedMime,
+    required int expectedSize,
+  })?
+  dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
     required int nowMs,
   })?
   dbQualifyDirectPrivateMediaDownloadClaimIfEligible;
@@ -199,6 +223,39 @@ class MediaAttachmentRepositoryImpl
     required String attachmentId,
   })?
   dbDeleteDirectPrivateMediaAttachmentExact;
+  final Future<OutgoingDirectPrivateCompletionQualification> Function(
+    Map<String, Object?> row, {
+    required String expectedPendingLocalPath,
+  })?
+  dbClassifyOutgoingDirectPrivateMediaCompletion;
+  final Future<bool> Function(
+    Map<String, Object?> row, {
+    required String expectedPendingLocalPath,
+  })?
+  dbCommitOutgoingDirectPrivateMediaAvailableCompletion;
+  final Future<bool> Function(
+    Map<String, Object?> row, {
+    required String expectedPendingLocalPath,
+    required String mode,
+  })?
+  dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion;
+  final Future<OutgoingDirectPrivateNonCompletionMutationOutcome> Function(
+    Map<String, Object?> row, {
+    required bool missingParentIsOrdinary,
+  })?
+  dbApplyOutgoingDirectPrivateNonCompletionMutation;
+  final Future<OutgoingDirectPrivatePendingPreparationOutcome> Function(
+    List<Map<String, Object?>> rows,
+  )?
+  dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible;
+  final Future<OutgoingDirectPrivateNonCompletionMutationOutcome> Function(
+    String messageId,
+  )?
+  dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion;
+  final Future<OutgoingDirectPrivateNonCompletionMutationOutcome> Function(
+    String messageId,
+  )?
+  dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible;
   final Future<int> Function({
     required String groupId,
     required String messageId,
@@ -279,6 +336,7 @@ class MediaAttachmentRepositoryImpl
     required this.dbLoadMediaForMessage,
     required this.dbLoadMediaById,
     required this.dbLoadMediaForMessages,
+    this.dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates,
     required this.dbUpdateMediaLocalPath,
     required this.dbUpdateMediaDownloadStatus,
     required this.dbDeleteMediaForMessage,
@@ -299,11 +357,19 @@ class MediaAttachmentRepositoryImpl
     this.dbCommitDirectPrivateMediaDownloadIfEligible,
     this.dbBeginDirectPrivateMediaDownloadIfEligible,
     this.dbQualifyDirectPrivateMediaLocalReadyIfEligible,
+    this.dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible,
     this.dbQualifyDirectPrivateMediaDownloadClaimIfEligible,
     this.dbRecordDirectPrivateMediaDownloadFailureIfEligible,
     this.dbSaveDirectPrivateMediaAttachmentGuarded,
     this.dbCanCleanupDirectPrivateMediaAttachmentExact,
     this.dbDeleteDirectPrivateMediaAttachmentExact,
+    this.dbClassifyOutgoingDirectPrivateMediaCompletion,
+    this.dbCommitOutgoingDirectPrivateMediaAvailableCompletion,
+    this.dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion,
+    this.dbApplyOutgoingDirectPrivateNonCompletionMutation,
+    this.dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible,
+    this.dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion,
+    this.dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible,
     this.dbBeginGroupPrivateMediaDownloadIfEligible,
     this.dbQualifyGroupPrivateMediaLocalReadyIfEligible,
     this.dbQualifyGroupPrivateMediaDownloadClaimIfEligible,
@@ -316,6 +382,20 @@ class MediaAttachmentRepositoryImpl
     this.refreshDirectPrivateMediaParent,
     MediaAttachmentLifecycleLock? lifecycleLock,
   }) : lifecycleLock = lifecycleLock ?? mediaAttachmentLifecycleLock;
+
+  late final OutgoingDirectPrivateMutationCoordinator
+  _outgoingDirectPrivateMutationCoordinator =
+      OutgoingDirectPrivateMutationCoordinator(
+        lifecycleLock: lifecycleLock,
+        classifyCompletion: _classifyOutgoingDirectPrivateCompletion,
+        commitAvailable: _commitOutgoingDirectPrivateAvailableCompletion,
+        commitRollback: _commitOutgoingDirectPrivateRollbackCompletion,
+      );
+
+  @override
+  OutgoingDirectPrivateMutationCoordinator
+  get outgoingDirectPrivateMutationCoordinator =>
+      _outgoingDirectPrivateMutationCoordinator;
 
   @override
   Stream<MediaAttachmentAuthorizationChange> get authorizationChanges =>
@@ -441,6 +521,127 @@ class MediaAttachmentRepositoryImpl
     );
   }
 
+  Future<OutgoingDirectPrivateCompletionQualification>
+  _classifyOutgoingDirectPrivateCompletion(
+    MediaAttachment attachment,
+    OutgoingDirectPrivateCompletionFingerprint fingerprint,
+  ) async {
+    final completionKey = attachment.encryptionKeyBase64;
+    if (completionKey != null && isSecureStoreReference(completionKey)) {
+      // A successful upload carries the raw rotated key. Accepting a storage
+      // reference here would let a first commit skip the compensated key
+      // write and could persist a dangling or attacker-selected reference.
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    final classify = _requireCasClosure(
+      dbClassifyOutgoingDirectPrivateMediaCompletion,
+      'dbClassifyOutgoingDirectPrivateMediaCompletion',
+    );
+    final row = _toStorageReferenceRowWithoutKeyWrite(attachment);
+    final qualification = await classify(
+      row,
+      expectedPendingLocalPath: fingerprint.expectedPendingLocalPath,
+    );
+    if (qualification !=
+        OutgoingDirectPrivateCompletionQualification
+            .identicalCommittedCandidate) {
+      return qualification;
+    }
+    final persisted = await getAttachmentById(attachment.id);
+    if (persisted == null ||
+        !fingerprint.matchesHydratedAttachment(persisted)) {
+      return OutgoingDirectPrivateCompletionQualification.refused;
+    }
+    return qualification;
+  }
+
+  Future<bool> _commitOutgoingDirectPrivateAvailableCompletion(
+    MediaAttachment attachment,
+    OutgoingDirectPrivateCompletionFingerprint fingerprint,
+  ) async {
+    final commit = _requireCasClosure(
+      dbCommitOutgoingDirectPrivateMediaAvailableCompletion,
+      'dbCommitOutgoingDirectPrivateMediaAvailableCompletion',
+    );
+    final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+    final committed = await _withCompensatedEncryptionKeyWrite<bool>(
+      stamped,
+      (row) => commit(
+        row,
+        expectedPendingLocalPath: fingerprint.expectedPendingLocalPath,
+      ),
+      committed: (result) => result,
+    );
+    if (committed) {
+      await _publishOutgoingPrivateCompletionBestEffort(attachment);
+    }
+    return committed;
+  }
+
+  Future<bool> _commitOutgoingDirectPrivateRollbackCompletion(
+    MediaAttachment attachment,
+    OutgoingDirectPrivateCompletionFingerprint fingerprint, {
+    required String mode,
+  }) async {
+    final commit = _requireCasClosure(
+      dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion,
+      'dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion',
+    );
+    final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+    final committed = await _withCompensatedEncryptionKeyWrite<bool>(
+      stamped,
+      (row) => commit(
+        row,
+        expectedPendingLocalPath: fingerprint.expectedPendingLocalPath,
+        mode: mode,
+      ),
+      committed: (result) => result,
+    );
+    // Refresh/event publication is deliberately outside the compensated
+    // key+DB callback. Once the DB transaction commits, an observer failure
+    // cannot restore the old key or downgrade the durable result.
+    if (committed) {
+      await _publishOutgoingPrivateCompletionBestEffort(attachment);
+    }
+    return committed;
+  }
+
+  Future<void> _publishOutgoingPrivateCompletionBestEffort(
+    MediaAttachment attachment,
+  ) async {
+    try {
+      await _refreshDirectPrivateParent(attachment.messageId);
+      _emitAuthorizationChange(
+        owner: MediaOwnerLane.direct,
+        messageId: attachment.messageId,
+        attachmentId: attachment.id,
+        kind: MediaAttachmentAuthorizationMutation.saved,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'OUTGOING_PRIVATE_COMPLETION_NOTIFICATION_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Map<String, Object?> _toStorageReferenceRowWithoutKeyWrite(
+    MediaAttachment attachment,
+  ) {
+    final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+    final row = Map<String, Object?>.from(stamped.toMap());
+    final key = stamped.encryptionKeyBase64;
+    if (secureKeyStore != null &&
+        key != null &&
+        key.isNotEmpty &&
+        !isSecureStoreReference(key)) {
+      final keyName = mediaAttachmentEncryptionKeyStoreName(stamped.id);
+      row['encryption_key_base64'] = secureStoreReferenceForKey(keyName);
+    }
+    return row;
+  }
+
   @override
   Future<bool> saveDirectPrivateAttachmentGuarded(
     MediaAttachment attachment, {
@@ -564,6 +765,47 @@ class MediaAttachmentRepositoryImpl
     } finally {
       await _refreshDirectPrivateParent(messageId);
     }
+  });
+
+  @override
+  Future<bool> repairOutgoingDirectPrivateMediaDoneLocalPathWithinLock({
+    required String messageId,
+    required String attachmentId,
+    required String expectedStoredLocalPath,
+    required String canonicalLocalPath,
+    required String expectedContactPeerId,
+    required String expectedMime,
+    required int expectedSize,
+  }) => lifecycleLock.synchronized(attachmentId, () async {
+    final repair = _requireCasClosure(
+      dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible,
+      'repairOutgoingDirectPrivateMediaDoneLocalPathWithinLock',
+    );
+    var repaired = false;
+    try {
+      repaired =
+          await repair(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            expectedStoredLocalPath: expectedStoredLocalPath,
+            canonicalLocalPath: canonicalLocalPath,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedMime: expectedMime,
+            expectedSize: expectedSize,
+          ) ==
+          1;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+    if (repaired) {
+      _emitAuthorizationChange(
+        owner: MediaOwnerLane.direct,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        kind: MediaAttachmentAuthorizationMutation.localPathChanged,
+      );
+    }
+    return repaired;
   });
 
   @override
@@ -773,6 +1015,66 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
+  Future<List<DirectPrivateCommittedPendingCleanupCandidate>>
+  loadDirectPrivateCommittedPendingCleanupCandidates({int limit = 50}) async {
+    final load = dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates;
+    if (load == null || limit <= 0) {
+      return const <DirectPrivateCommittedPendingCleanupCandidate>[];
+    }
+    final rows = await load(limit: limit.clamp(1, 100));
+    final candidates = <DirectPrivateCommittedPendingCleanupCandidate>[];
+    for (final row in rows) {
+      final hydrated = MediaAttachment.fromMap(await _hydrateRow(row));
+      final messageId = row['message_id'] as String? ?? '';
+      final attachmentId = row['id'] as String? ?? '';
+      final contactPeerId = row['contact_peer_id'] as String? ?? '';
+      final mime = row['mime'] as String? ?? '';
+      final localPath = row['local_path'] as String?;
+      if (hydrated.id != attachmentId ||
+          hydrated.messageId != messageId ||
+          hydrated.ownerLane != MediaOwnerLane.direct ||
+          hydrated.downloadStatus != kMediaDownloadStatusDone ||
+          hydrated.mime != mime ||
+          hydrated.localPath != localPath ||
+          hydrated.size <= 0 ||
+          hydrated.contentHash == null ||
+          hydrated.contentHash!.trim().isEmpty ||
+          !hydrated.hasEncryptionKeyMaterial ||
+          hydrated.encryptionScheme !=
+              kMediaAttachmentEncryptionSchemeBlobAesGcmV1 ||
+          !DirectPrivateMediaPathGuard.identifiersAreSafe(
+            contactPeerId: contactPeerId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+          ) ||
+          MediaFilePathConvention.extensionFromMime(mime).isEmpty) {
+        continue;
+      }
+      final expectedCanonical =
+          MediaFilePathConvention.relativePathForAttachment(
+            contactPeerId: contactPeerId,
+            blobId: attachmentId,
+            mime: mime,
+          );
+      if (localPath != expectedCanonical) continue;
+      candidates.add(
+        DirectPrivateCommittedPendingCleanupCandidate(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: mime,
+          expectedPendingLocalPath:
+              MediaFilePathConvention.relativePathForPendingUpload(
+                messageId: messageId,
+                attachmentId: attachmentId,
+                mime: mime,
+              ),
+        ),
+      );
+    }
+    return candidates;
+  }
+
+  @override
   Future<List<DirectPrivateMediaCleanupAttachment>>
   loadDirectPrivateMediaCleanupAttachments(String messageId) async {
     final rows = await dbLoadMediaForMessage(
@@ -790,6 +1092,9 @@ class MediaAttachmentRepositoryImpl
             id: row['id'] as String,
             messageId: row['message_id'] as String,
             mime: row['mime'] as String,
+            size: (row['size'] as num?)?.toInt() ?? 0,
+            downloadStatus: row['download_status'] as String?,
+            localPath: row['local_path'] as String?,
           ),
         )
         .toList(growable: false);
@@ -1095,6 +1400,87 @@ class MediaAttachmentRepositoryImpl
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
   }) => lifecycleLock.synchronized(attachment.id, () async {
+    if (dbClassifyOutgoingDirectPrivateMediaCompletion != null &&
+        owner == MediaOwnerLane.direct &&
+        attachment.downloadStatus == 'done' &&
+        attachment.localPath != null &&
+        attachment.localPath!.isNotEmpty &&
+        !mediaLocalPathIsTransient(attachment.localPath) &&
+        attachment.contentHash != null &&
+        attachment.contentHash!.isNotEmpty &&
+        attachment.encryptionKeyBase64 != null &&
+        attachment.encryptionKeyBase64!.isNotEmpty &&
+        attachment.encryptionNonce != null &&
+        attachment.encryptionNonce!.isNotEmpty &&
+        attachment.encryptionScheme != null &&
+        attachment.encryptionScheme!.isNotEmpty &&
+        (attachment.ownerLane == null ||
+            attachment.ownerLane == MediaOwnerLane.direct)) {
+      final expectedPendingLocalPath =
+          MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: attachment.messageId,
+            attachmentId: attachment.id,
+            mime: attachment.mime,
+          );
+      final result = await outgoingDirectPrivateMutationCoordinator
+          .commitCompletion(
+            attachment: attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+            expectedPendingLocalPath: expectedPendingLocalPath,
+          );
+      if (result.appliesToPrivateParent) {
+        // Private completion refusal/defer/commit is final. In particular, a
+        // late fallback after terminal cleanup must remain a silent no-op and
+        // can never fall through to an INSERT-capable generic save.
+        return;
+      }
+    }
+    if (owner == MediaOwnerLane.direct) {
+      final existing = await dbLoadMediaById(attachment.id);
+      if (existing != null) {
+        if (existing['owner_lane'] != owner.dbValue ||
+            existing['message_id'] != attachment.messageId) {
+          throw MediaAttachmentOwnerViolation(
+            'save would re-parent attachment ${attachment.id} from '
+            '(${existing['owner_lane']}, ${existing['message_id']}) to '
+            '(${owner.dbValue}, ${attachment.messageId})',
+          );
+        }
+        final result = await _applyOutgoingDirectPrivateNonCompletionWithinLock(
+          attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+          missingParentIsOrdinary: true,
+        );
+        if (result !=
+            OutgoingDirectPrivateNonCompletionMutationOutcome
+                .notPrivateParent) {
+          if (result ==
+              OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+            _emitAuthorizationChange(
+              owner: owner,
+              messageId: attachment.messageId,
+              attachmentId: attachment.id,
+              kind: MediaAttachmentAuthorizationMutation.saved,
+            );
+          }
+          return;
+        }
+      } else if (_isOutgoingDirectPrivatePendingPreparationCandidate(
+        attachment,
+      )) {
+        final result = await _prepareOutgoingDirectPrivatePendingWithinLock(
+          <MediaAttachment>[
+            attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+          ],
+        );
+        if (result !=
+            OutgoingDirectPrivatePendingPreparationOutcome.notPrivateParent) {
+          if (result ==
+              OutgoingDirectPrivatePendingPreparationOutcome.refused) {
+            throw OutgoingDirectPrivatePendingPreparationRefused(result);
+          }
+          return;
+        }
+      }
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_SAVE_START',
@@ -1214,6 +1600,241 @@ class MediaAttachmentRepositoryImpl
     }
   });
 
+  // Legacy saveAttachment callers have no parent-policy argument. Enter the
+  // typed first-preparation seam only for its exact convention-owned shape;
+  // the DB seam then remains the authority for ordinary/private parent policy.
+  bool _isOutgoingDirectPrivatePendingPreparationCandidate(
+    MediaAttachment attachment,
+  ) {
+    if (attachment.downloadStatus != kMediaDownloadStatusUploadPending ||
+        attachment.messageId.isEmpty ||
+        attachment.id.isEmpty ||
+        attachment.mime.isEmpty ||
+        attachment.size <= 0 ||
+        attachment.localPath == null) {
+      return false;
+    }
+    try {
+      return attachment.localPath ==
+          MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: attachment.messageId,
+            attachmentId: attachment.id,
+            mime: attachment.mime,
+          );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<OutgoingDirectPrivatePendingPreparationOutcome>
+  prepareOutgoingDirectPrivatePendingAttachments(
+    List<MediaAttachment> attachments,
+  ) => lifecycleLock.synchronizedAll(
+    () => _prepareOutgoingDirectPrivatePendingWithinLock(attachments),
+  );
+
+  Future<OutgoingDirectPrivatePendingPreparationOutcome>
+  _prepareOutgoingDirectPrivatePendingWithinLock(
+    List<MediaAttachment> attachments,
+  ) async {
+    if (attachments.isEmpty) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final messageIds = attachments
+        .map((attachment) => attachment.messageId)
+        .toSet();
+    final attachmentIds = attachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    if (messageIds.length != 1 ||
+        messageIds.single.isEmpty ||
+        attachmentIds.length != attachments.length ||
+        attachmentIds.contains('') ||
+        attachments.any(
+          (attachment) =>
+              attachment.ownerLane != null &&
+              attachment.ownerLane != MediaOwnerLane.direct,
+        )) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final prepare = dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible;
+    if (prepare == null) {
+      return OutgoingDirectPrivatePendingPreparationOutcome.refused;
+    }
+    final result = await prepare(
+      attachments
+          .map(
+            (attachment) => _toStorageReferenceRowWithoutKeyWrite(
+              attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+            ),
+          )
+          .toList(growable: false),
+    );
+    if (result == OutgoingDirectPrivatePendingPreparationOutcome.inserted) {
+      for (final attachment in attachments) {
+        _emitAuthorizationChange(
+          owner: MediaOwnerLane.direct,
+          messageId: attachment.messageId,
+          attachmentId: attachment.id,
+          kind: MediaAttachmentAuthorizationMutation.saved,
+        );
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  applyOutgoingDirectPrivateNonCompletionMutation(MediaAttachment attachment) =>
+      lifecycleLock.synchronized(
+        attachment.id,
+        () => _applyOutgoingDirectPrivateNonCompletionWithinLock(
+          attachment,
+          missingParentIsOrdinary: false,
+        ),
+      );
+
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  _applyOutgoingDirectPrivateNonCompletionWithinLock(
+    MediaAttachment attachment, {
+    required bool missingParentIsOrdinary,
+  }) async {
+    if (attachment.ownerLane != null &&
+        attachment.ownerLane != MediaOwnerLane.direct) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    final existing = await dbLoadMediaById(attachment.id);
+    if (existing == null ||
+        existing['owner_lane'] != MediaOwnerLane.direct.dbValue ||
+        existing['message_id'] != attachment.messageId) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    final apply = dbApplyOutgoingDirectPrivateNonCompletionMutation;
+    if (apply == null) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    return apply(
+      _toStorageReferenceRowWithoutKeyWrite(
+        attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+      ),
+      missingParentIsOrdinary: missingParentIsOrdinary,
+    );
+  }
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  deleteOutgoingDirectPrivatePendingAttachmentsForMessage(
+    String messageId, {
+    required MediaFileManager mediaFileManager,
+  }) => lifecycleLock.synchronizedAll(() async {
+    final qualify = dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion;
+    final delete = dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible;
+    if (qualify == null || delete == null) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    final previousRows = await dbLoadMediaForMessage(
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+    );
+    if (directPrivateMediaTransferRegistry.isActiveForMessage(messageId) ||
+        previousRows.any(
+          (row) => directPrivateMediaTransferRegistry.isActive(
+            row['id'] as String? ?? '',
+          ),
+        )) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome
+          .notAppliedActiveLease;
+    }
+    final qualification = await qualify(messageId);
+    if (qualification !=
+        OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+      return qualification;
+    }
+    final storedPaths = previousRows
+        .map((row) => row['local_path'] as String?)
+        .toList(growable: false);
+    try {
+      // Plaintext disappears first while every row/key still carries exact
+      // authority. A failed unlink therefore cannot strand bytes after their
+      // only durable identity has been removed.
+      await mediaFileManager.deleteOwnedPendingUploadFilesForMessage(
+        messageId: messageId,
+        storedPaths: storedPaths,
+      );
+      for (final storedPath in storedPaths) {
+        if (storedPath == null || storedPath.isEmpty) {
+          return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+        }
+        final resolved = await mediaFileManager.resolveStoredPath(storedPath);
+        if (await FileSystemEntity.type(resolved, followLinks: false) !=
+            FileSystemEntityType.notFound) {
+          return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+        }
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'OUTGOING_PRIVATE_PENDING_FILE_DELETE_REFUSED',
+        details: {'error': error.runtimeType.toString()},
+      );
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    final store = secureKeyStore;
+    if (store == null) {
+      return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+    }
+    final keySnapshots = <_MediaEncryptionKeyDeletionSnapshot>[];
+    Future<void> restoreKeys() async {
+      for (final snapshot in keySnapshots.reversed) {
+        await snapshot.restore();
+      }
+    }
+
+    late final OutgoingDirectPrivateNonCompletionMutationOutcome result;
+    try {
+      for (final row in previousRows) {
+        final attachmentId = row['id'] as String? ?? '';
+        if (attachmentId.isEmpty) {
+          await restoreKeys();
+          return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+        }
+        final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+        final existed = await store.containsKey(keyName);
+        final value = existed ? await store.read(keyName) : null;
+        if (existed && value == null) {
+          await restoreKeys();
+          return OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+        }
+        keySnapshots.add(
+          _MediaEncryptionKeyDeletionSnapshot(
+            store: store,
+            keyName: keyName,
+            existed: existed,
+            previousValue: value,
+          ),
+        );
+        if (existed) await store.delete(keyName);
+      }
+      result = await delete(messageId);
+      if (result != OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+        await restoreKeys();
+      }
+    } catch (_) {
+      await restoreKeys();
+      rethrow;
+    }
+    if (result == OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+      for (final row in previousRows) {
+        _emitAuthorizationChangeForRow(
+          row,
+          MediaAttachmentAuthorizationMutation.removed,
+        );
+      }
+    }
+    return result;
+  });
+
   @override
   Future<int> rollbackNewMessageAttachments({
     required String messageId,
@@ -1314,36 +1935,77 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<void> updateLocalPath(String id, String localPath) =>
-      lifecycleLock.synchronized(id, () async {
-        final previous = await dbLoadMediaById(id);
-        await dbUpdateMediaLocalPath(id, localPath, 'done');
-        final updated = await dbLoadMediaById(id);
-        if (updated != null &&
-            (previous == null ||
-                previous['local_path'] != updated['local_path'] ||
-                previous['download_status'] != updated['download_status'])) {
-          _emitAuthorizationChangeForRow(
-            updated,
-            MediaAttachmentAuthorizationMutation.localPathChanged,
-          );
-        }
-      });
+  Future<void> updateLocalPath(
+    String id,
+    String localPath,
+  ) => lifecycleLock.synchronized(id, () async {
+    final previous = await dbLoadMediaById(id);
+    final applyPrivate = dbApplyOutgoingDirectPrivateNonCompletionMutation;
+    if (previous != null &&
+        previous['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+        applyPrivate != null) {
+      final result = await applyPrivate(<String, Object?>{
+        ...previous,
+        'local_path': localPath,
+        'download_status': 'done',
+      }, missingParentIsOrdinary: true);
+      if (result !=
+          OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent) {
+        return;
+      }
+    }
+    await dbUpdateMediaLocalPath(id, localPath, 'done');
+    final updated = await dbLoadMediaById(id);
+    if (updated != null &&
+        (previous == null ||
+            previous['local_path'] != updated['local_path'] ||
+            previous['download_status'] != updated['download_status'])) {
+      _emitAuthorizationChangeForRow(
+        updated,
+        MediaAttachmentAuthorizationMutation.localPathChanged,
+      );
+    }
+  });
 
   @override
-  Future<void> updateDownloadStatus(String id, String downloadStatus) =>
-      lifecycleLock.synchronized(id, () async {
-        final previous = await dbLoadMediaById(id);
-        await dbUpdateMediaDownloadStatus(id, downloadStatus);
-        final updated = await dbLoadMediaById(id);
-        if (updated != null &&
-            previous?['download_status'] != updated['download_status']) {
-          _emitAuthorizationChangeForRow(
-            updated,
-            MediaAttachmentAuthorizationMutation.downloadStatusChanged,
-          );
+  Future<void> updateDownloadStatus(
+    String id,
+    String downloadStatus,
+  ) => lifecycleLock.synchronized(id, () async {
+    final previous = await dbLoadMediaById(id);
+    final applyPrivate = dbApplyOutgoingDirectPrivateNonCompletionMutation;
+    if (previous != null &&
+        previous['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+        applyPrivate != null) {
+      final result = await applyPrivate(<String, Object?>{
+        ...previous,
+        'download_status': downloadStatus,
+      }, missingParentIsOrdinary: true);
+      if (result !=
+          OutgoingDirectPrivateNonCompletionMutationOutcome.notPrivateParent) {
+        if (result ==
+            OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+          final updated = await dbLoadMediaById(id);
+          if (updated != null) {
+            _emitAuthorizationChangeForRow(
+              updated,
+              MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+            );
+          }
         }
-      });
+        return;
+      }
+    }
+    await dbUpdateMediaDownloadStatus(id, downloadStatus);
+    final updated = await dbLoadMediaById(id);
+    if (updated != null &&
+        previous?['download_status'] != updated['download_status']) {
+      _emitAuthorizationChangeForRow(
+        updated,
+        MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+      );
+    }
+  });
 
   @override
   Future<void> setBookmarked(String id, {required bool bookmarked}) =>
@@ -1758,6 +2420,31 @@ class _MediaEncryptionKeyWriteSnapshot {
       await effectiveStore.write(effectiveKeyName, previousValue!);
     } else {
       await effectiveStore.delete(effectiveKeyName);
+    }
+    _restored = true;
+  }
+}
+
+class _MediaEncryptionKeyDeletionSnapshot {
+  _MediaEncryptionKeyDeletionSnapshot({
+    required this.store,
+    required this.keyName,
+    required this.existed,
+    required this.previousValue,
+  });
+
+  final SecureKeyStore store;
+  final String keyName;
+  final bool existed;
+  final String? previousValue;
+  var _restored = false;
+
+  Future<void> restore() async {
+    if (_restored) return;
+    if (existed) {
+      await store.write(keyName, previousValue!);
+    } else {
+      await store.delete(keyName);
     }
     _restored = true;
   }

@@ -285,6 +285,16 @@ major`, and a green legacy run must not be reported as major-update closure.
   silently dropping their full file/relay semantics. Run
   `bash scripts/test/host_test_gate_batch_contract_test.sh` after changing this
   orchestration contract.
+- Durable concurrency guidance: `./scripts/run_test_gates.sh 1to1` with no
+  extra arguments already sends all of its host paths to one `flutter test`
+  invocation, so Flutter schedules file workers concurrently; its integration
+  paths and non-Flutter tail remain separate. In contrast,
+  `./scripts/run_host_test_gates.sh 1to1` intentionally rejects
+  `--batch-flutter` and runs one Flutter process per file with fail-fast
+  semantics. Use one `--batch-flutter --concurrency 4` invocation for broad
+  `feature-host-all` / `core-host-all` work. Never overlap independent Flutter
+  gate processes: native-assets and temporary-output races can create false
+  failures.
 - Feature-local tests under `test/features/<feature>/application`, `domain`, `presentation`, `phase*`, `improvement`, and `regression` stay implicitly covered by direct feature-level runs unless they are explicitly named below.
 - High-value integration, cross-feature, service, lifecycle, resilience, and orchestration suites must be classified intentionally, even when they stay outside the named gates.
 - Red tests are not removed from a gate definition to make the gate look green. They stay documented as known failures until fixed.

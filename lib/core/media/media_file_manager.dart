@@ -184,6 +184,16 @@ class MediaFileManager {
     return p.join(appDir.path, 'media');
   }
 
+  /// Returns the independently trusted root for durable pending uploads.
+  ///
+  /// Open authorization must construct the exact convention path beneath
+  /// this root. It must never infer pending-upload authority from a stored
+  /// database path or from a candidate file's ancestors.
+  Future<String> trustedPendingUploadRootPath() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    return p.join(appDir.path, 'pending_uploads');
+  }
+
   /// App-owned, process-temporary storage for immutable forward snapshots.
   ///
   /// A dedicated root keeps scavenging bounded and prevents cleanup from ever

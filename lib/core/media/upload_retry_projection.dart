@@ -39,7 +39,13 @@ bool isManualUploadRetryAttachmentSetEligible(
 }
 
 /// The committed result of an owner-qualified upload-failure projection.
-enum UploadRetryProjectionState { notApplied, retryPending, terminal }
+enum UploadRetryProjectionState {
+  notApplied,
+  notAppliedActiveLease,
+  notAppliedTerminal,
+  retryPending,
+  terminal,
+}
 
 class UploadRetryProjectionResult {
   const UploadRetryProjectionResult({
@@ -51,10 +57,22 @@ class UploadRetryProjectionResult {
     : state = UploadRetryProjectionState.notApplied,
       uploadRetryCount = null;
 
+  const UploadRetryProjectionResult.notAppliedActiveLease()
+    : state = UploadRetryProjectionState.notAppliedActiveLease,
+      uploadRetryCount = null;
+
+  const UploadRetryProjectionResult.notAppliedTerminal()
+    : state = UploadRetryProjectionState.notAppliedTerminal,
+      uploadRetryCount = null;
+
   final UploadRetryProjectionState state;
   final int? uploadRetryCount;
 
-  bool get applied => state != UploadRetryProjectionState.notApplied;
+  bool get applied =>
+      state == UploadRetryProjectionState.retryPending ||
+      state == UploadRetryProjectionState.terminal;
+  bool get blockedByActiveLease =>
+      state == UploadRetryProjectionState.notAppliedActiveLease;
   bool get isTerminal => state == UploadRetryProjectionState.terminal;
 }
 

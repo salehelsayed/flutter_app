@@ -110,6 +110,20 @@ void main() {
         source,
         contains('groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle()'),
       );
+      expect(
+        source,
+        contains(
+          'dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates:',
+        ),
+        reason:
+            'production must wire the bounded real-repository cleanup query',
+      );
+      expect(
+        'retryDirectPrivateCommittedPendingCleanup('.allMatches(source),
+        hasLength(1),
+        reason:
+            'cold start and every real resume must share one cleanup callback',
+      );
       expect(source, contains('privateMediaLifecycleRecoveryFn:'));
       expect(source, contains('widget.privateMediaLifecycleRecovery'));
       expect(source, contains('PrivateMediaLifecycleForegroundRuntime('));
@@ -139,6 +153,31 @@ void main() {
         source,
         isNot(contains('widget.startPrivateMediaExpiryScheduler?.call()')),
         reason: 'resume completion cannot unconditionally undo a later pause',
+      );
+
+      final sharedLocalRecovery = source.indexOf(
+        'recoverLocalLifecycle: () async',
+      );
+      final directRecovery = source.indexOf(
+        'directPrivateMediaLifecycleEngine.reconcileLocalLifecycle()',
+        sharedLocalRecovery,
+      );
+      final committedPendingCleanup = source.indexOf(
+        'retryDirectPrivateCommittedPendingCleanup(',
+        sharedLocalRecovery,
+      );
+      final groupRecovery = source.indexOf(
+        'groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle()',
+        sharedLocalRecovery,
+      );
+      expect(sharedLocalRecovery, isNonNegative);
+      expect(directRecovery, greaterThan(sharedLocalRecovery));
+      expect(committedPendingCleanup, greaterThan(directRecovery));
+      expect(
+        groupRecovery,
+        greaterThan(committedPendingCleanup),
+        reason:
+            'pending cleanup load failures are isolated before group recovery',
       );
 
       final runAppMark = source.indexOf(

@@ -67,9 +67,11 @@ void main() {
         // Three conditionalTransitionStatus calls: 'inboxed'→'delivered', the
         // lost-ack 'sent'→'delivered' repair, and (185) the defensive
         // 'failed'→'delivered' arm for a sender-offline send that still reached
-        // the receiver. All three ride the peer-auth guard (:55) + CAS (D-6).
+        // the receiver. The two protected-media expressions settle the live
+        // parent or delete-for-everyone tombstone through their exact CAS after
+        // the same peer-authenticated receipt. All five ride the receipt guard.
         'lib/features/conversation/application/handle_delivery_receipt_use_case.dart':
-            3,
+            5,
         // (b) the live deferred-ack branch of _persistOutgoingSendResult —
         // Go withholds the wire ack until the receiver durably stages
         // (node.go deferred direct ack), so this IS receiver confirmation.

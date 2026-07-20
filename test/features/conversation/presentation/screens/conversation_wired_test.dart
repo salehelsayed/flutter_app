@@ -14,6 +14,8 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -77,6 +79,7 @@ import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
+import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../domain/repositories/fake_media_attachment_repository.dart';
 import '../../domain/repositories/fake_reaction_repository.dart';
 
@@ -213,11 +216,15 @@ class FakeIdentityRepository implements IdentityRepository {
 }
 
 class FakeContactRepository implements ContactRepository {
+  FakeContactRepository({this.contactExistsResult = true});
+
+  final bool contactExistsResult;
+
   @override
   Future<void> addContact(ContactModel contact) async {}
 
   @override
-  Future<bool> contactExists(String peerId) async => false;
+  Future<bool> contactExists(String peerId) async => contactExistsResult;
 
   @override
   Future<void> deleteContact(String peerId) async {}
@@ -307,6 +314,13 @@ class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
   }
 
   @override
+  Future<String> trustedMediaRootPath() async => '${rootDir.path}/media';
+
+  @override
+  Future<String> trustedPendingUploadRootPath() async =>
+      '${rootDir.path}/pending_uploads';
+
+  @override
   Future<String> localPathForAttachment({
     required String contactPeerId,
     required String blobId,
@@ -335,6 +349,24 @@ class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
     if (!pendingUploadDirDeleted.isCompleted) {
       pendingUploadDirDeleted.complete();
     }
+  }
+}
+
+class _ThrowingPendingPlaintextDeleteMediaFileManager
+    extends TrackingDurableConversationMediaFileManager {
+  _ThrowingPendingPlaintextDeleteMediaFileManager(super.rootDir);
+
+  int deleteAttempts = 0;
+  List<String?> attemptedStoredPaths = const <String?>[];
+
+  @override
+  Future<void> deleteOwnedPendingUploadFilesForMessage({
+    required String messageId,
+    required Iterable<String?> storedPaths,
+  }) async {
+    deleteAttempts++;
+    attemptedStoredPaths = storedPaths.toList(growable: false);
+    throw StateError('simulated pending plaintext deletion failure');
   }
 }
 
@@ -1005,6 +1037,18 @@ class _RecordingComposerUploadProjection
   }
 }
 
+class _TerminalComposerUploadProjection
+    implements DirectUploadRetryProjectionRepository {
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async => const UploadRetryProjectionResult(
+    state: UploadRetryProjectionState.terminal,
+  );
+}
+
 void main() {
   late FakeUploadWakeLockDriver wakeLockDriver;
 
@@ -1064,7 +1108,7 @@ void main() {
   Future<void> pumpScreen(
     WidgetTester tester, {
     required FakeIdentityRepository identityRepo,
-    required FakeMessageRepository messageRepo,
+    required MessageRepository messageRepo,
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
     EditChatMessageFn? editFn,
@@ -1184,6 +1228,23 @@ void main() {
     expect(condition(), isTrue);
   }
 
+  void installPrivateMediaProtectionEventChannelStub(WidgetTester tester) {
+    final previousFlowEventLogging = flowEventLoggingEnabled;
+    flowEventLoggingEnabled = false;
+    addTearDown(() => flowEventLoggingEnabled = previousFlowEventLogging);
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMessageHandler(
+      kPrivateMediaProtectionEventChannel,
+      (_) async => const StandardMethodCodec().encodeSuccessEnvelope(null),
+    );
+    addTearDown(
+      () => messenger.setMockMessageHandler(
+        kPrivateMediaProtectionEventChannel,
+        null,
+      ),
+    );
+  }
+
   group('FDC-04 warm on open', () {
     // TC-04-09: opening the conversation screen fires warmPeer(contact.peerId)
     // exactly once (fire-and-forget), on EVERY open. Mutation: remove the warm
@@ -1213,6 +1274,7 @@ void main() {
     testWidgets('selected private policy reaches the injected send seam', (
       tester,
     ) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
       final tempDir = Directory.systemTemp.createTempSync(
         'private_media_send_',
       );
@@ -1225,7 +1287,13 @@ void main() {
         ..writeAsBytesSync(_tinyPngBytes);
       final mediaPicker = FakeMediaPicker()
         ..multipleMediaResult = [XFile(nextImage.path)];
-      final messageRepo = FakeMessageRepository();
+      final fixture = (await tester.runAsync(
+        MediaRepositoryRealDbFixture.create,
+      ))!;
+      addTearDown(fixture.dispose);
+      final messageRepo = fixture.messageRepo;
+      final durableMediaFileManager =
+          TrackingDurableConversationMediaFileManager(tempDir);
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final chatListener = ChatMessageListener(
         chatMessageStream: const Stream.empty(),
@@ -1233,15 +1301,22 @@ void main() {
         contactRepo: FakeContactRepository(),
       );
       final capturedPolicies = <PrivateMediaPolicy>[];
+      var completedSends = 0;
+      String? privateMessageId;
+      String? privateAttachmentId;
+      String? latestAttachmentId;
 
       await pumpScreen(
         tester,
         identityRepo: identityRepo,
         messageRepo: messageRepo,
         chatListener: chatListener,
+        contactRepo: FakeContactRepository(),
         initialAttachments: [image],
         mediaPicker: mediaPicker,
         bridge: FakeBridge(),
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: durableMediaFileManager,
         uploadMediaFn:
             ({
               required bridge,
@@ -1257,16 +1332,35 @@ void main() {
               allowedPeers,
               deleteSourceWhenDone = false,
               preparedArtifact,
-            }) async => MediaAttachment(
-              id: 'private-media-upload',
-              messageId: '',
-              mime: mime,
-              size: File(localFilePath).lengthSync(),
-              mediaType: MediaAttachment.mediaTypeFromMime(mime),
-              localPath: localFilePath,
-              downloadStatus: 'done',
-              createdAt: DateTime.now().toUtc().toIso8601String(),
-            ),
+            }) async {
+              final canonicalPath = durableMediaFileManager
+                  .relativePathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId!,
+                    mime: mime,
+                  );
+              final canonicalAbsolutePath = await durableMediaFileManager
+                  .localPathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId,
+                    mime: mime,
+                  );
+              await File(localFilePath).copy(canonicalAbsolutePath);
+              return MediaAttachment(
+                id: blobId,
+                messageId: '',
+                mime: mime,
+                size: File(localFilePath).lengthSync(),
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                localPath: canonicalPath,
+                downloadStatus: 'done',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+                contentHash: 'private-policy-test-hash',
+                encryptionKeyBase64: 'private-policy-test-key',
+                encryptionNonce: 'private-policy-test-nonce',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              );
+            },
         sendFn:
             ({
               required p2pService,
@@ -1285,10 +1379,15 @@ void main() {
               mediaAttachmentRepo,
               transportMetrics,
             }) async {
-              capturedPolicies.add(
-                privateMediaPolicy ?? const PrivateMediaPolicy.ordinary(),
-              );
-              return _instantSuccessSendFn(
+              final policy =
+                  privateMediaPolicy ?? const PrivateMediaPolicy.ordinary();
+              capturedPolicies.add(policy);
+              latestAttachmentId = mediaAttachments?.singleOrNull?.id;
+              if (policy.isPrivate) {
+                privateMessageId = messageId;
+                privateAttachmentId = latestAttachmentId;
+              }
+              final result = await _instantSuccessSendFn(
                 p2pService: p2pService,
                 messageRepo: messageRepo,
                 targetPeerId: targetPeerId,
@@ -1305,6 +1404,8 @@ void main() {
                 mediaAttachmentRepo: mediaAttachmentRepo,
                 transportMetrics: transportMetrics,
               );
+              completedSends++;
+              return result;
             },
       );
       await tester.tap(find.byKey(const ValueKey('private-media-selector')));
@@ -1328,7 +1429,26 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await pumpUntil(tester, () => capturedPolicies.length == 1);
+      await pumpUntilAsyncIo(tester, () => completedSends == 1);
+
+      await pumpUntilAsyncIo(tester, () {
+        final attachmentId = privateAttachmentId;
+        return attachmentId != null &&
+            !directPrivateMediaTransferRegistry.isActive(attachmentId);
+      }, timeout: const Duration(seconds: 10));
+      await pumpUntilAsyncIo(tester, () {
+        final attachmentId = privateAttachmentId;
+        return attachmentId != null &&
+            !mediaUploadInFlightTracker.isInFlight(attachmentId);
+      }, timeout: const Duration(seconds: 10));
+      await pumpUntilAsyncIo(tester, () {
+        final messageId = privateMessageId;
+        final attachmentId = privateAttachmentId;
+        if (messageId == null || attachmentId == null) return false;
+        final pendingPath =
+            '${tempDir.path}/pending_uploads/$messageId/$attachmentId.png';
+        return !File(pendingPath).existsSync();
+      }, timeout: const Duration(seconds: 10));
 
       expect(capturedPolicies.single, const PrivateMediaPolicy.protected());
 
@@ -1347,13 +1467,19 @@ void main() {
       expect(find.text('Keep in chat'), findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await pumpUntil(tester, () => capturedPolicies.length == 2);
+      await pumpUntilAsyncIo(tester, () => completedSends == 2);
+      await pumpUntilAsyncIo(tester, () {
+        final attachmentId = latestAttachmentId;
+        return attachmentId != null &&
+            !mediaUploadInFlightTracker.isInFlight(attachmentId);
+      }, timeout: const Duration(seconds: 10));
       expect(capturedPolicies.last, const PrivateMediaPolicy.ordinary());
     });
 
     testWidgets('failed private upload restores the exact selected policy', (
       tester,
     ) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
       final tempDir = Directory.systemTemp.createTempSync(
         'private_media_restore_',
       );
@@ -1362,21 +1488,32 @@ void main() {
       });
       final image = File('${tempDir.path}/private.png')
         ..writeAsBytesSync(_tinyPngBytes);
-      final messageRepo = FakeMessageRepository();
+      final fixture = (await tester.runAsync(
+        MediaRepositoryRealDbFixture.create,
+      ))!;
+      addTearDown(fixture.dispose);
+      final messageRepo = fixture.messageRepo;
+      final durableMediaFileManager =
+          TrackingDurableConversationMediaFileManager(tempDir);
       final chatListener = ChatMessageListener(
         chatMessageStream: const Stream.empty(),
         messageRepo: messageRepo,
         contactRepo: FakeContactRepository(),
       );
       var sendCalls = 0;
+      String? failedAttachmentId;
 
       await pumpScreen(
         tester,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         messageRepo: messageRepo,
         chatListener: chatListener,
+        contactRepo: FakeContactRepository(),
         initialAttachments: [image],
         bridge: FakeBridge(),
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: durableMediaFileManager,
+        uploadRetryProjectionRepo: _TerminalComposerUploadProjection(),
         uploadMediaFn:
             ({
               required bridge,
@@ -1392,7 +1529,10 @@ void main() {
               allowedPeers,
               deleteSourceWhenDone = false,
               preparedArtifact,
-            }) async => null,
+            }) async {
+              failedAttachmentId = blobId;
+              return null;
+            },
         sendFn:
             ({
               required p2pService,
@@ -1451,13 +1591,20 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await pumpUntil(
+      await pumpUntilAsyncIo(
         tester,
         () => find
             .text('Failed to upload media. Try again.')
             .evaluate()
             .isNotEmpty,
+        timeout: const Duration(seconds: 10),
       );
+      await pumpUntilAsyncIo(tester, () {
+        final attachmentId = failedAttachmentId;
+        return attachmentId != null &&
+            !directPrivateMediaTransferRegistry.isActive(attachmentId) &&
+            !mediaUploadInFlightTracker.isInFlight(attachmentId);
+      }, timeout: const Duration(seconds: 10));
 
       expect(sendCalls, 0);
       expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
@@ -9532,6 +9679,96 @@ void main() {
         ),
       );
     });
+
+    testWidgets(
+      'ordinary failed-media delete retains durable authority when plaintext deletion throws',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'ordinary-failed-media-delete-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+
+        const messageId = 'ordinary-delete-file-failure';
+        const attachmentId = 'ordinary-delete-file-failure-attachment';
+        const storedPath =
+            'pending_uploads/ordinary-delete-file-failure/'
+            'ordinary-delete-file-failure-attachment.jpg';
+        final pendingPlaintext = File('${tempDir.path}/$storedPath')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(const <int>[1, 2, 3, 4]);
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final mediaFileManager =
+            _ThrowingPendingPlaintextDeleteMediaFileManager(tempDir);
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final failedMessage = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: '2026-02-11T10:05:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-11T10:05:00.000Z',
+          media: const <MediaAttachment>[
+            MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 4,
+              mediaType: 'image',
+              localPath: storedPath,
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-02-11T10:05:00.000Z',
+            ),
+          ],
+        );
+        await messageRepo.saveMessage(failedMessage);
+        mediaAttachmentRepo.seedAttachments(
+          messageId: messageId,
+          attachments: failedMessage.media,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await tester.tap(
+          find.byKey(const ValueKey('failed-media-delete-$messageId')),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(mediaFileManager.deleteAttempts, 1);
+        expect(mediaFileManager.attemptedStoredPaths, const <String?>[
+          storedPath,
+        ]);
+        expect(pendingPlaintext.existsSync(), isTrue);
+        expect(messageRepo.store.containsKey(messageId), isTrue);
+        final retained = await mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(retained, hasLength(1));
+        expect(retained.single.id, attachmentId);
+        expect(retained.single.localPath, storedPath);
+        expect(retained.single.downloadStatus, 'upload_failed');
+      },
+    );
 
     testWidgets(
       'direct terminalization preserves same id group pending media',

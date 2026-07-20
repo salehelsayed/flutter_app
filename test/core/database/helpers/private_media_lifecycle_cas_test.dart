@@ -30,6 +30,7 @@ void main() {
     String state = 'available',
     String? attachmentId,
     String? localPath,
+    String downloadStatus = 'done',
   }) async {
     await fixture.seedDirectParent(id);
     await fixture.db.update(
@@ -55,7 +56,7 @@ void main() {
           size: 3,
           mediaType: 'image',
           localPath: localPath,
-          downloadStatus: 'done',
+          downloadStatus: downloadStatus,
           createdAt: '2026-07-19T00:00:00.000Z',
           ownerLane: MediaOwnerLane.direct,
         ).toMap(),
@@ -71,6 +72,68 @@ void main() {
       whereArgs: <Object?>[id],
     );
     return rows.single['private_media_state']! as String;
+  }
+
+  Future<int> runExactPendingOperation({
+    required String operation,
+    required String messageId,
+    required String mode,
+    required String attachmentId,
+    required String storedPath,
+    required bool isIncoming,
+  }) {
+    switch (operation) {
+      case 'claim':
+        return dbClaimDirectPrivateMediaOpening(
+          fixture.db,
+          messageId,
+          nowMs: 1100,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedPath,
+        );
+      case 'mark':
+        return dbMarkDirectPrivateMediaViewing(
+          fixture.db,
+          messageId,
+          nowMs: 1200,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedPath,
+        );
+      case 'rollback':
+        return dbRollbackDirectPrivateMediaOpening(
+          fixture.db,
+          messageId,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedPath,
+        );
+      case 'consume':
+        return dbConsumeDirectPrivateMedia(
+          fixture.db,
+          messageId,
+          nowMs: 1300,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedPath,
+        );
+      case 'quarantine':
+        return dbQuarantineIndeterminateDirectPrivateMediaAvailable(
+          fixture.db,
+          messageId,
+          isIncoming: isIncoming,
+          mode: mode,
+          attachmentId: attachmentId,
+          storedLocalPath: storedPath,
+          nowMs: 1400,
+        );
+    }
+    throw ArgumentError.value(operation, 'operation');
   }
 
   test(
@@ -367,6 +430,145 @@ void main() {
   );
 
   test(
+    'outgoing pending identity claims, views, rolls back, consumes and quarantines exactly once (protected AND view_once)',
+    () async {
+      const operations = <String>[
+        'claim',
+        'mark',
+        'rollback',
+        'consume',
+        'quarantine',
+      ];
+      for (final mode in const <String>['protected', 'view_once']) {
+        for (final operation in operations) {
+          final messageId = 'pending-$mode-$operation';
+          final attachmentId = '$messageId-attachment';
+          final storedPath = 'pending_uploads/$messageId/$attachmentId.jpg';
+          await seedTarget(
+            id: messageId,
+            direction: PrivateMediaDirection.outgoing,
+            mode: mode,
+            state:
+                operation == 'mark' ||
+                    operation == 'rollback' ||
+                    operation == 'consume'
+                ? 'opening'
+                : 'available',
+            attachmentId: attachmentId,
+            localPath: storedPath,
+            downloadStatus: 'upload_pending',
+          );
+
+          expect(
+            await runExactPendingOperation(
+              operation: operation,
+              messageId: messageId,
+              mode: mode,
+              attachmentId: attachmentId,
+              storedPath: storedPath,
+              isIncoming: false,
+            ),
+            1,
+            reason: '$mode $operation must accept the exact pending identity',
+          );
+          expect(
+            await runExactPendingOperation(
+              operation: operation,
+              messageId: messageId,
+              mode: mode,
+              attachmentId: attachmentId,
+              storedPath: storedPath,
+              isIncoming: false,
+            ),
+            0,
+            reason: '$mode $operation remains an exact one-shot CAS',
+          );
+        }
+
+        final wrongMessageId = 'pending-$mode-wrong-identity';
+        final wrongAttachmentId = '$wrongMessageId-attachment';
+        final wrongStoredPath =
+            'pending_uploads/$wrongMessageId/$wrongAttachmentId.jpg';
+        await seedTarget(
+          id: wrongMessageId,
+          direction: PrivateMediaDirection.outgoing,
+          mode: mode,
+          attachmentId: wrongAttachmentId,
+          localPath: wrongStoredPath,
+          downloadStatus: 'upload_pending',
+        );
+        expect(
+          await dbClaimDirectPrivateMediaOpening(
+            fixture.db,
+            wrongMessageId,
+            nowMs: 1500,
+            isIncoming: false,
+            mode: mode,
+            attachmentId: '$wrongAttachmentId-replaced',
+            storedLocalPath: wrongStoredPath,
+          ),
+          0,
+        );
+        expect(
+          await dbClaimDirectPrivateMediaOpening(
+            fixture.db,
+            wrongMessageId,
+            nowMs: 1500,
+            isIncoming: false,
+            mode: mode,
+            attachmentId: wrongAttachmentId,
+            storedLocalPath: '$wrongStoredPath-replaced',
+          ),
+          0,
+        );
+      }
+    },
+  );
+
+  test(
+    'incoming lease identity still requires done and canonical path',
+    () async {
+      for (final operation in const <String>[
+        'claim',
+        'mark',
+        'rollback',
+        'consume',
+        'quarantine',
+      ]) {
+        final messageId = 'incoming-pending-$operation';
+        final attachmentId = '$messageId-attachment';
+        final storedPath = 'pending_uploads/$messageId/$attachmentId.jpg';
+        await seedTarget(
+          id: messageId,
+          direction: PrivateMediaDirection.incoming,
+          mode: 'view_once',
+          state:
+              operation == 'mark' ||
+                  operation == 'rollback' ||
+                  operation == 'consume'
+              ? 'opening'
+              : 'available',
+          attachmentId: attachmentId,
+          localPath: storedPath,
+          downloadStatus: 'upload_pending',
+        );
+        expect(
+          await runExactPendingOperation(
+            operation: operation,
+            messageId: messageId,
+            mode: 'view_once',
+            attachmentId: attachmentId,
+            storedPath: storedPath,
+            isIncoming: true,
+          ),
+          0,
+          reason: 'incoming pending $operation must remain fail-closed',
+        );
+      }
+    },
+  );
+
+  test(
     'recovery candidates include stale sender leases without widening sender modes',
     () async {
       await seedTarget(
@@ -426,8 +628,11 @@ void main() {
         mode: 'protected',
         state: 'opening',
       );
-      await fixture.repo.saveAttachment(
-        const MediaAttachment(
+      final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+      await fixture.secureKeyStore.write(keyName, 'c2VuZGVyLWtleQ==');
+      await dbInsertMediaAttachment(
+        fixture.db,
+        MediaAttachment(
           id: attachmentId,
           messageId: messageId,
           mime: 'image/jpeg',
@@ -436,11 +641,10 @@ void main() {
           localPath: storedPath,
           downloadStatus: 'done',
           createdAt: '2026-07-19T00:00:00.000Z',
-          encryptionKeyBase64: 'c2VuZGVyLWtleQ==',
+          encryptionKeyBase64: secureStoreReferenceForKey(keyName),
           encryptionNonce: 'bm9uY2U=',
           ownerLane: MediaOwnerLane.direct,
-        ),
-        owner: MediaOwnerLane.direct,
+        ).toMap(),
       );
       final canonical = File(
         p.join(FakeMediaFileManager.testRootPath, storedPath),

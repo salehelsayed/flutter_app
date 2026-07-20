@@ -1,7 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -19,6 +26,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 Future<void> handleDeliveryReceipt({
   required ChatMessage message,
   required MessageRepository messageRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   final fromPreview = message.from.length > 10
       ? message.from.substring(0, 10)
@@ -64,6 +72,63 @@ Future<void> handleDeliveryReceipt({
     }
     if (row.status == 'delivered') {
       // Idempotent re-apply (duplicate receipt) — nothing to do.
+      continue;
+    }
+
+    if (_isOutgoingOneMoreLookPrivate(row)) {
+      final expectedEnvelope = row.wireEnvelope;
+      var accepted = false;
+      if (expectedEnvelope != null && expectedEnvelope.isNotEmpty) {
+        if (row.isDeleted) {
+          if (messageRepo is DirectPrivateDeleteForEveryoneRepository) {
+            final target = normalizeOutgoingDeleteTombstoneVisibility(
+              row.copyWith(status: 'delivered', wireEnvelope: null),
+            );
+            accepted =
+                await (messageRepo as DirectPrivateDeleteForEveryoneRepository)
+                    .settlePrivateDeleteForEveryoneTombstone(
+                      tombstone: target,
+                      expectedEnvelope: expectedEnvelope,
+                    ) !=
+                null;
+          }
+        } else {
+          List<MediaAttachment>? attachments;
+          try {
+            attachments = await mediaAttachmentRepo?.getAttachmentsForMessage(
+              row.id,
+              owner: MediaOwnerLane.direct,
+            );
+          } catch (_) {
+            attachments = null;
+          }
+          final outcome =
+              await settleOutgoingDirectPrivateTransportUnderLifecycleLock(
+                messageRepository: messageRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+                attachments: attachments,
+                messageId: row.id,
+                expectedEnvelope: expectedEnvelope,
+                status: 'delivered',
+                transport: row.transport,
+                relayExpiresAt: null,
+              );
+          accepted = outcome.accepted;
+        }
+      }
+      if (!accepted) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DELIVERY_RECEIPT_NO_TRANSITION',
+          details: {'from': fromPreview, 'id': idPreview, 'status': row.status},
+        );
+        continue;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_APPLIED',
+        details: {'from': fromPreview, 'id': idPreview},
+      );
       continue;
     }
 
@@ -119,3 +184,9 @@ Future<void> handleDeliveryReceipt({
     );
   }
 }
+
+bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
+    !message.isIncoming &&
+    message.privateMediaPolicy.version == 1 &&
+    (message.privateMediaMode == PrivateMediaMode.protected ||
+        message.privateMediaMode == PrivateMediaMode.viewOnce);

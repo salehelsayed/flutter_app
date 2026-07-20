@@ -5,6 +5,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -76,6 +77,7 @@ enum DirectPrivateMediaPrepareFailureReason {
   appLifecycleContinuityLost,
   notEligible,
   localAuthorityMissing,
+  senderLocalBytesMissing,
   leaseUnavailable,
   protectionEnterFailed,
   protectionIncident,
@@ -144,6 +146,7 @@ class DirectPrivateMediaPrepareResult {
 
 enum DirectPrivateMediaOpenFailureReason {
   prepareFailed,
+  senderLocalBytesMissing,
   routePushFailure,
   preFrameFailure,
   lifecycleInterrupted,
@@ -354,31 +357,33 @@ class DirectPrivateMediaViewerController {
     try {
       final beforeQualification = await continuityFailure();
       if (beforeQualification != null) return beforeQualification;
+      await _repairLegacyOpenQualificationIfEligible(identity);
+      final afterLegacyRepair = await continuityFailure();
+      if (afterLegacyRepair != null) return afterLegacyRepair;
       final initial = await _qualifyRows(identity);
       final afterInitialRows = await continuityFailure();
       if (afterInitialRows != null) return afterInitialRows;
       if (initial == null ||
           !initial.decision.allows(DirectPrivateMediaAction.openInApp)) {
-        return failed(DirectPrivateMediaPrepareFailureReason.notEligible);
+        return await failed(DirectPrivateMediaPrepareFailureReason.notEligible);
       }
-      final initialTarget = await _loadExactTarget(identity, initial);
+      final initialTargetLoad = await _loadExactTarget(identity, initial);
+      final initialTarget = initialTargetLoad.target;
       final afterInitialTarget = await continuityFailure();
       if (afterInitialTarget != null) return afterInitialTarget;
       if (initialTarget == null) {
-        return failed(
-          DirectPrivateMediaPrepareFailureReason.localAuthorityMissing,
-        );
+        return await failed(initialTargetLoad.failureReason);
       }
       final initialKind = _qualifiedMediaKind(initial.rows.attachment!);
       if (initialKind == null) {
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.unsupportedMediaKind,
         );
       }
       final initialPath = _openableTargetPath(initialTarget, identity);
       if (initialPath == null ||
           initialTarget.state != PrivateMediaLifecycleState.available) {
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.localAuthorityMissing,
         );
       }
@@ -391,7 +396,7 @@ class DirectPrivateMediaViewerController {
         final afterLease = await continuityFailure();
         if (afterLease != null) return afterLease;
         if (openingLease == null) {
-          return failed(
+          return await failed(
             DirectPrivateMediaPrepareFailureReason.leaseUnavailable,
           );
         }
@@ -399,7 +404,7 @@ class DirectPrivateMediaViewerController {
             openingLease.direction != initialTarget.direction ||
             openingLease.mode != initialTarget.mode ||
             openingLease.localPath != initialPath) {
-          return failed(
+          return await failed(
             DirectPrivateMediaPrepareFailureReason.revalidationFailed,
             exitReason: DirectPrivateMediaExitReason.revalidationFailure,
           );
@@ -409,7 +414,9 @@ class DirectPrivateMediaViewerController {
         if (initialTarget.direction != PrivateMediaDirection.incoming ||
             (initialTarget.mode != PrivateMediaMode.protected &&
                 initialTarget.mode != PrivateMediaMode.disappearing)) {
-          return failed(DirectPrivateMediaPrepareFailureReason.notEligible);
+          return await failed(
+            DirectPrivateMediaPrepareFailureReason.notEligible,
+          );
         }
         authorizedPath = initialPath;
       }
@@ -421,7 +428,7 @@ class DirectPrivateMediaViewerController {
       if (afterProtection != null) return afterProtection;
       if (protectionOwner == null ||
           protectionCoordinator.latchedCriticalEvent != null) {
-        return failed(
+        return await failed(
           protectionOwner == null
               ? DirectPrivateMediaPrepareFailureReason.protectionEnterFailed
               : DirectPrivateMediaPrepareFailureReason.protectionIncident,
@@ -448,18 +455,18 @@ class DirectPrivateMediaViewerController {
         if (initialTarget.mode == PrivateMediaMode.disappearing) {
           await _cleanupTerminalSafely(identity.messageId);
         }
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.revalidationFailed,
           exitReason: DirectPrivateMediaExitReason.revalidationFailure,
         );
       }
-      final currentTarget = await _loadExactTarget(identity, current);
+      final currentTarget = (await _loadExactTarget(identity, current)).target;
       final afterCurrentTarget = await continuityFailure();
       if (afterCurrentTarget != null) return afterCurrentTarget;
       if (currentTarget == null ||
           currentTarget.mode != initialTarget.mode ||
           currentTarget.direction != initialTarget.direction) {
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.revalidationFailed,
           exitReason: DirectPrivateMediaExitReason.revalidationFailure,
         );
@@ -482,7 +489,7 @@ class DirectPrivateMediaViewerController {
         if (openingLease == null && currentTarget.cleanupTerminal) {
           await _cleanupTerminalSafely(identity.messageId);
         }
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.revalidationFailed,
           exitReason: DirectPrivateMediaExitReason.revalidationFailure,
         );
@@ -490,7 +497,7 @@ class DirectPrivateMediaViewerController {
 
       final kind = _qualifiedMediaKind(current.rows.attachment!);
       if (kind == null || kind != initialKind) {
-        return failed(
+        return await failed(
           DirectPrivateMediaPrepareFailureReason.unsupportedMediaKind,
           exitReason: DirectPrivateMediaExitReason.revalidationFailure,
         );
@@ -511,7 +518,7 @@ class DirectPrivateMediaViewerController {
     } catch (_) {
       final invalidated = await continuityFailure();
       if (invalidated != null) return invalidated;
-      return failed(
+      return await failed(
         DirectPrivateMediaPrepareFailureReason.unexpectedFailure,
         exitReason: DirectPrivateMediaExitReason.revalidationFailure,
       );
@@ -536,7 +543,7 @@ class DirectPrivateMediaViewerController {
     DirectPrivateMediaExitReason exitReason, {
     required bool terminalize,
   }) async {
-    final disposition = await lifecycleEngine.settleOpeningLease(
+    final disposition = await _settleOpeningLeaseWithReconciliation(
       lease,
       intent: terminalize
           ? PrivateMediaLifecycleSettlementIntent.terminalize
@@ -547,6 +554,41 @@ class DirectPrivateMediaViewerController {
       exitReason: exitReason,
       firstFrameRecorded: false,
     );
+  }
+
+  Future<PrivateMediaLifecycleSettlementDisposition>
+  _settleOpeningLeaseWithReconciliation(
+    PrivateMediaOpeningLease lease, {
+    required PrivateMediaLifecycleSettlementIntent intent,
+  }) async {
+    late final PrivateMediaLifecycleSettlementDisposition disposition;
+    try {
+      disposition = await lifecycleEngine.settleOpeningLease(
+        lease,
+        intent: intent,
+      );
+    } catch (_) {
+      // settleOpeningLease has released its attachment lock before it returns
+      // or throws. Reconciliation therefore cannot invert lock ordering.
+      await _reconcileFailedSettlementSafely();
+      rethrow;
+    }
+    if (disposition ==
+            PrivateMediaLifecycleSettlementDisposition.lostRollbackRace ||
+        disposition ==
+            PrivateMediaLifecycleSettlementDisposition
+                .indeterminateFailClosed) {
+      await _reconcileFailedSettlementSafely();
+    }
+    return disposition;
+  }
+
+  Future<void> _reconcileFailedSettlementSafely() async {
+    try {
+      await lifecycleEngine.reconcileLocalLifecycle();
+    } catch (_) {
+      // Startup reconciliation remains the crash/error fallback.
+    }
   }
 
   Future<bool> markFirstFrame(DirectPrivateMediaViewerGrant grant) async {
@@ -585,7 +627,7 @@ class DirectPrivateMediaViewerController {
       }
       return false;
     }
-    final target = await _loadExactTarget(grant.identity, current);
+    final target = (await _loadExactTarget(grant.identity, current)).target;
     return target != null &&
         target.mode == grant.mode &&
         target.state == PrivateMediaLifecycleState.available &&
@@ -689,12 +731,13 @@ class DirectPrivateMediaViewerController {
               reason == DirectPrivateMediaExitReason.protectionEnterFailure ||
               reason == DirectPrivateMediaExitReason.revalidationFailure);
       try {
-        final lifecycleDisposition = await lifecycleEngine.settleOpeningLease(
-          lease,
-          intent: rollbackAllowed
-              ? PrivateMediaLifecycleSettlementIntent.rollbackPreFrame
-              : PrivateMediaLifecycleSettlementIntent.terminalize,
-        );
+        final lifecycleDisposition =
+            await _settleOpeningLeaseWithReconciliation(
+              lease,
+              intent: rollbackAllowed
+                  ? PrivateMediaLifecycleSettlementIntent.rollbackPreFrame
+                  : PrivateMediaLifecycleSettlementIntent.terminalize,
+            );
         disposition = _mapLifecycleDisposition(lifecycleDisposition);
       } catch (_) {
         disposition =
@@ -796,7 +839,13 @@ class DirectPrivateMediaViewerController {
           ? attachment.downloadRetryCount! < kMaxDownloadRetries
           : true;
     }
-    if (attachment.downloadStatus != kMediaDownloadStatusDone ||
+    final isOutgoingPendingOneMoreLook =
+        !parent.isIncoming &&
+        (parent.privateMediaMode == PrivateMediaMode.protected ||
+            parent.privateMediaMode == PrivateMediaMode.viewOnce) &&
+        attachment.downloadStatus == kMediaDownloadStatusUploadPending;
+    if ((attachment.downloadStatus != kMediaDownloadStatusDone &&
+            !isOutgoingPendingOneMoreLook) ||
         !allowedDoneRetry ||
         settleResult == null ||
         (settleResult.disposition !=
@@ -805,7 +854,7 @@ class DirectPrivateMediaViewerController {
                 DirectPrivateMediaSettleDisposition.noLease)) {
       return false;
     }
-    final target = await _loadExactTarget(identity, current);
+    final target = (await _loadExactTarget(identity, current)).target;
     return target != null &&
         target.state == PrivateMediaLifecycleState.available &&
         _openableTargetPath(target, identity) != null;
@@ -832,7 +881,27 @@ class DirectPrivateMediaViewerController {
     return (rows: rows, decision: decision);
   }
 
-  Future<PrivateMediaLifecycleTarget?> _loadExactTarget(
+  Future<void> _repairLegacyOpenQualificationIfEligible(
+    DirectPrivateMediaViewerIdentity identity,
+  ) async {
+    final adapter = lifecycleEngine.adapter;
+    if (adapter is DirectPrivateMediaOpenQualificationAdapter) {
+      final qualificationAdapter =
+          adapter as DirectPrivateMediaOpenQualificationAdapter;
+      await qualificationAdapter.repairLegacyOpenQualificationIfEligible(
+        messageId: identity.messageId,
+        attachmentId: identity.attachmentId,
+      );
+    }
+  }
+
+  Future<
+    ({
+      PrivateMediaLifecycleTarget? target,
+      DirectPrivateMediaPrepareFailureReason failureReason,
+    })
+  >
+  _loadExactTarget(
     DirectPrivateMediaViewerIdentity identity,
     ({
       DirectPrivateMediaCurrentRows rows,
@@ -840,7 +909,20 @@ class DirectPrivateMediaViewerController {
     })
     current,
   ) async {
-    final target = await lifecycleEngine.adapter.loadTarget(identity.messageId);
+    final adapter = lifecycleEngine.adapter;
+    final qualificationAdapter =
+        adapter is DirectPrivateMediaOpenQualificationAdapter
+        ? adapter as DirectPrivateMediaOpenQualificationAdapter
+        : null;
+    final qualification = qualificationAdapter != null
+        ? await qualificationAdapter.loadOpenQualificationTarget(
+            messageId: identity.messageId,
+            attachmentId: identity.attachmentId,
+          )
+        : null;
+    final target = qualification != null
+        ? qualification.target
+        : await adapter.loadTarget(identity.messageId);
     final parent = current.rows.parent!;
     final rowAttachment = current.rows.attachment!;
     final targetMatches = target?.attachments.where(
@@ -851,6 +933,18 @@ class DirectPrivateMediaViewerController {
     final targetAttachment = targetMatches != null && targetMatches.length == 1
         ? targetMatches.single
         : null;
+    final exactRowIdentityMatches =
+        targetAttachment != null &&
+        targetAttachment.storedLocalPath == rowAttachment.localPath &&
+        targetAttachment.mime == rowAttachment.mime &&
+        targetAttachment.size == rowAttachment.size;
+    final failureReason =
+        exactRowIdentityMatches &&
+            qualification?.failure ==
+                DirectPrivateMediaOpenQualificationFailure
+                    .senderLocalBytesMissing
+        ? DirectPrivateMediaPrepareFailureReason.senderLocalBytesMissing
+        : DirectPrivateMediaPrepareFailureReason.localAuthorityMissing;
     if (target == null ||
         targetAttachment == null ||
         target.hidden ||
@@ -861,13 +955,11 @@ class DirectPrivateMediaViewerController {
                 : PrivateMediaDirection.outgoing) ||
         target.mode != parent.privateMediaPolicy.mode ||
         target.state != parent.privateMediaState ||
-        targetAttachment.storedLocalPath != rowAttachment.localPath ||
-        targetAttachment.mime != rowAttachment.mime ||
-        targetAttachment.size != rowAttachment.size ||
+        !exactRowIdentityMatches ||
         _openableTargetPath(target, identity) == null) {
-      return null;
+      return (target: null, failureReason: failureReason);
     }
-    return target;
+    return (target: target, failureReason: failureReason);
   }
 
   String? _openableTargetPath(

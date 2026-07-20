@@ -346,6 +346,7 @@ class PendingMessageRetrier {
     return retryUnackedMessages(
       messageRepo: messageRepo,
       p2pService: p2pService,
+      mediaAttachmentRepo: mediaAttachmentRepo,
       // 186: reconnect passes Duration.zero (no age gate); periodic/cold-start
       // pass null → the use case default (60s anti-race window).
       olderThan: olderThan ?? const Duration(seconds: 60),

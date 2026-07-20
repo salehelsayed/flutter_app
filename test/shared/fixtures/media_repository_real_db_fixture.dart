@@ -100,6 +100,12 @@ class MediaRepositoryRealDbFixture {
       dbLoadMediaById: (id) => dbLoadMediaById(db, id),
       dbLoadMediaForMessages: (messageIds, ownerLane) =>
           dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
+      dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates:
+          ({int limit = 50}) =>
+              dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates(
+                db,
+                limit: limit,
+              ),
       dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
           dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
       dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
@@ -113,6 +119,25 @@ class MediaRepositoryRealDbFixture {
             db,
             messageId,
             ownerLane: ownerLane,
+          ),
+      dbApplyOutgoingDirectPrivateNonCompletionMutation:
+          (row, {required missingParentIsOrdinary}) =>
+              dbApplyOutgoingDirectPrivateNonCompletionMutation(
+                db,
+                row,
+                missingParentIsOrdinary: missingParentIsOrdinary,
+              ),
+      dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible: (rows) =>
+          dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible(db, rows),
+      dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion: (messageId) =>
+          dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion(
+            db,
+            messageId,
+          ),
+      dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible: (messageId) =>
+          dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible(
+            db,
+            messageId,
           ),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
       dbLoadUploadPendingAttachments:
@@ -246,6 +271,25 @@ class MediaRepositoryRealDbFixture {
             expectedLocalPath: expectedLocalPath,
             nowMs: nowMs,
           ),
+      dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible:
+          ({
+            required messageId,
+            required attachmentId,
+            required expectedStoredLocalPath,
+            required canonicalLocalPath,
+            required expectedContactPeerId,
+            required expectedMime,
+            required expectedSize,
+          }) => dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible(
+            db,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            expectedStoredLocalPath: expectedStoredLocalPath,
+            canonicalLocalPath: canonicalLocalPath,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedMime: expectedMime,
+            expectedSize: expectedSize,
+          ),
       dbQualifyDirectPrivateMediaDownloadClaimIfEligible:
           ({required messageId, required attachmentId, required nowMs}) =>
               dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
@@ -298,6 +342,28 @@ class MediaRepositoryRealDbFixture {
                 db,
                 messageId: messageId,
                 attachmentId: attachmentId,
+              ),
+      dbClassifyOutgoingDirectPrivateMediaCompletion:
+          (row, {required expectedPendingLocalPath}) =>
+              dbClassifyOutgoingDirectPrivateMediaCompletion(
+                db,
+                row,
+                expectedPendingLocalPath: expectedPendingLocalPath,
+              ),
+      dbCommitOutgoingDirectPrivateMediaAvailableCompletion:
+          (row, {required expectedPendingLocalPath}) =>
+              dbCommitOutgoingDirectPrivateMediaAvailableCompletion(
+                db,
+                row,
+                expectedPendingLocalPath: expectedPendingLocalPath,
+              ),
+      dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion:
+          (row, {required expectedPendingLocalPath, required mode}) =>
+              dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion(
+                db,
+                row,
+                expectedPendingLocalPath: expectedPendingLocalPath,
+                mode: mode,
               ),
       dbBeginGroupPrivateMediaDownloadIfEligible:
           ({
@@ -524,6 +590,80 @@ MessageRepositoryImpl _buildMessageRepository(Database db) {
         dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
     dbUpdateWireEnvelope: (id, wireEnvelope) =>
         dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbInvalidateWireEnvelopeBeforePrivateUpload:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedPendingLocalPath,
+        }) => dbInvalidateWireEnvelopeBeforePrivateUpload(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        ),
+    dbMarkOutgoingDirectPrivateUploadHandoffFailed:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedPendingLocalPath,
+        }) => dbMarkOutgoingDirectPrivateUploadHandoffFailed(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        ),
+    dbCommitOutgoingDirectPrivateWireEnvelope:
+        (
+          completionRow, {
+          required expectedPendingLocalPath,
+          required envelope,
+          required hasOwnedPendingCompletion,
+        }) => dbCommitOutgoingDirectPrivateWireEnvelope(
+          db,
+          completionRow,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+          envelope: envelope,
+          hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+        ),
+    dbSettleOutgoingDirectPrivateTransport:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+        }) => dbSettleOutgoingDirectPrivateTransport(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+        ),
+    dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone:
+        (expectedRow, tombstoneRow) =>
+            dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
+              db,
+              expectedRow,
+              tombstoneRow,
+            ),
+    dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope:
+        (tombstoneRow, {required expectedEnvelope, required envelope}) =>
+            dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope(
+              db,
+              tombstoneRow,
+              expectedEnvelope: expectedEnvelope,
+              envelope: envelope,
+            ),
+    dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone:
+        (tombstoneRow, {required expectedEnvelope}) =>
+            dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone(
+              db,
+              tombstoneRow,
+              expectedEnvelope: expectedEnvelope,
+            ),
     dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadStuckSendingOutgoingMessages(
           db,

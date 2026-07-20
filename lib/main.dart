@@ -124,6 +124,7 @@ import 'package:flutter_app/features/conversation/application/message_deletion_l
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_direct_private_committed_pending_cleanup.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
@@ -644,6 +645,80 @@ void main() async {
             ),
     dbUpdateWireEnvelope: (id, wireEnvelope) =>
         dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbInvalidateWireEnvelopeBeforePrivateUpload:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedPendingLocalPath,
+        }) => dbInvalidateWireEnvelopeBeforePrivateUpload(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        ),
+    dbMarkOutgoingDirectPrivateUploadHandoffFailed:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedPendingLocalPath,
+        }) => dbMarkOutgoingDirectPrivateUploadHandoffFailed(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        ),
+    dbCommitOutgoingDirectPrivateWireEnvelope:
+        (
+          completionRow, {
+          required expectedPendingLocalPath,
+          required envelope,
+          required hasOwnedPendingCompletion,
+        }) => dbCommitOutgoingDirectPrivateWireEnvelope(
+          db,
+          completionRow,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+          envelope: envelope,
+          hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+        ),
+    dbSettleOutgoingDirectPrivateTransport:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+        }) => dbSettleOutgoingDirectPrivateTransport(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+        ),
+    dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone:
+        (expectedRow, tombstoneRow) =>
+            dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
+              db,
+              expectedRow,
+              tombstoneRow,
+            ),
+    dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope:
+        (tombstoneRow, {required expectedEnvelope, required envelope}) =>
+            dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope(
+              db,
+              tombstoneRow,
+              expectedEnvelope: expectedEnvelope,
+              envelope: envelope,
+            ),
+    dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone:
+        (tombstoneRow, {required expectedEnvelope}) =>
+            dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone(
+              db,
+              tombstoneRow,
+              expectedEnvelope: expectedEnvelope,
+            ),
     dbLoadStuckSendingOutgoingMessages:
         ({required DateTime olderThan, int limit = 50}) =>
             dbLoadStuckSendingOutgoingMessages(
@@ -959,6 +1034,12 @@ void main() async {
     dbLoadMediaById: (id) => dbLoadMediaById(db, id),
     dbLoadMediaForMessages: (messageIds, ownerLane) =>
         dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
+    dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates:
+        ({int limit = 50}) =>
+            dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates(
+              db,
+              limit: limit,
+            ),
     dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
         dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
     dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
@@ -972,6 +1053,22 @@ void main() async {
           db,
           messageId,
           ownerLane: ownerLane,
+        ),
+    dbApplyOutgoingDirectPrivateNonCompletionMutation:
+        (row, {required missingParentIsOrdinary}) =>
+            dbApplyOutgoingDirectPrivateNonCompletionMutation(
+              db,
+              row,
+              missingParentIsOrdinary: missingParentIsOrdinary,
+            ),
+    dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible: (rows) =>
+        dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible(db, rows),
+    dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion: (messageId) =>
+        dbQualifyOutgoingDirectPrivatePendingAttachmentsDeletion(db, messageId),
+    dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible: (messageId) =>
+        dbDeleteOutgoingDirectPrivatePendingAttachmentsIfEligible(
+          db,
+          messageId,
         ),
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
     dbLoadUploadPendingAttachments:
@@ -1102,6 +1199,25 @@ void main() async {
           expectedLocalPath: expectedLocalPath,
           nowMs: nowMs,
         ),
+    dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedStoredLocalPath,
+          required canonicalLocalPath,
+          required expectedContactPeerId,
+          required expectedMime,
+          required expectedSize,
+        }) => dbRepairOutgoingDirectPrivateMediaDoneLocalPathIfEligible(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedStoredLocalPath: expectedStoredLocalPath,
+          canonicalLocalPath: canonicalLocalPath,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedMime: expectedMime,
+          expectedSize: expectedSize,
+        ),
     dbQualifyDirectPrivateMediaDownloadClaimIfEligible:
         ({required messageId, required attachmentId, required nowMs}) =>
             dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
@@ -1152,6 +1268,28 @@ void main() async {
               db,
               messageId: messageId,
               attachmentId: attachmentId,
+            ),
+    dbClassifyOutgoingDirectPrivateMediaCompletion:
+        (row, {required expectedPendingLocalPath}) =>
+            dbClassifyOutgoingDirectPrivateMediaCompletion(
+              db,
+              row,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+            ),
+    dbCommitOutgoingDirectPrivateMediaAvailableCompletion:
+        (row, {required expectedPendingLocalPath}) =>
+            dbCommitOutgoingDirectPrivateMediaAvailableCompletion(
+              db,
+              row,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+            ),
+    dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion:
+        (row, {required expectedPendingLocalPath, required mode}) =>
+            dbRollbackOutgoingDirectPrivateMediaOpeningWithCompletion(
+              db,
+              row,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+              mode: mode,
             ),
     dbBeginGroupPrivateMediaDownloadIfEligible:
         ({
@@ -2107,6 +2245,20 @@ void main() async {
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
         recoverLocalLifecycle: () async {
           await directPrivateMediaLifecycleEngine.reconcileLocalLifecycle();
+          try {
+            await retryDirectPrivateCommittedPendingCleanup(
+              repository: mediaAttachmentRepository,
+              lifecycle: directPrivateMediaLifecycle,
+            );
+          } catch (error) {
+            // Candidate-load failure is local and retryable on the next real
+            // resume. It must not suppress group recovery or scheduler arming.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'DIRECT_PRIVATE_COMMITTED_PENDING_CLEANUP_LOAD_FAILED',
+              details: {'error': error.runtimeType.toString()},
+            );
+          }
           await groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle();
         },
         startScheduler: privateMediaExpiryScheduler.start,
@@ -2889,6 +3041,7 @@ void main() async {
   final deliveryReceiptListener = DeliveryReceiptListener(
     receiptStream: messageRouter.deliveryReceiptStream,
     messageRepo: messageRepository,
+    mediaAttachmentRepo: mediaAttachmentRepository,
   );
 
   // NET-REL-01 P3: bridge inbound local-WiFi media into the attachment
@@ -5775,6 +5928,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryUnackedMessagesFn: () => retryUnackedMessages(
           messageRepo: widget.messageRepository,
           p2pService: widget.p2pService,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
         ),
         verifyInboxCustodyFn: () => verifyInboxCustody(
           loadInboxCustody:

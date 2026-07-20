@@ -1,8 +1,8 @@
 # 262 - Sender One-More-Look Independent Of Relay Upload Finalization  (Bug + Modification)
 
-Status: reviewed-ready (v4 — 2026-07-20 `$tdd-review`; source-grounded counterexamples were
-applied for shared runtime/lock ownership, pre-prep persistence, terminal deletion, durable outbox
-custody, commit-boundary/idempotency, causal RED waves, and the real device exit path.)
+Status: implemented-verified (v5 execution close — 2026-07-20; current p262 surfaces PASS, with
+two unrelated pre-existing repository-gate exceptions, one isolated batch-load flake, and two
+historical TDD evidence-retention gaps recorded below.)
 Type: bug + modification
 Closure tier: PROD-CRITICAL device proof when a policy-eligible target pair is available
 Boundary triggers: on-device Android controller/viewer + SQLCipher persistence; no relay,
@@ -26,13 +26,16 @@ C2 and C6 survived as stated, C1's field conclusion REFUTED, C3/C4/C5 corrected 
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + selected paths + exit) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-20 | contract extraction + causal RED | shared dirty-tree snapshot; Wave-A/B/C test files | Dirty worktree was snapshotted and preserved. Wave A has retained failing output (`+35 -5`, `/tmp/p262-wave-a.log`) at the documented finalize/custody boundary. The execution sequence placed Waves B/C before their seams, but only their final GREEN output (`+132`, `/tmp/p262-wave-b-c.log`) was retained. | Scope confirmed and unrelated changes preserved; historic B/C RED output is not independently auditable, so the literal evidence checkbox remains open. | Implement E1-E9. |
+| 2026-07-20 | implementation | lifecycle/CAS helpers, outgoing coordinator, repositories/use cases, conversation UI/controller, harness, gates | Repository-scoped lock/coordinator, pending-open authority and path repair, atomic rollback/finalize and key compensation, writer/cleanup/receipt/pause barriers, cached-envelope replay, terminal custody, ordinary-media compatibility, and artifact v3 landed. | No schema, bridge, relay, native handler, wire-format, group, or announcement production change. | Direct GREEN. |
+| 2026-07-20 | direct GREEN | 22 affected suites | `flutter test --concurrency=4 ...`: `+529`, all passed (`/tmp/p262-focused-final-after-ordinary-fix.log`). Earlier send-use-case rerun: `+143`; delivered-status exact census: `+2`. | All p262 causal and writer-guard coverage GREEN. | Preservation. |
+| 2026-07-20 | preservation GREEN | eight exact preservation suites | Exact preservation matrix: `+156`, all passed (`/tmp/p262-preservation-eight.log`); media-repository/private-writer compatibility: `+56`, all passed (`/tmp/p262-media-repo-classification-core.log`). | Incoming, ordinary media, queued/outbox, cleanup, retry, and completed-private sentinels preserved. | Registration/gates. |
+| 2026-07-20 | registration + curated gates | both gate scripts and discovery docs | Exact-line registrations/selectors and `check_reliability_simulation_discovery.sh` PASS. `run_test_gates.sh 1to1`: `+2406 -1`; `run_host_test_gates.sh 1to1`: items 1-48 PASS, then the same item-49 baseline stopped fail-fast. | No p262 failure. Both curated commands remain nonzero solely on the pre-existing shared-viewer `MethodChannel(` boundary violation. | Family sweeps. |
+| 2026-07-20 | concurrent feature family | feature inventory | `run_host_test_gates.sh feature-host-all --batch-flutter --concurrency 4 --reporter failures-only`: one Flutter invocation, 810 exact files, `+8281 ~1 -2` (`/tmp/p262-feature-host-all-rerun.log`). | One known shared-viewer baseline; one unrelated group-voice 10-second batch timeout passed exact isolation `+1`. The earlier 24 ordinary-media regressions were fixed and did not recur. | Core family. |
+| 2026-07-20 | concurrent core family | core inventory + Android manifest tail | Same four-worker batch form: `+2683 -1` (`/tmp/p262-core-host-all-final.log`). Exact isolated failure reproduced against clean unchanged `pending_group_broadcasts_db_helpers.dart`. Separate `./scripts/check_android_renderer_manifest_contract.sh` PASS sentinel retained at `/tmp/p262-android-renderer-manifest-contract.log`. | No p262 failure. Family remains nonzero on the pre-existing raw-transaction census baseline. | Device/hygiene. |
+| 2026-07-20 | TC-262-14 device proof | Android harness/evaluator/artifact v3 | Physical sender `21071FDF600CSC` + recipient `emulator-5554`; artifact `/tmp/p262-direct-private-media.5abqjE/plan234-direct-private-media-device-local-journey.json`, SHA-256 `c3772ee7f6989a64631a5266a1cbe3a5e194861c5358c5228bd40f6d11ea0`. | PASS: production route mounted; sender SQL sequence `available -> opening -> viewing -> consumed`; pending source cleanup and recipient proof present. | Final QA. |
+| 2026-07-20 | QA + architecture | harness, docs, Graphify outputs | `flutter analyze`: no issues; post-lint harness criteria rerun: `+95`, all passed; `git diff --check`: clean; incremental Graphify refresh: 57,854 nodes / 89,324 edges; affected query matched intended conversation/database/retry/receipt surface. Independent scope audit found no forbidden lane or platform drift. | p262 implementation verified; only unrelated repository baselines remain. | Close. |
+| 2026-07-20 | durable test-concurrency memory | `test-gate-definitions.md` | Recorded that curated `run_test_gates.sh 1to1` already uses one multi-path Flutter invocation; host `1to1` is intentionally sequential; broad feature/core use one `--batch-flutter --concurrency 4` invocation; independent Flutter processes must not overlap. | Guidance is durable for future runs. | Closed. |
 
 ## Source Of Truth
 - Spec / intent: inline above (free-text product decision)
@@ -41,7 +44,7 @@ C2 and C6 survived as stated, C1's field conclusion REFUTED, C3/C4/C5 corrected 
 - Numbering / index: Test-Flight-Improv/00-INDEX.md
 
 ## Session Classification
-implementation-ready (reviewed; execute RED-first under the literal wave contract)
+execution-closed (implemented and verified; unrelated repository baselines documented)
 
 ## Exact Problem Statement
 User-a sends a "protected view" photo to user-b. User-b receives it (LAN leg or relay) and opens
@@ -881,20 +884,47 @@ rollout/release closure.
   `emulator-5554` (5556 also available). Rediscover at execution. If an eligible pair is absent,
   record `N/A (target unavailable by project policy)` rather than an environment blocker/gap.
 - Scope drift (BLOCKING): any group/announcement-lane, relay/bridge, or incoming-contract diff.
+- Repository baseline 1 (pre-existing and deterministic):
+  `received_media_action_transport_boundary_test.dart` expects
+  `full_screen_typed_media_viewer.dart` not to reference `MethodChannel(`, but current HEAD does.
+  This is the only curated `1to1` failure and one of the two final feature-family failures; neither
+  file was modified by p262.
+- Repository baseline 2 (pre-existing and deterministic):
+  `no_raw_db_transaction_calls_test.dart` finds
+  `lib/core/database/helpers/pending_group_broadcasts_db_helpers.dart:18`. The offender is clean in
+  the worktree, reproduces alone, and is outside p262; it is the only core-family failure.
+- Batch-only noise (non-p262): the feature-family rerun timed out after 10 seconds in the group
+  voice pre-persist widget test; the exact named test passed alone. Earlier broad diagnostics also
+  exposed one account-migration port-reuse assertion and one fixed-delay profile-picture timeout;
+  both passed exact isolation and did not recur in the final feature run.
+- Historical TDD evidence retention: Wave A's expected failure is retained, but the stored Wave-B/C
+  log is final GREEN only, and no persistent command/result ledger proves every claimed raw-caller
+  re-red mutation. Current causal suites are green; the two historical proof checkboxes remain
+  unchecked rather than being reconstructed after the fact.
 
 ## Done Criteria
 - [ ] All three causal RED waves recorded before their corresponding production/proof seams; each true RED
       failed for its documented reason and every HEAD-green sentinel is labeled honestly.
+      Wave A is retained; failing output for Waves B/C was not retained.
 - [ ] Mutation-verified (every E1-E9 edit and every named raw caller has a re-red mutation).
+      Current mutation sentinels pass, but an exhaustive retained re-red ledger is unavailable.
 - [ ] Direct GREEN + preservation sentinels + 1to1 gates exit 0 with expected selected paths and
-      zero failures; no count-delta substitute for registration evidence.
-- [ ] No schema migration: E3/new CAS use existing columns, coordinator state is process-local,
+      zero failures; no count-delta substitute for registration evidence. Direct/preservation and
+      registration are GREEN; literal whole-gate exit 0 is withheld for baseline 1 above.
+- [x] No schema migration: E3/new CAS use existing columns, coordinator state is process-local,
       and E9's version bump is proof-artifact-only; confirm no schema diff.
 - [ ] `feature-host-all` and `core-host-all` pass; full `host-all` remains wave/final-owned.
-- [ ] TC-262-14 proven on an available pinned Android pair with version-3 causal artifact, or
+      Every p262 test passes; literal whole-family PASS is withheld for baselines 1/2 and the
+      isolated feature batch-load timeout above.
+- [x] TC-262-14 proven on an available pinned Android pair with version-3 causal artifact, or
       recorded `N/A (target unavailable by project policy)` if no eligible pair exists.
-- [ ] Exact-line curated registrations and exact host/family selectors pass.
-- [ ] flutter analyze 0 new; git diff --check clean; no Scope Guard violations.
+- [x] Exact-line curated registrations and exact host/family selectors pass.
+- [x] flutter analyze 0 new; git diff --check clean; no Scope Guard violations.
+
+The four unchecked items are intentionally honest: the first two are historical evidence-retention
+gaps that cannot be recreated as causal pre-implementation RED after the fact; the latter two are
+literal whole-repository green claims withheld for independently reproduced, unrelated baselines.
+They do not represent unfinished p262 implementation work.
 
 ## Scope Guard (hard "Do not")
 - Do not touch group (238) / announcement (242) private-media lanes.
@@ -936,8 +966,11 @@ rollout/release closure.
 - Builds directly on 260 S4 (sender one-more-look CAS lane) and 259 copy keys
   (`private_media_sender_local_missing_body`); 260 S3's queued-lane sweep exclusions are a
   hard prerequisite sentinel (upload_pending must never be reaped mid-window).
-- The debug-session memory note `sender-protected-open-authority-divergence` should be updated
-  at execution close (its "happy finalized state opens fine" clause is field-refuted by Leg A).
+- Durable execution memory supersedes the debug-session note
+  `sender-protected-open-authority-divergence`: both pending and finalized sender paths now open
+  through the shared authority/lock boundary, and upload finalization is not a prerequisite for
+  the pending canonical path. Gate-concurrency memory is recorded in
+  `Test-Flight-Improv/test-gate-definitions.md` under Bulk-Classification Policy.
 
 ## Reviewer Findings
 Review 1 (2026-07-19, external): verdict not-ready; blockers (1) E6 bounded re-attempt cannot
@@ -983,4 +1016,9 @@ completion replay.
   plan delta or user-owned decision remains.
 
 ## Final Execution Verdict
-ready — disposition: execute
+implemented-verified — disposition: current p262 surfaces PASS. Focused causal suites,
+preservation, registration, device, analyzer, hygiene, and architecture-impact evidence is green.
+Historical Wave-B/C RED output and an exhaustive re-red ledger were not retained, so those claims
+remain unchecked. Whole-repository green is also not claimed because the two exact pre-existing
+baselines above remain; the one final feature batch-load timeout passes in exact isolation. Full
+`host-all` remains dependency-wave/release-owned.

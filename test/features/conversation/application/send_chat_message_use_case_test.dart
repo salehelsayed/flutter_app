@@ -8,7 +8,11 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -604,6 +608,154 @@ class FakeMessageRepository implements MessageRepository {
   }) async => 0;
 }
 
+class _BlockedPrivateSettlementP2PService extends FakeP2PService {
+  final Completer<void> transportStarted = Completer<void>();
+  final Completer<void> releaseTransport = Completer<void>();
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    lastSentPeerId = peerId;
+    lastSentMessage = message;
+    sendCallCount++;
+    if (!transportStarted.isCompleted) transportStarted.complete();
+    await releaseTransport.future;
+    return const SendMessageResult(
+      sent: true,
+      acked: true,
+      reply: 'received: ok',
+      transport: 'direct',
+    );
+  }
+}
+
+class _PrivateCustodyMessageRepository extends FakeMessageRepository
+    implements OutgoingDirectPrivateEnvelopeCustodyRepository {
+  _PrivateCustodyMessageRepository(this.current);
+
+  ConversationMessage current;
+  int settlementCalls = 0;
+  OutgoingDirectPrivateTransportSettlementOutcome? lastSettlementOutcome;
+
+  void hideAndConsume() {
+    current = current.copyWith(
+      hiddenAt: '2026-07-20T09:00:01.000Z',
+      privateMediaState: PrivateMediaLifecycleState.consumed,
+      privateMediaTerminalAtMs: 1100,
+    );
+  }
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async =>
+      id == current.id ? current : null;
+
+  @override
+  Future<bool> invalidateWireEnvelopeBeforePrivateUpload({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async => false;
+
+  @override
+  Future<bool> markOutgoingDirectPrivateUploadHandoffFailed({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async => false;
+
+  @override
+  Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>
+  commitOutgoingDirectPrivateWireEnvelope({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+  }) async {
+    if (messageId != current.id ||
+        completedAttachment.messageId != messageId ||
+        current.hiddenAt != null ||
+        current.deletedAt != null) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+    current = current.copyWith(wireEnvelope: envelope);
+    return OutgoingDirectPrivateEnvelopeHandoffOutcome.committed;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateTransportSettlementOutcome>
+  settleOutgoingDirectPrivateTransport({
+    required String messageId,
+    required String? attachmentId,
+    required String expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+  }) async {
+    settlementCalls++;
+    if (current.hiddenAt != null || current.deletedAt != null) {
+      lastSettlementOutcome =
+          OutgoingDirectPrivateTransportSettlementOutcome.preservedUserIntent;
+      return lastSettlementOutcome!;
+    }
+    if (messageId != current.id || current.wireEnvelope != expectedEnvelope) {
+      lastSettlementOutcome =
+          OutgoingDirectPrivateTransportSettlementOutcome.refused;
+      return lastSettlementOutcome!;
+    }
+    current = current.copyWith(
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      wireEnvelope: status == 'delivered' ? null : expectedEnvelope,
+    );
+    lastSettlementOutcome =
+        OutgoingDirectPrivateTransportSettlementOutcome.committed;
+    return lastSettlementOutcome!;
+  }
+}
+
+class _PrivateMutationMediaRepository extends FakeMediaAttachmentRepository
+    implements OutgoingDirectPrivateMutationRepository {
+  final MediaAttachmentLifecycleLock _lifecycleLock =
+      MediaAttachmentLifecycleLock();
+
+  late final OutgoingDirectPrivateMutationCoordinator _coordinator =
+      OutgoingDirectPrivateMutationCoordinator(
+        lifecycleLock: _lifecycleLock,
+        classifyCompletion: (_, _) async =>
+            OutgoingDirectPrivateCompletionQualification.refused,
+        commitAvailable: (_, _) async => false,
+        commitRollback: (_, _, {required mode}) async => false,
+      );
+
+  @override
+  OutgoingDirectPrivateMutationCoordinator
+  get outgoingDirectPrivateMutationCoordinator => _coordinator;
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  applyOutgoingDirectPrivateNonCompletionMutation(
+    MediaAttachment attachment,
+  ) async => OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+
+  @override
+  Future<OutgoingDirectPrivatePendingPreparationOutcome>
+  prepareOutgoingDirectPrivatePendingAttachments(
+    List<MediaAttachment> attachments,
+  ) async => OutgoingDirectPrivatePendingPreparationOutcome.refused;
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  deleteOutgoingDirectPrivatePendingAttachmentsForMessage(
+    String messageId, {
+    required MediaFileManager mediaFileManager,
+  }) async => OutgoingDirectPrivateNonCompletionMutationOutcome.refused;
+}
+
 class _StaticIdentityRepository implements IdentityRepository {
   _StaticIdentityRepository(this.identity);
 
@@ -878,96 +1030,182 @@ void main() {
       },
     );
 
-    test('failed private retry reuses the exact envelope and policy', () async {
-      const messageId = 'private-retry-1';
-      const attachment = MediaAttachment(
-        id: 'private-retry-blob',
-        messageId: messageId,
-        mime: 'image/jpeg',
-        size: 1024,
-        mediaType: 'image',
-        downloadStatus: 'done',
-        createdAt: '2026-07-11T09:00:00.000Z',
-        contentHash:
-            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        encryptionKeyBase64: 'retry-key',
-        encryptionNonce: 'retry-nonce',
-        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      );
-      const policy = PrivateMediaPolicy.protected();
-      final failingP2p = FakeP2PService(sendMessageResult: false);
-      final bridge = FakeBridge(
-        initialResponses: {
-          'message.encrypt': {
-            'ok': true,
-            'kem': 'retry-kem',
-            'ciphertext': 'retry-ciphertext',
-            'nonce': 'retry-envelope-nonce',
-          },
-        },
-      );
+    test(
+      'failed private retry replays a previously guarded envelope and policy',
+      () async {
+        const messageId = 'private-retry-1';
+        const attachmentId = '$messageId-att';
+        const policy = PrivateMediaPolicy.protected();
+        const originalEnvelope =
+            '{"type":"chat_message","version":"2","id":"private-retry-1",'
+            '"senderPeerId":"my-peer","encrypted":{"kem":"retry-kem",'
+            '"ciphertext":"retry-ciphertext","nonce":"retry-nonce"}}';
+        final failingP2p = FakeP2PService(sendMessageResult: false);
+        final bridge = FakeBridge();
+        final failed = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: '',
+          timestamp: '2026-07-11T09:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-07-11T09:00:00.000Z',
+          wireEnvelope: originalEnvelope,
+          privateMediaPolicy: policy,
+          privateMediaState: PrivateMediaLifecycleState.available,
+        );
+        final privateMessageRepo = _PrivateCustodyMessageRepository(failed);
+        final privateMediaRepo = _PrivateMutationMediaRepository()
+          ..seed(const <MediaAttachment>[
+            MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 1024,
+              mediaType: 'image',
+              downloadStatus: 'done',
+              createdAt: '2026-07-11T09:00:00.000Z',
+              contentHash:
+                  'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+              encryptionKeyBase64: 'private-retry-key',
+              encryptionNonce: 'private-retry-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ownerLane: MediaOwnerLane.direct,
+            ),
+          ]);
+        failingP2p.storeInInboxResult = true;
 
-      final (result, failed) = await sendChatMessage(
-        p2pService: failingP2p,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: '',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-        messageId: messageId,
-        bridge: bridge,
-        mediaAttachments: const [attachment],
-        privateMediaPolicy: policy,
-      );
-
-      expect(result, SendChatMessageResult.sendFailed);
-      expect(failed?.status, 'failed');
-      expect(failed?.privateMediaPolicy, policy);
-      final originalEnvelope = failed!.wireEnvelope;
-      expect(originalEnvelope, isNotNull);
-      messageRepo.existingMessages[messageId] = failed;
-      final encryptCallsBeforeRetry = bridge.commandLog
-          .where((command) => command == 'message.encrypt')
-          .length;
-      failingP2p.storeInInboxResult = true;
-
-      final retried = await retryFailedMessage(
-        messageId: messageId,
-        messageRepo: messageRepo,
-        identityRepo: _StaticIdentityRepository(
-          IdentityModel(
-            peerId: 'my-peer',
-            publicKey: 'public-key',
-            privateKey: 'private-key',
-            mnemonic12:
-                'one two three four five six seven eight nine ten eleven twelve',
-            username: 'Me',
-            createdAt: '2026-07-11T09:00:00.000Z',
-            updatedAt: '2026-07-11T09:00:00.000Z',
+        final retried = await retryFailedMessage(
+          messageId: messageId,
+          messageRepo: privateMessageRepo,
+          identityRepo: _StaticIdentityRepository(
+            IdentityModel(
+              peerId: 'my-peer',
+              publicKey: 'public-key',
+              privateKey: 'private-key',
+              mnemonic12:
+                  'one two three four five six seven eight nine ten eleven twelve',
+              username: 'Me',
+              createdAt: '2026-07-11T09:00:00.000Z',
+              updatedAt: '2026-07-11T09:00:00.000Z',
+            ),
           ),
-        ),
-        contactRepo: InMemoryContactRepository(),
-        p2pService: failingP2p,
-        bridge: bridge,
-      );
+          contactRepo: InMemoryContactRepository(),
+          p2pService: failingP2p,
+          bridge: bridge,
+          mediaAttachmentRepo: privateMediaRepo,
+        );
 
-      expect(retried, 1);
-      expect(failingP2p.lastInboxMessage, originalEnvelope);
-      expect(
-        bridge.commandLog
-            .where((command) => command == 'message.encrypt')
-            .length,
-        encryptCallsBeforeRetry,
-      );
-      final retriedParent = messageRepo.saved.last;
-      expect(retriedParent.status, 'inboxed');
-      expect(retriedParent.wireEnvelope, originalEnvelope);
-      expect(retriedParent.privateMediaPolicy, policy);
-      expect(
-        retriedParent.privateMediaState,
-        PrivateMediaLifecycleState.available,
-      );
-    });
+        expect(retried, 1);
+        expect(failingP2p.lastInboxMessage, originalEnvelope);
+        expect(
+          bridge.commandLog
+              .where((command) => command == 'message.encrypt')
+              .length,
+          0,
+        );
+        final retriedParent = privateMessageRepo.current;
+        expect(retriedParent.status, 'inboxed');
+        expect(retriedParent.wireEnvelope, originalEnvelope);
+        expect(retriedParent.privateMediaPolicy, policy);
+        expect(
+          retriedParent.privateMediaState,
+          PrivateMediaLifecycleState.available,
+        );
+        expect(privateMessageRepo.settlementCalls, 1);
+        expect(
+          privateMessageRepo.lastSettlementOutcome,
+          OutgoingDirectPrivateTransportSettlementOutcome.committed,
+        );
+        expect(privateMessageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'private hide after envelope handoff wins blocked transport settlement',
+      () async {
+        const messageId = 'private-settlement-hide-race';
+        const attachmentId = '$messageId-att';
+        const contactPeerId = 'private-settlement-contact';
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          localPath: MediaFilePathConvention.relativePathForAttachment(
+            contactPeerId: contactPeerId,
+            blobId: attachmentId,
+            mime: 'image/jpeg',
+          ),
+          downloadStatus: 'done',
+          createdAt: '2026-07-20T09:00:00.000Z',
+          contentHash:
+              'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          encryptionKeyBase64: 'private-settlement-key',
+          encryptionNonce: 'private-settlement-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        final privateMessageRepo = _PrivateCustodyMessageRepository(
+          ConversationMessage(
+            id: messageId,
+            contactPeerId: contactPeerId,
+            senderPeerId: 'my-peer',
+            text: '',
+            timestamp: '2026-07-20T09:00:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-07-20T09:00:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.available,
+            privateMediaReceivedAtMs: 1000,
+            privateMediaClockHighWaterMs: 1000,
+          ),
+        );
+        final privateMediaRepo = _PrivateMutationMediaRepository()
+          ..seed(<MediaAttachment>[attachment]);
+        final blockedP2p = _BlockedPrivateSettlementP2PService();
+
+        final send = chat_use_case.sendChatMessage(
+          p2pService: blockedP2p,
+          messageRepo: privateMessageRepo,
+          targetPeerId: contactPeerId,
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+          mediaAttachments: <MediaAttachment>[attachment],
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          mediaAttachmentRepo: privateMediaRepo,
+        );
+
+        await blockedP2p.transportStarted.future;
+        expect(privateMessageRepo.current.wireEnvelope, isNotNull);
+        privateMessageRepo.hideAndConsume();
+        blockedP2p.releaseTransport.complete();
+        final (result, returned) = await send;
+
+        expect(result, SendChatMessageResult.success);
+        expect(returned?.hiddenAt, isNotNull);
+        expect(
+          returned?.privateMediaState,
+          PrivateMediaLifecycleState.consumed,
+        );
+        expect(privateMessageRepo.current.status, 'sending');
+        expect(privateMessageRepo.current.wireEnvelope, isNotNull);
+        expect(privateMessageRepo.saved, isEmpty);
+        expect(privateMediaRepo.allSavedAttachments, isEmpty);
+        expect(privateMessageRepo.settlementCalls, 1);
+        expect(
+          privateMessageRepo.lastSettlementOutcome,
+          OutgoingDirectPrivateTransportSettlementOutcome.preservedUserIntent,
+        );
+      },
+    );
 
     test(
       'private media with text rejects before encryption persistence or transport',

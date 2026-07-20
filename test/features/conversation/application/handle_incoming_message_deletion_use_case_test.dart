@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -41,6 +42,7 @@ void main() {
     String text = 'Hello',
     bool isIncoming = true,
     String status = 'delivered',
+    PrivateMediaPolicy privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
   }) {
     return ConversationMessage(
       id: id,
@@ -51,6 +53,7 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: '2026-03-31T10:00:01.000Z',
+      privateMediaPolicy: privateMediaPolicy,
     );
   }
 
@@ -171,6 +174,85 @@ void main() {
         expect(
           mediaFileManager.deletedFilePaths,
           isNot(contains('/tmp/external/photo.jpg')),
+        );
+      },
+    );
+
+    test(
+      'authorized incoming protected deletion cleans attachments and local artifacts',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-incoming-protected',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          ),
+        ]);
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'reaction-incoming-protected',
+            messageId: 'msg-incoming-protected',
+            emoji: '👍',
+            senderPeerId: 'peer-bob',
+            timestamp: '2026-03-31T10:01:00.000Z',
+            createdAt: '2026-03-31T10:01:00.000Z',
+          ),
+        );
+        mediaAttachmentRepo.seed([
+          makeAttachment(
+            id: 'att-incoming-protected',
+            messageId: 'msg-incoming-protected',
+            localPath: 'media/msg-incoming-protected/photo.jpg',
+          ),
+        ]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-incoming-protected',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(result, HandleMessageDeletionResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.isDeleted, isTrue);
+        expect(tombstone.isIncoming, isTrue);
+        expect(
+          tombstone.privateMediaPolicy,
+          const PrivateMediaPolicy.protected(),
+        );
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-incoming-protected',
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+        expect(
+          await reactionRepo.getReactionsForMessage('msg-incoming-protected'),
+          isEmpty,
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          contains(
+            endsWith('test_docs/media/msg-incoming-protected/photo.jpg'),
+          ),
         );
       },
     );

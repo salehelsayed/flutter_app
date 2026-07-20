@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
 import '../models/media_attachment.dart';
 import '../models/media_library.dart';
@@ -353,11 +355,17 @@ class DirectPrivateMediaCleanupAttachment {
     required this.id,
     required this.messageId,
     required this.mime,
+    this.size = 0,
+    this.downloadStatus,
+    this.localPath,
   });
 
   final String id;
   final String messageId;
   final String mime;
+  final int size;
+  final String? downloadStatus;
+  final String? localPath;
 }
 
 /// Raw, key-free direct attachment metadata used to decide whether a View Once
@@ -382,6 +390,36 @@ class DirectPrivateMediaLifecycleAttachmentMetadata {
   final String? localPath;
 }
 
+/// Bounded restart/resume candidate for an outgoing one-more-look upload whose
+/// canonical completion is durable but whose exact pending plaintext source
+/// may have survived a transient unlink failure. The transport settlement may
+/// already have cleared its wire envelope, so envelope presence is not part of
+/// this local file-custody qualification.
+///
+/// This shape is deliberately key-free. The application use case derives the
+/// convention pending path, while [DirectPrivateMediaLifecycle] requalifies
+/// the parent, row, canonical file, roots, and transfer lease under the exact
+/// attachment lifecycle lock before deleting anything.
+class DirectPrivateCommittedPendingCleanupCandidate {
+  const DirectPrivateCommittedPendingCleanupCandidate({
+    required this.messageId,
+    required this.attachmentId,
+    required this.mime,
+    required this.expectedPendingLocalPath,
+  });
+
+  final String messageId;
+  final String attachmentId;
+  final String mime;
+  final String expectedPendingLocalPath;
+}
+
+/// Read-only, bounded candidate source for committed pending-source recovery.
+abstract class DirectPrivateCommittedPendingCleanupCandidateRepository {
+  Future<List<DirectPrivateCommittedPendingCleanupCandidate>>
+  loadDirectPrivateCommittedPendingCleanupCandidates({int limit = 50});
+}
+
 /// Raw, key-free exact-direct cleanup seam. The lifecycle engine owns the
 /// process lock; these methods must not recursively acquire it.
 abstract class DirectPrivateMediaCleanupRepository {
@@ -402,6 +440,66 @@ abstract class DirectPrivateMediaCleanupRepository {
   Future<int> deleteDirectPrivateMediaAttachmentWithinLock({
     required String messageId,
     required String attachmentId,
+  });
+}
+
+/// Narrow path-only repair for the deployed outgoing private-media shape
+/// whose successful upload left a `done` row pointing at the now-removed
+/// absolute pending-upload file.
+///
+/// Callers authorize the canonical file while holding the exact attachment
+/// lifecycle lock. Implementations must exact-CAS only `local_path`; status,
+/// crypto metadata, retry counters, bookmarks, and playback state are never
+/// inferred or rewritten.
+abstract class DirectPrivateMediaLegacyPathRepairRepository {
+  Future<bool> repairOutgoingDirectPrivateMediaDoneLocalPathWithinLock({
+    required String messageId,
+    required String attachmentId,
+    required String expectedStoredLocalPath,
+    required String canonicalLocalPath,
+    required String expectedContactPeerId,
+    required String expectedMime,
+    required int expectedSize,
+  });
+}
+
+/// Repository-owned outgoing direct-private upload-completion authority.
+///
+/// Every adapter and upload writer resolving this capability from the same
+/// repository instance receives the exact same coordinator and lifecycle
+/// lock. Private callers must fail closed when the capability is absent.
+abstract class OutgoingDirectPrivateMutationRepository {
+  OutgoingDirectPrivateMutationCoordinator
+  get outgoingDirectPrivateMutationCoordinator;
+
+  /// Applies a failure/cancel/retry-count mutation to one exact outgoing
+  /// protected/view-once pending row. Ordinary/incoming/disappearing parents
+  /// return `notPrivateParent`; callers may retain their generic path only for
+  /// that result.
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  applyOutgoingDirectPrivateNonCompletionMutation(MediaAttachment attachment);
+
+  /// Atomically prepares the complete first pending-row set for one outgoing
+  /// protected/view-once parent. The result is always authoritative: only
+  /// [OutgoingDirectPrivatePendingPreparationOutcome.notPrivateParent] may
+  /// use generic persistence, while a private refusal must clean the copied
+  /// pending files and stop.
+  Future<OutgoingDirectPrivatePendingPreparationOutcome>
+  prepareOutgoingDirectPrivatePendingAttachments(
+    List<MediaAttachment> attachments,
+  );
+
+  /// Deletes one message's exact convention-pending protected/view-once row
+  /// set under available-state authority. File deletion runs first, under the
+  /// same repository lifecycle lock, while the rows and keys still authorize
+  /// every plaintext path. Key/row deletion follows only after every exact
+  /// pending file has been removed. This never performs terminal lifecycle
+  /// cleanup and therefore returns an active-lease or terminal no-op
+  /// explicitly.
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  deleteOutgoingDirectPrivatePendingAttachmentsForMessage(
+    String messageId, {
+    required MediaFileManager mediaFileManager,
   });
 }
 

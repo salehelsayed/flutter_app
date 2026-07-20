@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
@@ -205,19 +206,45 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     },
   );
 
+  ConversationMessage? currentMessage;
+  try {
+    currentMessage = await messageRepo.getMessage(originalMessage.id);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_AUTHORITY_READ_FAILED',
+      details: {'error': error.runtimeType.toString()},
+    );
+    emitDeleteTiming(outcome: 'authority_read_failed');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+  if (currentMessage == null ||
+      currentMessage.id != originalMessage.id ||
+      currentMessage.contactPeerId != originalMessage.contactPeerId ||
+      currentMessage.senderPeerId != originalMessage.senderPeerId ||
+      currentMessage.isIncoming != originalMessage.isIncoming) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_AUTHORITY_UNAVAILABLE',
+      details: {'id': _messageIdPreview(originalMessage.id)},
+    );
+    emitDeleteTiming(outcome: 'authority_unavailable');
+    return (SendChatMessageResult.invalidMessage, null);
+  }
+
   // 'inboxed' rows hold a durable relay copy the receiver will drain —
   // delete-for-everyone must stay available for them (doc 115 P1).
-  if (originalMessage.isIncoming ||
-      originalMessage.isDeleted ||
-      (originalMessage.status != 'delivered' &&
-          originalMessage.status != 'inboxed')) {
+  if (currentMessage.isIncoming ||
+      currentMessage.isDeleted ||
+      (currentMessage.status != 'delivered' &&
+          currentMessage.status != 'inboxed')) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_DELETE_FOR_EVERYONE_INVALID',
       details: {
-        'status': originalMessage.status,
-        'isIncoming': originalMessage.isIncoming,
-        'isDeleted': originalMessage.isDeleted,
+        'status': currentMessage.status,
+        'isIncoming': currentMessage.isIncoming,
+        'isDeleted': currentMessage.isDeleted,
       },
     );
     emitDeleteTiming(outcome: 'invalid_message');
@@ -254,11 +281,47 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
 
   final deletedAt = DateTime.now().toUtc().toIso8601String();
 
+  final requiresPrivateTerminalCleanup =
+      !currentMessage.isIncoming &&
+      currentMessage.privateMediaPolicy.version == 1 &&
+      (currentMessage.privateMediaMode == PrivateMediaMode.protected ||
+          currentMessage.privateMediaMode == PrivateMediaMode.viewOnce);
+  final privateLifecycleRepository =
+      messageRepo is DirectPrivateMediaLifecycleRepository
+      ? messageRepo as DirectPrivateMediaLifecycleRepository
+      : null;
+  final privateCleanupRuntime =
+      mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+      ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+      : null;
+  final privateCleanupRepository =
+      mediaAttachmentRepo is DirectPrivateMediaCleanupRepository
+      ? mediaAttachmentRepo as DirectPrivateMediaCleanupRepository
+      : null;
+  final privateDeleteRepository =
+      messageRepo is DirectPrivateDeleteForEveryoneRepository
+      ? messageRepo as DirectPrivateDeleteForEveryoneRepository
+      : null;
+  if (requiresPrivateTerminalCleanup &&
+      (privateLifecycleRepository == null ||
+          privateCleanupRuntime == null ||
+          privateCleanupRepository == null ||
+          privateDeleteRepository == null ||
+          mediaFileManager == null)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_UNAVAILABLE',
+      details: {'id': _messageIdPreview(originalMessage.id)},
+    );
+    emitDeleteTiming(outcome: 'private_cleanup_unavailable');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
   String jsonString;
   try {
     jsonString = await buildDeletionWireEnvelope(
       bridge: bridge,
-      originalMessage: originalMessage,
+      originalMessage: currentMessage,
       deletedAt: deletedAt,
       recipientMlKemPublicKey: recipientKey,
     );
@@ -283,24 +346,77 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.sendFailed, null);
   }
 
-  final pendingTombstone = buildDeletedMessageTombstone(
-    originalMessage: originalMessage,
+  final builtPendingTombstone = buildDeletedMessageTombstone(
+    originalMessage: currentMessage,
     deletedAt: deletedAt,
-    deletedByPeerId: originalMessage.senderPeerId,
+    deletedByPeerId: currentMessage.senderPeerId,
     hiddenLocally: false,
     status: 'sending',
-    transport: originalMessage.transport,
+    transport: currentMessage.transport,
     wireEnvelope: jsonString,
   );
-  await messageRepo.saveMessage(pendingTombstone);
-  await _bestEffortCleanup(
-    message: pendingTombstone,
-    reactionRepo: reactionRepo,
-    mediaAttachmentRepo: mediaAttachmentRepo,
-    mediaFileManager: mediaFileManager,
-  );
+  // The original message's inbox transport proves custody only for its chat
+  // envelope, never for this newly minted deletion envelope. Clear it before
+  // the private update-only commit; transport is restored only by an actual
+  // deletion send or inbox deposit below.
+  final pendingTombstoneCandidate = requiresPrivateTerminalCleanup
+      ? builtPendingTombstone.copyWith(transport: null)
+      : builtPendingTombstone;
+  late final ConversationMessage pendingTombstone;
+  if (requiresPrivateTerminalCleanup) {
+    final committed = await privateDeleteRepository!
+        .commitPrivateDeleteForEveryoneTombstone(
+          expectedMessage: currentMessage,
+          tombstone: pendingTombstoneCandidate,
+        );
+    if (committed == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_COMMIT_PRESERVED',
+        details: {'id': _messageIdPreview(currentMessage.id)},
+      );
+      emitDeleteTiming(outcome: 'private_commit_preserved');
+      return (SendChatMessageResult.invalidMessage, null);
+    }
+    pendingTombstone = committed;
+  } else {
+    await messageRepo.saveMessage(pendingTombstoneCandidate);
+    pendingTombstone = pendingTombstoneCandidate;
+  }
+  if (requiresPrivateTerminalCleanup) {
+    await reactionRepo?.deleteReactionsForMessage(pendingTombstone.id);
+    final adapter = DirectPrivateMediaLifecycle(
+      messageRepository: privateLifecycleRepository!,
+      mediaAttachmentRepository: mediaAttachmentRepo!,
+      mediaFileManager: mediaFileManager!,
+    );
+    final engine = PrivateMediaLifecycleEngine(
+      adapter: adapter,
+      lifecycleLock: privateCleanupRuntime!.directPrivateMediaLifecycleLock,
+      nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+    try {
+      // The durable deleted_at tombstone is the terminal authority. Exact
+      // lifecycle cleanup (not generic attachment deletion) discards any
+      // deferred completion and removes file/key/row state under that claim.
+      await engine.cleanupTerminalMessage(pendingTombstone.id);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_CLEANUP_RETAINED',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+  } else {
+    await _bestEffortCleanup(
+      message: pendingTombstone,
+      reactionRepo: reactionRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+    );
+  }
 
-  final targetPeerId = originalMessage.contactPeerId;
+  final targetPeerId = currentMessage.contactPeerId;
   final isAlreadyConnected = p2pService.currentState.connections.any(
     (connection) => connection.peerId == targetPeerId,
   );
@@ -326,6 +442,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
             sendResult,
             preserveLocalPeerLabel: true,
           ),
+          isOutgoingPrivate: requiresPrivateTerminalCleanup,
           emitTimingEvent: emitTimingEvent,
           deleteStopwatch: deleteStopwatch,
         );
@@ -343,7 +460,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
         p2pService,
         targetPeerId,
         jsonString,
-        originalMessage.senderPeerId,
+        currentMessage.senderPeerId,
         timeoutMs: interactiveLocalBudget.inMilliseconds,
       ),
     );
@@ -409,6 +526,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString: jsonString,
       acknowledged: raceResult.acknowledged,
       via: raceResult.via!,
+      isOutgoingPrivate: requiresPrivateTerminalCleanup,
       emitTimingEvent: emitTimingEvent,
       deleteStopwatch: deleteStopwatch,
     );
@@ -431,6 +549,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
         jsonString: jsonString,
         acknowledged: relayProbeResult.acknowledged,
         via: relayProbeResult.via!,
+        isOutgoingPrivate: requiresPrivateTerminalCleanup,
         emitTimingEvent: emitTimingEvent,
         deleteStopwatch: deleteStopwatch,
       );
@@ -454,7 +573,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           wireEnvelope: jsonString,
         ),
       );
-      await messageRepo.saveMessage(inboxedTombstone);
+      final persisted = await _persistOutgoingDeleteTombstoneResult(
+        messageRepo: messageRepo,
+        tombstone: inboxedTombstone,
+        expectedEnvelope: jsonString,
+        isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_DELETE_FOR_EVERYONE_SUCCESS',
@@ -464,7 +588,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
         outcome: 'success',
         details: {'status': 'inboxed', 'via': 'inbox'},
       );
-      return (SendChatMessageResult.success, inboxedTombstone);
+      return (SendChatMessageResult.success, persisted);
     }
   } catch (e) {
     emitFlowEvent(
@@ -475,9 +599,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   }
 
   final failedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
-    pendingTombstone.copyWith(status: 'failed', wireEnvelope: jsonString),
+    pendingTombstone.copyWith(
+      status: 'failed',
+      transport: requiresPrivateTerminalCleanup
+          ? null
+          : pendingTombstone.transport,
+      wireEnvelope: jsonString,
+    ),
   );
-  await messageRepo.saveMessage(failedTombstone);
+  final persistedFailedTombstone = await _persistOutgoingDeleteTombstoneResult(
+    messageRepo: messageRepo,
+    tombstone: failedTombstone,
+    expectedEnvelope: jsonString,
+    isOutgoingPrivate: requiresPrivateTerminalCleanup,
+  );
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_DELETE_FOR_EVERYONE_FAILED',
@@ -493,7 +628,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       'result': _resultForDeleteFailureReason(failureReason).name,
     },
   );
-  return (_resultForDeleteFailureReason(failureReason), failedTombstone);
+  return (
+    _resultForDeleteFailureReason(failureReason),
+    persistedFailedTombstone,
+  );
 }
 
 ConversationMessage buildDeletedMessageTombstone({
@@ -523,6 +661,14 @@ Future<void> cleanupDeletedMessageArtifacts({
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
 }) async {
+  if (!message.isIncoming &&
+      message.privateMediaPolicy.version == 1 &&
+      (message.privateMediaMode == PrivateMediaMode.protected ||
+          message.privateMediaMode == PrivateMediaMode.viewOnce)) {
+    throw StateError(
+      'private message artifacts require terminal lifecycle cleanup',
+    );
+  }
   final attachments =
       await mediaAttachmentRepo?.getAttachmentsForMessage(
         message.id,
@@ -610,7 +756,7 @@ class _DeleteRaceResult {
   );
 }
 
-Future<(SendChatMessageResult, ConversationMessage)>
+Future<(SendChatMessageResult, ConversationMessage?)>
 _completeSuccessfulDeleteSend({
   required P2PService p2pService,
   required MessageRepository messageRepo,
@@ -619,6 +765,7 @@ _completeSuccessfulDeleteSend({
   required String jsonString,
   required bool acknowledged,
   required String via,
+  required bool isOutgoingPrivate,
   required bool emitTimingEvent,
   required Stopwatch deleteStopwatch,
 }) async {
@@ -630,7 +777,12 @@ _completeSuccessfulDeleteSend({
     tombstone: tombstone,
     via: via,
   );
-  await messageRepo.saveMessage(message);
+  final persisted = await _persistOutgoingDeleteTombstoneResult(
+    messageRepo: messageRepo,
+    tombstone: message,
+    expectedEnvelope: jsonString,
+    isOutgoingPrivate: isOutgoingPrivate,
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -654,7 +806,25 @@ _completeSuccessfulDeleteSend({
       },
     );
   }
-  return (SendChatMessageResult.success, message);
+  return (SendChatMessageResult.success, persisted);
+}
+
+Future<ConversationMessage?> _persistOutgoingDeleteTombstoneResult({
+  required MessageRepository messageRepo,
+  required ConversationMessage tombstone,
+  required String expectedEnvelope,
+  required bool isOutgoingPrivate,
+}) async {
+  if (isOutgoingPrivate) {
+    if (messageRepo is! DirectPrivateDeleteForEveryoneRepository) return null;
+    return (messageRepo as DirectPrivateDeleteForEveryoneRepository)
+        .settlePrivateDeleteForEveryoneTombstone(
+          tombstone: tombstone,
+          expectedEnvelope: expectedEnvelope,
+        );
+  }
+  await messageRepo.saveMessage(tombstone);
+  return tombstone;
 }
 
 Future<ConversationMessage> _persistOutgoingDeleteResult({

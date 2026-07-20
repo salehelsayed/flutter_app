@@ -320,6 +320,39 @@ void main() {
       expect(remaining[0]['id'], 'blob-3');
     });
 
+    test('allows incoming protected direct attachment deletion', () async {
+      await db.insert('messages', {
+        ...makeMessageRow(id: 'msg-incoming-protected', isIncoming: 1),
+        'private_media_policy_version': 1,
+        'private_media_mode': 'protected',
+        'private_media_state': 'available',
+      });
+      await dbInsertMediaAttachment(
+        db,
+        makeAttachmentRow(
+          id: 'blob-incoming-protected',
+          messageId: 'msg-incoming-protected',
+          ownerLane: 'direct',
+        ),
+      );
+
+      final count = await dbDeleteMediaForMessage(
+        db,
+        'msg-incoming-protected',
+        ownerLane: 'direct',
+      );
+
+      expect(count, 1);
+      expect(
+        await dbLoadMediaForMessage(
+          db,
+          'msg-incoming-protected',
+          ownerLane: 'direct',
+        ),
+        isEmpty,
+      );
+    });
+
     test('returns 0 when no matches', () async {
       final count = await dbDeleteMediaForMessage(db, 'nonexistent', ownerLane: 'direct');
       expect(count, 0);

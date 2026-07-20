@@ -1,13 +1,16 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 
 /// Group sends younger than this may still be owned by an active background
@@ -213,6 +216,52 @@ Future<AppPausedResult> handleAppPaused({
     final sendingMessages = allSendingMessages
         .where((message) => !pendingUploadMessageIds.contains(message.id))
         .toList(growable: false);
+
+    bool isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
+        !message.isIncoming &&
+        message.privateMediaPolicy.version == 1 &&
+        (message.privateMediaMode == PrivateMediaMode.protected ||
+            message.privateMediaMode == PrivateMediaMode.viewOnce);
+
+    Future<bool> settlePrivateTransport(
+      ConversationMessage message, {
+      required String status,
+      required String? transport,
+    }) async {
+      final expectedEnvelope = message.wireEnvelope;
+      if (expectedEnvelope == null || expectedEnvelope.isEmpty) return false;
+      if (message.isDeleted) {
+        if (messageRepo is! DirectPrivateDeleteForEveryoneRepository) {
+          return false;
+        }
+        final target = normalizeOutgoingDeleteTombstoneVisibility(
+          message.copyWith(status: status, transport: transport),
+        );
+        return await (messageRepo as DirectPrivateDeleteForEveryoneRepository)
+                .settlePrivateDeleteForEveryoneTombstone(
+                  tombstone: target,
+                  expectedEnvelope: expectedEnvelope,
+                ) !=
+            null;
+      }
+      final attachments = await mediaAttachmentRepo?.getAttachmentsForMessage(
+        message.id,
+        owner: MediaOwnerLane.direct,
+      );
+      final outcome =
+          await settleOutgoingDirectPrivateTransportUnderLifecycleLock(
+            messageRepository: messageRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            attachments: attachments,
+            messageId: message.id,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: null,
+          );
+      return outcome.accepted;
+    }
+
     var transitionedCount = 0;
     var flushDepositedCount = 0;
 
@@ -258,11 +307,22 @@ Future<AppPausedResult> handleAppPaused({
           // (hidden+paused) re-deposits nothing — the row has left the
           // `status='sending'` query.
           try {
-            await messageRepo.saveMessage(
-              normalizeOutgoingDeleteTombstoneVisibility(
-                msg.copyWith(status: 'inboxed', transport: 'inbox'),
-              ),
-            );
+            if (isOutgoingOneMoreLookPrivate(msg)) {
+              final settled = await settlePrivateTransport(
+                msg,
+                status: 'inboxed',
+                transport: 'inbox',
+              );
+              if (!settled) {
+                throw StateError('private pause custody settlement refused');
+              }
+            } else {
+              await messageRepo.saveMessage(
+                normalizeOutgoingDeleteTombstoneVisibility(
+                  msg.copyWith(status: 'inboxed', transport: 'inbox'),
+                ),
+              );
+            }
           } catch (e) {
             // Non-fatal: the deposit already landed in relay custody. A failed
             // local status write leaves the row 'sending' (resume re-fails +
@@ -283,11 +343,19 @@ Future<AppPausedResult> handleAppPaused({
           continue;
         }
         try {
-          final updated = await messageRepo.conditionalTransitionStatus(
-            msg.id,
-            fromStatus: 'sending',
-            toStatus: 'failed',
-          );
+          final updated = isOutgoingOneMoreLookPrivate(msg)
+              ? (await settlePrivateTransport(
+                      msg,
+                      status: 'failed',
+                      transport: null,
+                    )
+                    ? 1
+                    : 0)
+              : await messageRepo.conditionalTransitionStatus(
+                  msg.id,
+                  fromStatus: 'sending',
+                  toStatus: 'failed',
+                );
           if (updated > 0) transitionedCount++;
           emitFlowEvent(
             layer: 'FL',

@@ -1,15 +1,26 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
+import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
   test(
@@ -254,4 +265,657 @@ void main() {
       );
     },
   );
+
+  test('restart terminalizes viewer state without destroying unhanded-off '
+      'outbox custody', () async {
+    final temp = Directory.systemTemp.createTempSync('private-outbox-restart-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final dbPath = p.join(temp.path, 'identity.db');
+    var fixture = await MediaRepositoryRealDbFixture.create(
+      databasePath: dbPath,
+    );
+    addTearDown(() async {
+      try {
+        await fixture.dispose();
+      } catch (_) {}
+    });
+
+    final seed = await _seedOutgoingPendingPrivateMedia(
+      fixture,
+      messageId: 'restart-outbox-no-handoff',
+      attachmentId: 'restart-outbox-no-handoff-att',
+      wireEnvelope: null,
+    );
+    addTearDown(() => _deleteSeedFiles(seed));
+    final rowBeforeRestart = await fixture.rawAttachmentRow(seed.attachmentId);
+    expect(rowBeforeRestart, isNotNull);
+
+    fixture = await fixture.reopen();
+    final first = await _restartEngine(fixture).reconcileLocalLifecycle();
+
+    expect(first.terminalClaims, 1);
+    final terminalParent = await fixture.messageRepo.getMessage(seed.messageId);
+    expect(terminalParent!.privateMediaState.name, 'consumed');
+    expect(
+      await fixture.messageRepo.claimPrivateMediaOpening(
+        seed.messageId,
+        nowMs: 1300,
+      ),
+      isFalse,
+      reason: 'retained transport custody must never restore viewer access',
+    );
+    expect(
+      await fixture.rawAttachmentRow(seed.attachmentId),
+      equals(rowBeforeRestart),
+      reason: 'a null envelope has not durably handed off the outbound bytes',
+    );
+    expect(seed.pendingFile.existsSync(), isTrue);
+    final messageBeforeHandoff = await _rawMessageRow(fixture, seed.messageId);
+    expect(messageBeforeHandoff!['wire_envelope'], isNull);
+    expect(messageBeforeHandoff['status'], 'sending');
+
+    final canonicalRelative = MediaFilePathConvention.relativePathForAttachment(
+      contactPeerId: 'contact-1',
+      blobId: seed.attachmentId,
+      mime: 'image/jpeg',
+    );
+    final canonicalFile = File(
+      p.join(FakeMediaFileManager.testRootPath, canonicalRelative),
+    );
+    final identityRepository = FakeIdentityRepository()
+      ..seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: 'self-peer',
+          mlKemPublicKey: 'self-ml-kem-public',
+          mlKemSecretKey: 'self-ml-kem-secret',
+        ),
+      );
+    final contactRepository = FakeContactRepository()
+      ..seed(<ContactModel>[
+        const ContactModel(
+          peerId: 'contact-1',
+          publicKey: 'contact-public-key',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Restart Contact',
+          signature: 'contact-signature',
+          scannedAt: '2026-07-20T00:00:00.000Z',
+          mlKemPublicKey: 'contact-ml-kem-public',
+        ),
+      ]);
+    final retried = await retryIncompleteUploads(
+      mediaAttachmentRepo: fixture.repo,
+      messageRepo: fixture.messageRepo,
+      bridge: FakeBridge(),
+      p2pService: FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'self-peer',
+          circuitAddresses: <String>['/p2p-circuit/restart'],
+        ),
+        storeInInboxResult: true,
+      ),
+      identityRepo: identityRepository,
+      contactRepo: contactRepository,
+      mediaFileManager: FakeMediaFileManager(),
+      uploadMediaFn:
+          ({
+            required bridge,
+            required localFilePath,
+            required mime,
+            required recipientPeerId,
+            mediaFileManager,
+            width,
+            height,
+            durationMs,
+            waveform,
+            allowedPeers,
+            blobId,
+            deleteSourceWhenDone = false,
+            preparedArtifact,
+          }) async {
+            canonicalFile.parent.createSync(recursive: true);
+            canonicalFile.writeAsBytesSync(
+              File(localFilePath).readAsBytesSync(),
+              flush: true,
+            );
+            return UploadMediaSucceeded(
+              MediaAttachment(
+                id: seed.attachmentId,
+                messageId: seed.messageId,
+                mime: mime,
+                size: canonicalFile.lengthSync(),
+                mediaType: 'image',
+                localPath: canonicalRelative,
+                downloadStatus: 'done',
+                createdAt: '2026-07-20T00:00:00.000Z',
+                contentHash:
+                    '0123456789abcdef0123456789abcdef'
+                    '0123456789abcdef0123456789abcdef',
+                encryptionKeyBase64: 'cmVzdGFydC10cmFuc3BvcnQta2V5',
+                encryptionNonce: 'cmVzdGFydC10cmFuc3BvcnQtbm9uY2U=',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                ownerLane: MediaOwnerLane.direct,
+              ),
+            );
+          },
+    );
+    expect(retried, 1);
+    final handedOffParent = await fixture.messageRepo.getMessage(
+      seed.messageId,
+    );
+    expect(handedOffParent!.privateMediaState.name, 'consumed');
+    expect(handedOffParent.wireEnvelope, isNotNull);
+
+    fixture = await fixture.reopen();
+
+    final afterHandoff = await _restartEngine(
+      fixture,
+    ).reconcileLocalLifecycle();
+    expect(afterHandoff.terminalClaims, 0);
+    expect(await fixture.rawAttachmentRow(seed.attachmentId), isNull);
+    expect(seed.pendingFile.existsSync(), isFalse);
+    expect(canonicalFile.existsSync(), isFalse);
+    final restartedParent = await fixture.messageRepo.getMessage(
+      seed.messageId,
+    );
+    expect(restartedParent!.privateMediaState.name, 'consumed');
+    expect(restartedParent.wireEnvelope, isNotNull);
+  });
+
+  test('restart retains a committed canonical outbox until a real failed retry '
+      'persists the missing envelope', () async {
+    final temp = Directory.systemTemp.createTempSync(
+      'private-committed-outbox-restart-',
+    );
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final dbPath = p.join(temp.path, 'identity.db');
+    var fixture = await MediaRepositoryRealDbFixture.create(
+      databasePath: dbPath,
+    );
+    addTearDown(() async {
+      try {
+        await fixture.dispose();
+      } catch (_) {}
+    });
+
+    const messageId = 'restart-committed-no-handoff';
+    const attachmentId = 'restart-committed-no-handoff-att';
+    const completionKey = 'cmVzdGFydC1jb21taXR0ZWQta2V5';
+    final seed = await _seedOutgoingPendingPrivateMedia(
+      fixture,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      wireEnvelope: null,
+      privateState: 'available',
+      seedCanonicalResidue: true,
+    );
+    addTearDown(() => _deleteSeedFiles(seed));
+    final pendingRelative =
+        MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: 'image/jpeg',
+        );
+    final canonicalRelative = MediaFilePathConvention.relativePathForAttachment(
+      contactPeerId: 'contact-1',
+      blobId: attachmentId,
+      mime: 'image/jpeg',
+    );
+    final completed = MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: seed.pendingFile.lengthSync(),
+      mediaType: 'image',
+      localPath: canonicalRelative,
+      downloadStatus: 'done',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      contentHash:
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef',
+      encryptionKeyBase64: completionKey,
+      encryptionNonce: 'cmVzdGFydC1jb21taXR0ZWQtbm9uY2U=',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      ownerLane: MediaOwnerLane.direct,
+    );
+    final committed = await fixture
+        .repo
+        .outgoingDirectPrivateMutationCoordinator
+        .commitCompletion(
+          attachment: completed,
+          expectedPendingLocalPath: pendingRelative,
+        );
+    expect(committed.outcome, OutgoingDirectPrivateMutationOutcome.committed);
+    expect(
+      (await fixture.rawAttachmentRow(attachmentId))?['download_status'],
+      'done',
+    );
+    expect(
+      await fixture.secureKeyStore.read(seed.secureKeyName),
+      completionKey,
+    );
+
+    // Model the durable first-frame/close transition after the available
+    // completion committed, followed by a process death before the upload
+    // caller can persist its freshly built wire envelope.
+    expect(
+      await fixture.db.update(
+        'messages',
+        <String, Object?>{
+          'private_media_state': 'consumed',
+          'private_media_revealed_at_ms': 1200,
+          'private_media_terminal_at_ms': 1300,
+          'private_media_clock_high_water_ms': 1300,
+          'status': 'sending',
+          'wire_envelope': null,
+        },
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      ),
+      1,
+    );
+    fixture = await fixture.reopen();
+
+    await _restartEngine(fixture).reconcileLocalLifecycle();
+    final retained = await fixture.rawAttachmentRow(attachmentId);
+    expect(retained?['download_status'], 'done');
+    expect(retained?['local_path'], canonicalRelative);
+    expect(seed.pendingFile.existsSync(), isTrue);
+    expect(seed.canonicalFile!.existsSync(), isTrue);
+    expect(
+      await fixture.secureKeyStore.read(seed.secureKeyName),
+      completionKey,
+    );
+    expect(
+      (await fixture.messageRepo.getMessage(messageId))?.wireEnvelope,
+      isNull,
+    );
+
+    expect(
+      await fixture.db.update(
+        'messages',
+        const <String, Object?>{'status': 'failed'},
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      ),
+      1,
+    );
+    final identityRepository = FakeIdentityRepository()
+      ..seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: 'self-peer',
+          mlKemPublicKey: 'self-ml-kem-public',
+          mlKemSecretKey: 'self-ml-kem-secret',
+        ),
+      );
+    final contactRepository = FakeContactRepository()
+      ..seed(<ContactModel>[
+        const ContactModel(
+          peerId: 'contact-1',
+          publicKey: 'contact-public-key',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Restart Contact',
+          signature: 'contact-signature',
+          scannedAt: '2026-07-20T00:00:00.000Z',
+          mlKemPublicKey: 'contact-ml-kem-public',
+        ),
+      ]);
+    final retried = await retryFailedMessage(
+      messageId: messageId,
+      messageRepo: fixture.messageRepo,
+      identityRepo: identityRepository,
+      contactRepo: contactRepository,
+      p2pService: FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'self-peer',
+          circuitAddresses: <String>['/p2p-circuit/restart'],
+        ),
+        storeInInboxResult: true,
+      ),
+      bridge: FakeBridge(),
+      mediaAttachmentRepo: fixture.repo,
+      mediaFileManager: FakeMediaFileManager(),
+    );
+    expect(retried, 1);
+    expect(
+      (await fixture.messageRepo.getMessage(messageId))?.wireEnvelope,
+      isNotNull,
+    );
+
+    expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+    expect(seed.pendingFile.existsSync(), isFalse);
+    expect(seed.canonicalFile!.existsSync(), isFalse);
+    expect(
+      await fixture.secureKeyStore.containsKey(seed.secureKeyName),
+      isFalse,
+    );
+  });
+
+  test(
+    'restart with durable envelope handoff cleans terminal outbox custody',
+    () async {
+      final temp = Directory.systemTemp.createTempSync(
+        'private-outbox-handed-off-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final dbPath = p.join(temp.path, 'identity.db');
+      var fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: dbPath,
+      );
+      addTearDown(() async {
+        try {
+          await fixture.dispose();
+        } catch (_) {}
+      });
+
+      final seed = await _seedOutgoingPendingPrivateMedia(
+        fixture,
+        messageId: 'restart-outbox-handed-off',
+        attachmentId: 'restart-outbox-handed-off-att',
+        wireEnvelope: '{"type":"direct_message","custody":"already-durable"}',
+        seedStoredKey: true,
+      );
+      addTearDown(() => _deleteSeedFiles(seed));
+      expect(
+        await fixture.secureKeyStore.containsKey(seed.secureKeyName),
+        isTrue,
+      );
+
+      fixture = await fixture.reopen();
+      final result = await _restartEngine(fixture).reconcileLocalLifecycle();
+
+      expect(result.terminalClaims, 1);
+      final parent = await fixture.messageRepo.getMessage(seed.messageId);
+      expect(parent!.privateMediaState.name, 'consumed');
+      expect(await fixture.rawAttachmentRow(seed.attachmentId), isNull);
+      expect(seed.pendingFile.existsSync(), isFalse);
+      expect(
+        await fixture.secureKeyStore.containsKey(seed.secureKeyName),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'explicit hidden and deleted intent clean pending outbox custody without '
+    'an envelope',
+    () async {
+      final temp = Directory.systemTemp.createTempSync(
+        'private-outbox-explicit-intent-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final dbPath = p.join(temp.path, 'identity.db');
+      var fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: dbPath,
+      );
+      addTearDown(() async {
+        try {
+          await fixture.dispose();
+        } catch (_) {}
+      });
+
+      final hidden = await _seedOutgoingPendingPrivateMedia(
+        fixture,
+        messageId: 'restart-outbox-hidden',
+        attachmentId: 'restart-outbox-hidden-att',
+        wireEnvelope: null,
+        privateState: 'available',
+        hiddenAt: '2026-07-20T10:00:00.000Z',
+        seedStoredKey: true,
+      );
+      final deleted = await _seedOutgoingPendingPrivateMedia(
+        fixture,
+        messageId: 'restart-outbox-deleted',
+        attachmentId: 'restart-outbox-deleted-att',
+        wireEnvelope: null,
+        privateState: 'available',
+        deletedAt: '2026-07-20T10:01:00.000Z',
+        seedStoredKey: true,
+      );
+      addTearDown(() => _deleteSeedFiles(hidden));
+      addTearDown(() => _deleteSeedFiles(deleted));
+
+      fixture = await fixture.reopen();
+      final result = await _restartEngine(fixture).reconcileLocalLifecycle();
+
+      expect(result.terminalClaims, 0);
+      for (final seed in [hidden, deleted]) {
+        expect(await fixture.rawAttachmentRow(seed.attachmentId), isNull);
+        expect(seed.pendingFile.existsSync(), isFalse);
+        expect(
+          await fixture.secureKeyStore.containsKey(seed.secureKeyName),
+          isFalse,
+        );
+      }
+      final hiddenRow = await _rawMessageRow(fixture, hidden.messageId);
+      final deletedRow = await _rawMessageRow(fixture, deleted.messageId);
+      expect(hiddenRow!['hidden_at'], isNotNull);
+      expect(deletedRow!['deleted_at'], isNotNull);
+    },
+  );
+
+  test('failed atomic rollback/finalize leaves opening and restart fails '
+      'closed without inferring canonical completion', () async {
+    final temp = Directory.systemTemp.createTempSync(
+      'private-outbox-precommit-crash-',
+    );
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final dbPath = p.join(temp.path, 'identity.db');
+    var fixture = await MediaRepositoryRealDbFixture.create(
+      databasePath: dbPath,
+    );
+    addTearDown(() async {
+      try {
+        await fixture.dispose();
+      } catch (_) {}
+    });
+
+    // These are the only durable artifacts a transaction returning false or
+    // throwing before commit may leave. No process-local completion token is
+    // carried across reopen; same-sized canonical residue is deliberately
+    // present so restart cannot infer a successful upload from bytes alone.
+    final falseResult = await _seedOutgoingPendingPrivateMedia(
+      fixture,
+      messageId: 'restart-precommit-false',
+      attachmentId: 'restart-precommit-false-att',
+      wireEnvelope: null,
+      status: 'sending',
+      seedCanonicalResidue: true,
+    );
+    final thrownResult = await _seedOutgoingPendingPrivateMedia(
+      fixture,
+      messageId: 'restart-precommit-throw',
+      attachmentId: 'restart-precommit-throw-att',
+      wireEnvelope: null,
+      status: 'failed',
+      seedCanonicalResidue: true,
+    );
+    addTearDown(() => _deleteSeedFiles(falseResult));
+    addTearDown(() => _deleteSeedFiles(thrownResult));
+    final rowsBeforeRestart = <String, Map<String, Object?>?>{
+      for (final seed in [falseResult, thrownResult])
+        seed.attachmentId: await fixture.rawAttachmentRow(seed.attachmentId),
+    };
+
+    fixture = await fixture.reopen();
+    final result = await _restartEngine(fixture).reconcileLocalLifecycle();
+
+    expect(result.terminalClaims, 2);
+    for (final seed in [falseResult, thrownResult]) {
+      final parent = await fixture.messageRepo.getMessage(seed.messageId);
+      expect(parent!.privateMediaState.name, 'consumed');
+      expect(
+        await fixture.rawAttachmentRow(seed.attachmentId),
+        equals(rowsBeforeRestart[seed.attachmentId]),
+        reason: 'canonical residue cannot fabricate a committed completion',
+      );
+      expect(seed.pendingFile.existsSync(), isTrue);
+      expect(
+        await fixture.messageRepo.claimPrivateMediaOpening(
+          seed.messageId,
+          nowMs: 1400,
+        ),
+        isFalse,
+      );
+    }
+  });
+}
+
+PrivateMediaLifecycleEngine _restartEngine(
+  MediaRepositoryRealDbFixture fixture,
+) {
+  return PrivateMediaLifecycleEngine(
+    adapter: DirectPrivateMediaLifecycle(
+      messageRepository: fixture.messageRepo,
+      mediaAttachmentRepository: fixture.repo,
+      mediaFileManager: FakeMediaFileManager(),
+    ),
+    lifecycleLock: fixture.repo.lifecycleLock,
+    nowMs: () => 1200,
+  );
+}
+
+Future<_OutgoingPendingRestartSeed> _seedOutgoingPendingPrivateMedia(
+  MediaRepositoryRealDbFixture fixture, {
+  required String messageId,
+  required String attachmentId,
+  required String? wireEnvelope,
+  String status = 'sending',
+  String privateState = 'opening',
+  String? hiddenAt,
+  String? deletedAt,
+  bool seedCanonicalResidue = false,
+  bool seedStoredKey = false,
+}) async {
+  const mime = 'image/jpeg';
+  const bytes = <int>[7, 8, 9, 10];
+  final pendingRelative = MediaFilePathConvention.relativePathForPendingUpload(
+    messageId: messageId,
+    attachmentId: attachmentId,
+    mime: mime,
+  );
+  final pendingFile = File(
+    p.join(FakeMediaFileManager.testRootPath, pendingRelative),
+  );
+  pendingFile.createSync(recursive: true);
+  pendingFile.writeAsBytesSync(bytes);
+
+  File? canonicalFile;
+  if (seedCanonicalResidue) {
+    canonicalFile = File(
+      p.join(
+        FakeMediaFileManager.testRootPath,
+        MediaFilePathConvention.relativePathForAttachment(
+          contactPeerId: 'contact-1',
+          blobId: attachmentId,
+          mime: mime,
+        ),
+      ),
+    );
+    canonicalFile.createSync(recursive: true);
+    canonicalFile.writeAsBytesSync(bytes);
+  }
+
+  await fixture.seedDirectParent(messageId);
+  await fixture.repo.saveAttachment(
+    MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: mime,
+      size: bytes.length,
+      mediaType: 'image',
+      localPath: pendingRelative,
+      downloadStatus: 'upload_pending',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      contentHash: seedStoredKey
+          ? '0123456789abcdef0123456789abcdef'
+                '0123456789abcdef0123456789abcdef'
+          : null,
+      encryptionKeyBase64: seedStoredKey
+          ? 'cmVzdGFydC1jdXN0b2R5LWtleQ=='
+          : null,
+      encryptionNonce: seedStoredKey ? 'cmVzdGFydC1ub25jZQ==' : null,
+      encryptionScheme: seedStoredKey
+          ? kMediaAttachmentEncryptionSchemeBlobAesGcmV1
+          : null,
+    ),
+    owner: MediaOwnerLane.direct,
+  );
+  expect(
+    await fixture.db.update(
+      'messages',
+      {
+        'sender_peer_id': 'self-peer',
+        'text': '',
+        'status': status,
+        'is_incoming': 0,
+        'wire_envelope': wireEnvelope,
+        'private_media_policy_version': 1,
+        'private_media_mode': 'protected',
+        'private_media_state': privateState,
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1100,
+        'private_media_revealed_at_ms': null,
+        'private_media_terminal_at_ms': null,
+        'hidden_at': hiddenAt,
+        'deleted_at': deletedAt,
+      },
+      where: 'id = ?',
+      whereArgs: [messageId],
+    ),
+    1,
+  );
+
+  return _OutgoingPendingRestartSeed(
+    messageId: messageId,
+    attachmentId: attachmentId,
+    pendingFile: pendingFile,
+    canonicalFile: canonicalFile,
+    secureKeyName: mediaAttachmentEncryptionKeyStoreName(attachmentId),
+  );
+}
+
+Future<Map<String, Object?>?> _rawMessageRow(
+  MediaRepositoryRealDbFixture fixture,
+  String messageId,
+) async {
+  final rows = await fixture.db.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: [messageId],
+  );
+  return rows.isEmpty ? null : rows.single;
+}
+
+void _deleteSeedFiles(_OutgoingPendingRestartSeed seed) {
+  for (final file in [seed.pendingFile, seed.canonicalFile]) {
+    if (file != null && file.existsSync()) file.deleteSync();
+  }
+}
+
+class _OutgoingPendingRestartSeed {
+  const _OutgoingPendingRestartSeed({
+    required this.messageId,
+    required this.attachmentId,
+    required this.pendingFile,
+    required this.canonicalFile,
+    required this.secureKeyName,
+  });
+
+  final String messageId;
+  final String attachmentId;
+  final File pendingFile;
+  final File? canonicalFile;
+  final String secureKeyName;
 }

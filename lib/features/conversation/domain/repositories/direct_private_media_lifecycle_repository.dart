@@ -48,6 +48,39 @@ abstract class DirectPrivateMediaLifecycleRepository {
   Future<int?> loadNextPrivateMediaExpiryAtMs();
 }
 
+/// Update-only persistence authority for an outgoing protected/View-Once
+/// Delete-for-Everyone tombstone.
+///
+/// Both operations require the exact private parent to remain present. They
+/// never insert a missing row, so a concurrent contact deletion or physical
+/// failed-message removal remains authoritative. Implementations also preserve
+/// an already-hidden parent and every private lifecycle column.
+abstract interface class DirectPrivateDeleteForEveryoneRepository {
+  /// Replaces the still-present original with the first durable `sending`
+  /// deletion tombstone. Returns the authoritative persisted row, or null when
+  /// removal/conflicting terminal intent won the race.
+  Future<ConversationMessage?> commitPrivateDeleteForEveryoneTombstone({
+    required ConversationMessage expectedMessage,
+    required ConversationMessage tombstone,
+  });
+
+  /// Replaces a missing/legacy cached deletion envelope on the exact failed
+  /// tombstone without inserting a physically removed parent.
+  Future<ConversationMessage?> stagePrivateDeleteForEveryoneRetryEnvelope({
+    required ConversationMessage tombstone,
+    required String? expectedEnvelope,
+    required String envelope,
+  });
+
+  /// Settles only the transport/visibility columns of the exact tombstone.
+  /// Returns the authoritative persisted row, or null when it was physically
+  /// removed. Callers must never fall back to an insertion-capable full save.
+  Future<ConversationMessage?> settlePrivateDeleteForEveryoneTombstone({
+    required ConversationMessage tombstone,
+    required String expectedEnvelope,
+  });
+}
+
 /// Durable CAS authority for transitions owned by one exact in-memory lease.
 ///
 /// The parent direction/mode and attachment identity/path are part of the

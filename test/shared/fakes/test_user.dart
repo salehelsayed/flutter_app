@@ -138,6 +138,7 @@ class TestUser {
         deliveryReceiptListener = DeliveryReceiptListener(
           receiptStream: router.deliveryReceiptStream,
           messageRepo: msgRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
       }
     } else {

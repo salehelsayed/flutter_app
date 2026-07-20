@@ -527,10 +527,14 @@ void main() {
       await pumpUntil(
         tester,
         () =>
-            visibleMessage(deletedMessageId).status == 'failed' &&
+            visibleMessage(deletedMessageId).isDeleted &&
+            visibleMessage(deletedMessageId).status == 'delivered' &&
             visibleMessage(deletedMessageId).media.isEmpty,
-        reason: 'deleted media must stay cleared through a later status event',
+        reason:
+            'durable delete intent and cleared media must outrank a later '
+            'generic status event',
       );
+      expect(visibleMessage(deletedMessageId).status, 'delivered');
       expect(deletedImageCell, findsNothing);
       expect(deletedVideoCell, findsNothing);
       expect(imageCell, findsOneWidget);

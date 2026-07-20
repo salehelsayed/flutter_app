@@ -1,7 +1,11 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
+import '../../media/media_owner_lane.dart';
+import '../../media/outgoing_direct_private_mutation_coordinator.dart';
+import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 
 const _visibleMessageFilter = 'hidden_at IS NULL';
@@ -386,7 +390,9 @@ Future<int> dbUpdateMessageStatus(Database db, String id, String status) async {
     final updated = await db.update(
       'messages',
       {'status': status},
-      where: 'id = ?',
+      // A late transport/status callback never outranks durable local
+      // hide/delete intent, regardless of media policy.
+      where: 'id = ? AND hidden_at IS NULL AND deleted_at IS NULL',
       whereArgs: [id],
     );
 
@@ -1045,12 +1051,44 @@ Future<void> dbUpdateWireEnvelope(
   );
 
   try {
-    await db.update(
-      'messages',
-      {'wire_envelope': wireEnvelope},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await dbWriteTransaction(db, (txn) async {
+      final rows = await txn.query(
+        'messages',
+        columns: const <String>[
+          'is_incoming',
+          'hidden_at',
+          'deleted_at',
+          'private_media_policy_version',
+          'private_media_mode',
+        ],
+        where: 'id = ?',
+        whereArgs: <Object?>[id],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final row = rows.single;
+      final version = (row['private_media_policy_version'] as num?)?.toInt();
+      final mode = row['private_media_mode'] as String?;
+      final genericOutgoing =
+          ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+          row['hidden_at'] == null &&
+          row['deleted_at'] == null &&
+          ((version == null && mode == null) ||
+              (version == 0 && (mode == null || mode == 'ordinary')) ||
+              (version == 1 && mode == 'disappearing'));
+      if (!genericOutgoing) return;
+      await txn.rawUpdate(
+        'UPDATE messages SET wire_envelope = ? WHERE id = ? '
+        'AND is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL '
+        'AND ((private_media_policy_version IS NULL '
+        'AND private_media_mode IS NULL) '
+        'OR (private_media_policy_version = 0 '
+        "AND (private_media_mode IS NULL OR private_media_mode = 'ordinary')) "
+        'OR (private_media_policy_version = 1 '
+        "AND private_media_mode = 'disappearing'))",
+        <Object?>[wireEnvelope, id],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1065,6 +1103,834 @@ Future<void> dbUpdateWireEnvelope(
     );
     rethrow;
   }
+}
+
+/// Update-only first persistence for an outgoing protected/View-Once
+/// Delete-for-Everyone tombstone.
+///
+/// A physical parent removal is authoritative: this helper never INSERTs. A
+/// concurrent local hide is preserved because `hidden_at` and all private
+/// lifecycle columns are deliberately outside the update set.
+Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
+  Database db,
+  Map<String, Object?> expectedRow,
+  Map<String, Object?> tombstoneRow,
+) {
+  final messageId = tombstoneRow['id'] as String? ?? '';
+  final contactPeerId = tombstoneRow['contact_peer_id'] as String? ?? '';
+  final senderPeerId = tombstoneRow['sender_peer_id'] as String? ?? '';
+  final deletedAt = tombstoneRow['deleted_at'] as String? ?? '';
+  final deletedByPeerId = tombstoneRow['deleted_by_peer_id'] as String? ?? '';
+  final envelope = tombstoneRow['wire_envelope'] as String? ?? '';
+  final mode = tombstoneRow['private_media_mode'] as String?;
+  final expectedStatus = expectedRow['status'] as String?;
+  final shapeIsValid =
+      messageId.isNotEmpty &&
+      contactPeerId.isNotEmpty &&
+      senderPeerId.isNotEmpty &&
+      deletedAt.isNotEmpty &&
+      deletedByPeerId == senderPeerId &&
+      envelope.isNotEmpty &&
+      tombstoneRow['text'] == '' &&
+      tombstoneRow['status'] == 'sending' &&
+      tombstoneRow['transport'] == null &&
+      (tombstoneRow['is_incoming'] as num?)?.toInt() == 0 &&
+      (tombstoneRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      const <String>{'protected', 'view_once'}.contains(mode) &&
+      expectedRow['id'] == messageId &&
+      expectedRow['contact_peer_id'] == contactPeerId &&
+      expectedRow['sender_peer_id'] == senderPeerId &&
+      (expectedRow['is_incoming'] as num?)?.toInt() == 0 &&
+      (expectedRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      expectedRow['private_media_mode'] == mode &&
+      (expectedStatus == 'delivered' || expectedStatus == 'inboxed');
+  if (!shapeIsValid) return Future<bool>.value(false);
+
+  bool exactTombstone(Map<String, Object?> row) =>
+      row['contact_peer_id'] == contactPeerId &&
+      row['sender_peer_id'] == senderPeerId &&
+      (row['is_incoming'] as num?)?.toInt() == 0 &&
+      (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      row['private_media_mode'] == mode &&
+      row['text'] == '' &&
+      row['transport'] == null &&
+      row['deleted_at'] == deletedAt &&
+      row['deleted_by_peer_id'] == deletedByPeerId &&
+      row['wire_envelope'] == envelope;
+
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final current = rows.single;
+    if (current['deleted_at'] != null) return exactTombstone(current);
+    if (current['contact_peer_id'] != contactPeerId ||
+        current['sender_peer_id'] != senderPeerId ||
+        (current['is_incoming'] as num?)?.toInt() != 0 ||
+        (current['private_media_policy_version'] as num?)?.toInt() != 1 ||
+        current['private_media_mode'] != mode ||
+        !const <String>{'delivered', 'inboxed'}.contains(current['status'])) {
+      return false;
+    }
+
+    final changed = await txn.rawUpdate(
+      'UPDATE messages SET text = ?, status = ?, transport = NULL, '
+      'deleted_at = ?, deleted_by_peer_id = ?, wire_envelope = ? '
+      'WHERE id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
+      'AND is_incoming = 0 AND deleted_at IS NULL '
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      "AND status IN ('delivered','inboxed')",
+      <Object?>[
+        '',
+        'sending',
+        deletedAt,
+        deletedByPeerId,
+        envelope,
+        messageId,
+        contactPeerId,
+        senderPeerId,
+      ],
+    );
+    if (changed == 1) return true;
+    final after = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    return after.isNotEmpty && exactTombstone(after.single);
+  });
+}
+
+/// Update-only staging for a rebuilt private deletion retry envelope.
+///
+/// The exact failed tombstone must still exist with the caller-observed
+/// envelope value. Only `wire_envelope` changes; physical removal, lifecycle,
+/// hidden state, and deletion identity always win.
+Future<bool> dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope(
+  Database db,
+  Map<String, Object?> tombstoneRow, {
+  required String? expectedEnvelope,
+  required String envelope,
+}) {
+  final messageId = tombstoneRow['id'] as String? ?? '';
+  final contactPeerId = tombstoneRow['contact_peer_id'] as String? ?? '';
+  final senderPeerId = tombstoneRow['sender_peer_id'] as String? ?? '';
+  final deletedAt = tombstoneRow['deleted_at'] as String? ?? '';
+  final deletedByPeerId = tombstoneRow['deleted_by_peer_id'] as String? ?? '';
+  final mode = tombstoneRow['private_media_mode'] as String?;
+  final shapeIsValid =
+      envelope.isNotEmpty &&
+      DirectPrivateMediaPathGuard.isSafeSegment(messageId) &&
+      DirectPrivateMediaPathGuard.isSafeSegment(contactPeerId) &&
+      DirectPrivateMediaPathGuard.isSafeSegment(senderPeerId) &&
+      deletedAt.isNotEmpty &&
+      deletedByPeerId == senderPeerId &&
+      tombstoneRow['text'] == '' &&
+      tombstoneRow['status'] == 'failed' &&
+      (tombstoneRow['is_incoming'] as num?)?.toInt() == 0 &&
+      (tombstoneRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      const <String>{'protected', 'view_once'}.contains(mode);
+  if (!shapeIsValid) return Future<bool>.value(false);
+
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final current = rows.single;
+    if (current['contact_peer_id'] != contactPeerId ||
+        current['sender_peer_id'] != senderPeerId ||
+        (current['is_incoming'] as num?)?.toInt() != 0 ||
+        (current['private_media_policy_version'] as num?)?.toInt() != 1 ||
+        current['private_media_mode'] != mode ||
+        current['text'] != '' ||
+        current['status'] != 'failed' ||
+        current['deleted_at'] != deletedAt ||
+        current['deleted_by_peer_id'] != deletedByPeerId ||
+        current['wire_envelope'] != expectedEnvelope) {
+      return false;
+    }
+    if (expectedEnvelope == envelope) return true;
+
+    final envelopePredicate = expectedEnvelope == null
+        ? 'wire_envelope IS NULL'
+        : 'wire_envelope = ?';
+    final updateArgs = <Object?>[
+      envelope,
+      messageId,
+      contactPeerId,
+      senderPeerId,
+      '',
+      'failed',
+      deletedAt,
+      deletedByPeerId,
+    ];
+    if (expectedEnvelope != null) updateArgs.add(expectedEnvelope);
+    final changed = await txn.rawUpdate(
+      'UPDATE messages SET wire_envelope = ? '
+      'WHERE id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
+      'AND is_incoming = 0 AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      'AND text = ? AND status = ? AND deleted_at = ? '
+      'AND deleted_by_peer_id = ? AND $envelopePredicate',
+      updateArgs,
+    );
+    return changed == 1;
+  });
+}
+
+/// Update-only transport settlement for the exact private deletion tombstone.
+///
+/// The expected deletion marker and envelope are the comparands. Missing rows
+/// remain missing, a concurrent hide is never cleared, and private lifecycle
+/// state is never rewritten from a stale message snapshot.
+Future<bool> dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone(
+  Database db,
+  Map<String, Object?> tombstoneRow, {
+  required String expectedEnvelope,
+}) {
+  final messageId = tombstoneRow['id'] as String? ?? '';
+  final contactPeerId = tombstoneRow['contact_peer_id'] as String? ?? '';
+  final senderPeerId = tombstoneRow['sender_peer_id'] as String? ?? '';
+  final deletedAt = tombstoneRow['deleted_at'] as String? ?? '';
+  final deletedByPeerId = tombstoneRow['deleted_by_peer_id'] as String? ?? '';
+  final status = tombstoneRow['status'] as String? ?? '';
+  final transport = tombstoneRow['transport'] as String?;
+  final targetEnvelope = tombstoneRow['wire_envelope'] as String?;
+  final targetHiddenAt = tombstoneRow['hidden_at'] as String?;
+  final mode = tombstoneRow['private_media_mode'] as String?;
+  const statuses = <String>{'failed', 'sent', 'inboxed', 'delivered'};
+  final shapeIsValid =
+      messageId.isNotEmpty &&
+      contactPeerId.isNotEmpty &&
+      senderPeerId.isNotEmpty &&
+      deletedAt.isNotEmpty &&
+      deletedByPeerId == senderPeerId &&
+      expectedEnvelope.isNotEmpty &&
+      statuses.contains(status) &&
+      (tombstoneRow['is_incoming'] as num?)?.toInt() == 0 &&
+      (tombstoneRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      const <String>{'protected', 'view_once'}.contains(mode) &&
+      (status == 'delivered'
+          ? targetEnvelope == null && targetHiddenAt == deletedAt
+          : targetEnvelope == expectedEnvelope && targetHiddenAt == null) &&
+      (status != 'inboxed' || transport == 'inbox');
+  if (!shapeIsValid) return Future<bool>.value(false);
+
+  final allowedCurrentStatuses = switch (status) {
+    'delivered' => const <String>['sending', 'failed', 'sent', 'inboxed'],
+    'inboxed' => const <String>['sending', 'failed', 'sent', 'inboxed'],
+    'sent' => const <String>['sending', 'failed', 'sent'],
+    'failed' => const <String>['sending', 'failed'],
+    _ => const <String>[],
+  };
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final current = rows.single;
+    if (current['contact_peer_id'] != contactPeerId ||
+        current['sender_peer_id'] != senderPeerId ||
+        (current['is_incoming'] as num?)?.toInt() != 0 ||
+        (current['private_media_policy_version'] as num?)?.toInt() != 1 ||
+        current['private_media_mode'] != mode ||
+        current['text'] != '' ||
+        current['deleted_at'] != deletedAt ||
+        current['deleted_by_peer_id'] != deletedByPeerId) {
+      return false;
+    }
+    final alreadySettled =
+        current['status'] == status &&
+        current['transport'] == transport &&
+        current['wire_envelope'] == targetEnvelope &&
+        (targetHiddenAt == null || current['hidden_at'] != null);
+    if (alreadySettled) return true;
+    if (current['wire_envelope'] != expectedEnvelope ||
+        !allowedCurrentStatuses.contains(current['status'])) {
+      return false;
+    }
+
+    final placeholders = List<String>.filled(
+      allowedCurrentStatuses.length,
+      '?',
+    ).join(',');
+    final changed = await txn.rawUpdate(
+      'UPDATE messages SET status = ?, transport = ?, wire_envelope = ?, '
+      'hidden_at = CASE WHEN hidden_at IS NULL THEN ? ELSE hidden_at END '
+      'WHERE id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
+      'AND is_incoming = 0 AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      'AND text = ? AND deleted_at = ? AND deleted_by_peer_id = ? '
+      'AND wire_envelope = ? AND status IN ($placeholders)',
+      <Object?>[
+        status,
+        transport,
+        targetEnvelope,
+        targetHiddenAt,
+        messageId,
+        contactPeerId,
+        senderPeerId,
+        '',
+        deletedAt,
+        deletedByPeerId,
+        expectedEnvelope,
+        ...allowedCurrentStatuses,
+      ],
+    );
+    return changed == 1;
+  });
+}
+
+/// Clears a stale transport envelope immediately before a key-rotating
+/// outgoing direct-private upload. The exact parent/attachment qualification
+/// and the column-only mutation share one transaction, so failure occurs
+/// before the caller reads plaintext bytes.
+Future<bool> dbInvalidateWireEnvelopeBeforePrivateUpload(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required String expectedPendingLocalPath,
+}) {
+  if (messageId.isEmpty ||
+      attachmentId.isEmpty ||
+      expectedPendingLocalPath.isEmpty) {
+    return Future<bool>.value(false);
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final qualified = await txn.rawQuery(
+      'SELECT 1 FROM messages parent '
+      'JOIN media_attachments attachment '
+      'ON attachment.message_id = parent.id '
+      'WHERE parent.id = ? AND parent.is_incoming = 0 '
+      'AND parent.hidden_at IS NULL AND parent.deleted_at IS NULL '
+      "AND parent.status IN ('sending','failed') "
+      'AND parent.private_media_policy_version = 1 '
+      "AND parent.private_media_mode IN ('protected','view_once') "
+      'AND ((parent.private_media_state = \'available\' '
+      'AND parent.private_media_revealed_at_ms IS NULL '
+      'AND parent.private_media_terminal_at_ms IS NULL) '
+      'OR (parent.private_media_state IN (\'opening\',\'viewing\') '
+      'AND parent.private_media_terminal_at_ms IS NULL) '
+      'OR (parent.private_media_state = \'consumed\' '
+      'AND parent.private_media_terminal_at_ms IS NOT NULL)) '
+      'AND attachment.id = ? AND attachment.owner_lane = ? '
+      "AND attachment.download_status = 'upload_pending' "
+      'AND attachment.local_path = ? LIMIT 1',
+      <Object?>[messageId, attachmentId, 'direct', expectedPendingLocalPath],
+    );
+    if (qualified.isEmpty) return false;
+    final count = await txn.rawUpdate(
+      'UPDATE messages SET wire_envelope = NULL WHERE id = ? '
+      'AND is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL '
+      "AND status IN ('sending','failed') "
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      'AND ((private_media_state = \'available\' '
+      'AND private_media_revealed_at_ms IS NULL '
+      'AND private_media_terminal_at_ms IS NULL) '
+      'OR (private_media_state IN (\'opening\',\'viewing\') '
+      'AND private_media_terminal_at_ms IS NULL) '
+      'OR (private_media_state = \'consumed\' '
+      'AND private_media_terminal_at_ms IS NOT NULL)) '
+      'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+      'WHERE attachment.message_id = messages.id '
+      'AND attachment.id = ? AND attachment.owner_lane = ? '
+      "AND attachment.download_status = 'upload_pending' "
+      'AND attachment.local_path = ?)',
+      <Object?>[messageId, attachmentId, 'direct', expectedPendingLocalPath],
+    );
+    return count == 1;
+  });
+}
+
+/// Restores retryable parent status when a key-rotating private upload
+/// completed but encryption/envelope handoff failed before any envelope became
+/// durable. Every predicate is repeated by the update so a concurrent
+/// hide/delete/removal or attachment replacement wins without fallback.
+Future<bool> dbMarkOutgoingDirectPrivateUploadHandoffFailed(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required String expectedPendingLocalPath,
+}) {
+  if (messageId.isEmpty ||
+      attachmentId.isEmpty ||
+      expectedPendingLocalPath.isEmpty) {
+    return Future<bool>.value(false);
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final count = await txn.rawUpdate(
+      "UPDATE messages SET status = 'failed' "
+      "WHERE id = ? AND status = 'sending' AND is_incoming = 0 "
+      'AND hidden_at IS NULL AND deleted_at IS NULL '
+      'AND wire_envelope IS NULL '
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      "AND ((private_media_state = 'available' "
+      'AND private_media_revealed_at_ms IS NULL '
+      'AND private_media_terminal_at_ms IS NULL) '
+      "OR (private_media_state IN ('opening','viewing') "
+      'AND private_media_terminal_at_ms IS NULL) '
+      "OR (private_media_state = 'consumed' "
+      'AND private_media_terminal_at_ms IS NOT NULL)) '
+      'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+      'WHERE attachment.message_id = messages.id '
+      'AND attachment.id = ? AND attachment.owner_lane = ? '
+      "AND attachment.download_status = 'upload_pending' "
+      'AND attachment.local_path = ?) '
+      'AND 1 = (SELECT COUNT(*) FROM media_attachments sibling '
+      'WHERE sibling.message_id = messages.id '
+      'AND sibling.owner_lane = ?)',
+      <Object?>[
+        messageId,
+        attachmentId,
+        MediaOwnerLane.direct.dbValue,
+        expectedPendingLocalPath,
+        MediaOwnerLane.direct.dbValue,
+      ],
+    );
+    return count == 1;
+  });
+}
+
+/// Final, exact outgoing-private transport handoff.
+///
+/// A canonical `done` row is durable completion authority in `available` and
+/// in the terminal no-envelope restart shape. A pending row is authority only
+/// while the caller proves that this process owns the matching deferred or
+/// transport-only completion fingerprint. The parent and exact single-row
+/// attachment predicates are repeated by the envelope UPDATE itself.
+Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>
+dbCommitOutgoingDirectPrivateWireEnvelope(
+  Database db,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+  required String envelope,
+  required bool hasOwnedPendingCompletion,
+}) {
+  final messageId = completionRow['message_id'] as String? ?? '';
+  final attachmentId = completionRow['id'] as String? ?? '';
+  final mime = completionRow['mime'] as String? ?? '';
+  final size = (completionRow['size'] as num?)?.toInt() ?? 0;
+  bool hasValue(String field) {
+    final value = completionRow[field];
+    return value is String && value.trim().isNotEmpty;
+  }
+
+  if (messageId.isEmpty ||
+      attachmentId.isEmpty ||
+      mime.isEmpty ||
+      size <= 0 ||
+      envelope.trim().isEmpty ||
+      completionRow['owner_lane'] != MediaOwnerLane.direct.dbValue ||
+      completionRow['download_status'] != 'done' ||
+      !hasValue('content_hash') ||
+      !hasValue('encryption_key_base64') ||
+      !hasValue('encryption_nonce') ||
+      !hasValue('encryption_scheme')) {
+    return Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>.value(
+      OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final parentRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (parentRows.isEmpty) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+    final parent = parentRows.single;
+    final contactPeerId = parent['contact_peer_id'] as String? ?? '';
+    if (((parent['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+        parent['hidden_at'] != null ||
+        parent['deleted_at'] != null ||
+        (parent['private_media_policy_version'] as num?)?.toInt() != 1 ||
+        !const <String>{
+          'protected',
+          'view_once',
+        }.contains(parent['private_media_mode']) ||
+        !const <String>{'sending', 'failed'}.contains(parent['status']) ||
+        !DirectPrivateMediaPathGuard.identifiersAreSafe(
+          contactPeerId: contactPeerId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+        )) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+
+    late final String canonicalPath;
+    late final String conventionPendingPath;
+    try {
+      canonicalPath = MediaFilePathConvention.relativePathForAttachment(
+        contactPeerId: contactPeerId,
+        blobId: attachmentId,
+        mime: mime,
+      );
+      conventionPendingPath =
+          MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: mime,
+          );
+    } catch (_) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+    if (expectedPendingLocalPath != conventionPendingPath ||
+        completionRow['local_path'] != canonicalPath) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+
+    final rows = await txn.query(
+      'media_attachments',
+      where: 'message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    );
+    if (rows.length != 1 || rows.single['id'] != attachmentId) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+    final persisted = rows.single;
+    final expectedKeyReference = secureStoreReferenceForKey(
+      mediaAttachmentEncryptionKeyStoreName(attachmentId),
+    );
+    final canonicalFingerprintMatches =
+        persisted['local_path'] == canonicalPath &&
+        persisted['download_status'] == 'done' &&
+        persisted['mime'] == mime &&
+        persisted['size'] == size &&
+        persisted['content_hash'] == completionRow['content_hash'] &&
+        persisted['thumbnail_hash'] == completionRow['thumbnail_hash'] &&
+        persisted['encryption_key_base64'] == expectedKeyReference &&
+        persisted['encryption_nonce'] == completionRow['encryption_nonce'] &&
+        persisted['encryption_scheme'] == completionRow['encryption_scheme'];
+    final pendingIdentityMatches =
+        persisted['local_path'] == conventionPendingPath &&
+        persisted['download_status'] == 'upload_pending' &&
+        persisted['mime'] == mime &&
+        persisted['size'] == size;
+    final state = parent['private_media_state'] as String?;
+    final terminalAt = parent['private_media_terminal_at_ms'];
+    final bool useCanonicalPredicate;
+    if (state == 'available' &&
+        parent['private_media_revealed_at_ms'] == null &&
+        terminalAt == null &&
+        canonicalFingerprintMatches) {
+      useCanonicalPredicate = true;
+    } else if ((state == 'opening' || state == 'viewing') &&
+        terminalAt == null &&
+        hasOwnedPendingCompletion &&
+        pendingIdentityMatches) {
+      useCanonicalPredicate = false;
+    } else if (state == 'consumed' && terminalAt != null) {
+      if (canonicalFingerprintMatches) {
+        useCanonicalPredicate = true;
+      } else if (hasOwnedPendingCompletion && pendingIdentityMatches) {
+        useCanonicalPredicate = false;
+      } else {
+        return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      }
+    } else {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+
+    final existingEnvelope = parent['wire_envelope'];
+    final envelopeMissing =
+        existingEnvelope == null ||
+        (existingEnvelope is String && existingEnvelope.isEmpty) ||
+        (existingEnvelope is List<int> && existingEnvelope.isEmpty);
+    if (!envelopeMissing) {
+      return existingEnvelope == envelope
+          ? OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent
+          : OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+
+    final statePredicate = switch (state) {
+      'available' =>
+        "private_media_state = 'available' "
+            'AND private_media_revealed_at_ms IS NULL '
+            'AND private_media_terminal_at_ms IS NULL',
+      'opening' || 'viewing' =>
+        'private_media_state = ? AND private_media_terminal_at_ms IS NULL',
+      'consumed' =>
+        "private_media_state = 'consumed' "
+            'AND private_media_terminal_at_ms IS NOT NULL',
+      _ => '0',
+    };
+    final attachmentPredicate = useCanonicalPredicate
+        ? "attachment.download_status = 'done' "
+              'AND attachment.local_path = ? AND attachment.mime = ? '
+              'AND attachment.size = ? AND attachment.content_hash = ? '
+              'AND attachment.thumbnail_hash IS ? '
+              'AND attachment.encryption_key_base64 = ? '
+              'AND attachment.encryption_nonce = ? '
+              'AND attachment.encryption_scheme = ?'
+        : "attachment.download_status = 'upload_pending' "
+              'AND attachment.local_path = ? AND attachment.mime = ? '
+              'AND attachment.size = ?';
+    final args = <Object?>[
+      envelope,
+      messageId,
+      if (state == 'opening' || state == 'viewing') state,
+      attachmentId,
+      MediaOwnerLane.direct.dbValue,
+      if (useCanonicalPredicate) ...<Object?>[
+        canonicalPath,
+        mime,
+        size,
+        completionRow['content_hash'],
+        completionRow['thumbnail_hash'],
+        expectedKeyReference,
+        completionRow['encryption_nonce'],
+        completionRow['encryption_scheme'],
+      ] else ...<Object?>[conventionPendingPath, mime, size],
+      MediaOwnerLane.direct.dbValue,
+    ];
+    final changed = await txn.rawUpdate(
+      'UPDATE messages SET wire_envelope = ? WHERE id = ? '
+      'AND is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL '
+      "AND status IN ('sending','failed') "
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      'AND $statePredicate '
+      'AND (wire_envelope IS NULL OR length(wire_envelope) = 0) '
+      'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+      'WHERE attachment.message_id = messages.id AND attachment.id = ? '
+      'AND attachment.owner_lane = ? AND $attachmentPredicate) '
+      'AND (SELECT COUNT(*) FROM media_attachments exact_set '
+      'WHERE exact_set.message_id = messages.id '
+      'AND exact_set.owner_lane = ?) = 1',
+      args,
+    );
+    return changed == 1
+        ? OutgoingDirectPrivateEnvelopeHandoffOutcome.committed
+        : OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+  });
+}
+
+/// Post-network transport settlement for one exact outgoing protected or
+/// view-once message.
+///
+/// This is intentionally a column-only CAS. It never rewrites content,
+/// deletion markers, private lifecycle fields, or attachments. A concurrent
+/// user hide/delete (including physical parent removal) wins and is reported
+/// as [OutgoingDirectPrivateTransportSettlementOutcome.preservedUserIntent]
+/// so callers cannot fall back to a stale full save.
+Future<OutgoingDirectPrivateTransportSettlementOutcome>
+dbSettleOutgoingDirectPrivateTransport(
+  Database db, {
+  required String messageId,
+  required String? attachmentId,
+  required String expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+}) {
+  const statuses = <String>{'failed', 'sent', 'inboxed', 'delivered'};
+  const transports = <String>{
+    'wifi',
+    'local',
+    'direct',
+    'reuse',
+    'relay',
+    'inbox',
+  };
+  final shapeIsValid =
+      messageId.isNotEmpty &&
+      (attachmentId == null || attachmentId.isNotEmpty) &&
+      expectedEnvelope.isNotEmpty &&
+      statuses.contains(status) &&
+      (transport == null || transports.contains(transport)) &&
+      (status != 'inboxed' || transport == 'inbox') &&
+      (status != 'failed' || transport == null) &&
+      (relayExpiresAt == null ||
+          (relayExpiresAt > 0 && status == 'inboxed' && transport == 'inbox'));
+  if (!shapeIsValid) {
+    return Future<OutgoingDirectPrivateTransportSettlementOutcome>.value(
+      OutgoingDirectPrivateTransportSettlementOutcome.refused,
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final parents = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (parents.isEmpty) {
+      return OutgoingDirectPrivateTransportSettlementOutcome
+          .preservedUserIntent;
+    }
+    final parent = parents.single;
+    if (parent['hidden_at'] != null || parent['deleted_at'] != null) {
+      return OutgoingDirectPrivateTransportSettlementOutcome
+          .preservedUserIntent;
+    }
+    final contactPeerId = parent['contact_peer_id'] as String? ?? '';
+    final identifiersAreSafe = attachmentId == null
+        ? DirectPrivateMediaPathGuard.isSafeSegment(contactPeerId) &&
+              DirectPrivateMediaPathGuard.isSafeSegment(messageId)
+        : DirectPrivateMediaPathGuard.identifiersAreSafe(
+            contactPeerId: contactPeerId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+    if (((parent['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+        (parent['private_media_policy_version'] as num?)?.toInt() != 1 ||
+        !const <String>{
+          'protected',
+          'view_once',
+        }.contains(parent['private_media_mode']) ||
+        !identifiersAreSafe) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+    }
+
+    final directAttachments = await txn.query(
+      'media_attachments',
+      columns: const <String>['id', 'download_status'],
+      where: 'message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    );
+    final privateState = parent['private_media_state'];
+    final revealedAt = parent['private_media_revealed_at_ms'];
+    final terminalAt = parent['private_media_terminal_at_ms'];
+    final lifecycleAcceptsLiveAttachment =
+        (privateState == 'available' &&
+            revealedAt == null &&
+            terminalAt == null) ||
+        (const <String>{'opening', 'viewing'}.contains(privateState) &&
+            terminalAt == null) ||
+        (privateState == 'consumed' && terminalAt != null);
+    final cleanedTerminalAuthority =
+        privateState == 'consumed' &&
+        terminalAt != null &&
+        directAttachments.isEmpty;
+    final localAuthorityIsExact =
+        cleanedTerminalAuthority ||
+        (attachmentId != null &&
+            lifecycleAcceptsLiveAttachment &&
+            directAttachments.length == 1 &&
+            directAttachments.single['id'] == attachmentId &&
+            const <String>{
+              'done',
+              'upload_pending',
+            }.contains(directAttachments.single['download_status']));
+    if (!localAuthorityIsExact) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+    }
+
+    final targetEnvelope = status == 'delivered' ? null : expectedEnvelope;
+    final alreadySettled =
+        parent['status'] == status &&
+        parent['transport'] == transport &&
+        parent['relay_expires_at'] == relayExpiresAt &&
+        parent['wire_envelope'] == targetEnvelope;
+    if (alreadySettled) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.idempotent;
+    }
+    if (parent['wire_envelope'] != expectedEnvelope) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+    }
+
+    final allowedCurrentStatuses = switch (status) {
+      'delivered' => const <String>['sending', 'failed', 'sent', 'inboxed'],
+      'inboxed' => const <String>['sending', 'failed', 'sent', 'inboxed'],
+      'sent' => const <String>['sending', 'failed', 'sent'],
+      'failed' => const <String>['sending', 'failed'],
+      _ => const <String>[],
+    };
+    if (!allowedCurrentStatuses.contains(parent['status'])) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+    }
+    final statusPlaceholders = List<String>.filled(
+      allowedCurrentStatuses.length,
+      '?',
+    ).join(',');
+    const cleanedTerminalPredicate =
+        '(private_media_state = \'consumed\' '
+        'AND private_media_terminal_at_ms IS NOT NULL '
+        'AND NOT EXISTS (SELECT 1 FROM media_attachments cleaned_attachment '
+        'WHERE cleaned_attachment.message_id = messages.id '
+        'AND cleaned_attachment.owner_lane = ?))';
+    final localAuthorityPredicate = attachmentId == null
+        ? 'AND $cleanedTerminalPredicate'
+        : 'AND ($cleanedTerminalPredicate OR ('
+              '((private_media_state = \'available\' '
+              'AND private_media_revealed_at_ms IS NULL '
+              'AND private_media_terminal_at_ms IS NULL) '
+              'OR (private_media_state IN (\'opening\',\'viewing\') '
+              'AND private_media_terminal_at_ms IS NULL) '
+              'OR (private_media_state = \'consumed\' '
+              'AND private_media_terminal_at_ms IS NOT NULL)) '
+              'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+              'WHERE attachment.message_id = messages.id '
+              'AND attachment.id = ? AND attachment.owner_lane = ? '
+              "AND attachment.download_status IN ('done','upload_pending')) "
+              'AND (SELECT COUNT(*) FROM media_attachments exact_set '
+              'WHERE exact_set.message_id = messages.id '
+              'AND exact_set.owner_lane = ?) = 1))';
+    final localAuthorityArgs = attachmentId == null
+        ? <Object?>[MediaOwnerLane.direct.dbValue]
+        : <Object?>[
+            MediaOwnerLane.direct.dbValue,
+            attachmentId,
+            MediaOwnerLane.direct.dbValue,
+            MediaOwnerLane.direct.dbValue,
+          ];
+    final changed = await txn.rawUpdate(
+      'UPDATE messages SET status = ?, transport = ?, '
+      'relay_expires_at = ?, wire_envelope = ? '
+      'WHERE id = ? AND is_incoming = 0 '
+      'AND hidden_at IS NULL AND deleted_at IS NULL '
+      'AND private_media_policy_version = 1 '
+      "AND private_media_mode IN ('protected','view_once') "
+      'AND wire_envelope = ? AND status IN ($statusPlaceholders) '
+      '$localAuthorityPredicate',
+      <Object?>[
+        status,
+        transport,
+        relayExpiresAt,
+        targetEnvelope,
+        messageId,
+        expectedEnvelope,
+        ...allowedCurrentStatuses,
+        ...localAuthorityArgs,
+      ],
+    );
+    if (changed == 1) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.committed;
+    }
+
+    final after = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (after.isEmpty ||
+        after.single['hidden_at'] != null ||
+        after.single['deleted_at'] != null) {
+      return OutgoingDirectPrivateTransportSettlementOutcome
+          .preservedUserIntent;
+    }
+    return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1960,9 @@ _directPrivateMediaLeaseIdentityPredicate({
       storedLocalPath.isEmpty) {
     return (valid: false, sql: '', args: const <Object?>[]);
   }
+  final downloadStatusPredicate = isIncoming == true
+      ? "= 'done'"
+      : "IN ('done','upload_pending')";
   return (
     valid: true,
     sql:
@@ -1102,7 +1971,7 @@ _directPrivateMediaLeaseIdentityPredicate({
         'WHERE lease_attachment.message_id = messages.id '
         'AND lease_attachment.id = ? '
         "AND lease_attachment.owner_lane = 'direct' "
-        "AND lease_attachment.download_status = 'done' "
+        'AND lease_attachment.download_status $downloadStatusPredicate '
         'AND lease_attachment.local_path = ?) ',
     args: <Object?>[isIncoming! ? 1 : 0, mode, attachmentId, storedLocalPath],
   );
@@ -1228,6 +2097,9 @@ Future<int> dbQuarantineIndeterminateDirectPrivateMediaAvailable(
       storedLocalPath.isEmpty) {
     return Future<int>.value(0);
   }
+  final downloadStatusPredicate = isIncoming
+      ? "= 'done'"
+      : "IN ('done','upload_pending')";
   return db.rawUpdate(
     "UPDATE messages SET private_media_state = 'opening', "
     'private_media_clock_high_water_ms = '
@@ -1242,7 +2114,7 @@ Future<int> dbQuarantineIndeterminateDirectPrivateMediaAvailable(
     'WHERE attachment.message_id = messages.id '
     'AND attachment.id = ? '
     "AND attachment.owner_lane = 'direct' "
-    "AND attachment.download_status = 'done' "
+    'AND attachment.download_status $downloadStatusPredicate '
     'AND attachment.local_path = ?)',
     <Object?>[
       nowMs,

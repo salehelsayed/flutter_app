@@ -238,6 +238,16 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/messages_db_helpers_stuck_sending_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_bg_task_test.dart"
   "test/features/conversation/presentation/screens/direct_private_media_route_observer_wiring_test.dart"
+  # 262: sender one-more-look from a durable pending upload, exact lifecycle
+  # CAS/atomic retry coordination, and canonical upload finalization.
+  "test/features/conversation/application/direct_private_media_sender_pending_open_test.dart"
+  "test/features/conversation/application/retry_incomplete_uploads_pending_open_race_test.dart"
+  "test/features/conversation/integration/private_media_committed_pending_cleanup_recovery_test.dart"
+  "test/features/conversation/application/retry_failed_messages_private_manual_retry_test.dart"
+  "test/features/conversation/integration/private_cached_envelope_retry_delete_race_test.dart"
+  "test/core/database/helpers/outgoing_direct_private_writer_guard_test.dart"
+  "test/core/database/helpers/private_media_lifecycle_cas_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart"
   "test/core/media/private_media_protection_coordinator_test.dart"
   # 234 Session 06: strict fail-closed evaluator for the fully automated,
   # availability-bounded physical-Android + emulator device-local artifact.

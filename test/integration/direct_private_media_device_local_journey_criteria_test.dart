@@ -6,6 +6,13 @@ import '../../integration_test/scripts/direct_private_media_device_local_journey
 
 void main() {
   group('direct private-media device-local journey criteria', () {
+    test(
+      'locks the causal sender pending-open proof to artifact version 3',
+      () {
+        expect(directPrivateMediaDeviceLocalJourneyVersion, 3);
+      },
+    );
+
     test('accepts one complete automated physical/emulator artifact', () {
       final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
         _validArtifact(),
@@ -14,6 +21,165 @@ void main() {
       expect(result.ok, isTrue, reason: result.detail);
       expect(result.failures, isEmpty);
       expect(result.detail, 'accepted');
+    });
+
+    test('requires the exact sender pending-open causal evidence keys', () {
+      for (final key in const <String>[
+        'pendingOpenTapCount',
+        'pendingOpenSqlStateSequence',
+        'pendingOpenProofSequence',
+      ]) {
+        final artifact = _validArtifact();
+        _senderObservations(artifact).remove(key);
+
+        final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          artifact,
+        );
+
+        expect(result.ok, isFalse, reason: '$key removal was accepted');
+        expect(
+          result.failures,
+          contains(
+            r'$.sender.observations missing fields: '
+            '$key',
+          ),
+          reason: result.detail,
+        );
+      }
+    });
+
+    test('requires exactly one scoped sender Open tap', () {
+      for (final invalidCount in const <Object?>[0, 2, true]) {
+        final artifact = _validArtifact();
+        _senderObservations(artifact)['pendingOpenTapCount'] = invalidCount;
+
+        final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          artifact,
+        );
+
+        expect(result.ok, isFalse, reason: '$invalidCount was accepted');
+        expect(
+          result.failures,
+          contains(
+            r'$.sender.observations.pendingOpenTapCount must equal integer 1',
+          ),
+          reason: result.detail,
+        );
+      }
+    });
+
+    test('requires SQL-derived available-opening-viewing-consumed order', () {
+      final mutations = <Object?>[
+        const <String>['available', 'viewing', 'opening', 'consumed'],
+        const <String>['available', 'opening', 'viewing'],
+        true,
+      ];
+      for (final mutation in mutations) {
+        final artifact = _validArtifact();
+        _senderObservations(artifact)['pendingOpenSqlStateSequence'] = mutation;
+
+        final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          artifact,
+        );
+
+        expect(result.ok, isFalse, reason: '$mutation was accepted');
+        expect(
+          result.failures,
+          contains(
+            r'$.sender.observations.pendingOpenSqlStateSequence must equal '
+            'the derived available -> opening -> viewing -> consumed sequence',
+          ),
+          reason: result.detail,
+        );
+      }
+    });
+
+    test('requires causal first-frame, Back, route, and cleanup evidence', () {
+      final mutations = <Object?>[
+        <String>[..._pendingOpenProofSequence]..remove('viewer_first_frame'),
+        const <String>[
+          'pending_sql_authority_verified',
+          'repository_mirror_seeded',
+          'open_tapped',
+          'opening_sql_observed',
+          'viewing_sql_observed',
+          'viewer_first_frame',
+          'viewer_back_tapped',
+          'conversation_route_resumed',
+          'consumed_sql_observed',
+          'attachment_cleanup_observed',
+          'pending_source_cleanup_observed',
+        ],
+        true,
+      ];
+      for (final mutation in mutations) {
+        final artifact = _validArtifact();
+        _senderObservations(artifact)['pendingOpenProofSequence'] = mutation;
+
+        final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+          artifact,
+        );
+
+        expect(result.ok, isFalse, reason: '$mutation was accepted');
+        expect(
+          result.failures,
+          contains(
+            r'$.sender.observations.pendingOpenProofSequence must equal the '
+            'exact causal sender pending-open proof sequence',
+          ),
+          reason: result.detail,
+        );
+      }
+    });
+
+    test('rejects p262 evidence under the recipient role', () {
+      final artifact = _validArtifact();
+      _recipientObservations(artifact)['pendingOpenTapCount'] = 1;
+
+      final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+        artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(
+        result.failures.any(
+          (failure) => failure.contains('unexpected fields at indexes:'),
+        ),
+        isTrue,
+        reason: result.detail,
+      );
+    });
+
+    test('rejects boolean-only p262 success evidence', () {
+      final artifact = _validArtifact();
+      final observations = _senderObservations(artifact)
+        ..remove('pendingOpenTapCount')
+        ..remove('pendingOpenSqlStateSequence')
+        ..remove('pendingOpenProofSequence')
+        ..['pendingOpenSucceeded'] = true;
+
+      final result = validateDirectPrivateMediaDeviceLocalJourneyArtifact(
+        artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(
+        result.failures.any(
+          (failure) =>
+              failure.contains('missing fields:') &&
+              failure.contains('pendingOpenSqlStateSequence'),
+        ),
+        isTrue,
+        reason: result.detail,
+      );
+      expect(
+        result.failures.any(
+          (failure) => failure.contains('unexpected fields at indexes:'),
+        ),
+        isTrue,
+        reason: result.detail,
+      );
+      expect(observations['pendingOpenSucceeded'], isTrue);
     });
 
     test('rejects non-object and non-string-keyed artifacts', () {
@@ -342,8 +508,9 @@ void main() {
       'unexpected root field': (artifact) => artifact['verdict'] = 'passed',
       'wrong schema': (artifact) => artifact['schema'] = 'plan234.demo',
       'non-integer version': (artifact) => artifact['version'] = 1.0,
-      'legacy version': (artifact) => artifact['version'] = 1,
-      'future version': (artifact) => artifact['version'] = 3,
+      'legacy v1 version': (artifact) => artifact['version'] = 1,
+      'legacy v2 version': (artifact) => artifact['version'] = 2,
+      'future v4 version': (artifact) => artifact['version'] = 4,
       'manual generator': (artifact) => artifact['generatedBy'] = 'operator',
       'non-Android platform': (artifact) =>
           _topology(artifact)['platform'] = 'ios',
@@ -527,7 +694,7 @@ Map<String, dynamic> _recipientObservations(Map<String, dynamic> artifact) {
 
 const Map<String, Object?> _validArtifactFixture = <String, Object?>{
   'schema': directPrivateMediaDeviceLocalJourneySchema,
-  'version': directPrivateMediaDeviceLocalJourneyVersion,
+  'version': 3,
   'generatedBy': 'automated_instrumented_harness',
   'topology': <String, Object?>{
     'platform': 'android',
@@ -553,6 +720,14 @@ const Map<String, Object?> _validArtifactFixture = <String, Object?>{
       'outerPrivateMediaPresent': false,
       'innerPrivateMediaPresent': true,
       'ordinarySendPreserved': true,
+      'pendingOpenTapCount': 1,
+      'pendingOpenSqlStateSequence': <String>[
+        'available',
+        'opening',
+        'viewing',
+        'consumed',
+      ],
+      'pendingOpenProofSequence': _pendingOpenProofSequence,
       'productionConversationMounted': true,
       'productionLetterCardCount': 3,
       'privateSlotCount': 3,
@@ -613,3 +788,17 @@ const Map<String, Object?> _validArtifactFixture = <String, Object?>{
 
 const String _fixtureDigest =
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const List<String> _pendingOpenProofSequence = <String>[
+  'pending_sql_authority_verified',
+  'repository_mirror_seeded',
+  'open_tapped',
+  'opening_sql_observed',
+  'viewer_first_frame',
+  'viewing_sql_observed',
+  'viewer_back_tapped',
+  'conversation_route_resumed',
+  'consumed_sql_observed',
+  'attachment_cleanup_observed',
+  'pending_source_cleanup_observed',
+];

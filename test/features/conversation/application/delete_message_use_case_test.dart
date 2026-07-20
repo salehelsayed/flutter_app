@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -19,6 +21,8 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
+import '../../contacts/domain/repositories/fake_contact_repository.dart'
+    as contact_fakes;
 
 class _UnackedDeleteP2PService extends FakeP2PService {
   _UnackedDeleteP2PService({
@@ -46,6 +50,43 @@ class _ThrowingReadMessageRepository extends FakeMessageRepository {
   }
 }
 
+class _BlockingEncryptBridge extends FakeBridge {
+  final Completer<void> encryptEntered = Completer<void>();
+  final Completer<void> releaseEncrypt = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final decoded = jsonDecode(message) as Map<String, dynamic>;
+    if (decoded['cmd'] == 'message.encrypt') {
+      if (!encryptEntered.isCompleted) encryptEntered.complete();
+      await releaseEncrypt.future;
+    }
+    return super.send(message);
+  }
+}
+
+class _BlockingDeleteP2PService extends FakeP2PService {
+  _BlockingDeleteP2PService({required super.peerId, required super.network});
+
+  final Completer<void> sendEntered = Completer<void>();
+  final Completer<void> releaseSend = Completer<void>();
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    if (!sendEntered.isCompleted) sendEntered.complete();
+    await releaseSend.future;
+    return const SendMessageResult(
+      sent: true,
+      acked: true,
+      transport: 'direct',
+    );
+  }
+}
+
 void main() {
   late FakeMessageRepository messageRepo;
   late FakeReactionRepository reactionRepo;
@@ -60,6 +101,7 @@ void main() {
     String text = 'Hello Bob',
     String status = 'delivered',
     bool isIncoming = false,
+    PrivateMediaPolicy privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
   }) {
     return ConversationMessage(
       id: id,
@@ -70,6 +112,7 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: '2026-03-31T10:00:01.000Z',
+      privateMediaPolicy: privateMediaPolicy,
     );
   }
 
@@ -89,6 +132,40 @@ void main() {
       downloadStatus: downloadStatus,
       createdAt: '2026-03-31T10:00:02.000Z',
     );
+  }
+
+  Future<ConversationMessage> seedPrivateDeleteForEveryoneParent(
+    MediaRepositoryRealDbFixture fixture, {
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    await fixture.seedDirectParent(messageId, contactPeerId: 'peer-bob');
+    await fixture.db.update(
+      'messages',
+      <String, Object?>{
+        'sender_peer_id': 'peer-alice',
+        'status': 'delivered',
+        'is_incoming': 0,
+        'private_media_policy_version': 1,
+        'private_media_mode': 'protected',
+        'private_media_state': 'available',
+        'private_media_received_at_ms': 1000,
+        'private_media_revealed_at_ms': null,
+        'private_media_clock_high_water_ms': 1000,
+      },
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+    );
+    await fixture.repo.saveAttachment(
+      makeAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+        downloadStatus: 'upload_pending',
+      ),
+      owner: MediaOwnerLane.direct,
+    );
+    return (await fixture.messageRepo.getMessage(messageId))!;
   }
 
   setUp(() {
@@ -265,6 +342,194 @@ void main() {
         expect(tombstone.privateMediaState.name, 'available');
         expect(tombstone.privateMediaPolicy.mode.name, 'protected');
         expect(await fixture.rawAttachmentRow('private-delete-att'), isNull);
+      },
+    );
+
+    test(
+      'stale ordinary delete-for-everyone uses authoritative private cleanup',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-delete-everyone';
+        const attachmentId = 'private-delete-everyone-att';
+        await fixture.seedDirectParent(messageId, contactPeerId: 'peer-bob');
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'sender_peer_id': 'peer-alice',
+            'status': 'delivered',
+            'is_incoming': 0,
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_revealed_at_ms': null,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'private_media_state': 'opening',
+            'private_media_revealed_at_ms': 1100,
+            'private_media_clock_high_water_ms': 1100,
+          },
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        );
+        final original = makeMessage(
+          id: messageId,
+          contactPeerId: 'peer-bob',
+          senderPeerId: 'peer-alice',
+        );
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        final persisted = await fixture.messageRepo.getMessage(messageId);
+        expect(persisted, isNotNull);
+        expect(persisted!.deletedAt, isNotNull);
+        expect(persisted.privateMediaState, PrivateMediaLifecycleState.opening);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+
+        p2pService.dispose();
+        recipient.dispose();
+      },
+    );
+
+    test(
+      'private delete-for-everyone cannot insert its first tombstone after contact deletion',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-delete-contact-before-tombstone';
+        const attachmentId =
+            'private-delete-contact-before-tombstone-attachment';
+        final original = await seedPrivateDeleteForEveryoneParent(
+          fixture,
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        final bridge = _BlockingEncryptBridge();
+        final network = FakeP2PNetwork();
+        final sender = FakeP2PService(peerId: 'peer-alice', network: network);
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+        addTearDown(sender.dispose);
+        addTearDown(recipient.dispose);
+
+        final deletion = deleteMessageForEveryone(
+          p2pService: sender,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: bridge,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+        await bridge.encryptEntered.future.timeout(const Duration(seconds: 5));
+
+        await deleteContactAndMessages(
+          contactRepo: contact_fakes.FakeContactRepository(),
+          messageRepo: fixture.messageRepo,
+          peerId: 'peer-bob',
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+        );
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+
+        bridge.releaseEncrypt.complete();
+        final (result, tombstone) = await deletion.timeout(
+          const Duration(seconds: 5),
+        );
+
+        expect(result, SendChatMessageResult.invalidMessage);
+        expect(tombstone, isNull);
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+        expect(network.deliverCallCount, 0);
+      },
+    );
+
+    test(
+      'private delete-for-everyone final settlement cannot reinsert after contact deletion',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-delete-contact-during-send';
+        const attachmentId = 'private-delete-contact-during-send-attachment';
+        final original = await seedPrivateDeleteForEveryoneParent(
+          fixture,
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        final network = FakeP2PNetwork();
+        final sender = _BlockingDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+        addTearDown(sender.dispose);
+        addTearDown(recipient.dispose);
+
+        final deletion = deleteMessageForEveryone(
+          p2pService: sender,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+        await sender.sendEntered.future.timeout(const Duration(seconds: 5));
+        final pending = await fixture.messageRepo.getMessage(messageId);
+        expect(pending, isNotNull);
+        expect(pending!.isDeleted, isTrue);
+        expect(pending.status, 'sending');
+
+        await deleteContactAndMessages(
+          contactRepo: contact_fakes.FakeContactRepository(),
+          messageRepo: fixture.messageRepo,
+          peerId: 'peer-bob',
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+        );
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+
+        sender.releaseSend.complete();
+        final (result, tombstone) = await deletion.timeout(
+          const Duration(seconds: 5),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNull);
+        expect(await fixture.messageRepo.getMessage(messageId), isNull);
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
       },
     );
 
@@ -540,6 +805,63 @@ void main() {
 
         p2pService.dispose();
         recipient.dispose();
+      },
+    );
+
+    test(
+      'outgoing disappearing delete-for-everyone retains generic cleanup',
+      () async {
+        final original = makeMessage(
+          id: 'disappearing-delete-everyone',
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+        );
+        final attachment = makeAttachment(
+          id: 'disappearing-delete-everyone-att',
+          messageId: original.id,
+          localPath: 'media/${original.id}/photo.jpg',
+          downloadStatus: 'upload_pending',
+        );
+        messageRepo.seed([original]);
+        mediaAttachmentRepo.seed([attachment]);
+
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+        addTearDown(p2pService.dispose);
+        addTearDown(recipient.dispose);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        expect(
+          tombstone!.privateMediaPolicy.mode,
+          PrivateMediaMode.disappearing,
+        );
+        expect(messageRepo.saveMessageCallCount, 2);
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            original.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          contains(endsWith('media/${original.id}/photo.jpg')),
+        );
       },
     );
 

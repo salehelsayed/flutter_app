@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
@@ -21,9 +22,11 @@ class MessageRepositoryImpl
         DirectPrivateMediaLifecycleRepository,
         DirectPrivateMediaExactOpeningLeaseRepository,
         DirectPrivateMediaIndeterminateQuarantineRepository,
+        DirectPrivateDeleteForEveryoneRepository,
         ConversationThreadSummaryRepository,
         DirectUploadRetryProjectionRepository,
         DirectManualUploadRetryRearmRepository,
+        OutgoingDirectPrivateEnvelopeCustodyRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
         ConversationReadEventSource {
@@ -75,6 +78,50 @@ class MessageRepositoryImpl
   dbRecoverStuckSendingMessages;
   final Future<void> Function(String id, String wireEnvelope)?
   dbUpdateWireEnvelope;
+  final Future<bool> Function({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  })?
+  dbInvalidateWireEnvelopeBeforePrivateUpload;
+  final Future<bool> Function({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  })?
+  dbMarkOutgoingDirectPrivateUploadHandoffFailed;
+  final Future<OutgoingDirectPrivateEnvelopeHandoffOutcome> Function(
+    Map<String, Object?> completionRow, {
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+  })?
+  dbCommitOutgoingDirectPrivateWireEnvelope;
+  final Future<OutgoingDirectPrivateTransportSettlementOutcome> Function({
+    required String messageId,
+    required String? attachmentId,
+    required String expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+  })?
+  dbSettleOutgoingDirectPrivateTransport;
+  final Future<bool> Function(
+    Map<String, Object?> expectedRow,
+    Map<String, Object?> tombstoneRow,
+  )?
+  dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone;
+  final Future<bool> Function(
+    Map<String, Object?> tombstoneRow, {
+    required String? expectedEnvelope,
+    required String envelope,
+  })?
+  dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope;
+  final Future<bool> Function(
+    Map<String, Object?> tombstoneRow, {
+    required String expectedEnvelope,
+  })?
+  dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone;
   final Future<List<Map<String, Object?>>> Function({
     required DateTime olderThan,
     int limit,
@@ -201,6 +248,13 @@ class MessageRepositoryImpl
     required this.dbLoadConversationThreadSummaries,
     required this.dbRecoverStuckSendingMessages,
     this.dbUpdateWireEnvelope,
+    this.dbInvalidateWireEnvelopeBeforePrivateUpload,
+    this.dbMarkOutgoingDirectPrivateUploadHandoffFailed,
+    this.dbCommitOutgoingDirectPrivateWireEnvelope,
+    this.dbSettleOutgoingDirectPrivateTransport,
+    this.dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone,
+    this.dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope,
+    this.dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone,
     required this.dbLoadStuckSendingOutgoingMessages,
     required this.dbLoadSendingOutgoingMessages,
     required this.dbConditionalTransitionStatus,
@@ -327,12 +381,201 @@ class MessageRepositoryImpl
     );
     if (dbUpdateWireEnvelope != null) {
       await dbUpdateWireEnvelope!(id, envelope);
-      final cached = _messageSnapshots[id];
-      if (cached != null) {
-        _rememberMessage(cached.copyWith(wireEnvelope: envelope));
-      }
+      // The generic DB helper deliberately refuses protected/view-once and
+      // future-policy parents. Re-read instead of optimistically teaching the
+      // cache that a refused write committed.
+      await _loadAndRememberMessage(id);
     }
   }
+
+  @override
+  Future<bool> invalidateWireEnvelopeBeforePrivateUpload({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async {
+    final invalidate = dbInvalidateWireEnvelopeBeforePrivateUpload;
+    if (invalidate == null) return false;
+    final changed = await invalidate(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+    );
+    if (changed) {
+      final cached = _messageSnapshots[messageId];
+      if (cached != null) {
+        _rememberMessage(cached.copyWith(wireEnvelope: null));
+      }
+    }
+    return changed;
+  }
+
+  @override
+  Future<bool> markOutgoingDirectPrivateUploadHandoffFailed({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async {
+    final markFailed = dbMarkOutgoingDirectPrivateUploadHandoffFailed;
+    if (markFailed == null) return false;
+    final changed = await markFailed(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+    );
+    if (changed) await _loadAndRememberMessage(messageId);
+    return changed;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>
+  commitOutgoingDirectPrivateWireEnvelope({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+  }) async {
+    final commit = dbCommitOutgoingDirectPrivateWireEnvelope;
+    if (commit == null ||
+        messageId.isEmpty ||
+        completedAttachment.messageId != messageId ||
+        (completedAttachment.ownerLane != null &&
+            completedAttachment.ownerLane != MediaOwnerLane.direct)) {
+      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+    }
+    final outcome = await commit(
+      completedAttachment.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      envelope: envelope,
+      hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+    );
+    if (outcome.authorizesTransport) {
+      // Preserve the DB's lifecycle/deletion truth in the repository cache.
+      // This write owns only wire_envelope.
+      await _loadAndRememberMessage(messageId);
+    }
+    return outcome;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateTransportSettlementOutcome>
+  settleOutgoingDirectPrivateTransport({
+    required String messageId,
+    required String? attachmentId,
+    required String expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+  }) async {
+    final settle = dbSettleOutgoingDirectPrivateTransport;
+    if (settle == null) {
+      return OutgoingDirectPrivateTransportSettlementOutcome.refused;
+    }
+    final outcome = await settle(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+    );
+    final updated = await _loadAndRememberMessage(messageId);
+    if (updated != null &&
+        (outcome == OutgoingDirectPrivateTransportSettlementOutcome.committed ||
+            outcome ==
+                OutgoingDirectPrivateTransportSettlementOutcome
+                    .preservedUserIntent)) {
+      _messageChangeController.add(updated);
+    }
+    return outcome;
+  }
+
+  @override
+  Future<ConversationMessage?> commitPrivateDeleteForEveryoneTombstone({
+    required ConversationMessage expectedMessage,
+    required ConversationMessage tombstone,
+  }) async {
+    final commit = dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone;
+    if (commit == null ||
+        expectedMessage.id != tombstone.id ||
+        expectedMessage.contactPeerId != tombstone.contactPeerId ||
+        expectedMessage.senderPeerId != tombstone.senderPeerId) {
+      return null;
+    }
+    final committed = await commit(expectedMessage.toMap(), tombstone.toMap());
+    if (!committed) return null;
+    final current = await _loadAndRememberMessage(tombstone.id);
+    if (!_isExactPrivateDeleteTombstone(current, tombstone)) return null;
+    _messageChangeController.add(current!);
+    return current;
+  }
+
+  @override
+  Future<ConversationMessage?> stagePrivateDeleteForEveryoneRetryEnvelope({
+    required ConversationMessage tombstone,
+    required String? expectedEnvelope,
+    required String envelope,
+  }) async {
+    final stage = dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope;
+    if (stage == null || envelope.isEmpty) return null;
+    final staged = await stage(
+      tombstone.toMap(),
+      expectedEnvelope: expectedEnvelope,
+      envelope: envelope,
+    );
+    if (!staged) return null;
+    final current = await _loadAndRememberMessage(tombstone.id);
+    if (!_isSamePrivateDeleteClaim(current, tombstone) ||
+        current!.status != 'failed' ||
+        current.wireEnvelope != envelope) {
+      return null;
+    }
+    _messageChangeController.add(current);
+    return current;
+  }
+
+  @override
+  Future<ConversationMessage?> settlePrivateDeleteForEveryoneTombstone({
+    required ConversationMessage tombstone,
+    required String expectedEnvelope,
+  }) async {
+    final settle = dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone;
+    if (settle == null || expectedEnvelope.isEmpty) return null;
+    final settled = await settle(
+      tombstone.toMap(),
+      expectedEnvelope: expectedEnvelope,
+    );
+    if (!settled) return null;
+    final current = await _loadAndRememberMessage(tombstone.id);
+    if (!_isSamePrivateDeleteClaim(current, tombstone)) return null;
+    _messageChangeController.add(current!);
+    return current;
+  }
+
+  bool _isExactPrivateDeleteTombstone(
+    ConversationMessage? current,
+    ConversationMessage expected,
+  ) =>
+      _isSamePrivateDeleteClaim(current, expected) &&
+      current!.text.isEmpty &&
+      current.status == 'sending' &&
+      current.wireEnvelope == expected.wireEnvelope;
+
+  bool _isSamePrivateDeleteClaim(
+    ConversationMessage? current,
+    ConversationMessage expected,
+  ) =>
+      current != null &&
+      !current.isIncoming &&
+      current.id == expected.id &&
+      current.contactPeerId == expected.contactPeerId &&
+      current.senderPeerId == expected.senderPeerId &&
+      current.privateMediaPolicy.version == 1 &&
+      (current.privateMediaMode == PrivateMediaMode.protected ||
+          current.privateMediaMode == PrivateMediaMode.viewOnce) &&
+      current.deletedAt == expected.deletedAt &&
+      current.deletedByPeerId == expected.deletedByPeerId;
 
   @override
   Future<bool> messageExists(String id) async {

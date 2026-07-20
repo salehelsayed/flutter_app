@@ -1347,11 +1347,17 @@ void main() {
       );
       expect(await replacedPath.controller.prepare(identity), isNull);
       expect(replacedPath.lane.rollbackCount, 0);
-      expect(replacedPath.lane.consumeCount, 0);
+      expect(
+        replacedPath.lane.consumeCount,
+        1,
+        reason: 'an indeterminate path-identity race is reconciled fail-closed',
+      );
       expect(
         replacedPath.lane.target.state,
-        PrivateMediaLifecycleState.opening,
+        PrivateMediaLifecycleState.consumed,
       );
+      expect(replacedPath.lane.cleanupCount, 1);
+      expect(replacedPath.lane.target.attachments, isEmpty);
       expect(replacedPath.nativeCalls, ['enter', 'exit']);
     },
   );

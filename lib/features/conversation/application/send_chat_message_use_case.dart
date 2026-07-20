@@ -5,7 +5,9 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -15,6 +17,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -587,7 +590,34 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // If the app crashes after this point, the DB row has wireEnvelope != null
   // and Section 1's PendingMessageRetrier can replay the message without
   // re-serializing or re-encrypting.
-  if (messageId != null) {
+  final isOutgoingPrivateOneMoreLook =
+      effectivePrivateMediaPolicy.version == 1 &&
+      (effectivePrivateMediaPolicy.mode == PrivateMediaMode.protected ||
+          effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce);
+  if (isOutgoingPrivateOneMoreLook) {
+    final handedOff =
+        messageId != null &&
+        await _commitOutgoingDirectPrivateEnvelopeForTransport(
+          messageId: messageId,
+          envelope: jsonString,
+          attachments: normalizedAttachments,
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+    if (!handedOff) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_PRIVATE_ENVELOPE_HANDOFF_REFUSED',
+        details: {
+          'id': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+        },
+      );
+      emitSendTiming(outcome: 'private_envelope_handoff_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+  } else if (messageId != null) {
     await messageRepo.updateWireEnvelope(messageId, jsonString);
   }
 
@@ -661,6 +691,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           editedAt: resolvedEditedAt,
           mediaAttachmentRepo: mediaAttachmentRepo,
           attachments: normalizedAttachments,
+          isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
           sendStopwatch: sendStopwatch,
           emitTimingEvent: emitTimingEvent,
           extraTimingDetails: {
@@ -745,6 +776,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         editedAt: resolvedEditedAt,
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: normalizedAttachments,
+        isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
         extraTimingDetails: {
@@ -845,7 +877,23 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           // no false two-tick when custody is not secured). Status-surfacing
           // only — it never feeds the race or a terminal recordMetrics.
           if (ok && !liveDelivered) {
-            await messageRepo.updateMessageStatus(resolvedMessageId, 'inboxed');
+            if (isOutgoingPrivateOneMoreLook) {
+              await _settleOutgoingDirectPrivateTransportState(
+                messageRepo: messageRepo,
+                mediaAttachmentRepo: mediaAttachmentRepo,
+                attachments: normalizedAttachments,
+                messageId: resolvedMessageId,
+                expectedEnvelope: jsonString,
+                status: 'inboxed',
+                transport: 'inbox',
+                relayExpiresAt: null,
+              );
+            } else {
+              await messageRepo.updateMessageStatus(
+                resolvedMessageId,
+                'inboxed',
+              );
+            }
             emitFlowEvent(
               layer: 'FL',
               event: 'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
@@ -1198,6 +1246,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       editedAt: resolvedEditedAt,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
+      isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
       // A live leg won the transport label. If a concurrent inbox copy was
@@ -1223,7 +1272,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // (doc 115): the row persists non-terminal 'inboxed' with the wire envelope
   // RETAINED so the custody sweep can re-store and a delivery receipt can
   // flip it to 'delivered'.
-  Future<(SendChatMessageResult, ConversationMessage)> persistInboxAccepted({
+  Future<(SendChatMessageResult, ConversationMessage?)> persistInboxAccepted({
     required bool recordInboxAttempt,
     int? expiresAtMs,
   }) async {
@@ -1243,14 +1292,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           wireEnvelope: jsonString,
         )
         .copyWith(relayExpiresAt: expiresAtMs);
-    await _saveOutgoingMessageWithMedia(
+    final persistedMessage = await _persistOutgoingTransportState(
       messageRepo: messageRepo,
       message: inboxedMessage,
       attachments: normalizedAttachments,
-    );
-    await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
-      attachments: normalizedAttachments,
+      isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+      expectedEnvelope: jsonString,
     );
     emitFlowEvent(
       layer: 'FL',
@@ -1274,11 +1322,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     _recordSuccessfulSendReadinessProof(p2pService, inboxedMessage);
     return (
       SendChatMessageResult.success,
-      inboxedMessage.copyWith(media: normalizedAttachments ?? const []),
+      persistedMessage?.copyWith(media: normalizedAttachments ?? const []),
     );
   }
 
-  Future<(SendChatMessageResult, ConversationMessage)>
+  Future<(SendChatMessageResult, ConversationMessage?)>
   persistInboxRejectedFull() async {
     sendPath = 'inbox';
     transportMetrics?.recordAttempt(leg: 'inbox', succeeded: false);
@@ -1292,14 +1340,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       transport: 'inbox',
       wireEnvelope: jsonString,
     );
-    await _saveOutgoingMessageWithMedia(
+    final persistedMessage = await _persistOutgoingTransportState(
       messageRepo: messageRepo,
       message: sentMessage,
       attachments: normalizedAttachments,
-    );
-    await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
-      attachments: normalizedAttachments,
+      isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+      expectedEnvelope: jsonString,
     );
     emitFlowEvent(
       layer: 'FL',
@@ -1318,7 +1365,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     return (
       SendChatMessageResult.success,
-      sentMessage.copyWith(media: normalizedAttachments ?? const []),
+      persistedMessage?.copyWith(media: normalizedAttachments ?? const []),
     );
   }
 
@@ -1413,14 +1460,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     editedAt: resolvedEditedAt,
     wireEnvelope: jsonString,
   );
-  await _saveOutgoingMessageWithMedia(
+  final persistedFailedMessage = await _persistOutgoingTransportState(
     messageRepo: messageRepo,
     message: failedMessage,
     attachments: normalizedAttachments,
-  );
-  await _persistOutgoingMedia(
     mediaAttachmentRepo: mediaAttachmentRepo,
-    attachments: normalizedAttachments,
+    isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+    expectedEnvelope: jsonString,
   );
 
   // Reached only after an inbox store attempt that did not succeed (returned
@@ -1448,7 +1494,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
   return (
     _resultForFailureReason(failureReason),
-    failedMessage.copyWith(media: normalizedAttachments ?? const []),
+    persistedFailedMessage?.copyWith(media: normalizedAttachments ?? const []),
   );
 }
 
@@ -2154,6 +2200,159 @@ Future<void> _persistOutgoingMedia({
   }
 }
 
+/// Persists the only durable custody marker for a freshly rebuilt outgoing
+/// protected/view-once envelope.
+///
+/// A canonical attachment can authorize a restart-shaped handoff directly.
+/// A still-pending row can authorize it only while the shared mutation
+/// coordinator owns the exact full completion fingerprint. The lifecycle lock
+/// keeps that process-local ownership from being discarded between the check
+/// and the DB helper's exact parent/attachment compare-and-set.
+Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
+  required String messageId,
+  required String envelope,
+  required List<MediaAttachment>? attachments,
+  required MessageRepository messageRepo,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (messageId.isEmpty ||
+      envelope.isEmpty ||
+      attachments == null ||
+      attachments.length != 1 ||
+      messageRepo is! OutgoingDirectPrivateEnvelopeCustodyRepository ||
+      mediaAttachmentRepo is! OutgoingDirectPrivateMutationRepository) {
+    return false;
+  }
+
+  final completed = attachments.single.copyWith(
+    messageId: messageId,
+    ownerLane: MediaOwnerLane.direct,
+  );
+  late final String expectedPendingLocalPath;
+  try {
+    expectedPendingLocalPath =
+        MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: messageId,
+          attachmentId: completed.id,
+          mime: completed.mime,
+        );
+  } catch (_) {
+    return false;
+  }
+  final fingerprint = OutgoingDirectPrivateCompletionFingerprint.fromAttachment(
+    completed,
+    expectedPendingLocalPath: expectedPendingLocalPath,
+  );
+  if (!fingerprint.isStructurallyComplete) return false;
+
+  final attachmentRepository = mediaAttachmentRepo!;
+  final mutationRepository =
+      mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository;
+  final coordinator =
+      mutationRepository.outgoingDirectPrivateMutationCoordinator;
+  final envelopeRepository =
+      messageRepo as OutgoingDirectPrivateEnvelopeCustodyRepository;
+  return coordinator.lifecycleLock.synchronized(completed.id, () async {
+    final owned = await coordinator.loadOwnedCompletionFingerprint(
+      messageId: messageId,
+      attachmentId: completed.id,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+    );
+    final hasOwnedPendingCompletion = owned == fingerprint;
+
+    if (!hasOwnedPendingCompletion) {
+      // Restart recovery has no process token. It is safe only when the
+      // hydrated durable row already carries the exact canonical fingerprint;
+      // the DB compare-and-set repeats the same persisted-field check.
+      final durable = await attachmentRepository.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
+      if (durable.length != 1 ||
+          !fingerprint.matchesHydratedAttachment(durable.single)) {
+        return false;
+      }
+    }
+
+    final outcome = await envelopeRepository
+        .commitOutgoingDirectPrivateWireEnvelope(
+          messageId: messageId,
+          completedAttachment: completed,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+          envelope: envelope,
+          hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+        );
+    return outcome.authorizesTransport;
+  });
+}
+
+Future<ConversationMessage?> _settleOutgoingDirectPrivateTransportState({
+  required MessageRepository messageRepo,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required List<MediaAttachment>? attachments,
+  required String messageId,
+  required String expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+}) async {
+  final outcome = await settleOutgoingDirectPrivateTransportUnderLifecycleLock(
+    messageRepository: messageRepo,
+    mediaAttachmentRepository: mediaAttachmentRepo,
+    attachments: attachments,
+    messageId: messageId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+  );
+  if (!outcome.accepted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_PRIVATE_TRANSPORT_SETTLEMENT_REFUSED',
+      details: {
+        'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+        'status': status,
+      },
+    );
+  }
+  return messageRepo.getMessage(messageId);
+}
+
+Future<ConversationMessage?> _persistOutgoingTransportState({
+  required MessageRepository messageRepo,
+  required ConversationMessage message,
+  required List<MediaAttachment>? attachments,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required bool isOutgoingPrivateOneMoreLook,
+  required String expectedEnvelope,
+}) async {
+  if (isOutgoingPrivateOneMoreLook) {
+    // Completion persistence was already authorized by the outgoing-private
+    // coordinator. Post-network work owns message transport columns only.
+    return _settleOutgoingDirectPrivateTransportState(
+      messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: attachments,
+      messageId: message.id,
+      expectedEnvelope: expectedEnvelope,
+      status: message.status,
+      transport: message.transport,
+      relayExpiresAt: message.relayExpiresAt,
+    );
+  }
+  await _saveOutgoingMessageWithMedia(
+    messageRepo: messageRepo,
+    message: message,
+    attachments: attachments,
+  );
+  await _persistOutgoingMedia(
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    attachments: attachments,
+  );
+  return message;
+}
+
 Future<void> _saveOutgoingMessageWithMedia({
   required MessageRepository messageRepo,
   required ConversationMessage message,
@@ -2164,7 +2363,7 @@ Future<void> _saveOutgoingMessageWithMedia({
   );
 }
 
-Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
+Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   required P2PService p2pService,
   required MessageRepository messageRepo,
   required MessagePayload payload,
@@ -2178,6 +2377,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required String? editedAt,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required List<MediaAttachment>? attachments,
+  required bool isOutgoingPrivateOneMoreLook,
   required Stopwatch sendStopwatch,
   required bool emitTimingEvent,
   Future<bool>? concurrentInbox,
@@ -2194,14 +2394,13 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     via: via,
     concurrentInbox: concurrentInbox,
   );
-  await _saveOutgoingMessageWithMedia(
+  final persistedMessage = await _persistOutgoingTransportState(
     messageRepo: messageRepo,
     message: message,
     attachments: attachments,
-  );
-  await _persistOutgoingMedia(
     mediaAttachmentRepo: mediaAttachmentRepo,
-    attachments: attachments,
+    isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+    expectedEnvelope: jsonString,
   );
   emitFlowEvent(
     layer: 'FL',
@@ -2246,7 +2445,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   }
   return (
     SendChatMessageResult.success,
-    message.copyWith(media: attachments ?? const []),
+    persistedMessage?.copyWith(media: attachments ?? const []),
   );
 }
 

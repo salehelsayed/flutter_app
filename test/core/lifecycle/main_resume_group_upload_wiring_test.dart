@@ -156,6 +156,46 @@ void main() {
   );
 
   test(
+    'Plan 262 wires private settlement authority through both unacked retry entry points',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+      final resumeStart = mainSource.lastIndexOf(
+        'retryUnackedMessagesFn: () => retryUnackedMessages(',
+      );
+      final resumeEnd = mainSource.indexOf(
+        'verifyInboxCustodyFn:',
+        resumeStart,
+      );
+      expect(resumeStart, isNonNegative);
+      expect(resumeEnd, greaterThan(resumeStart));
+      expect(
+        mainSource.substring(resumeStart, resumeEnd),
+        contains('mediaAttachmentRepo: widget.mediaAttachmentRepository'),
+        reason:
+            'app-resume unacked replay must receive the private mutation coordinator',
+      );
+
+      final retrierSource = await File(
+        'lib/core/services/pending_message_retrier.dart',
+      ).readAsString();
+      final retrierStart = retrierSource.indexOf(
+        'Future<int> _retryUnackedMessagesNow({Duration? olderThan})',
+      );
+      final retrierEnd = retrierSource.indexOf('\n  }', retrierStart);
+      expect(retrierStart, isNonNegative);
+      expect(retrierEnd, greaterThan(retrierStart));
+      expect(
+        retrierSource.substring(retrierStart, retrierEnd),
+        contains('mediaAttachmentRepo: mediaAttachmentRepo'),
+        reason:
+            'background unacked replay must receive the private mutation coordinator',
+      );
+    },
+  );
+
+  test(
     'main.dart passes mediaFileManager into retryIncompleteGroupUploads on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);

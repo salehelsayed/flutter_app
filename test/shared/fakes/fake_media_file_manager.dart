@@ -34,6 +34,7 @@ class FakeMediaFileManager extends MediaFileManager {
   /// through this instance) — the RED-on-HEAD lever for TC-162-02/03.
   int resolveStoredPathCount = 0;
   int trustedMediaRootPathCount = 0;
+  int trustedPendingUploadRootPathCount = 0;
 
   /// Override file existence for testing.
   bool? fileExistsOverride;
@@ -111,6 +112,12 @@ class FakeMediaFileManager extends MediaFileManager {
   Future<String> trustedMediaRootPath() async {
     trustedMediaRootPathCount++;
     return p.join(_testRootPath, 'media');
+  }
+
+  @override
+  Future<String> trustedPendingUploadRootPath() async {
+    trustedPendingUploadRootPathCount++;
+    return p.join(_testRootPath, 'pending_uploads');
   }
 
   @override

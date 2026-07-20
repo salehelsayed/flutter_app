@@ -1,6 +1,5 @@
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
@@ -135,11 +134,9 @@ Future<void> _surfaceLostCustody(
   );
   if (transitioned <= 0) return;
 
-  final current = await messageRepo.getMessage(row.id);
-  if (current == null) return;
-  await messageRepo.saveMessage(
-    normalizeOutgoingDeleteTombstoneVisibility(current),
-  );
+  // The status CAS above is already the complete persisted mutation. A stale
+  // full-row save here can only widen the race surface and can reinsert a
+  // parent that contact deletion removed after the CAS.
 }
 
 String _shortId(String id) => id.length > 8 ? id.substring(0, 8) : id;

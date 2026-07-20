@@ -3,21 +3,27 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -39,12 +45,103 @@ class _RetryAttachmentResolution {
     required this.skipReason,
     this.uploadLease,
     this.didUpload = false,
+    this.privateCustody,
   });
 
   final List<MediaAttachment>? attachments;
   final _RetryFailedMessageSkipReason skipReason;
   final MediaUploadLease? uploadLease;
   final bool didUpload;
+  final _DirectPrivateManualRetryCustody? privateCustody;
+}
+
+/// Ownership handed from the manual re-upload phase to the durable envelope
+/// handoff. The direct-private transfer claim remains active for that entire
+/// interval, so terminal cleanup cannot remove sender-local plaintext while
+/// the upload/send attempt still owns it.
+class _DirectPrivateManualRetryCustody {
+  _DirectPrivateManualRetryCustody({
+    required this.messageId,
+    required this.tokens,
+    required this.expectedPendingPaths,
+    required this.lifecycleRepository,
+    required this.envelopeRepository,
+    required this.mediaAttachmentRepository,
+    required this.cleanupRuntime,
+    required this.mediaFileManager,
+  });
+
+  final String messageId;
+  final Map<String, Object> tokens;
+  final Map<String, String> expectedPendingPaths;
+  final DirectPrivateMediaLifecycleRepository lifecycleRepository;
+  final OutgoingDirectPrivateEnvelopeCustodyRepository envelopeRepository;
+  final MediaAttachmentRepository mediaAttachmentRepository;
+  final DirectPrivateMediaCleanupRuntime cleanupRuntime;
+  final MediaFileManager mediaFileManager;
+  bool _released = false;
+
+  Future<void> releaseClaims() async {
+    if (_released) return;
+    _released = true;
+    final ownedTokens = tokens.entries.toList(growable: false);
+    for (final token in ownedTokens) {
+      await cleanupRuntime.directPrivateMediaLifecycleLock.synchronized(
+        token.key,
+        () async {
+          directPrivateMediaTransferRegistry.end(token.key, token.value);
+        },
+      );
+    }
+    tokens.clear();
+  }
+
+  /// Remove a positively committed redundant pending source, or clean a parent
+  /// that is already durably terminal. A broad startup reconciliation would
+  /// consume a legitimate in-process `opening` viewer; the manual retry lane
+  /// must never make that recovery decision.
+  Future<void> cleanupAfterRelease() async {
+    if (!_released) {
+      throw StateError('private retry cleanup requires released ownership');
+    }
+    final adapter = DirectPrivateMediaLifecycle(
+      messageRepository: lifecycleRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
+    );
+    for (final pending in expectedPendingPaths.entries) {
+      try {
+        await adapter.cleanupCommittedPendingSource(
+          messageId: messageId,
+          attachmentId: pending.key,
+          expectedPendingLocalPath: pending.value,
+        );
+      } catch (_) {
+        // Exact committed residue remains safe and independently retryable.
+      }
+    }
+    try {
+      await PrivateMediaLifecycleEngine(
+        adapter: adapter,
+        lifecycleLock: cleanupRuntime.directPrivateMediaLifecycleLock,
+        nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+      ).cleanupTerminalMessage(messageId);
+    } catch (_) {
+      // Durable terminal residue remains eligible for startup reconciliation.
+    }
+    final mutationRepository = mediaAttachmentRepository;
+    if (mutationRepository is OutgoingDirectPrivateMutationRepository) {
+      await reconcileReleasedOutgoingDirectPrivateUploadAttempt(
+        messageId: messageId,
+        expectedPendingPaths: expectedPendingPaths,
+        coordinator:
+            (mutationRepository as OutgoingDirectPrivateMutationRepository)
+                .outgoingDirectPrivateMutationCoordinator,
+        envelopeRepository: envelopeRepository,
+        lifecycleRepository: lifecycleRepository,
+      );
+    }
+  }
 }
 
 /// 116 EF-1 (row-derived action): the semantic action of a retried row comes
@@ -284,6 +381,7 @@ Future<bool> _retryFailedMessageCandidate({
     return false;
   }
   MediaUploadLease? uploadLease;
+  _DirectPrivateManualRetryCustody? privateCustody;
   try {
     // 116 EF-3 settled-recheck: the loaded list may hold a stale snapshot of
     // a row that settled between load and execution — re-fetch and use the
@@ -313,7 +411,8 @@ Future<bool> _retryFailedMessageCandidate({
     // retries are envelope-only for completed media; pending/terminal rows are
     // owned by the incomplete/manual lanes and must never be uploaded here.
     final resolution = await _resolveAttachmentsForRetry(
-      messageId: msg.id,
+      message: msg,
+      messageRepo: messageRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       bridge: bridge,
       targetPeerId: msg.contactPeerId,
@@ -326,6 +425,7 @@ Future<bool> _retryFailedMessageCandidate({
       manualRetry: manualRetry,
     );
     uploadLease = resolution.uploadLease;
+    privateCustody = resolution.privateCustody;
     if (resolution.skipReason != _RetryFailedMessageSkipReason.none) {
       final details = {
         'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
@@ -368,10 +468,54 @@ Future<bool> _retryFailedMessageCandidate({
     }
 
     Future<void> cleanupSettledMediaStaging() async {
-      if (resolution.attachments == null || mediaFileManager == null) return;
+      if (resolution.attachments == null ||
+          mediaFileManager == null ||
+          _isOutgoingOneMoreLookPrivate(msg)) {
+        return;
+      }
       try {
         await mediaFileManager.deletePendingUploadDir(msg.id);
       } catch (_) {}
+    }
+
+    Future<void> cleanupSettledPrivateTerminalMedia() async {
+      if (!_isOutgoingOneMoreLookPrivate(msg) || mediaFileManager == null) {
+        return;
+      }
+      final lifecycleRepository = messageRepo;
+      final cleanupRepository = mediaAttachmentRepo;
+      if (lifecycleRepository is! DirectPrivateMediaLifecycleRepository ||
+          cleanupRepository is! DirectPrivateMediaCleanupRepository ||
+          cleanupRepository is! DirectPrivateMediaCleanupRuntime ||
+          cleanupRepository is! OutgoingDirectPrivateMutationRepository) {
+        return;
+      }
+      final runtime = cleanupRepository as DirectPrivateMediaCleanupRuntime;
+      final coordinator =
+          (cleanupRepository as OutgoingDirectPrivateMutationRepository)
+              .outgoingDirectPrivateMutationCoordinator;
+      if (!identical(
+        runtime.directPrivateMediaLifecycleLock,
+        coordinator.lifecycleLock,
+      )) {
+        return;
+      }
+      try {
+        final adapter = DirectPrivateMediaLifecycle(
+          messageRepository:
+              lifecycleRepository as DirectPrivateMediaLifecycleRepository,
+          mediaAttachmentRepository:
+              cleanupRepository as MediaAttachmentRepository,
+          mediaFileManager: mediaFileManager,
+        );
+        await PrivateMediaLifecycleEngine(
+          adapter: adapter,
+          lifecycleLock: runtime.directPrivateMediaLifecycleLock,
+          nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+        ).cleanupTerminalMessage(msg.id);
+      } catch (_) {
+        // Durable terminal residue remains a startup/resume cleanup candidate.
+      }
     }
 
     // Prefer wire_envelope -> inbox-only only when this attempt did not mint
@@ -380,16 +524,54 @@ Future<bool> _retryFailedMessageCandidate({
     if (!resolution.didUpload &&
         msg.wireEnvelope != null &&
         msg.wireEnvelope!.isNotEmpty) {
+      Future<bool> persistCachedEnvelopeTransport({
+        required String status,
+        required String? transport,
+      }) async {
+        if (_isOutgoingOneMoreLookPrivate(msg)) {
+          final outcome =
+              await settleOutgoingDirectPrivateTransportUnderLifecycleLock(
+                messageRepository: messageRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+                attachments: resolution.attachments,
+                messageId: msg.id,
+                expectedEnvelope: msg.wireEnvelope!,
+                status: status,
+                transport: transport,
+                relayExpiresAt: null,
+              );
+          if (!outcome.accepted) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_FAILED_PRIVATE_TRANSPORT_SETTLEMENT_REFUSED',
+              details: {
+                'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+                'status': status,
+              },
+            );
+          }
+          return outcome.accepted;
+        }
+        await messageRepo.saveMessage(
+          normalizeOutgoingDeleteTombstoneVisibility(
+            msg.copyWith(status: status, transport: transport),
+          ),
+        );
+        return true;
+      }
+
       if (msg.transport == 'inbox') {
         // Already in the relay inbox — that is custody, not receiver delivery
         // (F6). Keep it 'inboxed' (envelope retained) so the custody sweep +
         // DeliveryReceiptListener flip it to 'delivered' only on the receiver's
         // confirmation; a false terminal 'delivered' here is uncorrectable.
-        await messageRepo.saveMessage(
-          normalizeOutgoingDeleteTombstoneVisibility(
-            msg.copyWith(status: 'inboxed'),
-          ),
-        );
+        if (!await persistCachedEnvelopeTransport(
+          status: 'inboxed',
+          transport: 'inbox',
+        )) {
+          return false;
+        }
+        await cleanupSettledPrivateTerminalMedia();
         await cleanupSettledMediaStaging();
         emitFlowEvent(
           layer: 'FL',
@@ -413,11 +595,13 @@ Future<bool> _retryFailedMessageCandidate({
             // no peer ack, no delivery receipt. Persist 'inboxed' and RETAIN the
             // wire envelope so the custody sweep + receipt repair can advance it
             // to 'delivered' on the receiver's confirmation.
-            await messageRepo.saveMessage(
-              normalizeOutgoingDeleteTombstoneVisibility(
-                msg.copyWith(status: 'inboxed', transport: 'inbox'),
-              ),
-            );
+            if (!await persistCachedEnvelopeTransport(
+              status: 'inboxed',
+              transport: 'inbox',
+            )) {
+              return false;
+            }
+            await cleanupSettledPrivateTerminalMedia();
             await cleanupSettledMediaStaging();
             emitFlowEvent(
               layer: 'FL',
@@ -470,11 +654,13 @@ Future<bool> _retryFailedMessageCandidate({
       dedupKey: msg.dedupKey,
       isForwarded: msg.isForwarded,
       mediaAttachments: attachments,
+      privateMediaPolicy: msg.privateMediaPolicy,
       mediaAttachmentRepo: mediaAttachmentRepo,
       emitTimingEvent: false,
     );
 
     if (result == SendChatMessageResult.success) {
+      await cleanupSettledPrivateTerminalMedia();
       await cleanupSettledMediaStaging();
       emitFlowEvent(
         layer: 'FL',
@@ -508,10 +694,18 @@ Future<bool> _retryFailedMessageCandidate({
     );
     return false;
   } finally {
-    if (uploadLease != null) {
-      releaseUploadLease?.call(uploadLease);
+    try {
+      await privateCustody?.releaseClaims();
+    } finally {
+      try {
+        if (uploadLease != null) {
+          releaseUploadLease?.call(uploadLease);
+        }
+      } finally {
+        await privateCustody?.cleanupAfterRelease();
+        _retryInFlightMessageIds.remove(msg.id);
+      }
     }
-    _retryInFlightMessageIds.remove(msg.id);
   }
 }
 
@@ -524,6 +718,19 @@ Future<bool> _retryFailedDeletedTombstone({
 }) async {
   if (!p2pService.currentState.isStarted) {
     _emitDeleteTombstoneStillFailed(msg, reason: 'node_not_running');
+    return false;
+  }
+
+  final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
+  final privateDeleteRepository =
+      messageRepo is DirectPrivateDeleteForEveryoneRepository
+      ? messageRepo as DirectPrivateDeleteForEveryoneRepository
+      : null;
+  if (isOutgoingPrivate && privateDeleteRepository == null) {
+    _emitDeleteTombstoneStillFailed(
+      msg,
+      reason: 'private_delete_capability_missing',
+    );
     return false;
   }
 
@@ -575,6 +782,23 @@ Future<bool> _retryFailedDeletedTombstone({
     return false;
   }
 
+  if (isOutgoingPrivate) {
+    final staged = await privateDeleteRepository!
+        .stagePrivateDeleteForEveryoneRetryEnvelope(
+          tombstone: msg,
+          expectedEnvelope: msg.wireEnvelope,
+          envelope: rebuiltEnvelope,
+        );
+    if (staged == null) {
+      _emitDeleteTombstoneStillFailed(
+        msg,
+        reason: 'private_delete_envelope_stage_refused',
+      );
+      return false;
+    }
+    msg = staged;
+  }
+
   return _storeOrReplayDeleteEnvelope(
     msg: msg,
     messageRepo: messageRepo,
@@ -591,31 +815,35 @@ Future<bool> _storeOrReplayDeleteEnvelope({
   required String wireEnvelope,
   required bool rebuilt,
 }) async {
-  if (msg.transport == 'inbox') {
-    await messageRepo.saveMessage(
-      normalizeOutgoingDeleteTombstoneVisibility(
-        msg.copyWith(
-          status: 'inboxed',
-          transport: 'inbox',
-          wireEnvelope: wireEnvelope,
-        ),
-      ),
-    );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
-      details: {'id': _messageIdPreview(msg.id), 'type': 'message_deletion'},
-    );
+  final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
+  final privateDeleteRepository =
+      messageRepo is DirectPrivateDeleteForEveryoneRepository
+      ? messageRepo as DirectPrivateDeleteForEveryoneRepository
+      : null;
+  Future<bool> persistSettlement(ConversationMessage target) async {
+    if (isOutgoingPrivate) {
+      if (privateDeleteRepository == null) return false;
+      return await privateDeleteRepository
+              .settlePrivateDeleteForEveryoneTombstone(
+                tombstone: target,
+                expectedEnvelope: wireEnvelope,
+              ) !=
+          null;
+    }
+    await messageRepo.saveMessage(target);
     return true;
   }
 
+  // Genuine deletion-envelope inbox custody is persisted as `inboxed`.
+  // A `failed` tombstone carrying `transport == inbox` can be legacy state
+  // inherited from the original chat envelope, so it must reacquire custody.
   try {
     final stored = await p2pService.storeInInbox(
       msg.contactPeerId,
       wireEnvelope,
     );
     if (stored) {
-      await messageRepo.saveMessage(
+      final persisted = await persistSettlement(
         normalizeOutgoingDeleteTombstoneVisibility(
           msg.copyWith(
             status: 'inboxed',
@@ -624,6 +852,13 @@ Future<bool> _storeOrReplayDeleteEnvelope({
           ),
         ),
       );
+      if (!persisted) {
+        _emitDeleteTombstoneStillFailed(
+          msg,
+          reason: 'private_delete_settlement_refused',
+        );
+        return false;
+      }
       _emitDeleteTombstoneSuccess(
         msg,
         via: 'inbox',
@@ -659,7 +894,7 @@ Future<bool> _storeOrReplayDeleteEnvelope({
     sendResult,
   );
   final status = sendResult.acknowledged ? 'delivered' : 'sent';
-  await messageRepo.saveMessage(
+  final persisted = await persistSettlement(
     normalizeOutgoingDeleteTombstoneVisibility(
       msg.copyWith(
         status: status,
@@ -668,6 +903,13 @@ Future<bool> _storeOrReplayDeleteEnvelope({
       ),
     ),
   );
+  if (!persisted) {
+    _emitDeleteTombstoneStillFailed(
+      msg,
+      reason: 'private_delete_settlement_refused',
+    );
+    return false;
+  }
   _emitDeleteTombstoneSuccess(msg, via: via, status: status, rebuilt: rebuilt);
   return true;
 }
@@ -748,7 +990,8 @@ void _emitDeleteTombstoneStillFailed(
 /// Returns [skipReason] when the message cannot be recovered or should remain
 /// terminal (e.g. local file missing or user-cancelled upload).
 Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
-  required String messageId,
+  required ConversationMessage message,
+  required MessageRepository messageRepo,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required Bridge bridge,
   required String targetPeerId,
@@ -760,6 +1003,8 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
   ReleaseMediaUploadLease? releaseUploadLease,
 }) async {
+  final messageId = message.id;
+  final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(message);
   // Load any persisted attachments for this message
   final persistedAttachments =
       await mediaAttachmentRepo?.getAttachmentsForMessage(
@@ -811,6 +1056,41 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
   final unfinished = persistedAttachments
       .where((attachment) => attachment.downloadStatus != 'done')
       .toList(growable: false);
+
+  final privateCleanupRuntime =
+      mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+      ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+      : null;
+  final privateMutationRepository =
+      mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository
+      ? mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository
+      : null;
+  final privateEnvelopeRepository =
+      messageRepo is OutgoingDirectPrivateEnvelopeCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateEnvelopeCustodyRepository
+      : null;
+  final privateLifecycleRepository =
+      messageRepo is DirectPrivateMediaLifecycleRepository
+      ? messageRepo as DirectPrivateMediaLifecycleRepository
+      : null;
+  if (isOutgoingPrivate) {
+    if (mediaFileManager == null ||
+        privateCleanupRuntime == null ||
+        privateMutationRepository == null ||
+        privateEnvelopeRepository == null ||
+        privateLifecycleRepository == null ||
+        !identical(
+          privateMutationRepository
+              .outgoingDirectPrivateMutationCoordinator
+              .lifecycleLock,
+          privateCleanupRuntime.directPrivateMediaLifecycleLock,
+        )) {
+      return const _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.uploadOwnershipUnavailable,
+      );
+    }
+  }
   if (unfinished.length > kReuploadMaxAttachmentsPerMessage) {
     return const _RetryAttachmentResolution(
       attachments: null,
@@ -869,6 +1149,7 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
 
   MediaUploadLease? lease;
   var leaseHandedOff = false;
+  _DirectPrivateManualRetryCustody? privateCustody;
   try {
     if (tryClaimUploadLease == null ||
         releaseUploadLease == null ||
@@ -898,6 +1179,24 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       );
     }
 
+    if (isOutgoingPrivate) {
+      privateCustody = await _claimDirectPrivateManualRetryCustody(
+        messageId: messageId,
+        attachments: unfinished,
+        cleanupRuntime: privateCleanupRuntime!,
+        lifecycleRepository: privateLifecycleRepository!,
+        envelopeRepository: privateEnvelopeRepository!,
+        mediaAttachmentRepository: mediaAttachmentRepo!,
+        mediaFileManager: mediaFileManager!,
+      );
+      if (privateCustody == null) {
+        return const _RetryAttachmentResolution(
+          attachments: null,
+          skipReason: _RetryFailedMessageSkipReason.uploadOwnershipUnavailable,
+        );
+      }
+    }
+
     final reuploadedAttachments = await _reuploadAttachments(
       attachments: unfinished,
       resolvedPaths: resolvedPaths,
@@ -908,6 +1207,9 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
       uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+      privateMutationRepository: isOutgoingPrivate
+          ? privateMutationRepository
+          : null,
     );
     if (reuploadedAttachments == null) {
       leaseHandedOff = true;
@@ -915,6 +1217,7 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
         attachments: null,
         skipReason: _RetryFailedMessageSkipReason.uploadFailed,
         uploadLease: lease,
+        privateCustody: privateCustody,
       );
     }
 
@@ -930,12 +1233,108 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       skipReason: _RetryFailedMessageSkipReason.none,
       uploadLease: lease,
       didUpload: true,
+      privateCustody: privateCustody,
     );
   } finally {
     if (!leaseHandedOff && lease != null) {
-      releaseUploadLease?.call(lease);
+      try {
+        await privateCustody?.releaseClaims();
+      } finally {
+        try {
+          releaseUploadLease?.call(lease);
+        } finally {
+          await privateCustody?.cleanupAfterRelease();
+        }
+      }
     }
   }
+}
+
+Future<_DirectPrivateManualRetryCustody?>
+_claimDirectPrivateManualRetryCustody({
+  required String messageId,
+  required List<MediaAttachment> attachments,
+  required DirectPrivateMediaCleanupRuntime cleanupRuntime,
+  required DirectPrivateMediaLifecycleRepository lifecycleRepository,
+  required OutgoingDirectPrivateEnvelopeCustodyRepository envelopeRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+  required MediaFileManager mediaFileManager,
+}) async {
+  final tokens = <String, Object>{};
+  var handedOff = false;
+  try {
+    final ordered = attachments.toList(growable: false)
+      ..sort((left, right) => left.id.compareTo(right.id));
+    for (final attachment in ordered) {
+      final expectedPendingPath = attachment.localPath?.trim();
+      if (expectedPendingPath == null || expectedPendingPath.isEmpty) {
+        return null;
+      }
+      final acquired = await cleanupRuntime.directPrivateMediaLifecycleLock
+          .synchronized(attachment.id, () async {
+            final token = directPrivateMediaTransferRegistry.tryBegin(
+              attachment.id,
+              messageId: messageId,
+            );
+            if (token == null) return false;
+            try {
+              final invalidated = await envelopeRepository
+                  .invalidateWireEnvelopeBeforePrivateUpload(
+                    messageId: messageId,
+                    attachmentId: attachment.id,
+                    expectedPendingLocalPath: expectedPendingPath,
+                  );
+              if (!invalidated) {
+                directPrivateMediaTransferRegistry.end(attachment.id, token);
+                return false;
+              }
+              tokens[attachment.id] = token;
+              return true;
+            } catch (_) {
+              directPrivateMediaTransferRegistry.end(attachment.id, token);
+              rethrow;
+            }
+          });
+      if (!acquired) return null;
+    }
+    handedOff = true;
+    return _DirectPrivateManualRetryCustody(
+      messageId: messageId,
+      tokens: tokens,
+      expectedPendingPaths: <String, String>{
+        for (final attachment in attachments)
+          attachment.id: attachment.localPath!.trim(),
+      },
+      lifecycleRepository: lifecycleRepository,
+      envelopeRepository: envelopeRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      cleanupRuntime: cleanupRuntime,
+      mediaFileManager: mediaFileManager,
+    );
+  } finally {
+    if (!handedOff) {
+      await _releaseManualPrivateTransferClaims(
+        cleanupRuntime: cleanupRuntime,
+        tokens: tokens,
+      );
+    }
+  }
+}
+
+Future<void> _releaseManualPrivateTransferClaims({
+  required DirectPrivateMediaCleanupRuntime cleanupRuntime,
+  required Map<String, Object> tokens,
+}) async {
+  final ownedTokens = tokens.entries.toList(growable: false);
+  for (final token in ownedTokens) {
+    await cleanupRuntime.directPrivateMediaLifecycleLock.synchronized(
+      token.key,
+      () async {
+        directPrivateMediaTransferRegistry.end(token.key, token.value);
+      },
+    );
+  }
+  tokens.clear();
 }
 
 /// Re-uploads each attachment whose local file still exists on disk.
@@ -958,6 +1357,7 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
   required MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  OutgoingDirectPrivateMutationRepository? privateMutationRepository,
 }) async {
   // Defensive ceiling: skip messages with too many attachments
   if (attachments.length > kReuploadMaxAttachmentsPerMessage) {
@@ -1010,14 +1410,45 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
       uploadRetryCount: 0,
       ownerLane: MediaOwnerLane.direct,
     );
-    await mediaAttachmentRepo?.saveAttachment(
-      completed,
-      owner: MediaOwnerLane.direct,
-    );
+    if (privateMutationRepository != null) {
+      final expectedPendingPath = attachment.localPath?.trim();
+      if (expectedPendingPath == null || expectedPendingPath.isEmpty) {
+        return null;
+      }
+      final mutation = await privateMutationRepository
+          .outgoingDirectPrivateMutationCoordinator
+          .commitCompletion(
+            attachment: completed,
+            expectedPendingLocalPath: expectedPendingPath,
+          );
+      if (!mutation.authorizesTransportHandoff) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_REUPLOAD_PRIVATE_MUTATION_REFUSED',
+          details: {
+            'attachmentId': attachment.id.length > 8
+                ? attachment.id.substring(0, 8)
+                : attachment.id,
+          },
+        );
+        return null;
+      }
+    } else {
+      await mediaAttachmentRepo?.saveAttachment(
+        completed,
+        owner: MediaOwnerLane.direct,
+      );
+    }
     result.add(completed);
   }
 
   return result;
 }
+
+bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
+    !message.isIncoming &&
+    message.privateMediaPolicy.version == 1 &&
+    (message.privateMediaMode == PrivateMediaMode.protected ||
+        message.privateMediaMode == PrivateMediaMode.viewOnce);
 
 String _messageIdPreview(String id) => id.length > 8 ? id.substring(0, 8) : id;

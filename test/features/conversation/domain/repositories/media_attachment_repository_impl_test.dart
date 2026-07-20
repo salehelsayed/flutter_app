@@ -307,6 +307,39 @@ void main() {
       expect(row['owner_lane'], 'direct');
     });
 
+    test(
+      'ordinary new direct upload rows bypass private pending preparation',
+      () async {
+        await saveDirect(
+          makeAttachment(
+            id: 'ordinary-source-upload',
+            messageId: 'ordinary-source-parent',
+            downloadStatus: 'upload_pending',
+            localPath: '/tmp/ordinary-source.jpg',
+          ),
+        );
+
+        final row = await rawRow('ordinary-source-upload');
+        expect(row, isNotNull);
+        expect(row!['download_status'], 'upload_pending');
+        expect(row['local_path'], '/tmp/ordinary-source.jpg');
+        expect(row['owner_lane'], MediaOwnerLane.direct.dbValue);
+
+        await saveDirect(
+          makeAttachment(
+            id: 'ordinary-source-upload',
+            messageId: 'ordinary-source-parent',
+            downloadStatus: 'upload_failed',
+            localPath: '/tmp/ordinary-source.jpg',
+          ),
+        );
+        expect(
+          (await rawRow('ordinary-source-upload'))!['download_status'],
+          'upload_failed',
+        );
+      },
+    );
+
     test('saveAttachment updates transport metadata in place', () async {
       await saveDirect(makeAttachment(downloadStatus: 'pending'));
       await saveDirect(makeAttachment(downloadStatus: 'done'));

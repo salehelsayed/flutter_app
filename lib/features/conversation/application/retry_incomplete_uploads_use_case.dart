@@ -1,17 +1,23 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_connectivity_probe.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -164,6 +170,12 @@ Future<int> retryIncompleteUploads({
     // not yet provide the token-owned seam. A failed all-or-none claim leaves
     // every row untouched.
     MediaUploadLease? uploadLease;
+    final privateTransferTokens = <String, Object>{};
+    final authorizedPrivatePendingSources = <String, String>{};
+    DirectPrivateMediaCleanupRuntime? privateCleanupRuntime;
+    DirectPrivateMediaLifecycleRepository? privateLifecycleMessageRepository;
+    OutgoingDirectPrivateEnvelopeCustodyRepository? privateEnvelopeRepository;
+    OutgoingDirectPrivateMutationCoordinator? privateMutationCoordinator;
     String? inFlightBlob;
     if (tryClaimUploadLease != null) {
       uploadLease = tryClaimUploadLease(
@@ -227,6 +239,107 @@ Future<int> retryIncompleteUploads({
         messageId,
         owner: MediaOwnerLane.direct,
       );
+      final isOutgoingPrivateOneMoreLook =
+          !msg.isIncoming &&
+          msg.privateMediaPolicy.version == 1 &&
+          (msg.privateMediaMode == PrivateMediaMode.protected ||
+              msg.privateMediaMode == PrivateMediaMode.viewOnce);
+      final mutationRepository =
+          mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository
+          ? mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository
+          : null;
+      if (isOutgoingPrivateOneMoreLook) {
+        final runtime = mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+            ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+            : null;
+        final envelopeRepository =
+            messageRepo is OutgoingDirectPrivateEnvelopeCustodyRepository
+            ? messageRepo as OutgoingDirectPrivateEnvelopeCustodyRepository
+            : null;
+        final lifecycleMessageRepository =
+            messageRepo is DirectPrivateMediaLifecycleRepository
+            ? messageRepo as DirectPrivateMediaLifecycleRepository
+            : null;
+        if (runtime == null ||
+            mutationRepository == null ||
+            envelopeRepository == null ||
+            lifecycleMessageRepository == null ||
+            mediaFileManager == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_PRIVATE_AUTHORITY_UNAVAILABLE',
+            details: {'messageId': messageId},
+          );
+          continue;
+        }
+        if (!identical(
+          mutationRepository
+              .outgoingDirectPrivateMutationCoordinator
+              .lifecycleLock,
+          runtime.directPrivateMediaLifecycleLock,
+        )) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_PRIVATE_AUTHORITY_MISMATCH',
+            details: {'messageId': messageId},
+          );
+          continue;
+        }
+        privateCleanupRuntime = runtime;
+        privateLifecycleMessageRepository = lifecycleMessageRepository;
+        privateEnvelopeRepository = envelopeRepository;
+        privateMutationCoordinator =
+            mutationRepository.outgoingDirectPrivateMutationCoordinator;
+        var allClaimsAcquired = true;
+        final orderedPending = pendingAttsForMessage.toList(growable: false)
+          ..sort((left, right) => left.id.compareTo(right.id));
+        for (final attachment in orderedPending) {
+          final expectedPendingPath = attachment.localPath;
+          if (expectedPendingPath == null || expectedPendingPath.isEmpty) {
+            allClaimsAcquired = false;
+            break;
+          }
+          final acquired = await runtime.directPrivateMediaLifecycleLock
+              .synchronized(attachment.id, () async {
+                final token = directPrivateMediaTransferRegistry.tryBegin(
+                  attachment.id,
+                  messageId: messageId,
+                );
+                if (token == null) return false;
+                try {
+                  final invalidated = await envelopeRepository
+                      .invalidateWireEnvelopeBeforePrivateUpload(
+                        messageId: messageId,
+                        attachmentId: attachment.id,
+                        expectedPendingLocalPath: expectedPendingPath,
+                      );
+                  if (!invalidated) {
+                    directPrivateMediaTransferRegistry.end(
+                      attachment.id,
+                      token,
+                    );
+                    return false;
+                  }
+                  privateTransferTokens[attachment.id] = token;
+                  return true;
+                } catch (_) {
+                  directPrivateMediaTransferRegistry.end(attachment.id, token);
+                  rethrow;
+                }
+              });
+          if (!acquired) {
+            allClaimsAcquired = false;
+            break;
+          }
+        }
+        if (!allClaimsAcquired) {
+          await _releaseIncompletePrivateTransferClaims(
+            runtime: runtime,
+            tokens: privateTransferTokens,
+          );
+          continue;
+        }
+      }
 
       // 2. Re-upload ALL pending attachments for this message.
       //    If any single upload fails, the message is skipped and
@@ -235,6 +348,7 @@ Future<int> retryIncompleteUploads({
       var isNonRetryable = false;
       UploadMediaFailed? uploadFailure;
       MediaAttachment? failedAttachment;
+      final carriedPrivateCompletions = <String, MediaAttachment>{};
 
       for (final attachment in pendingAttsForMessage) {
         var localPath = attachment.localPath;
@@ -359,7 +473,7 @@ Future<int> retryIncompleteUploads({
         final keyChanged =
             uploaded.encryptionKeyBase64 != attachment.encryptionKeyBase64 ||
             uploaded.encryptionNonce != attachment.encryptionNonce;
-        if (keyChanged) {
+        if (keyChanged && !isOutgoingPrivateOneMoreLook) {
           final staleMsg = await messageRepo.getMessage(messageId);
           if (staleMsg != null && staleMsg.wireEnvelope != null) {
             await messageRepo.saveMessage(
@@ -379,10 +493,49 @@ Future<int> retryIncompleteUploads({
             );
           }
         }
-        await mediaAttachmentRepo.saveAttachment(
-          completedAttachment,
-          owner: MediaOwnerLane.direct,
-        );
+        if (isOutgoingPrivateOneMoreLook) {
+          final expectedPendingPath = attachment.localPath;
+          if (expectedPendingPath == null || mutationRepository == null) {
+            allUploadsSucceeded = false;
+            isNonRetryable = true;
+            failedAttachment = attachment;
+            uploadFailure = const UploadMediaFailed(
+              stage: UploadMediaStage.consumerBoundary,
+              disposition: UploadMediaDisposition.terminal,
+              errorCode: 'PRIVATE_MUTATION_AUTHORITY_MISSING',
+            );
+            break;
+          }
+          final mutation = await mutationRepository
+              .outgoingDirectPrivateMutationCoordinator
+              .commitCompletion(
+                attachment: completedAttachment.copyWith(
+                  ownerLane: MediaOwnerLane.direct,
+                ),
+                expectedPendingLocalPath: expectedPendingPath,
+              );
+          if (!mutation.authorizesTransportHandoff) {
+            allUploadsSucceeded = false;
+            isNonRetryable = true;
+            failedAttachment = attachment;
+            uploadFailure = const UploadMediaFailed(
+              stage: UploadMediaStage.consumerBoundary,
+              disposition: UploadMediaDisposition.terminal,
+              errorCode: 'PRIVATE_MUTATION_REFUSED',
+            );
+            break;
+          }
+          // Recheck every authorized outcome after release. A completion that
+          // deferred while opening may have committed through pre-frame
+          // settlement before this transfer's finally path runs.
+          authorizedPrivatePendingSources[attachment.id] = expectedPendingPath;
+          carriedPrivateCompletions[attachment.id] = completedAttachment;
+        } else {
+          await mediaAttachmentRepo.saveAttachment(
+            completedAttachment,
+            owner: MediaOwnerLane.direct,
+          );
+        }
       }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable
@@ -453,9 +606,15 @@ Future<int> retryIncompleteUploads({
       final refreshedMsg = await messageRepo.getMessage(messageId);
       final refreshedAttachments = await mediaAttachmentRepo
           .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
+      final transportAttachments = refreshedAttachments
+          .map(
+            (attachment) =>
+                carriedPrivateCompletions[attachment.id] ?? attachment,
+          )
+          .toList(growable: false);
       final abortReason = _lateSendAbortReason(
         message: refreshedMsg,
-        attachments: refreshedAttachments,
+        attachments: transportAttachments,
         expectedAttachmentIds: {
           for (final attachment in allAttachments) attachment.id,
         },
@@ -476,7 +635,7 @@ Future<int> retryIncompleteUploads({
 
       // 3. All uploads still belong to a live retryable row — send ONCE with
       // the current completed attachment set.
-      final fullAttachmentList = refreshedAttachments
+      final fullAttachmentList = transportAttachments
           .where((attachment) => attachment.downloadStatus == 'done')
           .toList(growable: false);
 
@@ -496,6 +655,7 @@ Future<int> retryIncompleteUploads({
         dedupKey: refreshedMsg.dedupKey,
         isForwarded: refreshedMsg.isForwarded,
         mediaAttachments: fullAttachmentList,
+        privateMediaPolicy: refreshedMsg.privateMediaPolicy,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
       );
@@ -514,7 +674,7 @@ Future<int> retryIncompleteUploads({
         );
 
         // Cleanup durable storage after successful send
-        if (mediaFileManager != null) {
+        if (mediaFileManager != null && !isOutgoingPrivateOneMoreLook) {
           try {
             await mediaFileManager.deletePendingUploadDir(messageId);
           } catch (_) {}
@@ -533,8 +693,54 @@ Future<int> retryIncompleteUploads({
         details: {'error': e.toString()},
       );
     } finally {
+      final releasedPrivateTransfer = privateTransferTokens.isNotEmpty;
+      if (releasedPrivateTransfer && privateCleanupRuntime != null) {
+        await _releaseIncompletePrivateTransferClaims(
+          runtime: privateCleanupRuntime,
+          tokens: privateTransferTokens,
+        );
+      }
       if (uploadLease != null) {
         releaseUploadLease?.call(uploadLease);
+      }
+      if (releasedPrivateTransfer &&
+          privateCleanupRuntime != null &&
+          privateLifecycleMessageRepository != null &&
+          mediaFileManager != null) {
+        try {
+          final adapter = DirectPrivateMediaLifecycle(
+            messageRepository: privateLifecycleMessageRepository,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          );
+          for (final committed in authorizedPrivatePendingSources.entries) {
+            await adapter.cleanupCommittedPendingSource(
+              messageId: messageId,
+              attachmentId: committed.key,
+              expectedPendingLocalPath: committed.value,
+            );
+          }
+          await PrivateMediaLifecycleEngine(
+            adapter: adapter,
+            lifecycleLock:
+                privateCleanupRuntime.directPrivateMediaLifecycleLock,
+            nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+          ).cleanupTerminalMessage(messageId);
+        } catch (_) {
+          // Durable lifecycle state remains a retryable cleanup candidate.
+        }
+      }
+      if (releasedPrivateTransfer &&
+          privateEnvelopeRepository != null &&
+          privateLifecycleMessageRepository != null &&
+          privateMutationCoordinator != null) {
+        await reconcileReleasedOutgoingDirectPrivateUploadAttempt(
+          messageId: messageId,
+          expectedPendingPaths: authorizedPrivatePendingSources,
+          coordinator: privateMutationCoordinator,
+          envelopeRepository: privateEnvelopeRepository,
+          lifecycleRepository: privateLifecycleMessageRepository,
+        );
       }
     }
   }
@@ -556,6 +762,22 @@ Future<int> retryIncompleteUploads({
   );
 
   return successCount;
+}
+
+Future<void> _releaseIncompletePrivateTransferClaims({
+  required DirectPrivateMediaCleanupRuntime runtime,
+  required Map<String, Object> tokens,
+}) async {
+  final ownedTokens = tokens.entries.toList(growable: false);
+  for (final token in ownedTokens) {
+    await runtime.directPrivateMediaLifecycleLock.synchronized(
+      token.key,
+      () async {
+        directPrivateMediaTransferRegistry.end(token.key, token.value);
+      },
+    );
+  }
+  tokens.clear();
 }
 
 /// Default [retryIncompleteUploads] in-flight predicate: nothing is in-flight
@@ -587,8 +809,38 @@ String? _lateSendAbortReason({
   if (message == null) {
     return 'message_missing';
   }
+  if (message.hiddenAt != null) {
+    return 'message_hidden';
+  }
+  if (message.deletedAt != null) {
+    return 'message_deleted';
+  }
   if (message.status != 'sending' && message.status != 'failed') {
     return 'message_status_${message.status}';
+  }
+
+  final oneMoreLookPolicy =
+      message.privateMediaPolicy.version == 1 &&
+      (message.privateMediaMode == PrivateMediaMode.protected ||
+          message.privateMediaMode == PrivateMediaMode.viewOnce);
+  if (oneMoreLookPolicy) {
+    if (message.isIncoming) {
+      return 'private_parent_incoming';
+    }
+    final stateAuthorized = switch (message.privateMediaState) {
+      PrivateMediaLifecycleState.available =>
+        message.privateMediaRevealedAtMs == null &&
+            message.privateMediaTerminalAtMs == null,
+      PrivateMediaLifecycleState.opening ||
+      PrivateMediaLifecycleState.viewing =>
+        message.privateMediaTerminalAtMs == null,
+      PrivateMediaLifecycleState.consumed =>
+        message.privateMediaTerminalAtMs != null,
+      _ => false,
+    };
+    if (!stateAuthorized) {
+      return 'private_state_${message.privateMediaState.name}';
+    }
   }
 
   if (attachments.length != expectedAttachmentIds.length ||

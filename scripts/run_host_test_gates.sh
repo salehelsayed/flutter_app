@@ -145,6 +145,13 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/direct_media_library_batch_actions_test.dart"
   "test/features/conversation/application/direct_media_library_batch_delete_test.dart"
   "test/features/conversation/application/direct_media_library_boundary_test.dart"
+  # 262: headline sender pending-open application contract.
+  "test/features/conversation/application/direct_private_media_sender_pending_open_test.dart"
+  "test/features/conversation/application/retry_failed_messages_private_manual_retry_test.dart"
+  "test/features/conversation/integration/private_cached_envelope_retry_delete_race_test.dart"
+  "test/core/database/helpers/outgoing_direct_private_writer_guard_test.dart"
+  "test/features/conversation/integration/private_media_committed_pending_cleanup_recovery_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"

@@ -993,6 +993,10 @@ class _ConversationScreenState extends State<ConversationScreen>
                     kind: privateKind,
                     settleResult: failed.settleResult,
                     canRetry: failed.canRetry,
+                    localMediaMissing:
+                        failed.failureReason ==
+                        DirectPrivateMediaOpenFailureReason
+                            .senderLocalBytesMissing,
                     onRetry:
                         !failed.canRetry ||
                             attachment == null ||
@@ -1008,9 +1012,14 @@ class _ConversationScreenState extends State<ConversationScreen>
                   );
                 }
                 if (!message.isIncoming) {
-                  final localMediaAvailable =
+                  final senderOpenableStatus =
                       attachment != null &&
-                      attachment.downloadStatus == kMediaDownloadStatusDone &&
+                      (attachment.downloadStatus == kMediaDownloadStatusDone ||
+                          (attachment.downloadStatus == 'upload_pending' &&
+                              attachment.ownerLane == MediaOwnerLane.direct &&
+                              attachment.messageId == message.id));
+                  final localMediaAvailable =
+                      senderOpenableStatus &&
                       _existingDirectMediaPath(attachment) != null;
                   final canReopen =
                       identity != null &&
