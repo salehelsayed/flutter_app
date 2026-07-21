@@ -94,7 +94,10 @@ String canonicalMembershipEventId({
     '$transitionType:$groupId:$actorPeerId:'
     '${eventAt.toUtc().microsecondsSinceEpoch}';
 
-DateTime nextMembershipEventAt(DateTime? lastMembershipEventAt, {DateTime? now}) {
+DateTime nextMembershipEventAt(
+  DateTime? lastMembershipEventAt, {
+  DateTime? now,
+}) {
   final candidate = (now ?? DateTime.now()).toUtc();
   final last = lastMembershipEventAt?.toUtc();
   if (last != null && !candidate.isAfter(last)) {
@@ -110,6 +113,18 @@ Future<void> recordGroupMembershipEventWatermark({
   String? eventId,
 }) async {
   if (eventAt == null) {
+    return;
+  }
+
+  final protectedRepository = groupRepo is GroupMembershipWatermarkRepository
+      ? groupRepo as GroupMembershipWatermarkRepository
+      : null;
+  if (protectedRepository != null) {
+    await protectedRepository.advanceGroupMembershipWatermark(
+      groupId: groupId,
+      eventAt: eventAt,
+      eventId: eventId,
+    );
     return;
   }
 

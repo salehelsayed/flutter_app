@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_parent_write_guard.dart';
 
 /// Inserts a group key into the database.
 Future<void> dbInsertGroupKey(Database db, Map<String, Object?> row) async {
@@ -17,6 +18,14 @@ Future<void> dbInsertGroupKey(Database db, Map<String, Object?> row) async {
   );
 
   try {
+    if (!await dbAllowsOrdinaryGroupWrite(db, groupId)) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_KEYS_DB_INSERT_REFUSED_PARENT',
+        details: {'keyGeneration': keyGen},
+      );
+      return;
+    }
     final existing = await db.query(
       'group_keys',
       columns: ['encrypted_key'],
@@ -60,11 +69,20 @@ Future<void> dbInsertGroupKey(Database db, Map<String, Object?> row) async {
       );
     }
 
-    await db.insert(
-      'group_keys',
-      row,
+    final inserted = await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_keys',
+      row: row,
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
+    if (!inserted) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_KEYS_DB_INSERT_REFUSED_PARENT',
+        details: {'keyGeneration': keyGen},
+      );
+      return;
+    }
 
     emitFlowEvent(
       layer: 'DB',
@@ -98,12 +116,14 @@ Future<Map<String, Object?>?> dbLoadLatestGroupKey(
   );
 
   try {
-    final results = await db.query(
-      'group_keys',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-      orderBy: 'key_generation DESC',
-      limit: 1,
+    final parent = await dbOrdinaryGroupParentPredicate(
+      db,
+      groupIdExpression: 'group_keys.group_id',
+    );
+    final results = await db.rawQuery(
+      'SELECT * FROM group_keys WHERE group_id = ? AND $parent '
+      'ORDER BY key_generation DESC LIMIT 1',
+      [groupId],
     );
 
     if (results.isNotEmpty) {
@@ -147,11 +167,14 @@ Future<Map<String, Object?>?> dbLoadGroupKeyByGeneration(
   );
 
   try {
-    final results = await db.query(
-      'group_keys',
-      where: 'group_id = ? AND key_generation = ?',
-      whereArgs: [groupId, keyGeneration],
-      limit: 1,
+    final parent = await dbOrdinaryGroupParentPredicate(
+      db,
+      groupIdExpression: 'group_keys.group_id',
+    );
+    final results = await db.rawQuery(
+      'SELECT * FROM group_keys '
+      'WHERE group_id = ? AND key_generation = ? AND $parent LIMIT 1',
+      [groupId, keyGeneration],
     );
 
     if (results.isNotEmpty) {
@@ -193,11 +216,14 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupKeys(
   );
 
   try {
-    final results = await db.query(
-      'group_keys',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-      orderBy: 'key_generation ASC',
+    final parent = await dbOrdinaryGroupParentPredicate(
+      db,
+      groupIdExpression: 'group_keys.group_id',
+    );
+    final results = await db.rawQuery(
+      'SELECT * FROM group_keys WHERE group_id = ? AND $parent '
+      'ORDER BY key_generation ASC',
+      [groupId],
     );
 
     emitFlowEvent(
@@ -302,11 +328,20 @@ Future<void> dbUpsertPendingGroupKeyRotation(
   );
 
   try {
-    await db.insert(
-      'group_key_rotation_drafts',
-      row,
+    final inserted = await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_key_rotation_drafts',
+      row: row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    if (!inserted) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_KEY_ROTATION_DRAFT_DB_UPSERT_REFUSED_PARENT',
+        details: {'keyGeneration': keyGen},
+      );
+      return;
+    }
 
     emitFlowEvent(
       layer: 'DB',
@@ -337,11 +372,14 @@ Future<Map<String, Object?>?> dbLoadPendingGroupKeyRotation(
   );
 
   try {
-    final results = await db.query(
-      'group_key_rotation_drafts',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-      limit: 1,
+    final parent = await dbOrdinaryGroupParentPredicate(
+      db,
+      groupIdExpression: 'group_key_rotation_drafts.group_id',
+    );
+    final results = await db.rawQuery(
+      'SELECT * FROM group_key_rotation_drafts '
+      'WHERE group_id = ? AND $parent LIMIT 1',
+      [groupId],
     );
 
     if (results.isEmpty) {

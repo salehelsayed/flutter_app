@@ -131,40 +131,40 @@ void main() {
         expect(await dbLoadGroupRejoinStates(db), hasLength(1));
       });
 
+      test('G2: forceGroupRejoinEligible collapses next_eligible_at to 0 and '
+          'keeps the row + attempt count', () async {
+        // A stuck group: 11 failures (past the cap), backoff far in the future.
+        for (var i = 0; i < 11; i++) {
+          await dbRecordGroupRejoinFailure(
+            db,
+            'g1',
+            nextEligibleAtMs: 9999999999999,
+          );
+        }
+        final before = (await dbLoadGroupRejoinStates(db)).single;
+        expect(before['rejoin_attempt_count'], 11);
+        expect(before['next_eligible_at'], 9999999999999);
+
+        await dbForceGroupRejoinEligible(db, 'g1');
+
+        final after = (await dbLoadGroupRejoinStates(db)).single;
+        // Row + attempt count preserved (no auto-delete), backoff collapsed so
+        // the next rejoin pass (which gates only on next_eligible_at) retries.
+        expect(after['group_id'], 'g1');
+        expect(after['rejoin_attempt_count'], 11);
+        expect(after['next_eligible_at'], 0);
+      });
+
       test(
-        'G2: forceGroupRejoinEligible collapses next_eligible_at to 0 and '
-        'keeps the row + attempt count',
+        'G2: forceGroupRejoinEligible on an absent group is a no-op',
         () async {
-          // A stuck group: 11 failures (past the cap), backoff far in the future.
-          for (var i = 0; i < 11; i++) {
-            await dbRecordGroupRejoinFailure(
-              db,
-              'g1',
-              nextEligibleAtMs: 9999999999999,
-            );
-          }
-          final before = (await dbLoadGroupRejoinStates(db)).single;
-          expect(before['rejoin_attempt_count'], 11);
-          expect(before['next_eligible_at'], 9999999999999);
-
-          await dbForceGroupRejoinEligible(db, 'g1');
-
-          final after = (await dbLoadGroupRejoinStates(db)).single;
-          // Row + attempt count preserved (no auto-delete), backoff collapsed so
-          // the next rejoin pass (which gates only on next_eligible_at) retries.
-          expect(after['group_id'], 'g1');
-          expect(after['rejoin_attempt_count'], 11);
-          expect(after['next_eligible_at'], 0);
+          await dbRecordGroupRejoinFailure(db, 'g1', nextEligibleAtMs: 1000);
+          await dbForceGroupRejoinEligible(db, 'missing');
+          final rows = await dbLoadGroupRejoinStates(db);
+          expect(rows, hasLength(1));
+          expect(rows.single['next_eligible_at'], 1000);
         },
       );
-
-      test('G2: forceGroupRejoinEligible on an absent group is a no-op', () async {
-        await dbRecordGroupRejoinFailure(db, 'g1', nextEligibleAtMs: 1000);
-        await dbForceGroupRejoinEligible(db, 'missing');
-        final rows = await dbLoadGroupRejoinStates(db);
-        expect(rows, hasLength(1));
-        expect(rows.single['next_eligible_at'], 1000);
-      });
 
       test(
         'next_eligible_at persists the exact epoch-ms (UTC DateTime round-trip)',
@@ -185,6 +185,44 @@ void main() {
           expect(DateTime.fromMillisecondsSinceEpoch(stored, isUtc: true), dt);
         },
       );
+    },
+  );
+
+  test(
+    'v102 rejoin upsert and force-eligible require an active parent',
+    () async {
+      await db.execute('''
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY,
+  self_removed_at TEXT
+)
+''');
+      await db.insert('groups', {'id': 'active', 'self_removed_at': null});
+      await db.insert('groups', {
+        'id': 'marked',
+        'self_removed_at': '2026-07-20T10:00:00.000Z',
+      });
+
+      await dbRecordGroupRejoinFailure(db, 'active', nextEligibleAtMs: 1000);
+      await dbRecordGroupRejoinFailure(db, 'active', nextEligibleAtMs: 2000);
+      await dbRecordGroupRejoinFailure(db, 'marked', nextEligibleAtMs: 3000);
+      await dbRecordGroupRejoinFailure(db, 'absent', nextEligibleAtMs: 4000);
+
+      final rows = await dbLoadGroupRejoinStates(db);
+      expect(rows, hasLength(1));
+      expect(rows.single['group_id'], 'active');
+      expect(rows.single['rejoin_attempt_count'], 2);
+      expect(rows.single['next_eligible_at'], 2000);
+
+      await dbForceGroupRejoinEligible(db, 'active');
+      expect((await dbLoadGroupRejoinStates(db)).single['next_eligible_at'], 0);
+      await db.update(
+        'groups',
+        {'self_removed_at': '2026-07-20T10:01:00.000Z'},
+        where: 'id = ?',
+        whereArgs: ['active'],
+      );
+      expect(await dbLoadGroupRejoinStates(db), isEmpty);
     },
   );
 }

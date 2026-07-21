@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -146,11 +150,12 @@ GroupInvitePayload _makePayload({
   String? recipientKeyPackagePublicMaterial,
   DateTime? membershipProofIssuedAt,
   DateTime? membershipProofExpiresAt,
+  DateTime? invitePolicyExpiresAt,
   String? membershipWatermark,
 }) {
   final issuedAtUtc = (membershipProofIssuedAt ?? DateTime.now().toUtc())
       .toUtc();
-  final policyExpiresAt = DateTime.utc(2099, 3, 9, 12);
+  final policyExpiresAt = invitePolicyExpiresAt ?? DateTime.utc(2099, 3, 9, 12);
   final allowedDevices = <String>[];
   if (recipientDeviceId != null) {
     allowedDevices.add(recipientDeviceId);
@@ -347,6 +352,75 @@ class _GenericFailJoinBridge extends FakeBridge {
     }
 
     return super.send(message);
+  }
+}
+
+class _GateableJoinBridge extends FakeBridge {
+  final Completer<void> joinStarted = Completer<void>();
+  final Completer<void> _releaseJoin = Completer<void>();
+
+  void releaseJoin() {
+    if (!_releaseJoin.isCompleted) {
+      _releaseJoin.complete();
+    }
+  }
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:join') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      if (!joinStarted.isCompleted) {
+        joinStarted.complete();
+      }
+      await _releaseJoin.future;
+      return jsonEncode({'ok': true});
+    }
+    return super.send(message);
+  }
+}
+
+class _GateableShellDeleteRepository extends InMemoryGroupRepository {
+  final Completer<void> deleteEntered = Completer<void>();
+  final Completer<void> _releaseDelete = Completer<void>();
+
+  void releaseDelete() {
+    if (!_releaseDelete.isCompleted) {
+      _releaseDelete.complete();
+    }
+  }
+
+  @override
+  Future<SelfRemovedShellMediaBatch> loadSelfRemovedShellMediaParents({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required int limit,
+  }) async {
+    if (!deleteEntered.isCompleted) {
+      deleteEntered.complete();
+    }
+    await _releaseDelete.future;
+    return super.loadSelfRemovedShellMediaParents(
+      expected: expected,
+      limit: limit,
+    );
+  }
+}
+
+class _ExpiryBarrierRepository extends InMemoryGroupRepository {
+  final Completer<void> preLockSelfCheckDone = Completer<void>();
+
+  @override
+  Future<GroupMember?> getMember(String groupId, String peerId) async {
+    final member = await super.getMember(groupId, peerId);
+    if (!preLockSelfCheckDone.isCompleted) {
+      preLockSelfCheckDone.complete();
+    }
+    return member;
   }
 }
 
@@ -656,6 +730,7 @@ void main() {
         // B3 retains a removed member's group read-only (self absent, keyless)
         // instead of hard-deleting it. A fresh re-add invite must RE-JOIN
         // (re-materialize), not be rejected as a duplicate.
+        final removedAt = DateTime.utc(2026, 7, 19, 10);
         final retainedShell = GroupModel(
           id: 'grp-abc123',
           name: 'Original Name',
@@ -664,6 +739,9 @@ void main() {
           createdAt: DateTime.utc(2026, 1, 1),
           createdBy: '12D3KooWAlice',
           myRole: GroupRole.member,
+          selfRemovedAt: removedAt,
+          lastMembershipEventAt: removedAt,
+          lastMembershipEventId: 'remove-grp-abc123',
         );
         await groupRepo.saveGroup(retainedShell);
         // Only the admin remains; self ('12D3KooWBob') is absent (removed).
@@ -677,8 +755,12 @@ void main() {
           ),
         );
 
+        final payload = _makePayload(
+          membershipWatermark: DateTime.utc(2026, 7, 20, 11).toIso8601String(),
+          membershipProofIssuedAt: DateTime.utc(2026, 7, 20, 12),
+        );
         final (result, _) = await handleIncomingGroupInvite(
-          message: _makeV1Message(),
+          message: _makeV1Message(payload: payload),
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
@@ -689,6 +771,445 @@ void main() {
         expect(result, equals(HandleGroupInviteResult.success));
         expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
         expect(bridge.commandLog, contains('group:join'));
+      },
+    );
+
+    test(
+      'accepted re-invite atomically restores group self and key under a newer local watermark',
+      () async {
+        final removedAt = DateTime.utc(2026, 7, 20, 10);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-atomic-reentry',
+            name: 'Retained history',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-atomic-reentry',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+            lastMembershipEventId: 'remove-atomic',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-atomic-reentry',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+
+        final issuedAt = DateTime.utc(2026, 7, 20, 12);
+        final payload = _makePayload(
+          groupId: 'grp-atomic-reentry',
+          membershipWatermark: removedAt.toIso8601String(),
+          membershipProofIssuedAt: issuedAt,
+        );
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, HandleGroupInviteResult.success);
+        expect(groupId, 'grp-atomic-reentry');
+        final accepted = await groupRepo.getGroup('grp-atomic-reentry');
+        expect(accepted?.selfRemovedAt, isNull);
+        expect(accepted?.lastMembershipEventAt, issuedAt);
+        expect(accepted?.lastMembershipEventId, isNull);
+        expect(
+          await groupRepo.getMember('grp-atomic-reentry', '12D3KooWBob'),
+          isNotNull,
+        );
+        expect(
+          (await groupRepo.getMember(
+            'grp-atomic-reentry',
+            '12D3KooWBob',
+          ))?.joinedAt,
+          issuedAt,
+        );
+        expect(await groupRepo.getLatestKey('grp-atomic-reentry'), isNotNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:join'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'accepted re-invite refuses same self joinedAt at retained removal authority',
+      () async {
+        const groupId = 'grp-stale-self-generation';
+        const selfPeerId = '12D3KooWBob';
+        final removedAt = DateTime.utc(2026, 7, 20, 10);
+        final membershipAuthorityAt = removedAt.add(const Duration(hours: 1));
+        final issuedAt = removedAt.add(const Duration(hours: 2));
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Retained history',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: membershipAuthorityAt,
+            lastMembershipEventId: 'remove-stale-generation',
+          ),
+        );
+        final staleConfig = <String, dynamic>{
+          ..._testGroupConfig,
+          'members': [
+            for (final raw in _testGroupConfig['members']! as List<Object?>)
+              <String, Object?>{
+                ...Map<String, Object?>.from(raw! as Map),
+                if ((raw as Map)['peerId'] == selfPeerId)
+                  'joinedAt': membershipAuthorityAt.toIso8601String(),
+              },
+          ],
+        };
+        final payload = _makePayload(
+          groupId: groupId,
+          groupConfig: staleConfig,
+          membershipWatermark: removedAt.toIso8601String(),
+          membershipProofIssuedAt: issuedAt,
+        );
+
+        final (result, acceptedId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: selfPeerId,
+          now: issuedAt,
+        );
+
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(acceptedId, isNull);
+        final preserved = await groupRepo.getGroup(groupId);
+        expect(preserved?.selfRemovedAt, removedAt);
+        expect(await groupRepo.getMember(groupId, selfPeerId), isNull);
+        expect(await groupRepo.getLatestKey(groupId), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'accepted re-invite revalidates expiry after waiting for the membership phase',
+      () async {
+        const groupId = 'grp-expiry-after-lock';
+        const selfPeerId = '12D3KooWBob';
+        final removedAt = DateTime.utc(2026, 7, 20, 10);
+        final repository = _ExpiryBarrierRepository();
+        await repository.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Retained history',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+            lastMembershipEventId: 'remove-expiry',
+          ),
+        );
+        final issuedAt = DateTime.utc(2026, 7, 20, 12);
+        final expiresAt = issuedAt.add(const Duration(minutes: 5));
+        final payload = _makePayload(
+          groupId: groupId,
+          membershipWatermark: removedAt.toIso8601String(),
+          membershipProofIssuedAt: issuedAt,
+          membershipProofExpiresAt: expiresAt,
+          invitePolicyExpiresAt: expiresAt,
+        );
+        var clock = expiresAt.subtract(const Duration(seconds: 1));
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final blockingPhase = runGroupMembershipMutationLocked<void>(
+          groupId: groupId,
+          action: () async {
+            entered.complete();
+            await release.future;
+          },
+        );
+        await entered.future;
+
+        final materialization = materializeAcceptedGroupInvitePayload(
+          payload: payload,
+          groupRepo: repository,
+          bridge: bridge,
+          ownPeerId: selfPeerId,
+          validationNowUtc: () => clock,
+        );
+        await repository.preLockSelfCheckDone.future;
+        clock = expiresAt.add(const Duration(microseconds: 1));
+        release.complete();
+
+        final (result, acceptedId) = await materialization;
+        await blockingPhase;
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(acceptedId, isNull);
+        expect((await repository.getGroup(groupId))?.selfRemovedAt, removedAt);
+        expect(await repository.getLatestKey(groupId), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'deleted-shell re-entry enforces retained removal freshness floor',
+      () async {
+        const groupId = 'grp-deleted-floor';
+        const selfPeerId = '12D3KooWBob';
+        final removedAt = DateTime.utc(2026, 7, 20, 10);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Deleted shell',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+            lastMembershipEventId: 'remove-floor',
+          ),
+        );
+        final authority = await groupRepo.loadSelfRemovedShellAuthority(
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+        );
+        await groupRepo.appendSelfRemovedShellFreshnessFloor(
+          expected: authority,
+        );
+        await groupRepo.deleteGroup(groupId);
+
+        for (final candidate in <DateTime>[
+          removedAt.subtract(const Duration(seconds: 1)),
+          removedAt,
+        ]) {
+          final payload = _makePayload(
+            groupId: groupId,
+            membershipWatermark: candidate.toIso8601String(),
+            membershipProofIssuedAt: candidate,
+          );
+          final (result, acceptedId) = await handleIncomingGroupInvite(
+            message: _makeV1Message(payload: payload),
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownPeerId: selfPeerId,
+          );
+          expect(result, HandleGroupInviteResult.invalidPayload);
+          expect(acceptedId, isNull);
+          expect(await groupRepo.getGroup(groupId), isNull);
+        }
+        expect(bridge.commandLog, isNot(contains('group:join')));
+
+        final laterIssuedAt = removedAt.add(const Duration(hours: 1));
+        final newer = _makePayload(
+          groupId: groupId,
+          membershipWatermark: removedAt.toIso8601String(),
+          membershipProofIssuedAt: laterIssuedAt,
+        );
+        final (result, acceptedId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: newer),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: selfPeerId,
+        );
+        expect(result, HandleGroupInviteResult.success);
+        expect(acceptedId, groupId);
+        expect(
+          (await groupRepo.getGroup(groupId))?.lastMembershipEventAt,
+          laterIssuedAt,
+        );
+      },
+    );
+
+    test(
+      'accepted re-invite and removed-shell delete serialize so later authority transition wins',
+      () async {
+        const selfPeerId = '12D3KooWBob';
+
+        Future<void> seedRemovedShell(
+          InMemoryGroupRepository repository, {
+          required String groupId,
+          required DateTime removedAt,
+        }) async {
+          await repository.saveGroup(
+            GroupModel(
+              id: groupId,
+              name: 'Retained shell',
+              type: GroupType.chat,
+              topicName: '/mknoon/group/$groupId',
+              createdAt: DateTime.utc(2026, 1, 1),
+              createdBy: '12D3KooWAlice',
+              myRole: GroupRole.member,
+              selfRemovedAt: removedAt,
+              lastMembershipEventAt: removedAt,
+              lastMembershipEventId: 'remove-$groupId',
+            ),
+          );
+          await repository.saveMember(
+            GroupMember(
+              groupId: groupId,
+              peerId: '12D3KooWAlice',
+              username: 'Alice',
+              role: MemberRole.admin,
+              joinedAt: DateTime.utc(2026, 1, 1),
+            ),
+          );
+        }
+
+        DeleteSelfRemovedGroupShellUseCase cleanup(
+          SelfRemovedGroupShellRepository repository,
+        ) => DeleteSelfRemovedGroupShellUseCase(
+          repository: repository,
+          prepareMedia:
+              ({
+                required String groupId,
+                required String messageId,
+                required String operationId,
+              }) async => const GroupMediaDeletePrepareResult(
+                GroupMediaDeletePrepareOutcome.parentMissing,
+              ),
+          runMediaReconciler: () async {},
+          snapshotAvatarPath: (_) async => null,
+          deleteAvatar: (_) async {},
+          operationIdFactory: () => 'tc11-cleanup-operation',
+        );
+
+        // Delete owns the phase first. Acceptance sees only the durable
+        // absent+floor state after purge, then commits its newer signed tuple.
+        const deleteFirstGroupId = 'grp-race-delete-first';
+        final deleteFirstRemovedAt = DateTime.utc(2026, 7, 20, 10);
+        final deleteFirstAcceptedAt = deleteFirstRemovedAt.add(
+          const Duration(minutes: 1),
+        );
+        final deleteFirstRepository = _GateableShellDeleteRepository();
+        groupRepo = deleteFirstRepository;
+        await seedRemovedShell(
+          deleteFirstRepository,
+          groupId: deleteFirstGroupId,
+          removedAt: deleteFirstRemovedAt,
+        );
+        final deleteFirst = cleanup(
+          deleteFirstRepository,
+        ).call(groupId: deleteFirstGroupId, selfPeerId: selfPeerId);
+        await deleteFirstRepository.deleteEntered.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        bridge = FakeBridge();
+        final acceptAfterDelete = handleIncomingGroupInvite(
+          message: _makeV1Message(
+            payload: _makePayload(
+              groupId: deleteFirstGroupId,
+              membershipWatermark: deleteFirstRemovedAt.toIso8601String(),
+              membershipProofIssuedAt: deleteFirstAcceptedAt,
+            ),
+          ),
+          groupRepo: deleteFirstRepository,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: selfPeerId,
+          now: deleteFirstAcceptedAt,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(bridge.commandLog, isNot(contains('group:join')));
+
+        deleteFirstRepository.releaseDelete();
+        expect(await deleteFirst, DeleteSelfRemovedGroupShellResult.deleted);
+        final deleteFirstAccepted = await acceptAfterDelete;
+        expect(deleteFirstAccepted.$1, HandleGroupInviteResult.success);
+        expect(deleteFirstAccepted.$2, deleteFirstGroupId);
+        expect(
+          (await deleteFirstRepository.getGroup(
+            deleteFirstGroupId,
+          ))?.lastMembershipEventAt,
+          deleteFirstAcceptedAt,
+        );
+        expect(
+          await deleteFirstRepository.getMember(deleteFirstGroupId, selfPeerId),
+          isNotNull,
+        );
+        expect(
+          await deleteFirstRepository.getLatestKey(deleteFirstGroupId),
+          isNotNull,
+        );
+
+        // Acceptance owns the phase first and holds it through native join.
+        // A queued cleanup re-reads the now-active membership and refuses its
+        // stale marked-shell delete authority.
+        const acceptFirstGroupId = 'grp-race-accept-first';
+        final acceptFirstRemovedAt = DateTime.utc(2026, 7, 20, 11);
+        final acceptFirstAcceptedAt = acceptFirstRemovedAt.add(
+          const Duration(minutes: 1),
+        );
+        final acceptFirstRepository = InMemoryGroupRepository();
+        groupRepo = acceptFirstRepository;
+        await seedRemovedShell(
+          acceptFirstRepository,
+          groupId: acceptFirstGroupId,
+          removedAt: acceptFirstRemovedAt,
+        );
+        final gateableJoinBridge = _GateableJoinBridge();
+        bridge = gateableJoinBridge;
+        final acceptFirst = handleIncomingGroupInvite(
+          message: _makeV1Message(
+            payload: _makePayload(
+              groupId: acceptFirstGroupId,
+              membershipWatermark: acceptFirstRemovedAt.toIso8601String(),
+              membershipProofIssuedAt: acceptFirstAcceptedAt,
+            ),
+          ),
+          groupRepo: acceptFirstRepository,
+          contactRepo: contactRepo,
+          bridge: gateableJoinBridge,
+          ownPeerId: selfPeerId,
+          now: acceptFirstAcceptedAt,
+        );
+        await gateableJoinBridge.joinStarted.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        var deleteAfterAcceptCompleted = false;
+        final deleteAfterAccept = cleanup(acceptFirstRepository)
+            .call(groupId: acceptFirstGroupId, selfPeerId: selfPeerId)
+            .whenComplete(() => deleteAfterAcceptCompleted = true);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(deleteAfterAcceptCompleted, isFalse);
+
+        gateableJoinBridge.releaseJoin();
+        final acceptFirstResult = await acceptFirst;
+        expect(acceptFirstResult.$1, HandleGroupInviteResult.success);
+        expect(
+          await deleteAfterAccept,
+          DeleteSelfRemovedGroupShellResult.refusedStateChanged,
+        );
+        final acceptedGroup = await acceptFirstRepository.getGroup(
+          acceptFirstGroupId,
+        );
+        expect(acceptedGroup?.selfRemovedAt, isNull);
+        expect(acceptedGroup?.lastMembershipEventAt, acceptFirstAcceptedAt);
+        expect(
+          await acceptFirstRepository.getMember(acceptFirstGroupId, selfPeerId),
+          isNotNull,
+        );
+        expect(
+          await acceptFirstRepository.getLatestKey(acceptFirstGroupId),
+          isNotNull,
+        );
       },
     );
 

@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
 
 /// Host (sqflite_common_ffi) real-DB coverage for the Finding 05 Phase 4 per-row
@@ -27,6 +28,7 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
+    await runGroupMessageReliabilityColumnsMigration(db);
     await runGroupMessageRetryBackoffColumnsMigration(db);
   });
 
@@ -40,6 +42,8 @@ void main() {
     int isIncoming = 0,
     int? nextEligibleAt,
     String text = 'body',
+    String? wireEnvelope,
+    String? inboxRetryPayload,
   }) async {
     await db.insert('group_messages', {
       'id': id,
@@ -51,6 +55,8 @@ void main() {
       'is_incoming': isIncoming,
       'created_at': '2026-06-17T12:00:00.000Z',
       'next_eligible_at': nextEligibleAt,
+      'wire_envelope': wireEnvelope,
+      'inbox_retry_payload': inboxRetryPayload,
     });
   }
 
@@ -195,6 +201,7 @@ void main() {
         'terminal',
         status: 'send_failed',
         nextEligibleAt: 5000,
+        wireEnvelope: '{"type":"group_message"}',
       );
       await db.rawUpdate(
         'UPDATE group_messages SET retry_attempt_count = 12 WHERE id = ?',
@@ -208,6 +215,24 @@ void main() {
       expect(r['retry_attempt_count'], 0);
       expect(r['next_eligible_at'], isNull);
     });
+
+    test(
+      'leaves a terminal row without durable retry evidence non-rearmable',
+      () async {
+        await insertOutgoing(
+          'terminal-without-evidence',
+          status: 'send_failed',
+          nextEligibleAt: 5000,
+        );
+
+        await dbResetGroupMessageRetryState(db, 'terminal-without-evidence');
+
+        final r = await row('terminal-without-evidence');
+        expect(r['status'], 'send_failed');
+        expect(r['retry_attempt_count'], 0);
+        expect(r['next_eligible_at'], 5000);
+      },
+    );
 
     test('is a no-op for a non-terminal row', () async {
       await insertOutgoing('plain', status: 'failed');

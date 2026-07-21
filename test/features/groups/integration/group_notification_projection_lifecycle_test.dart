@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
@@ -214,6 +215,79 @@ void main() {
       expect(await projection.readAuthoredTargets(), isEmpty);
       expect(await projection.readReactionComparands(), isEmpty);
       await projection.removeGroup('group-1');
+      expect((await projection.readContexts())['groups'], isEmpty);
+    },
+  );
+
+  test(
+    'accepted context replacement publishes group roster and key in one strict document write',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: 'self-device',
+        transportPeerId: 'self-transport',
+      );
+      await projection.upsertGroup(group(name: 'Removed generation'));
+      await projection.removeGroupStrict('group-1');
+      store.writeKeys.clear();
+
+      await projection.replaceAcceptedGroupContextStrict(
+        group: group(name: 'Accepted generation', muted: true),
+        members: <GroupMember>[
+          member(
+            peerId: oldAccount,
+            username: 'Local Account',
+            deviceId: 'self-device',
+            transportPeerId: 'self-transport',
+          ),
+          member(peerId: 'peer-alice', username: 'Alice'),
+        ],
+        key: GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 9,
+          encryptedKey: 'must-not-be-projected',
+          createdAt: now,
+        ),
+      );
+
+      expect(store.writeKeys, <String>[sharedGroupReactionContextsKey]);
+      final projected =
+          ((await projection.readContexts())['groups']!
+                  as Map<String, Object?>)['group-1']!
+              as Map<String, Object?>;
+      expect(projected['name'], 'Accepted generation');
+      expect(projected['muted'], isTrue);
+      expect(projected['keyEpoch'], 9);
+      expect(
+        (projected['members']! as Map<String, Object?>).keys,
+        containsAll(<String>[oldAccount, 'peer-alice']),
+      );
+      expect(
+        store.values.values.join('\n'),
+        isNot(contains('must-not-be-projected')),
+      );
+
+      await projection.removeGroupStrict('group-1');
+      store.writeKeys.clear();
+      store.failNextWriteKeys.add(sharedGroupReactionContextsKey);
+      await expectLater(
+        projection.replaceAcceptedGroupContextStrict(
+          group: group(name: 'Must fail'),
+          members: <GroupMember>[
+            member(peerId: oldAccount, username: 'Local Account'),
+          ],
+          key: GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 10,
+            encryptedKey: 'private',
+            createdAt: now,
+          ),
+        ),
+        throwsStateError,
+      );
+      expect(store.writeKeys, <String>[sharedGroupReactionContextsKey]);
       expect((await projection.readContexts())['groups'], isEmpty);
     },
   );
@@ -846,6 +920,216 @@ void main() {
   );
 
   test(
+    'authored targets and paused backfills cannot outlive terminal group context',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: oldAccount,
+        transportPeerId: oldAccount,
+      );
+      final groupDb = _MemoryGroupPersistence();
+      final groupRepository = groupDb.repository(projection);
+      final messageDb = _MemoryGroupMessagePersistence();
+      final messageRepository = messageDb.repository(projection);
+      await groupRepository.saveGroup(group());
+      await messageRepository.saveMessage(target());
+      expect(await projection.readAuthoredTargets(), hasLength(1));
+
+      groupDb.armGroupLoadBarrier();
+      final groupBackfill = groupRepository
+          .mirrorAllGroupReactionNotificationContexts();
+      await groupDb.groupLoadCaptured.future;
+      final terminalRemoval = projection.removeGroupStrict('group-1');
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          (await projection.readContexts())['groups'],
+          contains('group-1'),
+          reason: 'terminal removal queues behind the launch snapshot',
+        );
+      } finally {
+        groupDb.releaseGroupLoad();
+      }
+      await Future.wait<void>([groupBackfill, terminalRemoval]);
+      expect((await projection.readContexts())['groups'], isEmpty);
+      expect(await projection.readAuthoredTargets(), isEmpty);
+
+      messageDb.armAuthoredLoadBarrier();
+      final targetBackfill = messageRepository
+          .mirrorAllGroupReactionAuthoredTargets();
+      await messageDb.authoredLoadCaptured.future;
+      messageDb.releaseAuthoredLoad();
+      await targetBackfill;
+      await projection.upsertAuthoredTarget(target(id: 'late-target'));
+
+      expect((await projection.readContexts())['groups'], isEmpty);
+      expect(await projection.readAuthoredTargets(), isEmpty);
+      expect(store.values.values.join('\n'), isNot(contains('group-1')));
+
+      // A later authenticated membership restoration republishes the group
+      // before its authored targets, re-establishing projection authority.
+      await projection.upsertGroup(group(name: 'Reaccepted'));
+      await projection.upsertAuthoredTarget(target(id: 'accepted-target'));
+      expect(
+        (await projection.readAuthoredTargets()).single['id'],
+        'accepted-target',
+      );
+    },
+  );
+
+  test(
+    'launch snapshot queued before removal and accepted re-entry cannot overwrite accepted context',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: oldAccount,
+        transportPeerId: oldAccount,
+      );
+      final groupDb = _MemoryGroupPersistence();
+      final repository = groupDb.repository(projection);
+      await repository.saveGroup(group(name: 'Old authority'));
+      await repository.saveMember(
+        member(peerId: oldAccount, username: 'Old Local'),
+      );
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'old-private',
+          createdAt: now,
+        ),
+      );
+
+      groupDb.armGroupLoadBarrier();
+      final backfill = repository.mirrorAllGroupReactionNotificationContexts();
+      await groupDb.groupLoadCaptured.future;
+
+      var removalCompleted = false;
+      final removal = projection
+          .removeGroupStrict('group-1')
+          .whenComplete(() => removalCompleted = true);
+
+      final acceptedGroup = group(name: 'Accepted authority');
+      final acceptedMember = member(
+        peerId: oldAccount,
+        username: 'Accepted Local',
+        deviceId: 'accepted-device',
+        transportPeerId: 'accepted-transport',
+      );
+      final acceptedKey = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 12,
+        encryptedKey: 'accepted-private',
+        createdAt: now.add(const Duration(minutes: 1)),
+      );
+      groupDb.groups['group-1'] = acceptedGroup.toMap();
+      groupDb.members['group-1:$oldAccount'] = acceptedMember.toMap();
+      groupDb.keys['group-1:12'] = acceptedKey.toMap();
+
+      var acceptedCompleted = false;
+      final accepted = projection
+          .replaceAcceptedGroupContextStrict(
+            group: acceptedGroup,
+            members: <GroupMember>[acceptedMember],
+            key: acceptedKey,
+          )
+          .whenComplete(() => acceptedCompleted = true);
+
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          removalCompleted,
+          isFalse,
+          reason: 'terminal removal queues behind the launch snapshot',
+        );
+        expect(
+          acceptedCompleted,
+          isFalse,
+          reason: 'accepted replacement queues behind terminal removal',
+        );
+      } finally {
+        groupDb.releaseGroupLoad();
+      }
+
+      await Future.wait<void>([backfill, removal, accepted]);
+      final projected =
+          ((await projection.readContexts())['groups']!
+                  as Map<String, Object?>)['group-1']!
+              as Map<String, Object?>;
+      expect(projected['name'], 'Accepted authority');
+      expect(projected['keyEpoch'], 12);
+      final projectedMembers = projected['members']! as Map<String, Object?>;
+      expect(
+        (projectedMembers[oldAccount]! as Map<String, Object?>)['username'],
+        'Accepted Local',
+      );
+    },
+  );
+
+  test(
+    'authored target snapshot queued before removal and accepted re-entry cannot restore an old target',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: oldAccount,
+        transportPeerId: oldAccount,
+      );
+      await projection.upsertGroup(group(name: 'Old authority'));
+      final messageDb = _MemoryGroupMessagePersistence();
+      final repository = messageDb.repository(projection);
+      await repository.saveMessage(target(id: 'old-target'));
+
+      messageDb.armAuthoredLoadBarrier();
+      final backfill = repository.mirrorAllGroupReactionAuthoredTargets();
+      await messageDb.authoredLoadCaptured.future;
+      messageDb.messages.remove('old-target');
+
+      var removalCompleted = false;
+      final removal = projection
+          .removeGroupStrict('group-1')
+          .whenComplete(() => removalCompleted = true);
+      var acceptedCompleted = false;
+      final accepted = projection
+          .replaceAcceptedGroupContextStrict(
+            group: group(name: 'Accepted authority'),
+            members: <GroupMember>[
+              member(peerId: oldAccount, username: 'Accepted Local'),
+            ],
+            key: GroupKeyInfo(
+              groupId: 'group-1',
+              keyGeneration: 12,
+              encryptedKey: 'accepted-private',
+              createdAt: now.add(const Duration(minutes: 1)),
+            ),
+          )
+          .whenComplete(() => acceptedCompleted = true);
+
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(removalCompleted, isFalse);
+        expect(acceptedCompleted, isFalse);
+      } finally {
+        messageDb.releaseAuthoredLoad();
+      }
+
+      await Future.wait<void>([backfill, removal, accepted]);
+      expect(await projection.readAuthoredTargets(), isEmpty);
+
+      await projection.upsertAuthoredTarget(target(id: 'accepted-target'));
+      expect(
+        (await projection.readAuthoredTargets()).map((row) => row['id']),
+        <String?>['accepted-target'],
+      );
+    },
+  );
+
+  test(
     'inbox transaction projects after commit but never after rollback',
     () async {
       final store = _MemorySecureKeyStore();
@@ -855,6 +1139,7 @@ void main() {
         deviceId: oldAccount,
         transportPeerId: oldAccount,
       );
+      await projection.upsertGroup(group());
       final messageDb = _MemoryGroupMessagePersistence();
       final repository = messageDb.repository(
         projection,
@@ -1015,6 +1300,7 @@ void main() {
 
 class _MemorySecureKeyStore implements SecureKeyStore {
   final Map<String, String> values = <String, String>{};
+  final List<String> writeKeys = <String>[];
   bool failWrites = false;
   int failNextWrites = 0;
   final Set<String> failNextWriteKeys = <String>{};
@@ -1033,6 +1319,7 @@ class _MemorySecureKeyStore implements SecureKeyStore {
 
   @override
   Future<void> write(String key, String value) async {
+    writeKeys.add(key);
     if (failWrites || failNextWrites > 0 || failNextWriteKeys.remove(key)) {
       if (failNextWrites > 0) failNextWrites--;
       throw StateError('injected projection failure');
@@ -1049,6 +1336,17 @@ class _MemoryGroupPersistence {
   final Map<String, Map<String, Object?>> keys =
       <String, Map<String, Object?>>{};
   bool failNextGroupWrite = false;
+  Completer<void> groupLoadCaptured = Completer<void>();
+  Completer<void> _releaseGroupLoad = Completer<void>()..complete();
+
+  void armGroupLoadBarrier() {
+    groupLoadCaptured = Completer<void>();
+    _releaseGroupLoad = Completer<void>();
+  }
+
+  void releaseGroupLoad() {
+    if (!_releaseGroupLoad.isCompleted) _releaseGroupLoad.complete();
+  }
 
   GroupRepositoryImpl repository(
     GroupReactionNotificationProjection projection,
@@ -1060,7 +1358,14 @@ class _MemoryGroupPersistence {
       }
       groups[row['id']! as String] = Map<String, Object?>.from(row);
     },
-    dbLoadAllGroups: () async => groups.values.toList(growable: false),
+    dbLoadAllGroups: () async {
+      final snapshot = groups.values
+          .map(Map<String, Object?>.from)
+          .toList(growable: false);
+      if (!groupLoadCaptured.isCompleted) groupLoadCaptured.complete();
+      await _releaseGroupLoad.future;
+      return snapshot;
+    },
     dbLoadGroup: (id) async => groups[id],
     dbUpdateGroup: (row) async =>
         groups[row['id']! as String] = Map<String, Object?>.from(row),
@@ -1131,6 +1436,17 @@ class _MemoryGroupMessagePersistence {
       <String, Map<String, Object?>>{};
   bool skipNextInsert = false;
   bool failNextTransaction = false;
+  Completer<void> authoredLoadCaptured = Completer<void>();
+  Completer<void> _releaseAuthoredLoad = Completer<void>()..complete();
+
+  void armAuthoredLoadBarrier() {
+    authoredLoadCaptured = Completer<void>();
+    _releaseAuthoredLoad = Completer<void>();
+  }
+
+  void releaseAuthoredLoad() {
+    if (!_releaseAuthoredLoad.isCompleted) _releaseAuthoredLoad.complete();
+  }
 
   GroupMessageRepositoryImpl repository(
     GroupReactionNotificationProjection? projection, {
@@ -1139,9 +1455,10 @@ class _MemoryGroupMessagePersistence {
     dbInsertGroupMessage: (row) async {
       if (skipNextInsert) {
         skipNextInsert = false;
-        return;
+        return false;
       }
       messages[row['id']! as String] = Map<String, Object?>.from(row);
+      return true;
     },
     dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) async =>
         messages.values
@@ -1208,9 +1525,17 @@ class _MemoryGroupMessagePersistence {
         : null,
     groupReactionProjection: projection,
     dbLoadAuthoredGroupMessagesForProjectionFn:
-        (accountPeerId, {limit = 256}) async => messages.values
-            .where((row) => row['sender_peer_id'] == accountPeerId)
-            .take(limit)
-            .toList(growable: false),
+        (accountPeerId, {limit = 256}) async {
+          final snapshot = messages.values
+              .where((row) => row['sender_peer_id'] == accountPeerId)
+              .take(limit)
+              .map(Map<String, Object?>.from)
+              .toList(growable: false);
+          if (!authoredLoadCaptured.isCompleted) {
+            authoredLoadCaptured.complete();
+          }
+          await _releaseAuthoredLoad.future;
+          return snapshot;
+        },
   );
 }

@@ -629,6 +629,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'You left the group, but its local history could not be fully removed.';
 
   @override
+  String get group_removed_delete_title =>
+      'Delete this group from this device?';
+
+  @override
+  String get group_removed_delete_body =>
+      'This deletes the retained messages from this device only. You will not leave or notify the group.';
+
+  @override
+  String get group_removed_delete_action => 'Delete from Device';
+
+  @override
+  String get group_removed_delete_failed =>
+      'Couldn’t delete this group from this device. Try again.';
+
+  @override
   String get conversation_hint => 'Write something...';
 
   @override

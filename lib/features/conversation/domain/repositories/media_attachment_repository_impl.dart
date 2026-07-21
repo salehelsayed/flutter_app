@@ -317,6 +317,12 @@ class MediaAttachmentRepositoryImpl
     required String groupId,
   })?
   dbSaveGroupMediaAttachmentGuarded;
+  final Future<bool> Function({
+    required Map<String, Object?> expectedParent,
+    required Map<String, Object?> expectedAttachment,
+    required Map<String, Object?> completedAttachment,
+  })?
+  dbCompleteGroupUploadRetryExact;
 
   final SecureKeyStore? secureKeyStore;
   final Future<void> Function(String messageId)?
@@ -378,6 +384,7 @@ class MediaAttachmentRepositoryImpl
     this.dbCanCleanupGroupPrivateMediaAttachmentExact,
     this.dbDeleteGroupPrivateMediaAttachmentExact,
     this.dbSaveGroupMediaAttachmentGuarded,
+    this.dbCompleteGroupUploadRetryExact,
     this.secureKeyStore,
     this.refreshDirectPrivateMediaParent,
     MediaAttachmentLifecycleLock? lifecycleLock,
@@ -1350,6 +1357,51 @@ class MediaAttachmentRepositoryImpl
         );
       }
       return saved;
+    });
+  }
+
+  /// Commits one exact group upload retry without ever persisting its raw
+  /// encryption key in SQL. The secure-key write and the DB CAS form a
+  /// compensated saga under the attachment lifecycle lock: a refused/throwing
+  /// CAS restores the previous secure value (or removes the newly staged one).
+  Future<bool> completeGroupUploadRetrySecurely({
+    required Map<String, Object?> expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
+  }) async {
+    final complete = _requireCasClosure(
+      dbCompleteGroupUploadRetryExact,
+      'dbCompleteGroupUploadRetryExact',
+    );
+    if (expectedAttachment.id != completedAttachment.id ||
+        expectedAttachment.messageId != completedAttachment.messageId ||
+        expectedAttachment.ownerLane != MediaOwnerLane.group ||
+        completedAttachment.ownerLane != MediaOwnerLane.group ||
+        expectedAttachment.downloadStatus != 'upload_pending' ||
+        completedAttachment.downloadStatus != 'done' ||
+        isSecureStoreReference(completedAttachment.encryptionKeyBase64 ?? '')) {
+      return false;
+    }
+
+    return lifecycleLock.synchronized(completedAttachment.id, () async {
+      final committed = await _withCompensatedEncryptionKeyWrite<bool>(
+        completedAttachment,
+        (completedRow) => complete(
+          expectedParent: expectedParent,
+          expectedAttachment: expectedAttachment.toMap(),
+          completedAttachment: completedRow,
+        ),
+        committed: (result) => result,
+      );
+      if (committed) {
+        _emitAuthorizationChange(
+          owner: MediaOwnerLane.group,
+          messageId: completedAttachment.messageId,
+          attachmentId: completedAttachment.id,
+          kind: MediaAttachmentAuthorizationMutation.saved,
+        );
+      }
+      return committed;
     });
   }
 

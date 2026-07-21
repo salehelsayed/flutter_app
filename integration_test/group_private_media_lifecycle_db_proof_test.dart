@@ -84,7 +84,9 @@ void main() {
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
         expect(await _userVersion(db), 100);
-        expect(currentIdentityDatabaseVersion, 101);
+        // This historical proof deliberately opens through v101 below, but
+        // the production chain may have advanced beyond that allocation.
+        expect(currentIdentityDatabaseVersion, greaterThanOrEqualTo(101));
         expect(
           (await db.rawQuery(
             'PRAGMA cipher_version',

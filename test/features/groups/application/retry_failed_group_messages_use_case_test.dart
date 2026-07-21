@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -685,6 +686,116 @@ void main() {
         expect(saved!.status, 'sent');
         expect(saved.logicalDeliveryId, 'gfr001-logical-coalesce');
         expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+      },
+    );
+
+    test(
+      'PGC-010 action-first failed-text retry finishes before B3 commits',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        final gatedBridge = _Gfr001GatedPublishBridge()
+          ..responses['group:publish'] = {
+            'ok': true,
+            'messageId': 'pgc010-text-action-first',
+            'topicPeers': 1,
+          };
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'pgc010-text-action-first',
+            text: 'Finish this exact retry phase',
+            timestampIso: '2026-07-20T08:00:00.000Z',
+          ),
+        );
+
+        final retryFuture = retryFailedGroupMessage(
+          messageId: 'pgc010-text-action-first',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: gatedBridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        await gatedBridge.publishStarted.future;
+
+        var markerCommitted = false;
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20, 8, 1)),
+            );
+            markerCommitted = true;
+          },
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          markerCommitted,
+          isFalse,
+          reason: 'B3 must wait for publish and exact retry completion',
+        );
+
+        gatedBridge.publishGate.complete();
+        expect(await retryFuture, 1);
+        await markerFuture;
+        expect(markerCommitted, isTrue);
+        expect(
+          (await msgRepo.getMessage('pgc010-text-action-first'))!.status,
+          'sent',
+        );
+      },
+    );
+
+    test(
+      'PGC-010 B3-first membership phase stops failed-text retry dispatch',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'pgc010-text-b3-first',
+            text: 'Do not publish from the removed shell',
+            timestampIso: '2026-07-20T08:02:00.000Z',
+          ),
+        );
+
+        final markerMayFinish = Completer<void>();
+        final markerCommitted = Completer<void>();
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20, 8, 3)),
+            );
+            markerCommitted.complete();
+            await markerMayFinish.future;
+          },
+        );
+        await markerCommitted.future;
+
+        var retryCompleted = false;
+        final retryFuture = retryFailedGroupMessage(
+          messageId: 'pgc010-text-b3-first',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        ).whenComplete(() => retryCompleted = true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(retryCompleted, isFalse, reason: 'retry must queue behind B3');
+        expect(_publishedGroupPayloads(bridge), isEmpty);
+
+        markerMayFinish.complete();
+        await markerFuture;
+        expect(await retryFuture, 0);
+        expect(_publishedGroupPayloads(bridge), isEmpty);
+        expect(
+          (await msgRepo.getMessage('pgc010-text-b3-first'))!.status,
+          'failed',
+        );
       },
     );
 

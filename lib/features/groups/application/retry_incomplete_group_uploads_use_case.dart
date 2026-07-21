@@ -15,6 +15,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -25,10 +26,12 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 class _PreparedGroupRetryUpload {
+  final MediaAttachment expectedAttachment;
   final MediaAttachment pendingAttachment;
   final String absolutePath;
 
   const _PreparedGroupRetryUpload({
+    required this.expectedAttachment,
     required this.pendingAttachment,
     required this.absolutePath,
   });
@@ -472,27 +475,9 @@ Future<int> retryIncompleteGroupUploads({
         final allAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
 
-        final group = await groupRepo.getGroup(parentMessage.groupId);
-        if (group == null) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SKIP_NO_GROUP',
-            details: {
-              'groupId': parentMessage.groupId.length > 8
-                  ? parentMessage.groupId.substring(0, 8)
-                  : parentMessage.groupId,
-            },
-          );
-          continue;
-        }
-
-        final members = await groupRepo.getMembers(parentMessage.groupId);
-        var allowedPeers = groupMediaAllowedPeersForMembers(members);
-
         final preparedUploads = <_PreparedGroupRetryUpload>[];
         final resolvedPendingAttachments = <String, MediaAttachment>{};
         var allUploadsSucceeded = true;
-        var hasTerminalInvalidMedia = false;
 
         for (final attachment in pendingAttachmentsForMessage) {
           final validation = GroupMediaMimePolicy.validateDescriptor(
@@ -521,7 +506,6 @@ Future<int> retryIncompleteGroupUploads({
               },
             );
             allUploadsSucceeded = false;
-            hasTerminalInvalidMedia = true;
             break;
           }
 
@@ -537,7 +521,6 @@ Future<int> retryIncompleteGroupUploads({
               },
             );
             allUploadsSucceeded = false;
-            hasTerminalInvalidMedia = true;
             await _projectTerminalGroupUploadFailure(
               projection: projection,
               mediaAttachmentRepo: mediaAttachmentRepo,
@@ -580,7 +563,6 @@ Future<int> retryIncompleteGroupUploads({
               },
             );
             allUploadsSucceeded = false;
-            hasTerminalInvalidMedia = true;
             break;
           }
 
@@ -599,7 +581,6 @@ Future<int> retryIncompleteGroupUploads({
               },
             );
             allUploadsSucceeded = false;
-            hasTerminalInvalidMedia = true;
             await _projectTerminalGroupUploadFailure(
               projection: projection,
               mediaAttachmentRepo: mediaAttachmentRepo,
@@ -640,7 +621,6 @@ Future<int> retryIncompleteGroupUploads({
               },
             );
             allUploadsSucceeded = false;
-            hasTerminalInvalidMedia = true;
             break;
           }
 
@@ -648,6 +628,7 @@ Future<int> retryIncompleteGroupUploads({
           resolvedPendingAttachments[attachment.id] = resolvedAttachment;
           preparedUploads.add(
             _PreparedGroupRetryUpload(
+              expectedAttachment: attachment,
               pendingAttachment: resolvedAttachment,
               absolutePath: localPath,
             ),
@@ -655,35 +636,12 @@ Future<int> retryIncompleteGroupUploads({
         }
 
         if (!allUploadsSucceeded) {
-          if (hasTerminalInvalidMedia) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_MSG_DEFERRED',
-              details: {
-                'messageId': messageId.length > 8
-                    ? messageId.substring(0, 8)
-                    : messageId,
-                'reason': 'invalid_group_media',
-                'totalAttachments': pendingAttachmentsForMessage.length,
-              },
-            );
-            continue;
-          }
-
-          final failedCount = <String, int>{};
-          for (final attachment in pendingAttachmentsForMessage) {
-            failedCount[attachment.id] = (attachment.uploadRetryCount ?? 0) + 1;
-            final retryCount = failedCount[attachment.id]!;
-            await mediaAttachmentRepo.saveAttachment(
-              attachment.copyWith(
-                downloadStatus: retryCount >= kMaxUploadRetries
-                    ? 'upload_failed'
-                    : 'upload_pending',
-                uploadRetryCount: retryCount,
-              ),
-              owner: MediaOwnerLane.group,
-            );
-          }
+          // Fail closed. Every currently classified invalid-path/source case
+          // above has already gone through the parent-authorized atomic upload
+          // failure projection. Never fall back to a generic attachment save:
+          // a shortlist loaded before B3 could otherwise overwrite the
+          // membership terminalizer's `upload_failed` tuple after the marker
+          // commits (or after a later accepted membership reuses the group id).
           emitFlowEvent(
             layer: 'FL',
             event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_MSG_DEFERRED',
@@ -691,7 +649,7 @@ Future<int> retryIncompleteGroupUploads({
               'messageId': messageId.length > 8
                   ? messageId.substring(0, 8)
                   : messageId,
-              'reason': 'invalid_pending_path',
+              'reason': 'invalid_group_media',
               'totalAttachments': pendingAttachmentsForMessage.length,
             },
           );
@@ -732,109 +690,49 @@ Future<int> retryIncompleteGroupUploads({
           continue;
         }
 
-        if (parentMessage.privateMediaPolicy.isPrivate) {
-          final preUploadQualification =
-              await qualifyCurrentPrivateGroupMediaSend(
-                groupRepo: groupRepo,
-                msgRepo: groupMsgRepo,
-                expectedParent: parentMessage,
-                senderPeerId: identity.peerId,
-                inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-              );
-          if (preUploadQualification == null) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SKIP_PRIVATE_POLICY',
-              details: {
-                'messageId': messageId.length > 8
-                    ? messageId.substring(0, 8)
-                    : messageId,
-                'reason': 'pre_upload_requalification_failed',
-              },
-            );
-            continue;
-          }
-          allowedPeers = groupMediaAllowedPeersForMembers(
-            preUploadQualification.members,
+        final uploadOutcomes = <UploadMediaOutcome>[];
+        var uploadAuthorityLost = false;
+        for (final plan in preparedUploads) {
+          final outcome = await _runGroupRetryUploadLeaf(
+            groupRepo: groupRepo,
+            groupMsgRepo: groupMsgRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            expectedParent: parentMessage,
+            plan: plan,
+            identityPeerId: identity.peerId,
+            bridge: bridge,
+            uploadMediaFn: uploadMediaFn,
+            mediaFileManager: mediaFileManager,
+            privateMediaAvailability: privateMediaAvailability,
+            inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+            projection: projection,
           );
+          if (outcome == null) {
+            uploadAuthorityLost = true;
+            break;
+          }
+          uploadOutcomes.add(outcome);
         }
-
-        final uploadOutcomes = await Future.wait(
-          preparedUploads.map((plan) async {
-            final mime = plan.pendingAttachment.mime;
-            final outcome = await runUploadMedia(
-              uploadMediaFn: uploadMediaFn,
-              bridge: bridge,
-              localFilePath: plan.absolutePath,
-              mime: mime,
-              recipientPeerId: parentMessage.groupId,
-              mediaFileManager: mediaFileManager,
-              width: plan.pendingAttachment.width,
-              height: plan.pendingAttachment.height,
-              durationMs: plan.pendingAttachment.durationMs,
-              waveform: plan.pendingAttachment.waveform,
-              allowedPeers: allowedPeers,
-              blobId: plan.pendingAttachment.id,
-            );
-            return outcome;
-          }),
-        );
+        if (uploadAuthorityLost) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_ABORT_AUTHORITY_CHANGED',
+            details: {'messageId': _shortGroupRetryId(messageId)},
+          );
+          continue;
+        }
 
         final failedPlans = <_PreparedGroupRetryUpload>[];
         for (var i = 0; i < uploadOutcomes.length; i++) {
           final plan = preparedUploads[i];
           final outcome = uploadOutcomes[i];
-          if (outcome case final UploadMediaFailed failure) {
+          if (outcome is UploadMediaFailed) {
             failedPlans.add(plan);
-            if (projection != null) {
-              await projection.projectUploadFailure(
-                messageId: messageId,
-                attachmentId: plan.pendingAttachment.id,
-                failure: failure,
-              );
-            }
             continue;
           }
-          final successfulUpload = (outcome as UploadMediaSucceeded).attachment;
-
-          final contentHash =
-              successfulUpload.contentHash ??
-              await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                plan.absolutePath,
-              );
-          final completed = successfulUpload.copyWith(
-            id: plan.pendingAttachment.id,
-            messageId: parentMessage.id,
-            downloadStatus: 'done',
-            uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
-            contentHash: contentHash,
-          );
-          await mediaAttachmentRepo.saveAttachment(
-            completed,
-            owner: MediaOwnerLane.group,
-          );
         }
 
         if (failedPlans.isNotEmpty) {
-          if (projection == null) {
-            // Compatibility for lightweight repository doubles that predate
-            // the atomic capability. Production projects each typed failure
-            // exactly once in the loop above.
-            for (final plan in failedPlans) {
-              final nextRetryCount =
-                  (plan.pendingAttachment.uploadRetryCount ?? 0) + 1;
-              await mediaAttachmentRepo.saveAttachment(
-                plan.pendingAttachment.copyWith(
-                  downloadStatus: nextRetryCount >= kMaxUploadRetries
-                      ? 'upload_failed'
-                      : 'upload_pending',
-                  uploadRetryCount: nextRetryCount,
-                ),
-                owner: MediaOwnerLane.group,
-              );
-            }
-          }
-
           emitFlowEvent(
             layer: 'FL',
             event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_MSG_DEFERRED',
@@ -925,6 +823,7 @@ Future<int> retryIncompleteGroupUploads({
               refreshedMessage.privateMediaPolicy.isPrivate
               ? refreshedMessage
               : null,
+          expectedRetryParentBeforeDispatch: refreshedMessage,
           senderDeviceId: currentSenderDeviceId,
           senderTransportPeerId: currentSenderDeviceId,
           mediaAttachments: fullAttachmentList,
@@ -1008,6 +907,217 @@ Future<int> retryIncompleteGroupUploads({
       _retryIncompleteGroupUploadsInFlight = false;
     }
   }
+}
+
+String _shortGroupRetryId(String id) => id.length > 8 ? id.substring(0, 8) : id;
+
+bool sameExactGroupRetryAttachment(
+  MediaAttachment current,
+  MediaAttachment expected,
+) =>
+    current.id == expected.id &&
+    current.messageId == expected.messageId &&
+    current.ownerLane == expected.ownerLane &&
+    current.mime == expected.mime &&
+    current.size == expected.size &&
+    current.mediaType == expected.mediaType &&
+    current.width == expected.width &&
+    current.height == expected.height &&
+    current.durationMs == expected.durationMs &&
+    current.localPath == expected.localPath &&
+    current.downloadStatus == expected.downloadStatus &&
+    current.createdAt == expected.createdAt &&
+    _sameRetryWaveform(current.waveform, expected.waveform) &&
+    current.uploadRetryCount == expected.uploadRetryCount &&
+    current.downloadRetryCount == expected.downloadRetryCount &&
+    current.contentHash == expected.contentHash &&
+    current.thumbnailHash == expected.thumbnailHash &&
+    current.encryptionKeyBase64 == expected.encryptionKeyBase64 &&
+    current.encryptionNonce == expected.encryptionNonce &&
+    current.encryptionScheme == expected.encryptionScheme;
+
+bool _sameRetryWaveform(List<double>? left, List<double>? right) {
+  if (identical(left, right)) return true;
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+Future<UploadMediaOutcome?> _runGroupRetryUploadLeaf({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository groupMsgRepo,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required GroupMessage expectedParent,
+  required _PreparedGroupRetryUpload plan,
+  required String identityPeerId,
+  required Bridge bridge,
+  required UploadMediaFn uploadMediaFn,
+  required MediaFileManager? mediaFileManager,
+  required GroupPrivateMediaAvailability privateMediaAvailability,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required GroupUploadRetryProjectionRepository? projection,
+}) async {
+  final guarded = await runSelfRemovedGroupLifecycleLeaf<UploadMediaOutcome?>(
+    groupRepo: groupRepo,
+    groupId: expectedParent.groupId,
+    action: (currentGroup) async {
+      if (currentGroup.isDissolved) return null;
+      final currentParent = await groupMsgRepo.getMessage(expectedParent.id);
+      if (currentParent == null ||
+          !sameExactGroupPrivateMediaDispatchParent(
+            currentParent,
+            expectedParent,
+          )) {
+        return null;
+      }
+      final currentAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(
+            expectedParent.id,
+            owner: MediaOwnerLane.group,
+          );
+      MediaAttachment? currentAttachment;
+      for (final attachment in currentAttachments) {
+        if (attachment.id == plan.expectedAttachment.id) {
+          currentAttachment = attachment;
+          break;
+        }
+      }
+      if (currentAttachment == null ||
+          !sameExactGroupRetryAttachment(
+            currentAttachment,
+            plan.expectedAttachment,
+          )) {
+        return null;
+      }
+
+      final latestKey = await groupRepo.getLatestKey(expectedParent.groupId);
+      if (latestKey == null ||
+          (expectedParent.privateMediaPolicy.isPrivate &&
+              latestKey.keyGeneration != expectedParent.keyGeneration)) {
+        return null;
+      }
+      final members = await groupRepo.getMembers(expectedParent.groupId);
+      if (!members.any((member) => member.peerId == identityPeerId)) {
+        return null;
+      }
+      var allowedPeers = groupMediaAllowedPeersForMembers(members);
+      if (expectedParent.privateMediaPolicy.isPrivate) {
+        if (!privateMediaAvailability.isEnabled) return null;
+        final qualification = await qualifyCurrentPrivateGroupMediaSend(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+          expectedParent: expectedParent,
+          senderPeerId: identityPeerId,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        );
+        if (qualification == null) return null;
+        allowedPeers = groupMediaAllowedPeersForMembers(qualification.members);
+      }
+
+      final outcome = await runUploadMedia(
+        uploadMediaFn: uploadMediaFn,
+        bridge: bridge,
+        localFilePath: plan.absolutePath,
+        mime: plan.pendingAttachment.mime,
+        recipientPeerId: expectedParent.groupId,
+        mediaFileManager: mediaFileManager,
+        width: plan.pendingAttachment.width,
+        height: plan.pendingAttachment.height,
+        durationMs: plan.pendingAttachment.durationMs,
+        waveform: plan.pendingAttachment.waveform,
+        allowedPeers: allowedPeers,
+        blobId: plan.pendingAttachment.id,
+      );
+      if (outcome case final UploadMediaFailed failure) {
+        if (projection != null) {
+          final projected = await projection.projectUploadFailure(
+            messageId: expectedParent.id,
+            attachmentId: plan.expectedAttachment.id,
+            failure: failure,
+          );
+          if (!projected.applied &&
+              failure.disposition !=
+                  UploadMediaDisposition.connectivityRetryable) {
+            return null;
+          }
+        } else {
+          final nextRetryCount = (currentAttachment.uploadRetryCount ?? 0) + 1;
+          await mediaAttachmentRepo.saveAttachment(
+            currentAttachment.copyWith(
+              downloadStatus: nextRetryCount >= kMaxUploadRetries
+                  ? 'upload_failed'
+                  : 'upload_pending',
+              uploadRetryCount: nextRetryCount,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+        return outcome;
+      }
+
+      final successfulUpload = (outcome as UploadMediaSucceeded).attachment;
+      final contentHash =
+          successfulUpload.contentHash ??
+          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+            plan.absolutePath,
+          );
+      final completed = successfulUpload.copyWith(
+        id: plan.pendingAttachment.id,
+        messageId: expectedParent.id,
+        ownerLane: MediaOwnerLane.group,
+        downloadStatus: 'done',
+        uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+        contentHash: contentHash,
+      );
+      final completion = groupMsgRepo is GroupUploadRetryCompletionRepository
+          ? groupMsgRepo as GroupUploadRetryCompletionRepository
+          : null;
+      if (completion != null) {
+        final applied = await completion.completeUploadRetry(
+          expectedParent: expectedParent,
+          expectedAttachment: plan.expectedAttachment,
+          completedAttachment: completed,
+        );
+        return applied ? outcome : null;
+      }
+
+      final latestParent = await groupMsgRepo.getMessage(expectedParent.id);
+      final latestAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(
+            expectedParent.id,
+            owner: MediaOwnerLane.group,
+          );
+      MediaAttachment? latestAttachment;
+      for (final attachment in latestAttachments) {
+        if (attachment.id == plan.expectedAttachment.id) {
+          latestAttachment = attachment;
+          break;
+        }
+      }
+      if (latestParent == null ||
+          !sameExactGroupPrivateMediaDispatchParent(
+            latestParent,
+            expectedParent,
+          ) ||
+          latestAttachment == null ||
+          !sameExactGroupRetryAttachment(
+            latestAttachment,
+            plan.expectedAttachment,
+          )) {
+        return null;
+      }
+      await mediaAttachmentRepo.saveAttachment(
+        completed,
+        owner: MediaOwnerLane.group,
+      );
+      return outcome;
+    },
+  );
+  return guarded.didRun ? guarded.value : null;
 }
 
 bool _isFreshOutgoingGroupSend(GroupMessage message) {

@@ -14,4 +14,6 @@
 // fail closed on downgrade opens
 // (encrypted_db_opener.dart passes onDatabaseVersionChangeError), and no
 // pre-v96 build may be installed over a profile already opened at v96.
-const int currentIdentityDatabaseVersion = 101;
+// 263: DB v102 adds durable `groups.self_removed_at` authority for retained
+// self-removed shells and terminalizes legacy membership-instance work.
+const int currentIdentityDatabaseVersion = 102;

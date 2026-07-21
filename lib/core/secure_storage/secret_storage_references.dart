@@ -14,3 +14,16 @@ String mediaAttachmentEncryptionKeyStoreName(String attachmentId) =>
 
 String groupKeyMaterialStoreName(String groupId, int keyGeneration) =>
     'group_key_material:${Uri.encodeComponent(groupId)}:$keyGeneration';
+
+/// Phase-unique staging address for an authenticated post-removal re-entry.
+///
+/// A retained shell can still have an old generation at the ordinary key
+/// address. Using the accepted phase nonce prevents staging from overwriting
+/// that retry-owned material before the SQL authority transaction commits.
+String groupAcceptedKeyMaterialStoreName(
+  String groupId,
+  int keyGeneration,
+  String bindingNonce,
+) =>
+    'group_key_material:${Uri.encodeComponent(groupId)}:$keyGeneration:'
+    'accepted:${Uri.encodeComponent(bindingNonce)}';

@@ -38,6 +38,13 @@ void main() {
   }) {
     return GroupMessageRepositoryImpl(
       dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+      dbInsertExactSelfRemovalTimelineMessageFn:
+          (row, {required expectedSelfRemovedAt}) =>
+              dbInsertExactSelfRemovalTimelineMessage(
+                executor,
+                row,
+                expectedSelfRemovedAt: expectedSelfRemovedAt,
+              ),
       dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
           dbLoadGroupMessagesPage(
             executor,
@@ -224,6 +231,60 @@ void main() {
   }
 
   group('saveMessage and getMessage', () {
+    test(
+      'absent or marked group refuses ordinary message writes while exact removal timeline remains allowed',
+      () async {
+        await db.execute('''
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY,
+  self_removed_at TEXT
+)
+''');
+        final removedAt = DateTime.utc(2026, 1, 15, 12, 30);
+        await db.insert('groups', {
+          'id': 'marked-group',
+          'self_removed_at': removedAt.toIso8601String(),
+        });
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'absent-ordinary',
+            groupId: 'absent-group',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'marked-ordinary',
+            groupId: 'marked-group',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        final timeline = makeMessage(
+          id:
+              'sys-member_removed:marked-group:self-peer:'
+              '${removedAt.microsecondsSinceEpoch}',
+          groupId: 'marked-group',
+          senderPeerId: 'admin-peer',
+          timestamp: removedAt,
+        );
+        await repo.saveMessage(timeline);
+
+        expect(await repo.getMessage('absent-ordinary'), isNull);
+        expect(await repo.getMessage('marked-ordinary'), isNull);
+        expect(await repo.getMessage(timeline.id), isNotNull);
+        await pumpEventQueue();
+        expect(events, isEmpty);
+      },
+    );
+
     test('round-trip preserves all fields', () async {
       final msg = makeMessage(transportPeerId: 'peer-sender-device');
       await repo.saveMessage(msg);

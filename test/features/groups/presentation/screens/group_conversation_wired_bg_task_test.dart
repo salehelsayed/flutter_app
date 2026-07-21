@@ -717,7 +717,7 @@ void main() {
 
       await _pumpGroupConversationWired(tester, bridge: bridge);
 
-      await _sendText(tester, 'unmount');
+      final started = await _startTextSend(tester, 'unmount');
       await pumpUntil(
         tester,
         () => bridge.commandLog.contains('group:inboxStore'),
@@ -727,7 +727,10 @@ void main() {
       await tester.pump();
 
       inboxGate.complete();
-      await pumpFrames(tester, count: 20);
+      await tester.runAsync(() async {
+        await started.future;
+      });
+      await tester.pump();
 
       expect(bridge.commandLog, contains('bg:end'));
       expect(tester.takeException(), isNull);

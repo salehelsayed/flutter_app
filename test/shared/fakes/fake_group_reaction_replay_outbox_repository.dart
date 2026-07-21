@@ -95,8 +95,41 @@ class FakeGroupReactionReplayOutboxRepository
   }
 
   @override
+  Future<bool> updateEntryStatusIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required String deliveryStatus,
+    String? lastError,
+  }) async {
+    updateEntryStatusCallCount++;
+    final current = _entries[expected.reactionId];
+    if (current == null || !_sameEntry(current, expected)) return false;
+    _entries[expected.reactionId] = current.copyWith(
+      deliveryStatus: deliveryStatus,
+      lastError: lastError,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    return true;
+  }
+
+  @override
   Future<void> deleteEntry(String reactionId) async {
     deleteEntryCallCount++;
     _entries.remove(reactionId);
   }
 }
+
+bool _sameEntry(
+  GroupReactionReplayOutboxEntry current,
+  GroupReactionReplayOutboxEntry expected,
+) =>
+    current.reactionId == expected.reactionId &&
+    current.groupId == expected.groupId &&
+    current.messageId == expected.messageId &&
+    current.senderPeerId == expected.senderPeerId &&
+    current.emoji == expected.emoji &&
+    current.action == expected.action &&
+    current.inboxRetryPayload == expected.inboxRetryPayload &&
+    current.deliveryStatus == expected.deliveryStatus &&
+    current.lastError == expected.lastError &&
+    current.createdAt == expected.createdAt &&
+    current.updatedAt == expected.updatedAt;

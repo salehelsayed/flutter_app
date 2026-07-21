@@ -1442,6 +1442,7 @@ void main() {
           'keyEpoch': 1,
           'text': jsonEncode({
             '__sys': 'member_removed',
+            'removedAt': removalEventAt.toIso8601String(),
             'member': {
               'peerId': 'my-peer',
               'username': 'Self',

@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
@@ -9776,7 +9777,7 @@ void main() {
     );
 
     test(
-      'PGC-010 live publish with pending inbox custody returns sent and closes custody in background',
+      'PGC-010 live publish keeps inbox action and completion in one membership phase',
       () async {
         final gatedBridge = _GatedInboxStoreBridge();
         gatedBridge.responses['group:publish'] = {
@@ -9785,7 +9786,6 @@ void main() {
           'topicPeers': 2,
         };
 
-        final stopwatch = Stopwatch()..start();
         final sendFuture = sendGroupMessage(
           bridge: gatedBridge,
           groupRepo: groupRepo,
@@ -9798,26 +9798,43 @@ void main() {
           senderUsername: 'Alice',
           messageId: 'msg-peers-bg-inbox',
         );
-        final (result, message) = await sendFuture;
-        stopwatch.stop();
-
-        expect(result, SendGroupMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.status, 'sent');
-        expect(message.inboxStored, isFalse);
-        expect(message.inboxRetryPayload, isNotNull);
-        expect(stopwatch.elapsedMilliseconds, lessThan(150));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        var markerCommitted = false;
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20, 10)),
+            );
+            markerCommitted = true;
+          },
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          markerCommitted,
+          isFalse,
+          reason: 'B3 must wait for inbox action plus exact completion',
+        );
 
         final savedBeforeRelease = await msgRepo.getMessage(
           'msg-peers-bg-inbox',
         );
         expect(savedBeforeRelease, isNotNull);
-        expect(savedBeforeRelease!.status, 'sent');
+        expect(savedBeforeRelease!.status, 'sending');
         expect(savedBeforeRelease.inboxStored, isFalse);
         expect(savedBeforeRelease.inboxRetryPayload, isNotNull);
 
         gatedBridge.inboxGate.complete();
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        final (result, message) = await sendFuture;
+        await markerFuture;
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message.inboxStored, isTrue);
+        expect(message.inboxRetryPayload, isNull);
+        expect(markerCommitted, isTrue);
 
         final savedAfterRelease = await msgRepo.getMessage(
           'msg-peers-bg-inbox',
@@ -9826,6 +9843,61 @@ void main() {
         expect(savedAfterRelease!.status, 'sent');
         expect(savedAfterRelease.inboxStored, isTrue);
         expect(savedAfterRelease.inboxRetryPayload, isNull);
+      },
+    );
+
+    test(
+      'PGC-010 B3-first membership phase stops foreground publish before dispatch',
+      () async {
+        final markerMayFinish = Completer<void>();
+        final markerCommitted = Completer<void>();
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(
+                selfRemovedAt: DateTime.utc(2026, 7, 20, 10, 1),
+              ),
+            );
+            markerCommitted.complete();
+            await markerMayFinish.future;
+          },
+        );
+        await markerCommitted.future;
+
+        var sendCompleted = false;
+        final sendFuture = sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Must not leave the removed shell',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-b3-first',
+        ).whenComplete(() => sendCompleted = true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(sendCompleted, isFalse, reason: 'send must queue behind B3');
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+
+        markerMayFinish.complete();
+        await markerFuture;
+        final (result, message) = await sendFuture;
+
+        expect(result, SendGroupMessageResult.groupNotFound);
+        expect(message, isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+        expect(await msgRepo.getMessage('msg-b3-first'), isNull);
       },
     );
 

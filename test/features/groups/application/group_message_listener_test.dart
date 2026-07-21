@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -23,6 +24,8 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -32,9 +35,12 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -126,6 +132,105 @@ class _DelayedGroupLeaveBridge extends FakeBridge {
       joinCalls++;
     }
     return super.send(message);
+  }
+}
+
+class _FaultingSelfRemovalRepository extends InMemoryGroupRepository {
+  bool failAuthorityCommit = false;
+  bool failAuthorityCommitAfterNative = false;
+  bool failTerminalCleanup = false;
+
+  @override
+  Future<SelfRemovalAuthorityCommitOutcome> commitSelfRemovalAuthority({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime expectedSelfJoinedAt,
+    required DateTime removalAt,
+    required String removalEventId,
+    required Future<void> Function() leaveNative,
+  }) async {
+    if (failAuthorityCommit) {
+      throw StateError('authority commit failed');
+    }
+    if (failAuthorityCommitAfterNative) {
+      await leaveNative();
+      throw StateError('authority SQL commit failed after native leave');
+    }
+    return super.commitSelfRemovalAuthority(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      expectedSelfJoinedAt: expectedSelfJoinedAt,
+      removalAt: removalAt,
+      removalEventId: removalEventId,
+      leaveNative: leaveNative,
+    );
+  }
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> terminalizeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) {
+    if (failTerminalCleanup) {
+      throw StateError('terminal cleanup failed');
+    }
+    return super.terminalizeSelfRemovedShell(expected: expected);
+  }
+}
+
+class _SelfBanTerminalizationRepository extends InMemoryGroupRepository {
+  int authorityCommitCalls = 0;
+  int terminalizationCalls = 0;
+  int rawLeaveCleanupCalls = 0;
+  bool queuedExitPresent = true;
+
+  @override
+  Future<SelfRemovalAuthorityCommitOutcome> commitSelfRemovalAuthority({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime expectedSelfJoinedAt,
+    required DateTime removalAt,
+    required String removalEventId,
+    required Future<void> Function() leaveNative,
+  }) {
+    authorityCommitCalls++;
+    return super.commitSelfRemovalAuthority(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      expectedSelfJoinedAt: expectedSelfJoinedAt,
+      removalAt: removalAt,
+      removalEventId: removalEventId,
+      leaveNative: leaveNative,
+    );
+  }
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> terminalizeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) async {
+    terminalizationCalls++;
+    final result = await super.terminalizeSelfRemovedShell(expected: expected);
+    if (result == SelfRemovedShellMutationOutcome.committed) {
+      queuedExitPresent = false;
+    }
+    return result;
+  }
+
+  @override
+  Future<void> removeAllMembers(String groupId) {
+    rawLeaveCleanupCalls++;
+    return super.removeAllMembers(groupId);
+  }
+
+  @override
+  Future<void> removeAllKeys(String groupId) {
+    rawLeaveCleanupCalls++;
+    return super.removeAllKeys(groupId);
+  }
+
+  @override
+  Future<void> deleteGroup(String id) {
+    rawLeaveCleanupCalls++;
+    return super.deleteGroup(id);
   }
 }
 
@@ -667,7 +772,11 @@ void main() {
   }
 
   Future<void> expectCommittedNotificationClaim(File claim) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    // Reaction notifications are intentionally launched without awaiting the
+    // OS-notification path. Keep this poll bounded, but allow a busy batched
+    // groups gate to finish the durable claim before teardown removes its
+    // directory.
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
     while (DateTime.now().isBefore(deadline)) {
       if (await claim.exists() &&
           (await claim.readAsString()).contains('"state":"committed"')) {
@@ -2542,6 +2651,76 @@ void main() {
         expect(eventLog.entries, hasLength(2));
       },
     );
+
+    test(
+      'PB264-13 authenticated self-ban terminalizes queued exit without voluntary leave',
+      () async {
+        final terminalRepository = _SelfBanTerminalizationRepository();
+        groupRepo = terminalRepository;
+        await groupRepo.saveGroup(testGroup.copyWith(myRole: GroupRole.member));
+        await saveTrustedAdminMember();
+        await saveSelfMember();
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 4,
+            encryptedKey: 'self-ban-key',
+            createdAt: initialMemberJoinedAt,
+          ),
+        );
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+
+        final bannedAt = DateTime.utc(2026, 7, 21, 8);
+        final sourceEventId = 'pb264-authenticated-self-ban';
+        final signedPayload = await signedAuditSystemPayload(
+          transitionType: 'member_banned',
+          sourceEventId: sourceEventId,
+          eventAt: bannedAt,
+          systemPayload: {
+            '__sys': 'member_banned',
+            'targetPeerId': 'peer-self',
+            'targetUsername': 'Self',
+            'bannedAt': bannedAt.toIso8601String(),
+          },
+        );
+
+        await listener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'messageId': sourceEventId,
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode(signedPayload),
+          'timestamp': bannedAt.toIso8601String(),
+        });
+
+        final retained = await groupRepo.getGroup('group-1');
+        expect(retained, isNotNull);
+        expect(retained?.selfRemovedAt, bannedAt);
+        expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+        expect(await groupRepo.getLatestKey('group-1'), isNull);
+        expect(terminalRepository.authorityCommitCalls, 1);
+        expect(terminalRepository.terminalizationCalls, 1);
+        expect(terminalRepository.queuedExitPresent, isFalse);
+        expect(terminalRepository.rawLeaveCleanupCalls, 0);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        final messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        expect(
+          messages.where((message) => message.text == 'Admin banned Self'),
+          hasLength(1),
+        );
+      },
+    );
   });
 
   test('processes valid message', () async {
@@ -3283,6 +3462,93 @@ void main() {
       expect(delivered.text, 'PGC-009 startup sweep delivers me');
       expect(await msgRepo.getMessage('pgc009-startup-delivered'), isNotNull);
       expect(pendingRepo.messages, isEmpty);
+    },
+  );
+
+  test(
+    'marked shell startup skips loaded pending membership and reaction replay leaves',
+    () async {
+      final pendingMembershipRepo =
+          InMemoryGroupPendingMembershipMessageRepository();
+      final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+      final reactionRepo = FakeReactionRepository();
+      final createdAt = DateTime.utc(2026, 7, 20, 16);
+      final membershipPayload = <String, dynamic>{
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': 'guarded-membership-replay',
+        'text': 'must not replay after B3',
+        'timestamp': createdAt.toIso8601String(),
+      };
+      final payloadJson = jsonEncode(membershipPayload);
+      await pendingMembershipRepo.savePendingMessage(
+        GroupPendingMembershipMessage(
+          id: groupPendingMembershipMessageId(
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            messageId: 'guarded-membership-replay',
+            receivedAt: createdAt,
+            payloadJson: payloadJson,
+          ),
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          messageId: 'guarded-membership-replay',
+          payloadJson: payloadJson,
+          receivedAt: createdAt,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'guarded-reaction-target',
+          groupId: 'group-1',
+          senderPeerId: 'peer-self',
+          senderUsername: 'Self',
+          text: 'target',
+          timestamp: createdAt,
+          keyGeneration: 0,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: createdAt,
+        ),
+      );
+      await pendingReactionRepo.savePendingReaction(
+        GroupPendingReaction(
+          id: 'guarded-reaction',
+          groupId: 'group-1',
+          messageId: 'guarded-reaction-target',
+          senderPeerId: 'peer-sender',
+          reactionJson: '{}',
+          receivedAt: createdAt,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+      );
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup(
+          'group-1',
+        ))!.copyWith(selfRemovedAt: createdAt),
+      );
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        pendingMembershipMessageRepo: pendingMembershipRepo,
+        pendingReactionRepo: pendingReactionRepo,
+      );
+      listener.start(sourceController.stream);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(await msgRepo.getMessage('guarded-membership-replay'), isNull);
+      expect(pendingMembershipRepo.messages, hasLength(1));
+      expect(pendingReactionRepo.reactions, hasLength(1));
+      expect(pendingReactionRepo.deletePendingReactionCallCount, 0);
     },
   );
 
@@ -7844,6 +8110,7 @@ void main() {
 
         sourceController.add({
           'groupId': 'group-1',
+          'messageId': 'quiet-self-removal-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
@@ -7946,6 +8213,7 @@ void main() {
         });
 
         sourceController.add({
+          'messageId': 'ml017-self-removal-1',
           'groupId': 'group-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
@@ -7978,7 +8246,590 @@ void main() {
     );
 
     test(
-      'RA-011 late self-removal leave completion repairs newer re-add topic',
+      'ML-017 self-removal serializes native leave and atomic authority commit before terminal key teardown',
+      () async {
+        final joinedAt = DateTime.utc(2026, 4, 6, 12);
+        final removedAt = joinedAt.add(const Duration(seconds: 1));
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            publicKey: 'pk-self',
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'retained-address',
+            createdAt: joinedAt,
+          ),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
+        );
+        final selfListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        final removedGroups = <String>[];
+        final removedSubscription = selfListener.groupRemovedStream.listen(
+          removedGroups.add,
+        );
+
+        // A valid envelope timestamp is only transport metadata. Missing or
+        // malformed explicit `removedAt` must not become B3 delete authority.
+        for (final invalidExplicitTime in <String?>[null, 'not-a-date']) {
+          final suffix = invalidExplicitTime == null ? 'missing' : 'malformed';
+          await selfListener.handleReplayEnvelope({
+            'messageId': 'ml017-$suffix-removal-time',
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_removed',
+              'member': {'peerId': 'peer-self', 'username': 'Me'},
+              'removedAt': ?invalidExplicitTime,
+              'groupConfig': {
+                'name': 'must-not-apply-on-invalid-B3',
+                'groupType': 'chat',
+                'members': [
+                  {'peerId': 'peer-admin', 'role': 'admin'},
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': initialGroupCreatedAt.toIso8601String(),
+              },
+            }),
+            'timestamp': removedAt.toIso8601String(),
+          }, rethrowOnError: true);
+
+          final unchanged = await groupRepo.getGroup('group-1');
+          expect(unchanged, isNotNull, reason: suffix);
+          expect(unchanged!.name, testGroup.name, reason: suffix);
+          expect(unchanged.selfRemovedAt, isNull, reason: suffix);
+          expect(
+            await groupRepo.getMember('group-1', 'peer-self'),
+            isNotNull,
+            reason: suffix,
+          );
+          expect(
+            (await groupRepo.getLatestKey('group-1'))?.encryptedKey,
+            'retained-address',
+            reason: suffix,
+          );
+          expect(bridge.commandLog, isEmpty, reason: suffix);
+          expect(msgRepo.count, 0, reason: suffix);
+          expect(removedGroups, isEmpty, reason: suffix);
+        }
+
+        selfListener.start(sourceController.stream);
+
+        sourceController.add({
+          'messageId': 'ml017-atomic-removal-1',
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-self', 'username': 'Me'},
+            'removedAt': removedAt.toIso8601String(),
+            'groupConfig': {
+              'name': 'must-not-apply-on-B3',
+              'groupType': 'chat',
+              'members': [
+                {'peerId': 'peer-admin', 'role': 'admin'},
+              ],
+              'createdBy': 'peer-admin',
+              'createdAt': initialGroupCreatedAt.toIso8601String(),
+            },
+          }),
+          'timestamp': removedAt.toIso8601String(),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 75));
+
+        final shell = await groupRepo.getGroup('group-1');
+        expect(shell, isNotNull);
+        expect(shell!.name, testGroup.name);
+        expect(shell.selfRemovedAt, removedAt);
+        expect(shell.lastMembershipEventAt, removedAt);
+        expect(shell.lastMembershipEventId, 'ml017-atomic-removal-1');
+        expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+        expect(await groupRepo.getLatestKey('group-1'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(removedGroups, ['group-1']);
+        await removedSubscription.cancel();
+        selfListener.dispose();
+      },
+    );
+
+    test(
+      'ML-017 B3 commit and accepted re-invite serialize so either ordering converges',
+      () async {
+        const groupId = 'group-1';
+        const selfPeerId = 'peer-self';
+
+        GroupModel acceptedGroup(DateTime acceptedAt) => testGroup.copyWith(
+          myRole: GroupRole.member,
+          lastMembershipEventAt: acceptedAt,
+        );
+
+        List<GroupMember> acceptedRoster(DateTime acceptedAt) => [
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: initialMemberJoinedAt,
+          ),
+          GroupMember(
+            groupId: groupId,
+            peerId: selfPeerId,
+            username: 'Self',
+            role: MemberRole.writer,
+            publicKey: 'pk-self-accepted',
+            joinedAt: acceptedAt,
+          ),
+        ];
+
+        Future<SelfRemovedAcceptedReentryResult> commitAccepted({
+          required InMemoryGroupRepository repository,
+          required DateTime removalAt,
+          required DateTime acceptedAt,
+          required String authorizationId,
+        }) {
+          return repository.commitAcceptedReentry(
+            group: acceptedGroup(acceptedAt),
+            roster: acceptedRoster(acceptedAt),
+            key: GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 2,
+              encryptedKey: 'accepted-key-$authorizationId',
+              createdAt: acceptedAt,
+            ),
+            selfPeerId: selfPeerId,
+            authorizationId: authorizationId,
+            signedMembershipWatermark: removalAt.toIso8601String(),
+            signedIssuedAt: acceptedAt.toIso8601String(),
+            bindingNonce: 'binding-$authorizationId',
+          );
+        }
+
+        Map<String, Object?> removalEnvelope({
+          required String messageId,
+          required DateTime removedAt,
+        }) => {
+          'messageId': messageId,
+          'groupId': groupId,
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': selfPeerId, 'username': 'Self'},
+            'removedAt': removedAt.toIso8601String(),
+          }),
+          'timestamp': removedAt.toIso8601String(),
+        };
+
+        // B3 owns the phase first: accepted re-entry cannot observe the
+        // pre-marker state, then commits from the marked shell after leave.
+        final removalFirstAt = DateTime.utc(2026, 7, 20, 10);
+        final removalFirstAcceptedAt = removalFirstAt.add(
+          const Duration(minutes: 1),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
+        );
+        await saveSelfMember();
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'pre-removal-key',
+            createdAt: removalFirstAt.subtract(const Duration(minutes: 1)),
+          ),
+        );
+        final delayedLeaveBridge = _DelayedGroupLeaveBridge();
+        final removalFirstListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: delayedLeaveBridge,
+          getSelfPeerId: () async => selfPeerId,
+        );
+        final removalFirst = removalFirstListener.handleReplayEnvelope(
+          removalEnvelope(
+            messageId: 'ml017-race-removal-first',
+            removedAt: removalFirstAt,
+          ),
+        );
+        await delayedLeaveBridge.leaveStarted.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        var acceptedEntered = false;
+        final acceptedAfterRemoval = runGroupMembershipMutationLocked(
+          groupId: groupId,
+          action: () {
+            acceptedEntered = true;
+            return commitAccepted(
+              repository: groupRepo,
+              removalAt: removalFirstAt,
+              acceptedAt: removalFirstAcceptedAt,
+              authorizationId: 'invite-after-b3',
+            );
+          },
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(acceptedEntered, isFalse);
+
+        delayedLeaveBridge.completeLeave();
+        await removalFirst;
+        final removalFirstResult = await acceptedAfterRemoval;
+        expect(removalFirstResult.committed, isTrue);
+        expect((await groupRepo.getGroup(groupId))?.selfRemovedAt, isNull);
+        expect(
+          (await groupRepo.getGroup(groupId))?.lastMembershipEventAt,
+          removalFirstAcceptedAt,
+        );
+        expect(await groupRepo.getMember(groupId, selfPeerId), isNotNull);
+        expect(
+          (await groupRepo.getLatestKey(groupId))?.encryptedKey,
+          'accepted-key-invite-after-b3',
+        );
+        removalFirstListener.dispose();
+
+        // Accepted authority owns the phase first: once its atomic state is
+        // visible, the older B3 waits for phase release and is refused without
+        // a second native leave or teardown of the accepted membership.
+        groupRepo = InMemoryGroupRepository();
+        msgRepo = InMemoryGroupMessageRepository();
+        final priorRemovalAt = DateTime.utc(2026, 7, 20, 11);
+        final delayedB3At = priorRemovalAt.add(const Duration(minutes: 1));
+        final acceptedFirstAt = priorRemovalAt.add(const Duration(minutes: 2));
+        await groupRepo.saveGroup(
+          testGroup.copyWith(
+            myRole: GroupRole.member,
+            selfRemovedAt: priorRemovalAt,
+            lastMembershipEventAt: priorRemovalAt,
+            lastMembershipEventId: 'prior-b3',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        final acceptedCommitted = Completer<void>();
+        final releaseAcceptedPhase = Completer<void>();
+        final acceptedFirst = runGroupMembershipMutationLocked(
+          groupId: groupId,
+          action: () async {
+            final result = await commitAccepted(
+              repository: groupRepo,
+              removalAt: priorRemovalAt,
+              acceptedAt: acceptedFirstAt,
+              authorizationId: 'invite-before-b3',
+            );
+            acceptedCommitted.complete();
+            await releaseAcceptedPhase.future;
+            return result;
+          },
+        );
+        await acceptedCommitted.future.timeout(const Duration(seconds: 2));
+
+        final acceptedFirstBridge = FakeBridge();
+        final acceptedFirstListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: acceptedFirstBridge,
+          getSelfPeerId: () async => selfPeerId,
+        );
+        final delayedB3 = acceptedFirstListener.handleReplayEnvelope(
+          removalEnvelope(
+            messageId: 'ml017-race-accepted-first',
+            removedAt: delayedB3At,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(acceptedFirstBridge.commandLog, isNot(contains('group:leave')));
+
+        releaseAcceptedPhase.complete();
+        expect((await acceptedFirst).committed, isTrue);
+        await delayedB3;
+        final finalGroup = await groupRepo.getGroup(groupId);
+        expect(finalGroup?.selfRemovedAt, isNull);
+        expect(finalGroup?.lastMembershipEventAt, acceptedFirstAt);
+        expect(await groupRepo.getMember(groupId, selfPeerId), isNotNull);
+        expect(
+          (await groupRepo.getLatestKey(groupId))?.encryptedKey,
+          'accepted-key-invite-before-b3',
+        );
+        expect(acceptedFirstBridge.commandLog, isNot(contains('group:leave')));
+        acceptedFirstListener.dispose();
+      },
+    );
+
+    test(
+      'ML-017 native or authority commit failure preserves local retry state and terminal failure remains locally cleanable',
+      () async {
+        Future<_FaultingSelfRemovalRepository> seededRepository() async {
+          final repository = _FaultingSelfRemovalRepository();
+          final joinedAt = DateTime.utc(2026, 4, 7, 12);
+          await repository.saveGroup(
+            testGroup.copyWith(myRole: GroupRole.member),
+          );
+          await repository.saveMember(
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: MemberRole.admin,
+              publicKey: 'pk-admin',
+              joinedAt: initialGroupCreatedAt,
+            ),
+          );
+          await repository.saveMember(
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-self',
+              username: 'Me',
+              role: MemberRole.writer,
+              publicKey: 'pk-self',
+              joinedAt: joinedAt,
+            ),
+          );
+          await repository.saveKey(
+            GroupKeyInfo(
+              groupId: 'group-1',
+              keyGeneration: 1,
+              encryptedKey: 'retry-address',
+              createdAt: joinedAt,
+            ),
+          );
+          return repository;
+        }
+
+        Map<String, Object?> envelope(String id, DateTime removedAt) => {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': id,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-self', 'username': 'Me'},
+            'removedAt': removedAt.toIso8601String(),
+          }),
+          'timestamp': removedAt.toIso8601String(),
+        };
+
+        Future<void> expectUnmarkedLocalAuthority(
+          _FaultingSelfRemovalRepository repository, {
+          required String reason,
+        }) async {
+          expect(
+            (await repository.getGroup('group-1'))!.selfRemovedAt,
+            isNull,
+            reason: reason,
+          );
+          expect(
+            await repository.getMember('group-1', 'peer-self'),
+            isNotNull,
+            reason: reason,
+          );
+          expect(
+            await repository.getLatestKey('group-1'),
+            isNotNull,
+            reason: reason,
+          );
+        }
+
+        Future<DeleteSelfRemovedGroupShellResult> deleteLocally(
+          _FaultingSelfRemovalRepository repository,
+        ) {
+          return DeleteSelfRemovedGroupShellUseCase(
+            repository: repository,
+            prepareMedia:
+                ({
+                  required groupId,
+                  required messageId,
+                  required operationId,
+                }) async => const GroupMediaDeletePrepareResult(
+                  GroupMediaDeletePrepareOutcome.alreadyDeleted,
+                ),
+            runMediaReconciler: () async {},
+            operationIdFactory: () => 'ml017-local-cleanup',
+            snapshotAvatarPath: (_) async => null,
+            deleteAvatar: (_) async {},
+          ).call(groupId: 'group-1', selfPeerId: 'peer-self');
+        }
+
+        final nativeFaultRepo = await seededRepository();
+        final nativeFaultBridge = FakeBridge()
+          ..responses['group:leave'] = {
+            'ok': false,
+            'errorCode': 'INJECTED_NATIVE_FAILURE',
+          };
+        final nativeFaultListener = GroupMessageListener(
+          groupRepo: nativeFaultRepo,
+          msgRepo: InMemoryGroupMessageRepository(),
+          bridge: nativeFaultBridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        await nativeFaultListener.handleReplayEnvelope(
+          envelope('ml017-native-fault', DateTime.utc(2026, 4, 7, 12, 0, 1)),
+        );
+        expect(nativeFaultBridge.commandLog, ['group:leave']);
+        await expectUnmarkedLocalAuthority(
+          nativeFaultRepo,
+          reason: 'native failure',
+        );
+
+        final postNativeCommitFaultRepo = await seededRepository()
+          ..failAuthorityCommitAfterNative = true;
+        final postNativeCommitFaultBridge = FakeBridge();
+        final postNativeCommitFaultListener = GroupMessageListener(
+          groupRepo: postNativeCommitFaultRepo,
+          msgRepo: InMemoryGroupMessageRepository(),
+          bridge: postNativeCommitFaultBridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        await postNativeCommitFaultListener.handleReplayEnvelope(
+          envelope(
+            'ml017-post-native-commit-fault',
+            DateTime.utc(2026, 4, 7, 12, 0, 1),
+          ),
+        );
+        expect(postNativeCommitFaultBridge.commandLog, ['group:leave']);
+        await expectUnmarkedLocalAuthority(
+          postNativeCommitFaultRepo,
+          reason: 'post-native authority rollback',
+        );
+
+        final commitFaultRepo = await seededRepository()
+          ..failAuthorityCommit = true;
+        final commitFaultBridge = FakeBridge();
+        final commitFaultListener = GroupMessageListener(
+          groupRepo: commitFaultRepo,
+          msgRepo: InMemoryGroupMessageRepository(),
+          bridge: commitFaultBridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        await commitFaultListener.handleReplayEnvelope(
+          envelope('ml017-commit-fault', DateTime.utc(2026, 4, 7, 12, 0, 1)),
+        );
+        expect(commitFaultBridge.commandLog, isEmpty);
+        await expectUnmarkedLocalAuthority(
+          commitFaultRepo,
+          reason: 'pre-native capability failure',
+        );
+
+        final terminalFaultRepo = await seededRepository()
+          ..failTerminalCleanup = true;
+        final terminalFaultBridge = FakeBridge();
+        final terminalFaultListener = GroupMessageListener(
+          groupRepo: terminalFaultRepo,
+          msgRepo: InMemoryGroupMessageRepository(),
+          bridge: terminalFaultBridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        await terminalFaultListener.handleReplayEnvelope(
+          envelope('ml017-terminal-fault', DateTime.utc(2026, 4, 7, 12, 0, 1)),
+        );
+        final retryable = await terminalFaultRepo.loadSelfRemovedShellAuthority(
+          groupId: 'group-1',
+          selfPeerId: 'peer-self',
+        );
+        expect(
+          retryable.shape,
+          SelfRemovedShellAuthorityShape.markedSelfAbsent,
+        );
+        expect(await terminalFaultRepo.getLatestKey('group-1'), isNotNull);
+        expect(terminalFaultBridge.commandLog, ['group:leave']);
+
+        terminalFaultRepo.failTerminalCleanup = false;
+        expect(
+          await deleteLocally(terminalFaultRepo),
+          DeleteSelfRemovedGroupShellResult.deleted,
+        );
+        expect(await terminalFaultRepo.getGroup('group-1'), isNull);
+        expect(
+          terminalFaultBridge.commandLog,
+          ['group:leave'],
+          reason: 'marker-owned cleanup must not repeat native leave',
+        );
+
+        final presentationFaultRepo = await seededRepository();
+        final presentationFaultMessages = InMemoryGroupMessageRepository();
+        final presentationRemovedAt = DateTime.utc(2026, 4, 7, 12, 0, 1);
+        presentationFaultMessages.failSaveMessageIds.add(
+          'sys-member_removed:group-1:peer-self:peer-admin:'
+          '${presentationRemovedAt.microsecondsSinceEpoch}',
+        );
+        final presentationFaultBridge = FakeBridge();
+        final presentationFaultListener = GroupMessageListener(
+          groupRepo: presentationFaultRepo,
+          msgRepo: presentationFaultMessages,
+          bridge: presentationFaultBridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        final presentationEnvelope = envelope(
+          'ml017-presentation-fault',
+          presentationRemovedAt,
+        );
+        await presentationFaultListener.handleReplayEnvelope(
+          presentationEnvelope,
+        );
+        expect(
+          (await presentationFaultRepo.loadSelfRemovedShellAuthority(
+            groupId: 'group-1',
+            selfPeerId: 'peer-self',
+          )).shape,
+          SelfRemovedShellAuthorityShape.markedSelfAbsent,
+        );
+        expect(presentationFaultMessages.count, 0);
+        expect(presentationFaultBridge.commandLog, ['group:leave']);
+
+        // Redelivery is presentation-idempotent: the durable marker/self state
+        // suppresses another native leave, while local delete remains the retry
+        // owner even though the timeline write never completed.
+        await presentationFaultListener.handleReplayEnvelope(
+          presentationEnvelope,
+        );
+        expect(presentationFaultBridge.commandLog, ['group:leave']);
+        expect(
+          await deleteLocally(presentationFaultRepo),
+          DeleteSelfRemovedGroupShellResult.deleted,
+        );
+        expect(presentationFaultBridge.commandLog, ['group:leave']);
+
+        nativeFaultListener.dispose();
+        postNativeCommitFaultListener.dispose();
+        commitFaultListener.dispose();
+        terminalFaultListener.dispose();
+        presentationFaultListener.dispose();
+      },
+    );
+
+    test(
+      'RA-011 late self-removal leave completion preserves newer re-add authority without automatic topic repair',
       () async {
         final delayedBridge = _DelayedGroupLeaveBridge();
         bridge = delayedBridge;
@@ -8049,6 +8900,7 @@ void main() {
 
         sourceController.add({
           'groupId': 'group-1',
+          'messageId': 'ra011-self-removal-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
@@ -8102,11 +8954,12 @@ void main() {
           delayedBridge.commandLog.where((command) => command == 'group:leave'),
           hasLength(1),
         );
-        expect(delayedBridge.joinCalls, 1);
-        expect(
-          delayedBridge.commandLog.indexOf('group:join'),
-          greaterThan(delayedBridge.commandLog.indexOf('group:leave')),
-        );
+        // The repository coordinator makes this interleaving unreachable for
+        // production writes. If a lower-level writer bypasses that boundary,
+        // the post-native/precommit gap deliberately preserves the newer
+        // active authority without claiming automatic topic repair.
+        expect(delayedBridge.joinCalls, 0);
+        expect(delayedBridge.commandLog, isNot(contains('group:join')));
         expect(removedGroups, isEmpty);
 
         final group = await groupRepo.getGroup('group-1');
@@ -8384,6 +9237,7 @@ void main() {
 
         final duplicateEvent = {
           'groupId': 'group-1',
+          'messageId': 'duplicate-self-removal-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
@@ -8445,6 +9299,7 @@ void main() {
 
         await selfListener.handleReplayEnvelope({
           'groupId': 'group-1',
+          'messageId': 'lp003-self-removal-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
@@ -13089,6 +13944,7 @@ void main() {
 
         sourceController.add({
           'groupId': 'group-1',
+          'messageId': 'notification-self-removal-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,

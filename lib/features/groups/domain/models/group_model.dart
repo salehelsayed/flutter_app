@@ -105,6 +105,12 @@ class GroupModel {
   /// as a deterministic tie-breaker when two events share [lastMembershipEventAt].
   final String? lastMembershipEventId;
 
+  /// Durable local proof that this device applied an authenticated removal of
+  /// the local member. A marked group remains visible as a read-only shell
+  /// until the user explicitly deletes it or a newer authenticated membership
+  /// transition clears the marker.
+  final DateTime? selfRemovedAt;
+
   /// Latest applied metadata-event timestamp for stale-event rejection.
   final DateTime? lastMetadataEventAt;
 
@@ -134,6 +140,7 @@ class GroupModel {
     this.archivedAt,
     this.lastMembershipEventAt,
     this.lastMembershipEventId,
+    this.selfRemovedAt,
     this.lastMetadataEventAt,
     this.lastBacklogExpiredAt,
     this.lastBacklogRetainedAt,
@@ -167,6 +174,9 @@ class GroupModel {
           ? DateTime.parse(map['last_membership_event_at'] as String)
           : null,
       lastMembershipEventId: map['last_membership_event_id'] as String?,
+      selfRemovedAt: map['self_removed_at'] != null
+          ? DateTime.parse(map['self_removed_at'] as String)
+          : null,
       lastMetadataEventAt: map['last_metadata_event_at'] != null
           ? DateTime.parse(map['last_metadata_event_at'] as String)
           : null,
@@ -203,6 +213,7 @@ class GroupModel {
           ?.toUtc()
           .toIso8601String(),
       'last_membership_event_id': lastMembershipEventId,
+      'self_removed_at': selfRemovedAt?.toUtc().toIso8601String(),
       'last_metadata_event_at': lastMetadataEventAt?.toUtc().toIso8601String(),
       'last_backlog_expired_at': lastBacklogExpiredAt
           ?.toUtc()
@@ -234,6 +245,7 @@ class GroupModel {
     Object? archivedAt = _sentinel,
     Object? lastMembershipEventAt = _sentinel,
     Object? lastMembershipEventId = _sentinel,
+    Object? selfRemovedAt = _sentinel,
     Object? lastMetadataEventAt = _sentinel,
     Object? lastBacklogExpiredAt = _sentinel,
     Object? lastBacklogRetainedAt = _sentinel,
@@ -276,6 +288,9 @@ class GroupModel {
       lastMembershipEventId: lastMembershipEventId == _sentinel
           ? this.lastMembershipEventId
           : lastMembershipEventId as String?,
+      selfRemovedAt: selfRemovedAt == _sentinel
+          ? this.selfRemovedAt
+          : selfRemovedAt as DateTime?,
       lastMetadataEventAt: lastMetadataEventAt == _sentinel
           ? this.lastMetadataEventAt
           : lastMetadataEventAt as DateTime?,

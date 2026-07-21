@@ -15,6 +15,7 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -894,6 +895,66 @@ void main() {
     );
 
     test(
+      'missing local source projects once without a generic attachment rewrite',
+      () async {
+        const messageId = 'msg-missing-local-source';
+        const attachmentId = 'pending-missing-local-source';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Missing local source',
+            timestamp: DateTime.utc(2026, 7, 20),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 7, 20),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 2048,
+            mediaType: 'image',
+            downloadStatus: 'upload_pending',
+            createdAt: DateTime.utc(2026, 7, 20).toIso8601String(),
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        var sequentialAttachmentSaves = 0;
+        mediaRepo.onSaveAttachment = (_) => sequentialAttachmentSaves++;
+        final projection = _RecordingGroupUploadRetryProjection();
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          uploadRetryProjectionRepo: projection,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(projection.callCount, 1);
+        expect(projection.messageId, messageId);
+        expect(projection.attachmentId, attachmentId);
+        expect(projection.failure?.stage, UploadMediaStage.localSource);
+        expect(projection.failure?.errorCode, 'MISSING_LOCAL_SOURCE');
+        expect(sequentialAttachmentSaves, 0);
+        final persisted = await mediaRepo.getAttachmentById(attachmentId);
+        expect(persisted?.downloadStatus, 'upload_pending');
+        expect(persisted?.uploadRetryCount, isNull);
+      },
+    );
+
+    test(
       'returns 0 for overlapping same-isolate retry while first upload is in flight',
       () async {
         await groupMsgRepo.saveMessage(
@@ -987,6 +1048,176 @@ void main() {
           bridge.commandLog.where((command) => command == 'group:inboxStore'),
           hasLength(1),
         );
+      },
+    );
+
+    test(
+      'PGC-010 action-first upload completion precedes B3 and blocks final send',
+      () async {
+        const messageId = 'pgc010-upload-action-first';
+        const attachmentId = 'pgc010-upload-action-first-att';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Finish the bounded upload leaf',
+            timestamp: DateTime.utc(2026, 7, 20, 10),
+            keyGeneration: 0,
+            status: 'queued_offline',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 7, 20, 10),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final uploadStarted = Completer<void>();
+        final uploadMayFinish = Completer<void>();
+        Future<UploadMediaOutcome> blockingUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          preparedArtifact,
+        }) async {
+          uploadStarted.complete();
+          await uploadMayFinish.future;
+          return UploadMediaSucceeded(
+            _doneAttachment(id: blobId!, messageId: messageId),
+          );
+        }
+
+        final retryFuture = retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: blockingUpload,
+          mediaFileManager: mediaFileManager,
+        );
+        await uploadStarted.future;
+
+        var markerCommitted = false;
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(
+                selfRemovedAt: DateTime.utc(2026, 7, 20, 10, 1),
+              ),
+            );
+            markerCommitted = true;
+          },
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          markerCommitted,
+          isFalse,
+          reason: 'B3 must wait for upload action plus exact completion',
+        );
+
+        uploadMayFinish.complete();
+        await markerFuture;
+        expect(markerCommitted, isTrue);
+        expect(await retryFuture, 0);
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(attachments.single.downloadStatus, 'done');
+        expect(_publishedGroupPayloads(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'PGC-010 B3-first membership phase stops incomplete upload dispatch',
+      () async {
+        const messageId = 'pgc010-upload-b3-first';
+        const attachmentId = 'pgc010-upload-b3-first-att';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Do not upload from the removed shell',
+            timestamp: DateTime.utc(2026, 7, 20, 10, 2),
+            keyGeneration: 0,
+            status: 'queued_offline',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 7, 20, 10, 2),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final markerMayFinish = Completer<void>();
+        final markerCommitted = Completer<void>();
+        final markerFuture = runGroupMembershipMutationLocked(
+          groupId: 'group-1',
+          action: () async {
+            final current = await groupRepo.getGroup('group-1');
+            await groupRepo.updateGroup(
+              current!.copyWith(
+                selfRemovedAt: DateTime.utc(2026, 7, 20, 10, 3),
+              ),
+            );
+            markerCommitted.complete();
+            await markerMayFinish.future;
+          },
+        );
+        await markerCommitted.future;
+
+        var retryCompleted = false;
+        final retryFuture = retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        ).whenComplete(() => retryCompleted = true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(retryCompleted, isFalse, reason: 'upload must queue behind B3');
+        expect(uploadFn.callCount, 0);
+
+        markerMayFinish.complete();
+        await markerFuture;
+        expect(await retryFuture, 0);
+        expect(uploadFn.callCount, 0);
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(attachments.single.downloadStatus, 'upload_pending');
+        expect(_publishedGroupPayloads(bridge), isEmpty);
       },
     );
 
@@ -1087,7 +1318,7 @@ void main() {
           mediaRepo: mediaRepo,
         );
 
-        final manualCount = await retryIncompleteGroupUploads(
+        final manualRetry = retryIncompleteGroupUploads(
           groupRepo: groupRepo,
           groupMsgRepo: groupMsgRepo,
           mediaAttachmentRepo: mediaRepo,
@@ -1105,6 +1336,14 @@ void main() {
           ),
           releaseUploadLease: tracker.release,
         );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          uploadFn.callCount,
+          0,
+          reason:
+              'manual process-coalescer bypass still queues behind the active '
+              'per-group membership leaf',
+        );
         final overlappingAutomatic = await retryIncompleteGroupUploads(
           groupRepo: groupRepo,
           groupMsgRepo: groupMsgRepo,
@@ -1116,12 +1355,13 @@ void main() {
           mediaFileManager: mediaFileManager,
         );
 
+        expect(overlappingAutomatic, 0);
+        allowAutomatic.complete();
+        final manualCount = await manualRetry;
+        expect(await automaticRetry, 1);
         expect(manualCount, 1);
         expect(rearm.callCount, 1);
         expect(uploadFn.callCount, 1);
-        expect(overlappingAutomatic, 0);
-        allowAutomatic.complete();
-        expect(await automaticRetry, 1);
       },
     );
 

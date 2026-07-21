@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:uuid/uuid.dart';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -7,6 +9,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
@@ -594,6 +597,7 @@ storeIncomingPendingGroupInvite({
     }
   }
 
+  final selfPeerId = ownPeerId?.trim();
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
     // B3 re-join: a previously-removed member RETAINS the group read-only
@@ -606,7 +610,6 @@ storeIncomingPendingGroupInvite({
     // identifies the retained-removed case. A genuinely-joined duplicate (self
     // still a member) short-circuits as before. Mirrors the guard in
     // materializeAcceptedGroupInvitePayload.
-    final selfPeerId = ownPeerId?.trim();
     final selfIsActiveMember = selfPeerId == null || selfPeerId.isEmpty
         ? true
         : (await groupRepo.getMember(payload.groupId, selfPeerId)) != null;
@@ -738,6 +741,7 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
   String? ownKeyPackageId,
   String? ownKeyPackagePublicMaterial,
   DateTime? now,
+  DateTime Function()? nowUtc,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
 }) async {
   emitFlowEvent(
@@ -750,7 +754,9 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     },
   );
 
-  final effectiveNow = (now ?? DateTime.now()).toUtc();
+  DateTime currentValidationTime() =>
+      (nowUtc?.call() ?? now ?? DateTime.now()).toUtc();
+  final effectiveNow = currentValidationTime();
   final (resolveResult, resolvedInvite) = await _resolveIncomingGroupInvite(
     message: message,
     contactRepo: contactRepo,
@@ -797,6 +803,7 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     bridge: bridge,
     downloadGroupAvatarFn: downloadGroupAvatarFn,
     ownPeerId: ownPeerId,
+    validationNowUtc: currentValidationTime,
   );
 }
 
@@ -807,6 +814,7 @@ materializeAcceptedGroupInvitePayload({
   required Bridge bridge,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
   String? ownPeerId,
+  DateTime Function()? validationNowUtc,
 }) async {
   if (!payload.isInvitePolicyValid()) {
     emitFlowEvent(
@@ -821,7 +829,18 @@ materializeAcceptedGroupInvitePayload({
     return (HandleGroupInviteResult.invalidPayload, null);
   }
 
+  final requestedSelfPeerId = ownPeerId?.trim();
+  final payloadRecipientPeerId = payload.recipientPeerId?.trim();
+  final selfPeerId =
+      requestedSelfPeerId != null && requestedSelfPeerId.isNotEmpty
+      ? requestedSelfPeerId
+      : payloadRecipientPeerId;
+  final shellRepository = groupRepo is SelfRemovedGroupShellRepository
+      ? groupRepo as SelfRemovedGroupShellRepository
+      : null;
   final existingGroup = await groupRepo.getGroup(payload.groupId);
+  var isPostRemovalReentry = false;
+  DateTime? postRemovalGenerationFloor;
   if (existingGroup != null) {
     // B3 re-join: a previously-removed member RETAINS the group read-only
     // (self removed from members, keys cleared) instead of hard-deleting it,
@@ -831,7 +850,6 @@ materializeAcceptedGroupInvitePayload({
     // longer being an active member — a voluntarily-left group is hard-deleted
     // (getGroup == null), so this uniquely identifies the retained case. A
     // genuinely-joined duplicate (self still a member) short-circuits as before.
-    final selfPeerId = ownPeerId?.trim();
     final selfIsActiveMember = selfPeerId == null || selfPeerId.isEmpty
         ? true
         : (await groupRepo.getMember(payload.groupId, selfPeerId)) != null;
@@ -847,6 +865,21 @@ materializeAcceptedGroupInvitePayload({
       );
       return (HandleGroupInviteResult.duplicateGroup, null);
     }
+    if (existingGroup.selfRemovedAt == null || shellRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_HANDLE_REJOIN_AUTHORITY_MISSING',
+        details: {'groupId': payload.groupId},
+      );
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+    isPostRemovalReentry = true;
+    postRemovalGenerationFloor = existingGroup.selfRemovedAt!.toUtc();
+    final membershipFloor = existingGroup.lastMembershipEventAt?.toUtc();
+    if (membershipFloor != null &&
+        membershipFloor.isAfter(postRemovalGenerationFloor)) {
+      postRemovalGenerationFloor = membershipFloor;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_HANDLE_REJOIN_AFTER_REMOVAL',
@@ -856,7 +889,23 @@ materializeAcceptedGroupInvitePayload({
             : payload.groupId,
       },
     );
-    // Fall through to materialization to re-join the retained group.
+    // Fall through to the authenticated atomic re-entry phase.
+  } else {
+    // An absent row may still have a retained removal floor. Production and
+    // accepted-invite tests must expose the capability so absence can never be
+    // mistaken for a truly fresh group.
+    if (shellRepository == null || selfPeerId == null || selfPeerId.isEmpty) {
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+    try {
+      final floor = await shellRepository.loadSelfRemovedShellFreshnessFloor(
+        payload.groupId,
+      );
+      isPostRemovalReentry = floor != null;
+      postRemovalGenerationFloor = floor?.selfRemovedAt.toUtc();
+    } catch (_) {
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
   }
 
   final config = payload.groupConfig;
@@ -908,7 +957,13 @@ materializeAcceptedGroupInvitePayload({
       : null;
   final membershipWatermarkAt = _parseInviteMembershipWatermark(payload);
   final inviteIssuedAt = _parseInviteIssuedAt(payload);
-  final acceptedMembershipWatermarkAt = membershipWatermarkAt ?? inviteIssuedAt;
+  if (isPostRemovalReentry &&
+      (membershipWatermarkAt == null || inviteIssuedAt == null)) {
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+  final acceptedMembershipWatermarkAt = isPostRemovalReentry
+      ? _laterInstant(membershipWatermarkAt!, inviteIssuedAt!)
+      : membershipWatermarkAt ?? inviteIssuedAt;
 
   // 6. Persist GroupModel with myRole = member
   final groupModel = GroupModel(
@@ -925,25 +980,89 @@ materializeAcceptedGroupInvitePayload({
     lastMetadataEventAt: metadataUpdatedAt,
     lastMembershipEventAt: acceptedMembershipWatermarkAt,
   );
-  await groupRepo.saveGroup(groupModel);
 
-  // 7. Persist members from config
   final membersList = config['members'] as List<dynamic>? ?? [];
   final materializedAt = DateTime.now().toUtc();
+  final acceptedRoster = <GroupMember>[];
   for (final memberMap in membersList) {
-    final m = Map<String, dynamic>.from(memberMap as Map);
-    final priorMember = await groupRepo.getMember(
-      payload.groupId,
-      (m['peerId'] as String?) ?? '',
-    );
+    if (memberMap is! Map) {
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
     final member = GroupMember.fromConfigMap(
       groupId: payload.groupId,
-      map: m,
+      map: Map<String, dynamic>.from(memberMap),
       joinedAt: _acceptedMemberJoinedAt(
-        m,
+        Map<String, dynamic>.from(memberMap),
         membershipWatermarkAt: acceptedMembershipWatermarkAt,
         materializedAt: materializedAt,
       ),
+    );
+    acceptedRoster.add(member);
+  }
+  if (isPostRemovalReentry) {
+    final acceptedSelf = acceptedRoster
+        .where((member) => member.peerId == selfPeerId)
+        .toList(growable: false);
+    final generationFloor = postRemovalGenerationFloor;
+    if (generationFloor == null ||
+        acceptedSelf.length != 1 ||
+        !acceptedSelf.single.joinedAt.toUtc().isAfter(generationFloor)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_ACCEPTED_REENTRY_SELF_GENERATION_REFUSED',
+        details: {'groupId': payload.groupId},
+      );
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+  }
+  final keyInfo = GroupKeyInfo(
+    groupId: payload.groupId,
+    keyGeneration: payload.keyEpoch,
+    encryptedKey: payload.groupKey,
+    createdAt: DateTime.now().toUtc(),
+  );
+
+  if (isPostRemovalReentry) {
+    final result = await _materializePostRemovalAcceptedInvite(
+      payload: payload,
+      groupRepo: groupRepo,
+      shellRepository: shellRepository,
+      bridge: bridge,
+      group: groupModel,
+      roster: acceptedRoster,
+      key: keyInfo,
+      selfPeerId: selfPeerId,
+      validationNowUtc: validationNowUtc,
+    );
+    if (result.$2 != null) {
+      for (final member in acceptedRoster) {
+        if (groupMemberRegainedDeliverableKey(existing: null, saved: member)) {
+          await triggerDeferredDistributionDrainForPeer(
+            groupId: payload.groupId,
+            peerId: member.peerId,
+          );
+        }
+      }
+      await _downloadAcceptedAvatarIfCurrent(
+        payload: payload,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        downloadGroupAvatarFn: downloadGroupAvatarFn,
+        metadataUpdatedAt: metadataUpdatedAt,
+        avatarBlobId: avatarBlobId,
+        avatarMime: avatarMime,
+      );
+    }
+    return result;
+  }
+
+  await groupRepo.saveGroup(groupModel);
+
+  // 7. Persist members from config
+  for (final member in acceptedRoster) {
+    final priorMember = await groupRepo.getMember(
+      payload.groupId,
+      member.peerId,
     );
     await groupRepo.saveMember(member);
     // G-A: if materializing this accepted invite first lands a member's usable
@@ -961,38 +1080,17 @@ materializeAcceptedGroupInvitePayload({
   }
 
   // 8. Persist GroupKeyInfo
-  final keyInfo = GroupKeyInfo(
-    groupId: payload.groupId,
-    keyGeneration: payload.keyEpoch,
-    encryptedKey: payload.groupKey,
-    createdAt: DateTime.now().toUtc(),
-  );
   await groupRepo.saveKey(keyInfo);
 
-  if (avatarBlobId != null && avatarMime != null) {
-    final avatarPath = await (downloadGroupAvatarFn ?? downloadGroupAvatar)(
-      bridge: bridge,
-      groupId: payload.groupId,
-      blobId: avatarBlobId,
-    );
-    if (avatarPath != null) {
-      final refreshedGroup = await groupRepo.getGroup(payload.groupId);
-      final refreshedWatermark = refreshedGroup?.lastMetadataEventAt?.toUtc();
-      final inviteWatermark = metadataUpdatedAt?.toUtc();
-      final inviteMetadataIsCurrent =
-          refreshedWatermark == null ||
-          inviteWatermark == null ||
-          !inviteWatermark.isBefore(refreshedWatermark);
-      if (refreshedGroup != null &&
-          inviteMetadataIsCurrent &&
-          refreshedGroup.avatarBlobId == avatarBlobId &&
-          refreshedGroup.avatarMime == avatarMime) {
-        await groupRepo.updateGroup(
-          refreshedGroup.copyWith(avatarPath: avatarPath),
-        );
-      }
-    }
-  }
+  await _downloadAcceptedAvatarIfCurrent(
+    payload: payload,
+    groupRepo: groupRepo,
+    bridge: bridge,
+    downloadGroupAvatarFn: downloadGroupAvatarFn,
+    metadataUpdatedAt: metadataUpdatedAt,
+    avatarBlobId: avatarBlobId,
+    avatarMime: avatarMime,
+  );
 
   // 9. Call bridge to join the group topic
   try {
@@ -1070,6 +1168,147 @@ materializeAcceptedGroupInvitePayload({
   );
   return (HandleGroupInviteResult.success, payload.groupId);
 }
+
+Future<(HandleGroupInviteResult, String?)>
+_materializePostRemovalAcceptedInvite({
+  required GroupInvitePayload payload,
+  required GroupRepository groupRepo,
+  required SelfRemovedGroupShellRepository shellRepository,
+  required Bridge bridge,
+  required GroupModel group,
+  required List<GroupMember> roster,
+  required GroupKeyInfo key,
+  required String selfPeerId,
+  required DateTime Function()? validationNowUtc,
+}) {
+  return runGroupMembershipMutationLocked(
+    groupId: payload.groupId,
+    action: () async {
+      final proof = payload.membershipFreshnessProof;
+      final lockedValidationTime = (validationNowUtc?.call() ?? DateTime.now())
+          .toUtc();
+      if (!payload.isInvitePolicyValid(validationTime: lockedValidationTime) ||
+          proof == null ||
+          !proof.isFreshAt(lockedValidationTime)) {
+        return (HandleGroupInviteResult.invalidPayload, null);
+      }
+      final watermarkRaw = proof.membershipWatermark.trim();
+      final issuedAt = proof.issuedAt.toUtc();
+      if (watermarkRaw.isEmpty ||
+          DateTime.tryParse(watermarkRaw)?.toUtc() == null ||
+          selfPeerId.trim().isEmpty) {
+        return (HandleGroupInviteResult.invalidPayload, null);
+      }
+
+      SelfRemovedAcceptedReentryResult committed;
+      try {
+        committed = await shellRepository.commitAcceptedReentry(
+          group: group,
+          roster: roster,
+          key: key,
+          selfPeerId: selfPeerId,
+          authorizationId: payload.id,
+          signedMembershipWatermark: watermarkRaw,
+          signedIssuedAt: issuedAt.toIso8601String(),
+          bindingNonce: const Uuid().v4(),
+        );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INVITE_ACCEPTED_REENTRY_COMMIT_FAILED',
+          details: {'groupId': payload.groupId, 'error': error.toString()},
+        );
+        return (HandleGroupInviteResult.invalidPayload, null);
+      }
+      if (!committed.committed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INVITE_ACCEPTED_REENTRY_REFUSED',
+          details: {
+            'groupId': payload.groupId,
+            'outcome': committed.outcome.name,
+          },
+        );
+        return (HandleGroupInviteResult.invalidPayload, null);
+      }
+
+      try {
+        await callGroupJoinWithConfig(
+          bridge,
+          groupId: payload.groupId,
+          groupConfig: payload.groupConfig,
+          groupKey: payload.groupKey,
+          keyEpoch: payload.keyEpoch,
+        );
+      } on BridgeCommandException catch (error) {
+        if (_isRepairableJoinMaterialError(error)) {
+          final rollback = await shellRepository.rollbackAcceptedReentry(
+            groupId: payload.groupId,
+            selfPeerId: selfPeerId,
+            authorizationId: payload.id,
+          );
+          if (rollback == SelfRemovedAcceptedRollbackOutcome.rolledBack) {
+            return (HandleGroupInviteResult.invalidPayload, null);
+          }
+          // Exact rollback refused because newer authority won. Preserve that
+          // state and surface a retryable error rather than generic-deleting it.
+          await _enrollTransientJoinFailureForRejoin(
+            groupRepo,
+            payload.groupId,
+          );
+          return (HandleGroupInviteResult.bridgeError, payload.groupId);
+        }
+        await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
+        return (HandleGroupInviteResult.bridgeError, payload.groupId);
+      } on TimeoutException {
+        await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
+        return (HandleGroupInviteResult.bridgeError, payload.groupId);
+      } catch (_) {
+        await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
+        return (HandleGroupInviteResult.bridgeError, payload.groupId);
+      }
+
+      return (HandleGroupInviteResult.success, payload.groupId);
+    },
+  );
+}
+
+Future<void> _downloadAcceptedAvatarIfCurrent({
+  required GroupInvitePayload payload,
+  required GroupRepository groupRepo,
+  required Bridge bridge,
+  required DownloadGroupAvatarFn? downloadGroupAvatarFn,
+  required DateTime? metadataUpdatedAt,
+  required String? avatarBlobId,
+  required String? avatarMime,
+}) async {
+  if (avatarBlobId == null || avatarMime == null) return;
+  final avatarPath = await (downloadGroupAvatarFn ?? downloadGroupAvatar)(
+    bridge: bridge,
+    groupId: payload.groupId,
+    blobId: avatarBlobId,
+  );
+  if (avatarPath == null) return;
+  final refreshedGroup = await groupRepo.getGroup(payload.groupId);
+  final refreshedWatermark = refreshedGroup?.lastMetadataEventAt?.toUtc();
+  final inviteWatermark = metadataUpdatedAt?.toUtc();
+  final inviteMetadataIsCurrent =
+      refreshedWatermark == null ||
+      inviteWatermark == null ||
+      !inviteWatermark.isBefore(refreshedWatermark);
+  if (refreshedGroup != null &&
+      refreshedGroup.selfRemovedAt == null &&
+      inviteMetadataIsCurrent &&
+      refreshedGroup.avatarBlobId == avatarBlobId &&
+      refreshedGroup.avatarMime == avatarMime) {
+    await groupRepo.updateGroup(
+      refreshedGroup.copyWith(avatarPath: avatarPath),
+    );
+  }
+}
+
+DateTime _laterInstant(DateTime first, DateTime second) =>
+    first.isAfter(second) ? first.toUtc() : second.toUtc();
 
 DateTime? _parseInviteMembershipWatermark(GroupInvitePayload payload) {
   final raw = payload.membershipFreshnessProof?.membershipWatermark;

@@ -5,13 +5,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
 
 /// Bridge that fails on the first N group:inboxStore calls and succeeds after.
 class _FailFirstNInboxBridge extends FakeBridge {
@@ -55,6 +58,42 @@ class _TimeoutInboxStoreBridge extends FakeBridge {
       throw TimeoutException('Simulated group:inboxStore timeout');
     }
     return super.send(message);
+  }
+}
+
+class _GatedInboxStoreBridge extends FakeBridge {
+  final Completer<void> inboxStarted = Completer<void>();
+  final Completer<void> inboxGate = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:inboxStore') {
+      if (!inboxStarted.isCompleted) inboxStarted.complete();
+      await inboxGate.future;
+    }
+    return super.send(message);
+  }
+}
+
+class _ReplaceReactionRowOnStoreBridge extends FakeBridge {
+  _ReplaceReactionRowOnStoreBridge({
+    required this.repository,
+    required this.replacement,
+  });
+
+  final FakeGroupReactionReplayOutboxRepository repository;
+  final GroupReactionReplayOutboxEntry replacement;
+
+  @override
+  Future<String> send(String message) async {
+    final response = await super.send(message);
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:inboxStore') {
+      await repository.saveEntry(replacement);
+    }
+    return response;
   }
 }
 
@@ -274,6 +313,111 @@ void main() {
     expect(timing['details']['retried'], 1);
     expect(timing['details']['limit'], 20);
   });
+
+  test(
+    'PGC-010 action-first inbox repush completes before B3 commits',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: 'topic-1',
+          createdAt: DateTime.utc(2026, 7, 20, 9),
+          createdBy: 'peer-1',
+          myRole: GroupRole.member,
+        ),
+      );
+      await msgRepo.saveMessage(_makeRetryEligible('pgc010-inbox-action'));
+      final gatedBridge = _GatedInboxStoreBridge();
+
+      final retryFuture = retryFailedGroupInboxStores(
+        bridge: gatedBridge,
+        msgRepo: msgRepo,
+        groupRepo: groupRepo,
+      );
+      await gatedBridge.inboxStarted.future;
+
+      var markerCommitted = false;
+      final markerFuture = runGroupMembershipMutationLocked(
+        groupId: 'group-1',
+        action: () async {
+          final current = await groupRepo.getGroup('group-1');
+          await groupRepo.updateGroup(
+            current!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20, 9, 1)),
+          );
+          markerCommitted = true;
+        },
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        markerCommitted,
+        isFalse,
+        reason: 'B3 must wait for inbox action plus exact completion',
+      );
+
+      gatedBridge.inboxGate.complete();
+      expect(await retryFuture, 1);
+      await markerFuture;
+      expect(markerCommitted, isTrue);
+      final saved = await msgRepo.getMessage('pgc010-inbox-action');
+      expect(saved!.inboxStored, isTrue);
+      expect(saved.inboxRetryPayload, isNull);
+    },
+  );
+
+  test(
+    'PGC-010 B3-first membership phase stops inbox repush before dispatch',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: 'topic-1',
+          createdAt: DateTime.utc(2026, 7, 20, 9, 2),
+          createdBy: 'peer-1',
+          myRole: GroupRole.member,
+        ),
+      );
+      await msgRepo.saveMessage(_makeRetryEligible('pgc010-inbox-b3'));
+
+      final markerMayFinish = Completer<void>();
+      final markerCommitted = Completer<void>();
+      final markerFuture = runGroupMembershipMutationLocked(
+        groupId: 'group-1',
+        action: () async {
+          final current = await groupRepo.getGroup('group-1');
+          await groupRepo.updateGroup(
+            current!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20, 9, 3)),
+          );
+          markerCommitted.complete();
+          await markerMayFinish.future;
+        },
+      );
+      await markerCommitted.future;
+
+      var retryCompleted = false;
+      final retryFuture = retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+        groupRepo: groupRepo,
+      ).whenComplete(() => retryCompleted = true);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(retryCompleted, isFalse, reason: 'repush must queue behind B3');
+      expect(bridge.commandLog, isEmpty);
+
+      markerMayFinish.complete();
+      await markerFuture;
+      expect(await retryFuture, 0);
+      expect(bridge.commandLog, isEmpty);
+      final saved = await msgRepo.getMessage('pgc010-inbox-b3');
+      expect(saved!.inboxStored, isFalse);
+      expect(saved.inboxRetryPayload, isNotNull);
+    },
+  );
 
   test(
     'EK004 retry preserves signed group offline replay envelope fields',
@@ -674,6 +818,39 @@ void main() {
     expect(done['details']['reactionTotal'], 2);
     expect(done['details']['retried'], 2);
   });
+
+  test(
+    'reaction replay completion cannot settle a replacement with the same id',
+    () async {
+      final loaded = _makeReactionRetryEntry('rx-replaced');
+      await reactionReplayOutboxRepo.saveEntry(loaded);
+      final replacement = loaded.copyWith(
+        action: 'remove',
+        emoji: ':remove:',
+        inboxRetryPayload: '${loaded.inboxRetryPayload} ',
+        deliveryStatus: GroupReactionReplayOutboxStatus.pending,
+        lastError: null,
+        updatedAt: '2026-01-15T12:01:00.000Z',
+      );
+      final replacingBridge = _ReplaceReactionRowOnStoreBridge(
+        repository: reactionReplayOutboxRepo,
+        replacement: replacement,
+      );
+
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: replacingBridge,
+          msgRepo: msgRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        ),
+        0,
+      );
+      final current = await reactionReplayOutboxRepo.getEntry('rx-replaced');
+      expect(current!.action, 'remove');
+      expect(current.deliveryStatus, GroupReactionReplayOutboxStatus.pending);
+      expect(current.updatedAt, replacement.updatedAt);
+    },
+  );
 
   test(
     'reaction replay retry failure leaves the row failed and continues to later rows',

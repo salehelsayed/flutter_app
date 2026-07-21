@@ -167,3 +167,281 @@ abstract class GroupKeyRotationDraftRepository {
 
   Future<void> clearPendingKeyRotations(String groupId);
 }
+
+/// Optional persistence capability for the two protected membership watermark
+/// columns. Ordinary full-row metadata writes intentionally preserve these
+/// fields, so real membership events must advance them through this seam.
+abstract class GroupMembershipWatermarkRepository {
+  Future<bool> advanceGroupMembershipWatermark({
+    required String groupId,
+    required DateTime eventAt,
+    String? eventId,
+  });
+}
+
+enum SelfRemovedShellAuthorityShape {
+  absent,
+  unmarkedSelfPresent,
+  unmarkedSelfAbsent,
+  markedSelfPresent,
+  markedSelfAbsent,
+}
+
+/// Repository-neutral view of the exact SQL authority token. The opaque token
+/// is deliberately handed back to compare-and-swap mutations; callers cannot
+/// manufacture delete authority from a stale model or message history.
+class SelfRemovedShellAuthoritySnapshot {
+  const SelfRemovedShellAuthoritySnapshot({
+    required this.groupId,
+    required this.selfPeerId,
+    required this.shape,
+    required this.selfRemovedAt,
+    required this.lastMembershipEventAt,
+    required this.lastMembershipEventId,
+    required this.selfJoinedAt,
+    required this.persistenceToken,
+  });
+
+  final String groupId;
+  final String selfPeerId;
+  final SelfRemovedShellAuthorityShape shape;
+  final DateTime? selfRemovedAt;
+  final DateTime? lastMembershipEventAt;
+  final String? lastMembershipEventId;
+  final DateTime? selfJoinedAt;
+  final Object persistenceToken;
+}
+
+enum SelfRemovalAuthorityCommitOutcome {
+  committed,
+  refusedStateChanged,
+  refusedStaleRemoval,
+}
+
+enum SelfRemovedShellMutationOutcome {
+  committed,
+  refusedStateChanged,
+  refusedOutstandingReferences,
+  refusedMediaRemaining,
+  refusedFloorMissing,
+  refusedTombstoneConflict,
+}
+
+class SelfRemovedShellMediaParent {
+  const SelfRemovedShellMediaParent({
+    required this.messageId,
+    required this.timestamp,
+  });
+
+  final String messageId;
+  final DateTime timestamp;
+}
+
+class SelfRemovedShellMediaBatch {
+  const SelfRemovedShellMediaBatch({
+    required this.outcome,
+    required this.authority,
+    required this.parents,
+    required this.hasOverflow,
+  });
+
+  final SelfRemovedShellMutationOutcome outcome;
+  final SelfRemovedShellAuthoritySnapshot authority;
+  final List<SelfRemovedShellMediaParent> parents;
+  final bool hasOverflow;
+}
+
+class SelfRemovedShellFreshnessFloor {
+  const SelfRemovedShellFreshnessFloor({
+    required this.groupId,
+    required this.selfPeerId,
+    required this.selfRemovedAt,
+    required this.persistenceToken,
+  });
+
+  final String groupId;
+  final String selfPeerId;
+  final DateTime selfRemovedAt;
+  final Object persistenceToken;
+}
+
+/// Domain-level signal for an exact removed-shell authority CAS loss.
+///
+/// Persistence implementations translate their private database exception to
+/// this type so callers can preserve the public `refusedStateChanged`
+/// disposition without treating an operational store failure as a race.
+class SelfRemovedShellStateChangedException implements Exception {
+  const SelfRemovedShellStateChangedException();
+}
+
+enum SelfRemovedAcceptedReentryOutcome {
+  committed,
+  refusedMissingFloor,
+  refusedStateChanged,
+  refusedInvalidMaterial,
+  refusedMalformedAuthority,
+  refusedStaleAuthority,
+  refusedKeyState,
+  refusedEvidenceInvalid,
+  refusedBindingCollision,
+}
+
+class SelfRemovedAcceptedReentryResult {
+  const SelfRemovedAcceptedReentryResult({
+    required this.outcome,
+    this.acceptedAt,
+  });
+
+  final SelfRemovedAcceptedReentryOutcome outcome;
+  final DateTime? acceptedAt;
+
+  bool get committed => outcome == SelfRemovedAcceptedReentryOutcome.committed;
+}
+
+enum SelfRemovedAcceptedRollbackOutcome {
+  rolledBack,
+  refusedBindingMissing,
+  refusedAuthorizationMismatch,
+  refusedStateChanged,
+  refusedEvidenceInvalid,
+}
+
+enum SelfRemovedAcceptedRetryAuthorizationOutcome {
+  authorized,
+  refusedBindingMissing,
+  refusedAuthorizationMismatch,
+  refusedStateChanged,
+  refusedEvidenceInvalid,
+}
+
+class SelfRemovedAcceptedNativeRetryResult {
+  const SelfRemovedAcceptedNativeRetryResult({
+    required this.outcome,
+    this.group,
+  });
+
+  final SelfRemovedAcceptedRetryAuthorizationOutcome outcome;
+  final GroupModel? group;
+
+  bool get joined =>
+      outcome == SelfRemovedAcceptedRetryAuthorizationOutcome.authorized &&
+      group != null;
+}
+
+/// Optional fail-closed capability owning every durable removed-shell
+/// transition and its strict terminal external cleanup.
+abstract class SelfRemovedGroupShellRepository {
+  Future<SelfRemovedShellAuthoritySnapshot> loadSelfRemovedShellAuthority({
+    required String groupId,
+    required String selfPeerId,
+  });
+
+  /// Serializes the final re-read, one idempotent native leave, and atomic B3
+  /// authority commit in that order.
+  Future<SelfRemovalAuthorityCommitOutcome> commitSelfRemovalAuthority({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime expectedSelfJoinedAt,
+    required DateTime removalAt,
+    required String removalEventId,
+    required Future<void> Function() leaveNative,
+  });
+
+  Future<SelfRemovedShellMediaBatch> loadSelfRemovedShellMediaParents({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required int limit,
+  });
+
+  /// Strictly removes notification authorization, primary key material,
+  /// generation/mute mirrors, and finally their exact SQL addresses.
+  Future<SelfRemovedShellMutationOutcome> terminalizeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  });
+
+  Future<SelfRemovedShellFreshnessFloor> appendSelfRemovedShellFreshnessFloor({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  });
+
+  Future<SelfRemovedShellFreshnessFloor?> loadSelfRemovedShellFreshnessFloor(
+    String groupId,
+  );
+
+  /// Atomically crosses either a marked shell or an absent retained floor into
+  /// an authenticated accepted membership. The durable floor/origin and the
+  /// phase-unique SQL key address precede primary secure material; the final
+  /// transaction requires that exact preparation and adds the binding.
+  Future<SelfRemovedAcceptedReentryResult> commitAcceptedReentry({
+    required GroupModel group,
+    required List<GroupMember> roster,
+    required GroupKeyInfo key,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required String bindingNonce,
+  });
+
+  /// Restores the exact marked or absent-floor shape selected by the newest
+  /// matching durable accepted-state binding.
+  Future<SelfRemovedAcceptedRollbackOutcome> rollbackAcceptedReentry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+  });
+
+  /// Reconstructs the newest binding matching the current accepted state and
+  /// authorizes a duplicate native retry only when the pending signed tuple,
+  /// self identity, and key generation still match that binding.
+  Future<SelfRemovedAcceptedRetryAuthorizationOutcome>
+  authorizeAcceptedReentryRetry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+  });
+
+  /// Holds the repository's per-group coordinator across final durable
+  /// binding-or-fresh qualification, exact self/group/key reads, and one
+  /// duplicate native join action.
+  Future<SelfRemovedAcceptedNativeRetryResult> retryAcceptedReentryNative({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedFreshMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+    required Future<void> Function() joinNative,
+  });
+
+  /// Fresh-only direct join. Production holds its coordinator across the
+  /// absent/no-floor proof, native action, and private assumes-held writes.
+  Future<void> commitFreshDirectJoin({
+    required GroupModel group,
+    required GroupMember selfMember,
+    required GroupKeyInfo key,
+    required Future<void> Function() joinNative,
+  });
+
+  /// Exact no-floor fresh rollback. Newer group/member/key state refuses and
+  /// no sequence of public destructive repository calls is used.
+  Future<SelfRemovedAcceptedRollbackOutcome>
+  rollbackFreshAcceptedMaterialization({
+    required String groupId,
+    required String selfPeerId,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+  });
+
+  Future<SelfRemovedShellMutationOutcome> purgeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required SelfRemovedShellFreshnessFloor floor,
+    required DateTime deletedAt,
+  });
+}

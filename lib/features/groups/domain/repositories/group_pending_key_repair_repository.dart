@@ -44,3 +44,81 @@ abstract class GroupPendingKeyRepairRepository {
 
   Future<void> finalizeUndecryptable(String id, {required String lastError});
 }
+
+abstract interface class GroupPendingKeyRepairExactRepository {
+  Future<GroupPendingKeyRepair?> recordAttemptIfExact(
+    GroupPendingKeyRepair expected, {
+    required String? lastError,
+  });
+
+  Future<bool> deleteRepairIfExact(GroupPendingKeyRepair expected);
+
+  Future<bool> finalizeRepairedIfExact(GroupPendingKeyRepair expected);
+
+  Future<bool> finalizeUndecryptableIfExact(
+    GroupPendingKeyRepair expected, {
+    required String lastError,
+  });
+}
+
+Future<GroupPendingKeyRepair?> recordGroupPendingKeyRepairAttemptIfExact(
+  GroupPendingKeyRepairRepository repository,
+  GroupPendingKeyRepair expected, {
+  required String? lastError,
+}) async {
+  if (repository case final GroupPendingKeyRepairExactRepository exact) {
+    return exact.recordAttemptIfExact(expected, lastError: lastError);
+  }
+  final current = await repository.getRepair(expected.id);
+  if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+    return null;
+  }
+  await repository.recordAttempt(expected.id, lastError: lastError);
+  return repository.getRepair(expected.id);
+}
+
+Future<bool> deleteGroupPendingKeyRepairIfExact(
+  GroupPendingKeyRepairRepository repository,
+  GroupPendingKeyRepair expected,
+) async {
+  if (repository case final GroupPendingKeyRepairExactRepository exact) {
+    return exact.deleteRepairIfExact(expected);
+  }
+  final current = await repository.getRepair(expected.id);
+  if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+    return false;
+  }
+  await repository.deleteRepair(expected.id);
+  return true;
+}
+
+Future<bool> finalizeGroupPendingKeyRepairIfExact(
+  GroupPendingKeyRepairRepository repository,
+  GroupPendingKeyRepair expected,
+) async {
+  if (repository case final GroupPendingKeyRepairExactRepository exact) {
+    return exact.finalizeRepairedIfExact(expected);
+  }
+  final current = await repository.getRepair(expected.id);
+  if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+    return false;
+  }
+  await repository.finalizeRepaired(expected.id);
+  return true;
+}
+
+Future<bool> finalizeGroupPendingKeyRepairUndecryptableIfExact(
+  GroupPendingKeyRepairRepository repository,
+  GroupPendingKeyRepair expected, {
+  required String lastError,
+}) async {
+  if (repository case final GroupPendingKeyRepairExactRepository exact) {
+    return exact.finalizeUndecryptableIfExact(expected, lastError: lastError);
+  }
+  final current = await repository.getRepair(expected.id);
+  if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+    return false;
+  }
+  await repository.finalizeUndecryptable(expected.id, lastError: lastError);
+  return true;
+}

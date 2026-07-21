@@ -16,6 +16,7 @@ import 'package:flutter_app/features/groups/application/send_group_reaction_use_
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
@@ -544,6 +545,12 @@ class GroupTestUser {
         'removedAt': leftAt.toIso8601String(),
         'groupConfig': groupConfig,
       });
+      final removalEventId = canonicalMembershipEventId(
+        transitionType: 'member_removed',
+        groupId: groupId,
+        actorPeerId: peerId,
+        eventAt: leftAt,
+      );
 
       await _network.publish(groupId, peerId, {
         'groupId': groupId,
@@ -552,6 +559,7 @@ class GroupTestUser {
         'keyEpoch': 0,
         'text': sysText,
         'timestamp': leftAt.toIso8601String(),
+        'messageId': removalEventId,
       }, senderDeviceId: deviceId);
     }
 
@@ -833,7 +841,7 @@ class GroupTestUser {
     DateTime? removedAt,
   }) async {
     final effectiveRemovedAt = removedAt?.toUtc() ?? DateTime.now().toUtc();
-    await removeGroupMember(
+    final minted = await removeGroupMember(
       bridge: bridge,
       groupRepo: groupRepo,
       groupId: groupId,
@@ -843,6 +851,7 @@ class GroupTestUser {
       actorUsername: username,
       msgRepo: msgRepo,
     );
+    final canonicalRemovedAt = minted.eventAt;
 
     final group = await groupRepo.getGroup(groupId);
     final remainingMembers = await groupRepo.getMembers(groupId);
@@ -850,13 +859,13 @@ class GroupTestUser {
     final groupConfig = buildGroupConfigPayload(
       group!,
       remainingMembers,
-      configVersionOverride: effectiveRemovedAt,
+      configVersionOverride: canonicalRemovedAt,
     );
 
     final sysText = jsonEncode({
       '__sys': 'member_removed',
       'member': {'peerId': memberPeerId, 'username': memberUsername},
-      'removedAt': effectiveRemovedAt.toIso8601String(),
+      'removedAt': canonicalRemovedAt.toIso8601String(),
       'groupConfig': groupConfig,
     });
 
@@ -866,7 +875,8 @@ class GroupTestUser {
       'senderUsername': username,
       'keyEpoch': 0,
       'text': sysText,
-      'timestamp': effectiveRemovedAt.toIso8601String(),
+      'timestamp': canonicalRemovedAt.toIso8601String(),
+      'messageId': minted.eventId,
     };
     await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
 

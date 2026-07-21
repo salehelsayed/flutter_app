@@ -6,6 +6,11 @@ import 'package:flutter_app/features/groups/domain/models/pending_sibling_device
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
 
+bool _sameTestInstant(DateTime? left, DateTime? right) {
+  if (left == null || right == null) return left == null && right == null;
+  return left.toUtc().isAtSameMomentAs(right.toUtc());
+}
+
 /// In-memory [GroupRepository] for integration tests.
 class InMemoryGroupRepository
     implements
@@ -14,7 +19,9 @@ class InMemoryGroupRepository
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
         PendingSiblingDeviceRepository,
-        GroupKeyRotationDraftRepository {
+        GroupKeyRotationDraftRepository,
+        GroupMembershipWatermarkRepository,
+        SelfRemovedGroupShellRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
   final Map<String, Map<String, GroupMember>> _removedMemberSnapshots = {};
@@ -23,6 +30,8 @@ class InMemoryGroupRepository
   final Map<String, List<GroupKeyInfo>> _keys = {};
   final Map<String, GroupKeyInfo> _pendingKeyRotations = {};
   final Map<String, GroupRejoinState> _rejoinStates = {};
+  final Map<String, SelfRemovedShellFreshnessFloor> _removalFloors = {};
+  final Map<String, _AcceptedReentrySnapshot> _acceptedReentries = {};
 
   @override
   Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async =>
@@ -176,6 +185,446 @@ class InMemoryGroupRepository
       group: group,
       members: List<GroupMember>.unmodifiable(members),
       latestKeyGeneration: latestKeyGeneration,
+    );
+  }
+
+  @override
+  Future<bool> advanceGroupMembershipWatermark({
+    required String groupId,
+    required DateTime eventAt,
+    String? eventId,
+  }) async {
+    final group = _groups[groupId];
+    if (group == null) return false;
+    final incoming = eventAt.toUtc();
+    final stored = group.lastMembershipEventAt?.toUtc();
+    if (stored != null && !incoming.isAfter(stored)) {
+      if (!incoming.isAtSameMomentAs(stored) ||
+          eventId == null ||
+          group.lastMembershipEventId == null ||
+          eventId.compareTo(group.lastMembershipEventId!) <= 0) {
+        return false;
+      }
+    }
+    _groups[groupId] = group.copyWith(
+      lastMembershipEventAt: incoming,
+      lastMembershipEventId: eventId,
+    );
+    return true;
+  }
+
+  @override
+  Future<SelfRemovedShellAuthoritySnapshot> loadSelfRemovedShellAuthority({
+    required String groupId,
+    required String selfPeerId,
+  }) async => _shellAuthority(groupId, selfPeerId);
+
+  @override
+  Future<SelfRemovalAuthorityCommitOutcome> commitSelfRemovalAuthority({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime expectedSelfJoinedAt,
+    required DateTime removalAt,
+    required String removalEventId,
+    required Future<void> Function() leaveNative,
+  }) async {
+    final before = _shellAuthority(groupId, selfPeerId);
+    if (before.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
+        before.selfJoinedAt == null ||
+        !before.selfJoinedAt!.isAtSameMomentAs(expectedSelfJoinedAt)) {
+      return SelfRemovalAuthorityCommitOutcome.refusedStateChanged;
+    }
+    final incoming = removalAt.toUtc();
+    final stored = before.lastMembershipEventAt?.toUtc();
+    if (removalEventId.trim().isEmpty ||
+        (stored != null &&
+            (incoming.isBefore(stored) ||
+                (incoming.isAtSameMomentAs(stored) &&
+                    (before.lastMembershipEventId == null ||
+                        removalEventId.compareTo(
+                              before.lastMembershipEventId!,
+                            ) <=
+                            0))))) {
+      return SelfRemovalAuthorityCommitOutcome.refusedStaleRemoval;
+    }
+    await leaveNative();
+    final current = _shellAuthority(groupId, selfPeerId);
+    if (current.shape != before.shape ||
+        current.selfJoinedAt == null ||
+        !current.selfJoinedAt!.isAtSameMomentAs(expectedSelfJoinedAt) ||
+        current.lastMembershipEventAt != before.lastMembershipEventAt ||
+        current.lastMembershipEventId != before.lastMembershipEventId) {
+      return SelfRemovalAuthorityCommitOutcome.refusedStateChanged;
+    }
+    final group = _groups[groupId]!;
+    _groups[groupId] = group.copyWith(
+      selfRemovedAt: incoming,
+      lastMembershipEventAt: incoming,
+      lastMembershipEventId: removalEventId,
+    );
+    _members[groupId]?.remove(selfPeerId);
+    return SelfRemovalAuthorityCommitOutcome.committed;
+  }
+
+  @override
+  Future<SelfRemovedShellMediaBatch> loadSelfRemovedShellMediaParents({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required int limit,
+  }) async => SelfRemovedShellMediaBatch(
+    outcome: SelfRemovedShellMutationOutcome.committed,
+    authority: _shellAuthority(expected.groupId, expected.selfPeerId),
+    parents: const [],
+    hasOverflow: false,
+  );
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> terminalizeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) async {
+    final current = _shellAuthority(expected.groupId, expected.selfPeerId);
+    if (current.shape != SelfRemovedShellAuthorityShape.markedSelfAbsent ||
+        current.selfRemovedAt != expected.selfRemovedAt ||
+        current.lastMembershipEventAt != expected.lastMembershipEventAt ||
+        current.lastMembershipEventId != expected.lastMembershipEventId) {
+      return SelfRemovedShellMutationOutcome.refusedStateChanged;
+    }
+    _keys.remove(expected.groupId);
+    _pendingKeyRotations.remove(expected.groupId);
+    return SelfRemovedShellMutationOutcome.committed;
+  }
+
+  @override
+  Future<SelfRemovedShellFreshnessFloor> appendSelfRemovedShellFreshnessFloor({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) async {
+    final current = _shellAuthority(expected.groupId, expected.selfPeerId);
+    if (current.shape != SelfRemovedShellAuthorityShape.markedSelfAbsent ||
+        current.selfRemovedAt != expected.selfRemovedAt) {
+      throw StateError('self-removal authority changed');
+    }
+    return _removalFloors.putIfAbsent(
+      expected.groupId,
+      () => SelfRemovedShellFreshnessFloor(
+        groupId: expected.groupId,
+        selfPeerId: expected.selfPeerId,
+        selfRemovedAt: expected.selfRemovedAt!,
+        persistenceToken: Object(),
+      ),
+    );
+  }
+
+  @override
+  Future<SelfRemovedShellFreshnessFloor?> loadSelfRemovedShellFreshnessFloor(
+    String groupId,
+  ) async => _removalFloors[groupId];
+
+  @override
+  Future<SelfRemovedAcceptedReentryResult> commitAcceptedReentry({
+    required GroupModel group,
+    required List<GroupMember> roster,
+    required GroupKeyInfo key,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required String bindingNonce,
+  }) async {
+    final watermark = DateTime.tryParse(signedMembershipWatermark)?.toUtc();
+    final issuedAt = DateTime.tryParse(signedIssuedAt)?.toUtc();
+    if (watermark == null ||
+        issuedAt == null ||
+        authorizationId.trim().isEmpty ||
+        bindingNonce.trim().isEmpty ||
+        key.groupId != group.id ||
+        roster.any((member) => member.groupId != group.id) ||
+        !roster.any((member) => member.peerId == selfPeerId)) {
+      return const SelfRemovedAcceptedReentryResult(
+        outcome: SelfRemovedAcceptedReentryOutcome.refusedInvalidMaterial,
+      );
+    }
+    final acceptedAt = watermark.isAfter(issuedAt) ? watermark : issuedAt;
+    final authority = _shellAuthority(group.id, selfPeerId);
+    final floor = _removalFloors[group.id];
+    final isMarked =
+        authority.shape == SelfRemovedShellAuthorityShape.markedSelfAbsent;
+    final isAbsentWithFloor =
+        authority.shape == SelfRemovedShellAuthorityShape.absent &&
+        floor != null;
+    if (!isMarked && !isAbsentWithFloor) {
+      return SelfRemovedAcceptedReentryResult(
+        outcome: authority.shape == SelfRemovedShellAuthorityShape.absent
+            ? SelfRemovedAcceptedReentryOutcome.refusedMissingFloor
+            : SelfRemovedAcceptedReentryOutcome.refusedStateChanged,
+      );
+    }
+    final lowerBound = isMarked
+        ? authority.lastMembershipEventAt ?? authority.selfRemovedAt
+        : floor!.selfRemovedAt;
+    if (lowerBound == null || !acceptedAt.isAfter(lowerBound.toUtc())) {
+      return const SelfRemovedAcceptedReentryResult(
+        outcome: SelfRemovedAcceptedReentryOutcome.refusedStaleAuthority,
+      );
+    }
+    if (isMarked) {
+      await appendSelfRemovedShellFreshnessFloor(expected: authority);
+    }
+    _acceptedReentries[group.id] = _AcceptedReentrySnapshot(
+      authorizationId: authorizationId,
+      selfPeerId: selfPeerId,
+      signedMembershipWatermark: signedMembershipWatermark,
+      signedIssuedAt: signedIssuedAt,
+      keyGeneration: key.keyGeneration,
+      acceptedAt: acceptedAt,
+      group: _groups[group.id],
+      members: Map<String, GroupMember>.from(
+        _members[group.id] ?? const <String, GroupMember>{},
+      ),
+      keys: List<GroupKeyInfo>.from(_keys[group.id] ?? const <GroupKeyInfo>[]),
+    );
+    _groups[group.id] = group.copyWith(
+      selfRemovedAt: null,
+      lastMembershipEventAt: acceptedAt,
+      lastMembershipEventId: null,
+    );
+    _members[group.id] = {for (final member in roster) member.peerId: member};
+    _keys[group.id] = <GroupKeyInfo>[key];
+    return SelfRemovedAcceptedReentryResult(
+      outcome: SelfRemovedAcceptedReentryOutcome.committed,
+      acceptedAt: acceptedAt,
+    );
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRollbackOutcome> rollbackAcceptedReentry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+  }) async {
+    final prior = _acceptedReentries[groupId];
+    if (prior == null) {
+      return SelfRemovedAcceptedRollbackOutcome.refusedBindingMissing;
+    }
+    if (prior.authorizationId != authorizationId) {
+      return SelfRemovedAcceptedRollbackOutcome.refusedAuthorizationMismatch;
+    }
+    final current = _shellAuthority(groupId, selfPeerId);
+    if (current.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
+        current.lastMembershipEventAt == null ||
+        !current.lastMembershipEventAt!.isAtSameMomentAs(prior.acceptedAt)) {
+      return SelfRemovedAcceptedRollbackOutcome.refusedStateChanged;
+    }
+    if (prior.group == null) {
+      _groups.remove(groupId);
+      _members.remove(groupId);
+      _keys.remove(groupId);
+    } else {
+      _groups[groupId] = prior.group!;
+      _members[groupId] = Map<String, GroupMember>.from(prior.members);
+      _keys[groupId] = List<GroupKeyInfo>.from(prior.keys);
+    }
+    _acceptedReentries.remove(groupId);
+    return SelfRemovedAcceptedRollbackOutcome.rolledBack;
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRetryAuthorizationOutcome>
+  authorizeAcceptedReentryRetry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+  }) async {
+    final accepted = _acceptedReentries[groupId];
+    if (accepted == null) {
+      return SelfRemovedAcceptedRetryAuthorizationOutcome.refusedBindingMissing;
+    }
+    if (accepted.authorizationId != authorizationId) {
+      return SelfRemovedAcceptedRetryAuthorizationOutcome
+          .refusedAuthorizationMismatch;
+    }
+    final authority = _shellAuthority(groupId, selfPeerId);
+    final latestKey = await getLatestKey(groupId);
+    if (accepted.selfPeerId != selfPeerId ||
+        accepted.signedMembershipWatermark != signedMembershipWatermark ||
+        accepted.signedIssuedAt != signedIssuedAt ||
+        accepted.keyGeneration != keyGeneration ||
+        authority.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
+        authority.lastMembershipEventAt == null ||
+        !authority.lastMembershipEventAt!.isAtSameMomentAs(
+          accepted.acceptedAt,
+        ) ||
+        authority.lastMembershipEventId != null ||
+        latestKey?.keyGeneration != keyGeneration) {
+      return SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged;
+    }
+    return SelfRemovedAcceptedRetryAuthorizationOutcome.authorized;
+  }
+
+  @override
+  Future<SelfRemovedAcceptedNativeRetryResult> retryAcceptedReentryNative({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedFreshMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+    required Future<void> Function() joinNative,
+  }) async {
+    final authorization = await authorizeAcceptedReentryRetry(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      authorizationId: authorizationId,
+      signedMembershipWatermark: signedMembershipWatermark,
+      signedIssuedAt: signedIssuedAt,
+      keyGeneration: keyGeneration,
+    );
+    final group = _groups[groupId];
+    final self = _members[groupId]?[selfPeerId];
+    final key = await getLatestKey(groupId);
+    if (group == null ||
+        group.selfRemovedAt != null ||
+        group.isDissolved ||
+        self == null ||
+        key?.keyGeneration != keyGeneration ||
+        key?.encryptedKey != expectedKeyMaterial) {
+      return const SelfRemovedAcceptedNativeRetryResult(
+        outcome:
+            SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged,
+      );
+    }
+    if (authorization ==
+        SelfRemovedAcceptedRetryAuthorizationOutcome.authorized) {
+      await joinNative();
+      return SelfRemovedAcceptedNativeRetryResult(
+        outcome: authorization,
+        group: group,
+      );
+    }
+    if (authorization !=
+        SelfRemovedAcceptedRetryAuthorizationOutcome.refusedBindingMissing) {
+      return SelfRemovedAcceptedNativeRetryResult(outcome: authorization);
+    }
+    final authority = _shellAuthority(groupId, selfPeerId);
+    if (_removalFloors[groupId] != null ||
+        authority.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
+        authority.lastMembershipEventId != null ||
+        !_sameTestInstant(
+          group.lastMembershipEventAt,
+          expectedFreshMembershipAt,
+        ) ||
+        !_sameTestInstant(group.lastMetadataEventAt, latestAllowedMetadataAt)) {
+      return const SelfRemovedAcceptedNativeRetryResult(
+        outcome:
+            SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged,
+      );
+    }
+    await joinNative();
+    return SelfRemovedAcceptedNativeRetryResult(
+      outcome: SelfRemovedAcceptedRetryAuthorizationOutcome.authorized,
+      group: group,
+    );
+  }
+
+  @override
+  Future<void> commitFreshDirectJoin({
+    required GroupModel group,
+    required GroupMember selfMember,
+    required GroupKeyInfo key,
+    required Future<void> Function() joinNative,
+  }) async {
+    final authority = _shellAuthority(group.id, selfMember.peerId);
+    if (authority.shape != SelfRemovedShellAuthorityShape.absent ||
+        _removalFloors[group.id] != null) {
+      throw StateError('fresh direct join refused');
+    }
+    await joinNative();
+    await saveGroup(group);
+    await saveMember(selfMember);
+    await saveKey(key);
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRollbackOutcome>
+  rollbackFreshAcceptedMaterialization({
+    required String groupId,
+    required String selfPeerId,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+  }) async {
+    final group = _groups[groupId];
+    final key = await getLatestKey(groupId);
+    final authority = _shellAuthority(groupId, selfPeerId);
+    if (_removalFloors[groupId] != null ||
+        group == null ||
+        group.selfRemovedAt != null ||
+        group.isDissolved ||
+        authority.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
+        authority.lastMembershipEventId != null ||
+        key?.keyGeneration != keyGeneration ||
+        key?.encryptedKey != expectedKeyMaterial ||
+        !_sameTestInstant(group.lastMembershipEventAt, expectedMembershipAt) ||
+        !_sameTestInstant(group.lastMetadataEventAt, latestAllowedMetadataAt)) {
+      return SelfRemovedAcceptedRollbackOutcome.refusedStateChanged;
+    }
+    _keys.remove(groupId);
+    _pendingKeyRotations.remove(groupId);
+    _members.remove(groupId);
+    _groups.remove(groupId);
+    return SelfRemovedAcceptedRollbackOutcome.rolledBack;
+  }
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> purgeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required SelfRemovedShellFreshnessFloor floor,
+    required DateTime deletedAt,
+  }) async {
+    final current = _shellAuthority(expected.groupId, expected.selfPeerId);
+    if (current.shape != SelfRemovedShellAuthorityShape.markedSelfAbsent ||
+        current.selfRemovedAt != expected.selfRemovedAt) {
+      return SelfRemovedShellMutationOutcome.refusedStateChanged;
+    }
+    if (_removalFloors[expected.groupId] != floor) {
+      return SelfRemovedShellMutationOutcome.refusedFloorMissing;
+    }
+    _members.remove(expected.groupId);
+    _keys.remove(expected.groupId);
+    _pendingKeyRotations.remove(expected.groupId);
+    _groups.remove(expected.groupId);
+    return SelfRemovedShellMutationOutcome.committed;
+  }
+
+  SelfRemovedShellAuthoritySnapshot _shellAuthority(
+    String groupId,
+    String selfPeerId,
+  ) {
+    final group = _groups[groupId];
+    final self = _members[groupId]?[selfPeerId];
+    final marked = group?.selfRemovedAt != null;
+    final shape = group == null
+        ? SelfRemovedShellAuthorityShape.absent
+        : switch ((marked, self != null)) {
+            (false, true) => SelfRemovedShellAuthorityShape.unmarkedSelfPresent,
+            (false, false) => SelfRemovedShellAuthorityShape.unmarkedSelfAbsent,
+            (true, true) => SelfRemovedShellAuthorityShape.markedSelfPresent,
+            (true, false) => SelfRemovedShellAuthorityShape.markedSelfAbsent,
+          };
+    return SelfRemovedShellAuthoritySnapshot(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      shape: shape,
+      selfRemovedAt: group?.selfRemovedAt,
+      lastMembershipEventAt: group?.lastMembershipEventAt,
+      lastMembershipEventId: group?.lastMembershipEventId,
+      selfJoinedAt: self?.joinedAt,
+      persistenceToken: Object(),
     );
   }
 
@@ -348,4 +797,28 @@ class InMemoryGroupRepository
     );
     groupKeys.removeWhere((key) => key.keyGeneration < minKeyGenerationToKeep);
   }
+}
+
+class _AcceptedReentrySnapshot {
+  const _AcceptedReentrySnapshot({
+    required this.authorizationId,
+    required this.selfPeerId,
+    required this.signedMembershipWatermark,
+    required this.signedIssuedAt,
+    required this.keyGeneration,
+    required this.acceptedAt,
+    required this.group,
+    required this.members,
+    required this.keys,
+  });
+
+  final String authorizationId;
+  final String selfPeerId;
+  final String signedMembershipWatermark;
+  final String signedIssuedAt;
+  final int keyGeneration;
+  final DateTime acceptedAt;
+  final GroupModel? group;
+  final Map<String, GroupMember> members;
+  final List<GroupKeyInfo> keys;
 }

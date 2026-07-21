@@ -462,6 +462,17 @@ class MediaRepositoryRealDbFixture {
           dbSaveGroupMediaAttachmentGuardedOverride ??
           (row, {required groupId}) =>
               dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
+      dbCompleteGroupUploadRetryExact:
+          ({
+            required expectedParent,
+            required expectedAttachment,
+            required completedAttachment,
+          }) => dbCompleteGroupUploadRetry(
+            db,
+            expectedParent: expectedParent,
+            expectedAttachment: expectedAttachment,
+            completedAttachment: completedAttachment,
+          ),
       secureKeyStore: effectiveSecureKeyStore,
       refreshDirectPrivateMediaParent:
           messageRepo.refreshPrivateMediaLifecycleAfterExternalMutation,
@@ -515,6 +526,15 @@ class MediaRepositoryRealDbFixture {
     String groupId = 'group-1',
     String timestamp = '2026-07-01T00:00:00.000Z',
   }) async {
+    await db.insert('groups', {
+      'id': groupId,
+      'name': 'Group $groupId',
+      'type': 'chat',
+      'topic_name': 'topic-$groupId',
+      'created_at': timestamp,
+      'created_by': 'peer-g',
+      'my_role': 'member',
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
     await db.insert('group_messages', {
       'id': id,
       'group_id': groupId,

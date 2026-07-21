@@ -650,6 +650,20 @@ class AppLocalizationsAr extends AppLocalizations {
       'لقد غادرت المجموعة، ولكن تعذرت إزالة سجلها المحلي بالكامل.';
 
   @override
+  String get group_removed_delete_title => 'حذف هذه المجموعة من هذا الجهاز؟';
+
+  @override
+  String get group_removed_delete_body =>
+      'سيؤدي هذا إلى حذف الرسائل المحفوظة من هذا الجهاز فقط. لن تغادر المجموعة ولن يتم إشعار أي شخص فيها.';
+
+  @override
+  String get group_removed_delete_action => 'حذف من الجهاز';
+
+  @override
+  String get group_removed_delete_failed =>
+      'تعذّر حذف هذه المجموعة من هذا الجهاز. حاول مرة أخرى.';
+
+  @override
   String get conversation_hint => 'اكتب شيئًا...';
 
   @override

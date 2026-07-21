@@ -132,10 +132,53 @@ void main() {
     expect(await repo.getPendingSiblingDevicesForGroup(groupId), isEmpty);
   });
 
+  test(
+    'marked shells skip pending sibling hold verify and reject leaves',
+    () async {
+      await repo.savePendingSiblingDevice(pendingDevice());
+      await repo.updateGroup(
+        (await repo.getGroup(
+          groupId,
+        ))!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20)),
+      );
+      var drainCalls = 0;
+
+      expect(
+        await verifyAndAdmitPendingSiblingDevice(
+          pendingRepo: repo,
+          groupRepo: repo,
+          pending: pendingDevice(),
+          multiDeviceSyncEnabled: true,
+          triggerDrain: ({required groupId, required peerId}) async {
+            drainCalls++;
+          },
+        ),
+        SiblingDeviceAdmissionOutcome.memberNotFound,
+      );
+      await rejectPendingSiblingDevice(
+        pendingRepo: repo,
+        groupRepo: repo,
+        pending: pendingDevice(),
+      );
+      await hold(enabled: true);
+
+      expect(drainCalls, 0);
+      expect((await repo.getMember(groupId, bob))!.devices, isEmpty);
+      expect(
+        await repo.getPendingSiblingDevicesForGroup(groupId),
+        hasLength(1),
+      );
+    },
+  );
+
   test('reject drops the pending entry and never admits', () async {
     await repo.savePendingSiblingDevice(pendingDevice());
 
-    await rejectPendingSiblingDevice(pendingRepo: repo, pending: pendingDevice());
+    await rejectPendingSiblingDevice(
+      pendingRepo: repo,
+      groupRepo: repo,
+      pending: pendingDevice(),
+    );
 
     expect(await repo.getPendingSiblingDevicesForGroup(groupId), isEmpty);
     final member = await repo.getMember(groupId, bob);

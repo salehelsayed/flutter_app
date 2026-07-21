@@ -14,6 +14,7 @@ enum GroupExitDisposition {
   soleAdminRecovery,
   pendingRoleSync,
   deleteDissolvedLocally,
+  selfRemovedDeleteLocally,
 }
 
 class GroupExitSnapshot {
@@ -58,10 +59,67 @@ Future<GroupExitSnapshot> resolveGroupExitSnapshot({
     );
   }
 
-  final members = await groupRepo.getMembers(groupId);
-  final pending = loadPendingBroadcasts == null
-      ? const <GroupPendingBroadcast>[]
-      : await loadPendingBroadcasts(groupId);
+  if (group.isDissolved) {
+    return GroupExitSnapshot(
+      disposition: GroupExitDisposition.deleteDissolvedLocally,
+      group: group,
+      members: const <GroupMember>[],
+      eligibleSuccessors: const <GroupMember>[],
+      pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
+    );
+  }
+
+  final selfRemovedAt = group.selfRemovedAt?.toUtc();
+  final List<GroupMember> members;
+  try {
+    members = await groupRepo.getMembers(groupId);
+  } catch (_) {
+    if (selfRemovedAt == null) rethrow;
+    // The fresh group row proves this is a marked membership instance, but a
+    // failed roster read cannot prove that self is absent. Fail closed without
+    // falling through to voluntary leave; a later retry will classify again.
+    return GroupExitSnapshot(
+      disposition: GroupExitDisposition.noOp,
+      group: group,
+      members: const <GroupMember>[],
+      eligibleSuccessors: const <GroupMember>[],
+      pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
+    );
+  }
+  final selfIsPresent = members.any((member) => member.peerId == selfPeerId);
+  final membershipAdvancedAfterRemoval =
+      selfRemovedAt != null &&
+      (group.lastMembershipEventAt?.toUtc().isAfter(selfRemovedAt) ?? false);
+  if (selfRemovedAt != null &&
+      !selfIsPresent &&
+      !membershipAdvancedAfterRemoval) {
+    return GroupExitSnapshot(
+      disposition: GroupExitDisposition.selfRemovedDeleteLocally,
+      group: group,
+      members: members,
+      eligibleSuccessors: const <GroupMember>[],
+      pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
+    );
+  }
+
+  final List<GroupPendingBroadcast> pending;
+  try {
+    pending = loadPendingBroadcasts == null
+        ? const <GroupPendingBroadcast>[]
+        : await loadPendingBroadcasts(groupId);
+  } catch (_) {
+    if (selfRemovedAt == null) rethrow;
+    // A marker contradiction (restored self or newer membership) refuses the
+    // local-delete branch, but a failed pending-state read must still not turn
+    // the marked row into an ordinary voluntary-leave action.
+    return GroupExitSnapshot(
+      disposition: GroupExitDisposition.noOp,
+      group: group,
+      members: members,
+      eligibleSuccessors: const <GroupMember>[],
+      pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
+    );
+  }
   final pendingRoleBroadcasts = pending
       .where(
         (broadcast) =>
@@ -69,16 +127,6 @@ Future<GroupExitSnapshot> resolveGroupExitSnapshot({
             isPendingGroupMemberRoleBroadcastKind(broadcast.kind),
       )
       .toList(growable: false);
-
-  if (group.isDissolved) {
-    return GroupExitSnapshot(
-      disposition: GroupExitDisposition.deleteDissolvedLocally,
-      group: group,
-      members: members,
-      eligibleSuccessors: const <GroupMember>[],
-      pendingRoleBroadcasts: pendingRoleBroadcasts,
-    );
-  }
 
   if (pendingRoleBroadcasts.isNotEmpty) {
     return GroupExitSnapshot(

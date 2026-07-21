@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
@@ -189,6 +190,14 @@ class GroupKeyRepairRequestSender {
     // observability stays intact regardless of send outcome.
     await emitGroupKeyRepairRequest(request);
 
+    await runSelfRemovedGroupLifecycleLeaf<void>(
+      groupRepo: groupRepo,
+      groupId: request.groupId,
+      action: (_) => _sendForActiveGroup(request),
+    );
+  }
+
+  Future<void> _sendForActiveGroup(GroupKeyRepairRequest request) async {
     try {
       final requesterPeerId = (await getOwnPeerId())?.trim();
       final requesterDeviceId = (await getOwnDeviceId())?.trim();
@@ -326,10 +335,10 @@ class GroupKeyRepairRequestSender {
     final inbox = storeP2PMessageInInbox;
     if (inbox == null) return false;
     try {
-      return await inbox(transportPeerId, envelope).timeout(
-        sendTimeout,
-        onTimeout: () => false,
-      );
+      return await inbox(
+        transportPeerId,
+        envelope,
+      ).timeout(sendTimeout, onTimeout: () => false);
     } catch (_) {
       return false;
     }
@@ -501,8 +510,12 @@ Future<void> supersedeLiveGroupDecryptionRepairForDelivery({
     )) {
       continue;
     }
+    final finalized = await finalizeGroupPendingKeyRepairIfExact(
+      pendingKeyRepairRepo,
+      repair,
+    );
+    if (!finalized) continue;
     await msgRepo.deleteMessage(repair.messageId);
-    await pendingKeyRepairRepo.finalizeRepaired(repair.id);
     supersededCount++;
   }
   if (supersededCount == 0) return;
@@ -755,6 +768,67 @@ class GroupPendingKeyRepairRunner {
   }
 
   Future<bool> _retryOne(GroupPendingKeyRepair repair) async {
+    Map<String, dynamic>? deferredMessageReplay;
+    final guarded = await runSelfRemovedGroupLifecycleLeaf<bool>(
+      groupRepo: groupRepo,
+      groupId: repair.groupId,
+      action: (_) async {
+        final current = await _reloadExactPendingRepair(repair);
+        if (current == null) return false;
+        return _retryOneLocked(
+          current,
+          deferMessageReplay: (payload) => deferredMessageReplay = payload,
+        );
+      },
+    );
+    if (!guarded.didRun) return false;
+
+    final deferredPayload = deferredMessageReplay;
+    if (deferredPayload == null) return guarded.value ?? false;
+
+    // Every listener callback stays outside the non-reentrant membership
+    // phase. Besides system membership messages, ordinary replay listeners may
+    // themselves route into a same-group lifecycle owner; invoking either
+    // shape while this phase is held can deadlock. Exact completion is
+    // reacquired below, so a B3 transition that wins while the callback is in
+    // flight terminalizes the repair and the stale completion becomes a no-op.
+    final replay = replayGroupEnvelope;
+    if (replay == null) return false;
+    try {
+      await replay(deferredPayload);
+    } catch (error) {
+      await _recordDeferredReplayFailure(repair, error);
+      return false;
+    }
+
+    final completion = await runSelfRemovedGroupLifecycleLeaf<bool>(
+      groupRepo: groupRepo,
+      groupId: repair.groupId,
+      action: (_) async {
+        final current = await _reloadExactPendingRepair(repair);
+        if (current == null) return false;
+        return _finalizeSuccessfulReplay(current, deferredPayload);
+      },
+    );
+    return completion.didRun && (completion.value ?? false);
+  }
+
+  Future<GroupPendingKeyRepair?> _reloadExactPendingRepair(
+    GroupPendingKeyRepair loaded,
+  ) async {
+    final current = await pendingKeyRepairRepo.getRepair(loaded.id);
+    if (current == null ||
+        current.status != groupPendingKeyRepairStatusPendingKey ||
+        !sameExactGroupPendingKeyRepair(current, loaded)) {
+      return null;
+    }
+    return current;
+  }
+
+  Future<bool> _retryOneLocked(
+    GroupPendingKeyRepair repair, {
+    required void Function(Map<String, dynamic> payload) deferMessageReplay,
+  }) async {
     final rawEnvelope = repair.replayEnvelopeJson;
     if (rawEnvelope == null || rawEnvelope.isEmpty) {
       // TTL self-clear: a `live:` placeholder with no replay envelope whose real
@@ -762,9 +836,14 @@ class GroupPendingKeyRepairRunner {
       // it (message + repair) — explicitly NOT branded undecryptable, since
       // there is no ciphertext to recover and it isn't an authenticity failure.
       if (repair.id.startsWith('live:') &&
-          nowUtc().difference(repair.createdAt) >= liveGroupNoEnvelopeRepairTtl) {
+          nowUtc().difference(repair.createdAt) >=
+              liveGroupNoEnvelopeRepairTtl) {
+        final deleted = await deleteGroupPendingKeyRepairIfExact(
+          pendingKeyRepairRepo,
+          repair,
+        );
+        if (!deleted) return false;
         await msgRepo.deleteMessage(repair.messageId);
-        await pendingKeyRepairRepo.deleteRepair(repair.id);
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_PENDING_KEY_REPAIR_SELF_CLEARED',
@@ -776,8 +855,9 @@ class GroupPendingKeyRepairRunner {
         );
         return false;
       }
-      await pendingKeyRepairRepo.recordAttempt(
-        repair.id,
+      await recordGroupPendingKeyRepairAttemptIfExact(
+        pendingKeyRepairRepo,
+        repair,
         lastError: 'waiting for replay envelope',
       );
       emitFlowEvent(
@@ -837,7 +917,8 @@ class GroupPendingKeyRepairRunner {
 
         final replay = replayGroupEnvelope;
         if (replay != null) {
-          await replay(payload);
+          deferMessageReplay(payload);
+          return false;
         } else {
           final result = await handleIncomingGroupMessage(
             groupRepo: groupRepo,
@@ -866,72 +947,124 @@ class GroupPendingKeyRepairRunner {
         }
       }
 
-      final message = await msgRepo.getMessage(repair.messageId);
-      if (message != null &&
-          message.status == groupPendingKeyRepairStatusPendingKey) {
-        if (replayPayload != null &&
-            _isSystemGroupReplayPayload(replayPayload)) {
-          await msgRepo.deleteMessage(repair.messageId);
-        } else {
-          throw StateError('replay did not replace pending placeholder');
-        }
-      }
-      await pendingKeyRepairRepo.finalizeRepaired(repair.id);
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_PENDING_KEY_REPAIR_REPAIRED',
-        details: {
-          'groupId': _safeId(repair.groupId),
-          'messageId': _safeId(repair.messageId),
-          'keyEpoch': repair.keyEpoch,
-        },
-      );
-      return true;
+      return await _finalizeSuccessfulReplay(repair, replayPayload);
     } catch (e) {
-      final key = await groupRepo.getKeyByGeneration(
-        repair.groupId,
-        repair.keyEpoch,
-      );
-      // (1) Key still missing → NEVER terminal; key absence is recoverable
-      // (the key may arrive later via key-update/distribution). Requeue.
-      if (key == null) {
-        await pendingKeyRepairRepo.recordAttempt(
-          repair.id,
-          lastError: e.toString(),
-        );
-        return false;
+      return await _recordRetryFailureLocked(repair, e);
+    }
+  }
+
+  Future<bool> _finalizeSuccessfulReplay(
+    GroupPendingKeyRepair repair,
+    Map<String, dynamic>? replayPayload,
+  ) async {
+    final message = await msgRepo.getMessage(repair.messageId);
+    final deleteSystemPlaceholder =
+        message != null &&
+        message.status == groupPendingKeyRepairStatusPendingKey &&
+        replayPayload != null &&
+        _isSystemGroupReplayPayload(replayPayload);
+    if (message != null &&
+        message.status == groupPendingKeyRepairStatusPendingKey) {
+      if (replayPayload != null && _isSystemGroupReplayPayload(replayPayload)) {
+        // Delete only after the exact repair completion wins below. A same-id
+        // replacement installed while replay was in flight owns the existing
+        // placeholder and must survive the stale completion.
+      } else {
+        throw StateError('replay did not replace pending placeholder');
       }
-      // (2) Confirmed crypto/auth failure WITH the key present → bounded: brand
-      // undecryptable only once the attempt budget is exhausted, so a single
-      // transient hiccup never permanently poisons the message.
-      if (_isConfirmedGroupReplayCryptoFailure(e)) {
-        if (repair.attempts >= kGroupKeyRepairMaxAttempts) {
-          await _finalizeUndecryptable(repair, e.toString());
-          return false;
+    }
+    final finalized = await finalizeGroupPendingKeyRepairIfExact(
+      pendingKeyRepairRepo,
+      repair,
+    );
+    if (!finalized) return false;
+    if (deleteSystemPlaceholder) {
+      await msgRepo.deleteMessage(repair.messageId);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_PENDING_KEY_REPAIR_REPAIRED',
+      details: {
+        'groupId': _safeId(repair.groupId),
+        'messageId': _safeId(repair.messageId),
+        'keyEpoch': repair.keyEpoch,
+      },
+    );
+    return true;
+  }
+
+  Future<void> _recordDeferredReplayFailure(
+    GroupPendingKeyRepair loaded,
+    Object error,
+  ) async {
+    await runSelfRemovedGroupLifecycleLeaf<void>(
+      groupRepo: groupRepo,
+      groupId: loaded.groupId,
+      action: (_) async {
+        final current = await _reloadExactPendingRepair(loaded);
+        if (current != null) {
+          await _recordRetryFailureLocked(current, error);
         }
-        await pendingKeyRepairRepo.recordAttempt(
-          repair.id,
-          lastError: e.toString(),
-        );
-        return false;
-      }
-      // (3) Everything else — a transient bridge/internal error
-      // (BRIDGE_TIMEOUT/UNKNOWN/INTERNAL_ERROR), a not-yet-injected reaction
-      // repo, an ordering StateError, an ambiguous (membership/data-timing)
-      // signature reason — is non-terminal: stay pending so a later retry can
-      // recover. Never brand undecryptable on a transient/ambiguous failure.
-      await pendingKeyRepairRepo.recordAttempt(
-        repair.id,
-        lastError: e.toString(),
+      },
+    );
+  }
+
+  Future<bool> _recordRetryFailureLocked(
+    GroupPendingKeyRepair repair,
+    Object error,
+  ) async {
+    final key = await groupRepo.getKeyByGeneration(
+      repair.groupId,
+      repair.keyEpoch,
+    );
+    // (1) Key still missing → NEVER terminal; key absence is recoverable
+    // (the key may arrive later via key-update/distribution). Requeue.
+    if (key == null) {
+      await recordGroupPendingKeyRepairAttemptIfExact(
+        pendingKeyRepairRepo,
+        repair,
+        lastError: error.toString(),
       );
       return false;
     }
+    // (2) Confirmed crypto/auth failure WITH the key present → bounded: brand
+    // undecryptable only once the attempt budget is exhausted, so a single
+    // transient hiccup never permanently poisons the message.
+    if (_isConfirmedGroupReplayCryptoFailure(error)) {
+      if (repair.attempts >= kGroupKeyRepairMaxAttempts) {
+        await _finalizeUndecryptable(repair, error.toString());
+        return false;
+      }
+      await recordGroupPendingKeyRepairAttemptIfExact(
+        pendingKeyRepairRepo,
+        repair,
+        lastError: error.toString(),
+      );
+      return false;
+    }
+    // (3) Everything else — a transient bridge/internal error
+    // (BRIDGE_TIMEOUT/UNKNOWN/INTERNAL_ERROR), a not-yet-injected reaction
+    // repo, an ordering StateError, an ambiguous (membership/data-timing)
+    // signature reason — is non-terminal: stay pending so a later retry can
+    // recover. Never brand undecryptable on a transient/ambiguous failure.
+    await recordGroupPendingKeyRepairAttemptIfExact(
+      pendingKeyRepairRepo,
+      repair,
+      lastError: error.toString(),
+    );
+    return false;
   }
 
   Future<void> _finalizeUndecryptable(
     GroupPendingKeyRepair repair,
     String error,
   ) async {
+    final finalized = await finalizeGroupPendingKeyRepairUndecryptableIfExact(
+      pendingKeyRepairRepo,
+      repair,
+      lastError: error,
+    );
+    if (!finalized) return;
     final existing = await msgRepo.getMessage(repair.messageId);
     if (existing != null) {
       await msgRepo.saveMessage(
@@ -941,10 +1074,6 @@ class GroupPendingKeyRepairRunner {
         ),
       );
     }
-    await pendingKeyRepairRepo.finalizeUndecryptable(
-      repair.id,
-      lastError: error,
-    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_PENDING_KEY_REPAIR_UNDECRYPTABLE',

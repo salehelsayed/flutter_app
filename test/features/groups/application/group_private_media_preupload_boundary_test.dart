@@ -131,6 +131,130 @@ class _RevokingAttachmentReadRepository
 
 void main() {
   test(
+    'foreground durable prep is file-only and claims pending rows inside the B3 leaf',
+    () async {
+      final source = await File(
+        'lib/features/groups/presentation/screens/group_conversation_wired.dart',
+      ).readAsString();
+      final prepareStart = source.indexOf('_prepareDurableGroupMediaUploads({');
+      final leafStart = source.indexOf(
+        '_runForegroundGroupUploadLeaf({',
+        prepareStart,
+      );
+      final uploadStart = source.indexOf(
+        '_uploadPreparedGroupMediaUploads({',
+        leafStart,
+      );
+      expect(prepareStart, isNonNegative);
+      expect(leafStart, greaterThan(prepareStart));
+      expect(uploadStart, greaterThan(leafStart));
+
+      final prepareBody = source.substring(prepareStart, leafStart);
+      expect(
+        prepareBody,
+        isNot(contains('saveAttachment(')),
+        reason: 'filesystem prep must not create parentless upload rows',
+      );
+
+      final leafBody = source.substring(leafStart, uploadStart);
+      final phase = leafBody.indexOf('runSelfRemovedGroupLifecycleLeaf');
+      final parentReload = leafBody.indexOf('widget.msgRepo.getMessage');
+      final pendingSave = leafBody.indexOf(
+        'mediaAttachmentRepo.saveAttachment',
+      );
+      final upload = leafBody.indexOf('final outcome = await upload');
+      expect(phase, isNonNegative);
+      expect(parentReload, greaterThan(phase));
+      expect(pendingSave, greaterThan(parentReload));
+      expect(upload, greaterThan(pendingSave));
+      expect(
+        leafBody,
+        contains('completion.completeUploadRetry'),
+        reason: 'success completion must remain in the same bounded leaf',
+      );
+
+      final voicePending = source.indexOf(
+        'pendingAttachment = MediaAttachment(',
+        uploadStart,
+      );
+      final voiceLeaf = source.indexOf(
+        'voiceUpload = await _runForegroundGroupUploadLeaf(',
+        voicePending,
+      );
+      final voicePrepBody = source.substring(voicePending, voiceLeaf);
+      expect(voicePrepBody, contains('widget.msgRepo.saveMessage'));
+      expect(
+        voicePrepBody,
+        isNot(contains('mediaAttachmentRepo.saveAttachment')),
+        reason: 'voice pending-row replacement belongs to the B3 leaf',
+      );
+    },
+  );
+
+  test(
+    'restored media replacement cleanup is B3-gated and claimed by the first leaf',
+    () async {
+      final source = await File(
+        'lib/features/groups/presentation/screens/group_conversation_wired.dart',
+      ).readAsString();
+      final leafStart = source.indexOf('_runForegroundGroupUploadLeaf({');
+      final uploadStart = source.indexOf(
+        '_uploadPreparedGroupMediaUploads({',
+        leafStart,
+      );
+      final buildStart = source.indexOf(
+        '_buildStableUploadedAttachmentFromPlan({',
+        uploadStart,
+      );
+      final onSendStart = source.indexOf('Future<void> _onSend(String text)');
+      final onSendEnd = source.indexOf(
+        'Future<void> _onRetryUnavailableMedia(',
+        onSendStart,
+      );
+      expect(leafStart, isNonNegative);
+      expect(uploadStart, greaterThan(leafStart));
+      expect(buildStart, greaterThan(uploadStart));
+      expect(onSendStart, isNonNegative);
+      expect(onSendEnd, greaterThan(onSendStart));
+
+      final leafBody = source.substring(leafStart, uploadStart);
+      final phase = leafBody.indexOf('runSelfRemovedGroupLifecycleLeaf');
+      final replacementDelete = leafBody.indexOf(
+        'mediaAttachmentRepo.deleteAttachmentsForMessage',
+      );
+      expect(phase, isNonNegative);
+      expect(
+        replacementDelete,
+        greaterThan(phase),
+        reason: 'B3 must win before restored attachment rows can be deleted',
+      );
+
+      final uploadBody = source.substring(uploadStart, buildStart);
+      expect(
+        uploadBody,
+        contains('replaceExistingAttachments && index == 0'),
+        reason: 'only the first serialized leaf may replace restored rows',
+      );
+      expect(
+        uploadBody,
+        contains('if (result == null) return null;'),
+        reason: 'a B3-blocked first leaf must prevent every later upload leaf',
+      );
+
+      final onSendBody = source.substring(onSendStart, onSendEnd);
+      expect(
+        onSendBody,
+        isNot(contains('_clearPersistedMediaForRestoredContinuation(')),
+        reason: 'restored rows must never be cleared before the B3 leaf',
+      );
+      expect(
+        onSendBody,
+        contains('replaceExistingAttachments: restoredContinuation != null'),
+      );
+    },
+  );
+
+  test(
     'GPL-03A private parent is durable and requalified immediately before initial and retry upload',
     () async {
       final tempDir = await Directory.systemTemp.createTemp('gpl03a_');

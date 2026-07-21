@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart';
@@ -18,7 +19,8 @@ Future<void> Function({required String groupId, required String peerId})?
 _deferredDistributionDrainSink;
 
 void setDeferredDistributionDrainSink(
-  Future<void> Function({required String groupId, required String peerId})? sink,
+  Future<void> Function({required String groupId, required String peerId})?
+  sink,
 ) {
   _deferredDistributionDrainSink = sink;
 }
@@ -162,13 +164,49 @@ class GroupPendingKeyDistributionRunner {
   }
 
   Future<bool> _drainOne(GroupPendingKeyDistribution row) async {
-    final identity = await loadIdentity();
-    if (identity == null) {
-      // Transient local condition — retry on the next trigger without burning
-      // an attempt against the target.
-      return false;
-    }
+    final guarded = await runSelfRemovedGroupLifecycleLeaf<bool>(
+      groupRepo: groupRepo,
+      groupId: row.groupId,
+      action: (_) async {
+        // The outer loaders are shortlist-only. Re-read the exact row and all
+        // authority needed by this one distribution while holding the same
+        // membership phase as its network sends and terminal write.
+        final current = await repository.getDistribution(row.id);
+        if (current == null ||
+            !sameExactGroupPendingKeyDistribution(current, row) ||
+            current.status != groupPendingKeyDistributionStatusPending) {
+          return false;
+        }
 
+        final identity = await loadIdentity();
+        if (identity == null) {
+          // Transient local condition — retry on the next trigger without
+          // burning an attempt against the target.
+          return false;
+        }
+        final self = await groupRepo.getMember(
+          current.groupId,
+          identity.peerId,
+        );
+        final target = await groupRepo.getMember(
+          current.groupId,
+          current.peerId,
+        );
+        final key = await groupRepo.getLatestKey(current.groupId);
+        if (self == null || target == null || key == null) {
+          return false;
+        }
+
+        return _drainOneLocked(current, identity);
+      },
+    );
+    return guarded.didRun && (guarded.value ?? false);
+  }
+
+  Future<bool> _drainOneLocked(
+    GroupPendingKeyDistribution row,
+    IdentityModel identity,
+  ) async {
     try {
       final delivered = await distributeCurrentGroupKeyToDeferredPeer(
         bridge: bridge,
@@ -185,7 +223,11 @@ class GroupPendingKeyDistributionRunner {
       );
 
       if (delivered > 0) {
-        await repository.finalizeDistributed(row.id);
+        final finalized = await finalizeGroupPendingKeyDistributionIfExact(
+          repository,
+          row,
+        );
+        if (!finalized) return false;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_KEY_DISTRIBUTION_DISTRIBUTED',
@@ -199,12 +241,24 @@ class GroupPendingKeyDistributionRunner {
       }
 
       // Still undeliverable (keyless or every send failed): record + maybe cap.
-      await repository.recordAttempt(row.id, lastError: 'undeliverable');
-      await _maybeFinalizeUnreachable(row, 'attempt cap reached');
+      final attempted = await recordGroupPendingKeyDistributionAttemptIfExact(
+        repository,
+        row,
+        lastError: 'undeliverable',
+      );
+      if (attempted != null) {
+        await _maybeFinalizeUnreachable(attempted, 'attempt cap reached');
+      }
       return false;
     } catch (e) {
-      await repository.recordAttempt(row.id, lastError: e.toString());
-      await _maybeFinalizeUnreachable(row, e.toString());
+      final attempted = await recordGroupPendingKeyDistributionAttemptIfExact(
+        repository,
+        row,
+        lastError: e.toString(),
+      );
+      if (attempted != null) {
+        await _maybeFinalizeUnreachable(attempted, e.toString());
+      }
       return false;
     }
   }
@@ -213,16 +267,22 @@ class GroupPendingKeyDistributionRunner {
     GroupPendingKeyDistribution row,
     String lastError,
   ) async {
-    // row.attempts is the pre-drain count; recordAttempt above added one.
-    if (row.attempts + 1 >= attemptCap) {
-      await repository.finalizeUnreachable(row.id, lastError: lastError);
+    // [row] is the exact post-attempt tuple returned by the atomic CAS.
+    if (row.attempts >= attemptCap) {
+      final finalized =
+          await finalizeGroupPendingKeyDistributionUnreachableIfExact(
+            repository,
+            row,
+            lastError: lastError,
+          );
+      if (!finalized) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_KEY_DISTRIBUTION_UNREACHABLE',
         details: {
           'groupId': _safeId(row.groupId),
           'peerId': _safeId(row.peerId),
-          'attempts': row.attempts + 1,
+          'attempts': row.attempts,
         },
       );
     }

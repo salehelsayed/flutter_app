@@ -2,6 +2,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -37,37 +38,50 @@ Future<void> joinGroup({
     selfPublicKey: selfPublicKey,
   );
 
-  // 1. Call bridge with full private-group join material.
-  await callGroupJoinWithConfig(
-    bridge,
-    groupId: group.id,
-    groupConfig: groupConfig,
-    groupKey: groupKey,
-    keyEpoch: keyEpoch,
-  );
+  final shellRepository = groupRepo is SelfRemovedGroupShellRepository
+      ? groupRepo as SelfRemovedGroupShellRepository
+      : null;
+  if (shellRepository == null) {
+    _throwInvalidJoinMaterial('missing removal-floor capability');
+  }
 
-  // 2. Save group to repo
-  await groupRepo.saveGroup(group);
-
-  // 3. Save self as member
-  final now = DateTime.now().toUtc();
-  final selfMember = GroupMember(
+  await runGroupMembershipMutationLocked(
     groupId: group.id,
-    peerId: selfPeerId,
-    role: selfRole,
-    publicKey: selfPublicKey,
-    joinedAt: now,
+    action: () async {
+      final now = DateTime.now().toUtc();
+      final selfMember = GroupMember(
+        groupId: group.id,
+        peerId: selfPeerId,
+        role: selfRole,
+        publicKey: selfPublicKey,
+        joinedAt: now,
+      );
+      final keyInfo = GroupKeyInfo(
+        groupId: group.id,
+        keyGeneration: keyEpoch,
+        encryptedKey: groupKey,
+        createdAt: now,
+      );
+      try {
+        await shellRepository.commitFreshDirectJoin(
+          group: group,
+          selfMember: selfMember,
+          key: keyInfo,
+          joinNative: () => callGroupJoinWithConfig(
+            bridge,
+            groupId: group.id,
+            groupConfig: groupConfig,
+            groupKey: groupKey,
+            keyEpoch: keyEpoch,
+          ),
+        );
+      } on StateError {
+        _throwInvalidJoinMaterial(
+          'direct join is fresh-only for groups without a removal floor',
+        );
+      }
+    },
   );
-  await groupRepo.saveMember(selfMember);
-
-  // 4. Save group key
-  final keyInfo = GroupKeyInfo(
-    groupId: group.id,
-    keyGeneration: keyEpoch,
-    encryptedKey: groupKey,
-    createdAt: now,
-  );
-  await groupRepo.saveKey(keyInfo);
 
   emitFlowEvent(
     layer: 'FL',

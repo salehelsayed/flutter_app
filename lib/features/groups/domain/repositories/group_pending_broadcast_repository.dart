@@ -24,3 +24,29 @@ abstract class GroupPendingBroadcastRepository {
     }
   }
 }
+
+abstract interface class GroupPendingBroadcastExactRepository {
+  Future<bool> removeIfExact(GroupPendingBroadcast expected);
+}
+
+Future<bool> removeGroupPendingBroadcastIfExact(
+  GroupPendingBroadcastRepository repository,
+  GroupPendingBroadcast expected,
+) async {
+  if (repository case final GroupPendingBroadcastExactRepository exact) {
+    return exact.removeIfExact(expected);
+  }
+  final rows = await repository.forGroup(expected.groupId);
+  GroupPendingBroadcast? current;
+  for (final row in rows) {
+    if (row.id == expected.id) {
+      current = row;
+      break;
+    }
+  }
+  if (current == null || !sameExactGroupPendingBroadcast(current, expected)) {
+    return false;
+  }
+  await repository.remove(expected.id);
+  return true;
+}

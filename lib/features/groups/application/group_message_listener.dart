@@ -34,6 +34,7 @@ import 'package:flutter_app/features/groups/application/handle_incoming_group_me
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/trusted_private_group_system_event.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -84,6 +85,20 @@ class _PendingMembershipDependentMessage {
   final DateTime receivedAt;
   final String? durableId;
 }
+
+bool _samePendingReaction(
+  GroupPendingReaction current,
+  GroupPendingReaction loaded,
+) =>
+    current.id == loaded.id &&
+    current.groupId == loaded.groupId &&
+    current.messageId == loaded.messageId &&
+    current.senderPeerId == loaded.senderPeerId &&
+    current.transportPeerId == loaded.transportPeerId &&
+    current.senderDeviceId == loaded.senderDeviceId &&
+    current.senderPublicKey == loaded.senderPublicKey &&
+    current.reactionJson == loaded.reactionJson &&
+    current.receivedAt.toUtc().isAtSameMomentAs(loaded.receivedAt.toUtc());
 
 class _SignedTransitionAuditActorBinding {
   const _SignedTransitionAuditActorBinding({
@@ -273,6 +288,7 @@ class GroupMessageListener {
     GroupMessageRepository? msgRepoOverride,
     bool rethrowOnError = false,
     bool allowMembershipBuffer = false,
+    bool membershipPhaseHeld = false,
   }) async {
     if (!await _allowsInboundAccountSideEffects(
       operation: 'group_replay_message',
@@ -286,6 +302,7 @@ class GroupMessageListener {
       rethrowOnError: rethrowOnError,
       allowMembershipBuffer: allowMembershipBuffer,
       deliverySource: 'replay',
+      membershipPhaseHeld: membershipPhaseHeld,
     );
   }
 
@@ -416,7 +433,10 @@ class GroupMessageListener {
   /// Replays buffered reactions whose target [message] has just been persisted
   /// (INV-R4). Each row is DELETED before its [ReactionChange] is emitted, so
   /// an overlapping startup + live flush can never double-emit (INV-R5).
-  Future<void> _flushPendingReactionsForMessage(GroupMessage message) async {
+  Future<void> _flushPendingReactionsForMessage(
+    GroupMessage message, {
+    bool membershipPhaseHeld = false,
+  }) async {
     final repo = _pendingReactionRepo;
     final reactionRepo = _reactionRepo;
     if (repo == null || reactionRepo == null) return;
@@ -441,61 +461,105 @@ class GroupMessageListener {
 
     for (final pending in buffered) {
       if (_isStopping || _isDisposed) return;
-      // Atomically claim the row before emitting; if another flush already
-      // took it, skip so the ReactionChange is emitted exactly once.
-      final claimed = await repo.deletePendingReaction(pending.id);
-      if (claimed == 0) continue;
-      try {
-        final (result, change) = await handleIncomingGroupReaction(
-          groupRepo: _groupRepo,
+      if (membershipPhaseHeld) {
+        await _flushPendingReactionLocked(
+          message: message,
+          loaded: pending,
+          repo: repo,
           reactionRepo: reactionRepo,
-          msgRepo: _msgRepo,
+        );
+      } else {
+        await runSelfRemovedGroupLifecycleLeaf<void>(
+          groupRepo: _groupRepo,
           groupId: pending.groupId,
-          senderId: pending.senderPeerId,
-          senderDeviceId: pending.senderDeviceId,
-          transportPeerId: pending.transportPeerId,
-          senderPublicKey: pending.senderPublicKey,
-          reactionJson: pending.reactionJson,
-        );
-        if (result == HandleGroupReactionResult.success && change != null) {
-          final targetMessage = await _loadReactionDerivativeTarget(
-            groupId: pending.groupId,
-            change: change,
-          );
-          if (targetMessage != null) {
-            _emitReactionChange(change);
-            final wireReaction = GroupReactionPayload.fromDecryptedJson(
-              pending.reactionJson,
-            );
-            await _maybeNotifyGroupReaction(
-              groupId: pending.groupId,
-              reactorPeerId: pending.senderPeerId,
-              change: change,
-              targetMessage: targetMessage,
-              eventId: wireReaction?.eventId,
-            );
-          }
-        }
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_REACTION_BUFFER_FLUSHED',
-          details: {
-            'groupId': pending.groupId.length > 8
-                ? pending.groupId.substring(0, 8)
-                : pending.groupId,
-            'messageId': pending.messageId.length > 8
-                ? pending.messageId.substring(0, 8)
-                : pending.messageId,
-            'result': result.name,
-          },
-        );
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_REACTION_BUFFER_FLUSH_ERROR',
-          details: {'error': e.toString()},
+          action: (_) => _flushPendingReactionLocked(
+            message: message,
+            loaded: pending,
+            repo: repo,
+            reactionRepo: reactionRepo,
+          ),
         );
       }
+    }
+  }
+
+  Future<void> _flushPendingReactionLocked({
+    required GroupMessage message,
+    required GroupPendingReaction loaded,
+    required GroupPendingReactionRepository repo,
+    required ReactionRepository reactionRepo,
+  }) async {
+    final currentRows = await repo.getPendingReactionsForMessage(
+      groupId: loaded.groupId,
+      messageId: loaded.messageId,
+    );
+    GroupPendingReaction? pending;
+    for (final current in currentRows) {
+      if (_samePendingReaction(current, loaded)) {
+        pending = current;
+        break;
+      }
+    }
+    if (pending == null ||
+        message.groupId != pending.groupId ||
+        message.id != pending.messageId) {
+      return;
+    }
+
+    // Atomically claim the exact row before emitting; if another flush already
+    // took it, skip so the ReactionChange is emitted exactly once.
+    final claimed = await repo.deletePendingReaction(pending.id);
+    if (claimed == 0) return;
+    try {
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: _groupRepo,
+        reactionRepo: reactionRepo,
+        msgRepo: _msgRepo,
+        groupId: pending.groupId,
+        senderId: pending.senderPeerId,
+        senderDeviceId: pending.senderDeviceId,
+        transportPeerId: pending.transportPeerId,
+        senderPublicKey: pending.senderPublicKey,
+        reactionJson: pending.reactionJson,
+      );
+      if (result == HandleGroupReactionResult.success && change != null) {
+        final targetMessage = await _loadReactionDerivativeTarget(
+          groupId: pending.groupId,
+          change: change,
+        );
+        if (targetMessage != null) {
+          _emitReactionChange(change);
+          final wireReaction = GroupReactionPayload.fromDecryptedJson(
+            pending.reactionJson,
+          );
+          await _maybeNotifyGroupReaction(
+            groupId: pending.groupId,
+            reactorPeerId: pending.senderPeerId,
+            change: change,
+            targetMessage: targetMessage,
+            eventId: wireReaction?.eventId,
+          );
+        }
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_BUFFER_FLUSHED',
+        details: {
+          'groupId': pending.groupId.length > 8
+              ? pending.groupId.substring(0, 8)
+              : pending.groupId,
+          'messageId': pending.messageId.length > 8
+              ? pending.messageId.substring(0, 8)
+              : pending.messageId,
+          'result': result.name,
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_BUFFER_FLUSH_ERROR',
+        details: {'error': e.toString()},
+      );
     }
   }
 
@@ -647,6 +711,7 @@ class GroupMessageListener {
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
     String deliverySource = 'listener',
+    bool membershipPhaseHeld = false,
   }) {
     final queueKey = _userMessageWorkKey(data);
     if (queueKey == null) {
@@ -657,6 +722,8 @@ class GroupMessageListener {
         allowMembershipBuffer: allowMembershipBuffer,
         requestRecoveryOnError: requestRecoveryOnError,
         deliverySource: deliverySource,
+        membershipPhaseHeld: membershipPhaseHeld,
+        deferKeyRepairRequest: membershipPhaseHeld,
       );
     }
 
@@ -672,6 +739,8 @@ class GroupMessageListener {
             allowMembershipBuffer: allowMembershipBuffer,
             requestRecoveryOnError: requestRecoveryOnError,
             deliverySource: deliverySource,
+            membershipPhaseHeld: membershipPhaseHeld,
+            deferKeyRepairRequest: membershipPhaseHeld,
           ),
         )
         .whenComplete(() {
@@ -928,6 +997,8 @@ class GroupMessageListener {
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
     String deliverySource = 'listener',
+    bool membershipPhaseHeld = false,
+    bool deferKeyRepairRequest = false,
   }) async {
     try {
       final schemaRejectReason = _groupMessageEventSchemaRejectReason(data);
@@ -1114,7 +1185,10 @@ class GroupMessageListener {
         // before it (INV-R4). This single site serves BOTH live and offline
         // drain, because the drain replays messages through the same
         // _handleMessage → _emitGroupMessage path.
-        await _flushPendingReactionsForMessage(result);
+        await _flushPendingReactionsForMessage(
+          result,
+          membershipPhaseHeld: membershipPhaseHeld,
+        );
         // A real live delivery for this group+epoch supersedes any synthetic
         // `live:` decryption-failure placeholder from the same sender — clears
         // the stuck placeholder and prevents the duplicate. Placed after the
@@ -1133,7 +1207,9 @@ class GroupMessageListener {
             keyEpoch: result.keyGeneration,
           );
         }
-        await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
+        if (!deferKeyRepairRequest) {
+          await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
+        }
         if (!_privateMediaAvailability.allowsMediaDerivatives(
           result.privateMediaPolicy,
         )) {
@@ -1598,49 +1674,133 @@ class GroupMessageListener {
       details: {'groupId': _membershipFlowId(groupId), 'count': ready.length},
     );
     for (final pending in ready) {
-      final member = await _groupRepo.getMember(groupId, pending.senderPeerId);
-      final pendingTimestamp = DateTime.tryParse(
-        pending.data['timestamp'] as String? ?? '',
-      )?.toUtc();
-      if (member != null &&
-          pendingTimestamp != null &&
-          pendingTimestamp.isBefore(member.joinedAt.toUtc())) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_HANDLE_INCOMING_MSG_SENDER_BEFORE_JOINED_REJECTED',
-          details: {
-            'groupId': _membershipFlowId(groupId),
-            'senderId': _membershipFlowId(pending.senderPeerId),
-            'joinedAt': member.joinedAt.toUtc().toIso8601String(),
-          },
+      final text = pending.data['text'] as String? ?? '';
+      if (text.startsWith('{"__sys":')) {
+        // Listener membership callbacks stay outside the non-reentrant phase;
+        // a replayed B3 transition owns its own lock and cuts off later work.
+        await _flushMembershipDependentMessageLeaf(
+          groupId: groupId,
+          pending: pending,
+          msgRepo: msgRepo,
+          membershipPhaseHeld: false,
         );
-        await _deleteDurableMembershipDependentMessage(pending);
+        final group = await _groupRepo.getGroup(groupId);
+        if (group == null || group.selfRemovedAt != null) return;
         continue;
       }
-      try {
-        await _handleMessage(
-          pending.data,
-          msgRepoOverride: msgRepo,
-          allowMembershipBuffer: false,
-          rethrowOnError: true,
-          deliverySource: 'membershipBuffer',
-        );
-        await _deleteDurableMembershipDependentMessage(pending);
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event:
-              'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_CONTENT_FLUSH_ERROR',
-          details: {
-            'groupId': _membershipFlowId(groupId),
-            'senderId': _membershipFlowId(pending.senderPeerId),
-            if (pending.messageId != null && pending.messageId!.isNotEmpty)
-              'messageId': _membershipFlowId(pending.messageId!),
-            'error': e.toString(),
-          },
-        );
+
+      final guarded = await runSelfRemovedGroupLifecycleLeaf<void>(
+        groupRepo: _groupRepo,
+        groupId: groupId,
+        action: (_) => _flushMembershipDependentMessageLeaf(
+          groupId: groupId,
+          pending: pending,
+          msgRepo: msgRepo,
+          membershipPhaseHeld: true,
+        ),
+      );
+      if (guarded.didRun) {
+        await _requestDeferredMembershipMessageKeyRepair(pending, msgRepo);
       }
     }
+  }
+
+  Future<void> _flushMembershipDependentMessageLeaf({
+    required String groupId,
+    required _PendingMembershipDependentMessage pending,
+    required GroupMessageRepository msgRepo,
+    required bool membershipPhaseHeld,
+  }) async {
+    if (!await _isExactPendingMembershipMessage(pending)) return;
+    if (!membershipPhaseHeld) {
+      final currentGroup = await _groupRepo.getGroup(groupId);
+      if (currentGroup == null || currentGroup.selfRemovedAt != null) return;
+    }
+    final member = await _groupRepo.getMember(groupId, pending.senderPeerId);
+    final pendingTimestamp = DateTime.tryParse(
+      pending.data['timestamp'] as String? ?? '',
+    )?.toUtc();
+    if (member != null &&
+        pendingTimestamp != null &&
+        pendingTimestamp.isBefore(member.joinedAt.toUtc())) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_SENDER_BEFORE_JOINED_REJECTED',
+        details: {
+          'groupId': _membershipFlowId(groupId),
+          'senderId': _membershipFlowId(pending.senderPeerId),
+          'joinedAt': member.joinedAt.toUtc().toIso8601String(),
+        },
+      );
+      await _deleteDurableMembershipDependentMessage(pending);
+      return;
+    }
+    try {
+      await _handleMessage(
+        pending.data,
+        msgRepoOverride: msgRepo,
+        allowMembershipBuffer: false,
+        rethrowOnError: true,
+        deliverySource: 'membershipBuffer',
+        membershipPhaseHeld: membershipPhaseHeld,
+        deferKeyRepairRequest: membershipPhaseHeld,
+      );
+      await _deleteDurableMembershipDependentMessage(pending);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event:
+            'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_CONTENT_FLUSH_ERROR',
+        details: {
+          'groupId': _membershipFlowId(groupId),
+          'senderId': _membershipFlowId(pending.senderPeerId),
+          if (pending.messageId != null && pending.messageId!.isNotEmpty)
+            'messageId': _membershipFlowId(pending.messageId!),
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _requestDeferredMembershipMessageKeyRepair(
+    _PendingMembershipDependentMessage pending,
+    GroupMessageRepository msgRepo,
+  ) async {
+    final messageId = pending.messageId;
+    if (messageId == null || messageId.isEmpty) return;
+    final stored = await msgRepo.getMessage(messageId);
+    if (stored != null) {
+      // This runs only after the leaf released its membership phase. The
+      // guarded request sender may now acquire its own bounded network phase
+      // without nesting the non-reentrant lock.
+      await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(stored);
+    }
+  }
+
+  Future<bool> _isExactPendingMembershipMessage(
+    _PendingMembershipDependentMessage loaded,
+  ) async {
+    final durableId = loaded.durableId;
+    if (durableId == null || durableId.isEmpty) return true;
+    final repo = _pendingMembershipMessageRepo;
+    if (repo == null) return false;
+    final rows = await repo.getPendingMessagesForGroupAndSenders(
+      groupId: loaded.data['groupId'] as String? ?? '',
+      senderPeerIds: <String>{loaded.senderPeerId},
+      limit: _maxPendingMembershipDependentMessagesPerGroup,
+    );
+    for (final current in rows) {
+      if (current.id == durableId &&
+          current.senderPeerId == loaded.senderPeerId &&
+          current.messageId == loaded.messageId &&
+          current.payloadJson == jsonEncode(loaded.data) &&
+          current.receivedAt.toUtc().isAtSameMomentAs(
+            loaded.receivedAt.toUtc(),
+          )) {
+        return true;
+      }
+    }
+    return false;
   }
 
   _PendingMembershipDependentMessage
@@ -2282,6 +2442,12 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: membershipVersion.eventAt,
+            explicitRemovalAt: explicitMembershipEventAt,
+            removalEventId:
+                auditSourceEventId ??
+                ((sourceEventId?.trim().isNotEmpty ?? false)
+                    ? sourceEventId
+                    : null),
             msgRepo: msgRepo,
             appendSystemEventLog: appendSystemEventLog,
           );
@@ -2294,6 +2460,11 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            removalEventId:
+                auditSourceEventId ??
+                ((sourceEventId?.trim().isNotEmpty ?? false)
+                    ? sourceEventId
+                    : null),
             msgRepo: msgRepo,
             appendSystemEventLog: appendSystemEventLog,
           );
@@ -2345,31 +2516,13 @@ class GroupMessageListener {
         });
       } else if (sysType == 'group_dissolved') {
         await _enqueueGroupConfigWork(groupId, () async {
-          // 123 S1/T4 — a group_dissolved is a GLOBAL, TERMINAL transition, so
-          // it must apply even when the local membership watermark is AHEAD of
-          // the dissolve eventAt (e.g. a stale-but-keyed device that missed the
-          // live publish and whose last applied membership event post-dates the
-          // dissolve). Once the group is ALREADY dissolved locally we fall back
-          // to the stale-event gate so a replayed dissolve is idempotently
-          // ignored — preserving the single-timeline-row invariant.
-          final alreadyDissolved =
-              (await _groupRepo.getGroup(groupId))?.isDissolved ?? false;
-          if (alreadyDissolved &&
-              await _shouldIgnoreStaleMembershipEvent(
-                groupId,
-                sysType: sysType,
-                eventAt: membershipVersion.eventAt,
-                eventId: auditSourceEventId,
-              )) {
-            return;
-          }
-          await appendSystemEventLog();
           await _handleGroupDissolved(
             groupId,
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: membershipVersion.eventAt,
             msgRepo: msgRepo,
+            appendSystemEventLog: appendSystemEventLog,
           );
         });
       } else if (sysType == 'group_metadata_updated') {
@@ -3546,6 +3699,8 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required DateTime? explicitRemovalAt,
+    String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
   }) async {
@@ -3600,12 +3755,15 @@ class GroupMessageListener {
         // active member + no send key) with no new flag or migration.
         final selfRemovalCompleted = await _retainSelfRemovedLocalHistory(
           groupId,
-          parsed,
           selfPeerId: selfPeerId,
           senderId: senderId,
           senderUsername: senderUsername,
           removedUsername: removedUsername,
-          eventAt: eventAt,
+          // The envelope timestamp remains a compatibility fallback for
+          // ordinary member removals, but it is not canonical B3 authority.
+          // A self-removal must carry its own parseable `removedAt` value.
+          eventAt: explicitRemovalAt,
+          removalEventId: removalEventId,
           msgRepo: msgRepo,
           appendSystemEventLog: appendSystemEventLog,
         );
@@ -3807,55 +3965,117 @@ class GroupMessageListener {
   }
 
   Future<bool> _retainSelfRemovedLocalHistory(
-    String groupId,
-    Map<String, dynamic> parsed, {
+    String groupId, {
     required String selfPeerId,
     required String senderId,
     required String senderUsername,
     String? removedUsername,
+    GroupMessage? retainedTimelineMessage,
     DateTime? eventAt,
+    String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
   }) async {
-    await callGroupLeave(_bridge!, groupId);
-    if (await _repairLateSelfRemovalLeaveIfReadded(
-      groupId,
-      selfPeerId: selfPeerId,
-      removedAt: eventAt,
-    )) {
-      await appendSystemEventLog();
+    final resolvedEventAt = eventAt?.toUtc();
+    final stableEventId = removalEventId?.trim();
+    final shellRepository = _groupRepo is SelfRemovedGroupShellRepository
+        ? _groupRepo as SelfRemovedGroupShellRepository
+        : null;
+    // B3 is a destructive authority transition. Missing signed time/id or a
+    // repository without the atomic capability fails closed before native
+    // leave and before any local/projection mutation.
+    if (resolvedEventAt == null ||
+        stableEventId == null ||
+        stableEventId.isEmpty ||
+        shellRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_AUTHORITY_UNAVAILABLE',
+        details: {'groupId': groupId},
+      );
       return false;
     }
 
-    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
-    if (groupConfig != null) {
-      await _applyAuthoritativeGroupConfigSnapshot(
-        groupId,
-        groupConfig,
-        eventAt: eventAt,
-        msgRepo: msgRepo,
-        pruneOmittedMembers: false,
+    final SelfRemovalAuthorityCommitOutcome commitOutcome;
+    try {
+      commitOutcome = await runGroupMembershipMutationLocked(
+        groupId: groupId,
+        action: () async {
+          final currentSelf = await _groupRepo.getMember(groupId, selfPeerId);
+          if (currentSelf == null) {
+            return SelfRemovalAuthorityCommitOutcome.refusedStateChanged;
+          }
+          final outcome = await shellRepository.commitSelfRemovalAuthority(
+            groupId: groupId,
+            selfPeerId: selfPeerId,
+            expectedSelfJoinedAt: currentSelf.joinedAt,
+            removalAt: resolvedEventAt,
+            removalEventId: stableEventId,
+            leaveNative: () => callGroupLeave(_bridge!, groupId),
+          );
+          if (outcome == SelfRemovalAuthorityCommitOutcome.committed) {
+            // Marker and retained key/draft addresses now own retry. Failure at
+            // any strict terminal boundary must not undo the durable shell.
+            try {
+              final authority = await shellRepository
+                  .loadSelfRemovedShellAuthority(
+                    groupId: groupId,
+                    selfPeerId: selfPeerId,
+                  );
+              await shellRepository.terminalizeSelfRemovedShell(
+                expected: authority,
+              );
+            } catch (error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event:
+                    'GROUP_MESSAGE_LISTENER_SELF_REMOVED_TERMINAL_RETRY_REQUIRED',
+                details: {'groupId': groupId, 'error': error.toString()},
+              );
+            }
+          }
+          return outcome;
+        },
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_COMMIT_FAILED',
+        details: {'groupId': groupId, 'error': error.toString()},
+      );
+      rethrow;
+    }
+    if (commitOutcome != SelfRemovalAuthorityCommitOutcome.committed) {
+      return false;
+    }
+
+    // Presentation/evidence happens only after durable authority. Its failure
+    // cannot make the already-committed marker unsafe or require native leave
+    // again; local shell deletion remains available.
+    try {
+      await appendSystemEventLog();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_EVENT_LOG_FAILED',
+        details: {'groupId': groupId, 'error': error.toString()},
       );
     }
-    await _groupRepo.removeMember(groupId, selfPeerId);
-    await _groupRepo.removeAllKeys(groupId);
-
-    await appendSystemEventLog();
-    final resolvedEventAt = eventAt ?? DateTime.now().toUtc();
-    final timelineMessage = buildMemberRemovedTimelineMessage(
-      groupId: groupId,
-      removedPeerId: selfPeerId,
-      removedUsername: removedUsername,
-      senderId: senderId,
-      senderUsername: senderUsername,
-      eventAt: resolvedEventAt,
-    );
+    final timelineMessage =
+        retainedTimelineMessage ??
+        buildMemberRemovedTimelineMessage(
+          groupId: groupId,
+          removedPeerId: selfPeerId,
+          removedUsername: removedUsername,
+          senderId: senderId,
+          senderUsername: senderUsername,
+          eventAt: resolvedEventAt,
+        );
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
       msgRepo,
     );
     _emitGroupMessage(savedTimelineMessage);
-    await _recordMembershipEventWatermark(groupId, resolvedEventAt);
     await _deleteContentMessagesAtOrAfterRemoval(
       groupId: groupId,
       removedPeerId: selfPeerId,
@@ -3871,80 +4091,6 @@ class GroupMessageListener {
       },
     );
     return true;
-  }
-
-  Future<bool> _repairLateSelfRemovalLeaveIfReadded(
-    String groupId, {
-    required String selfPeerId,
-    DateTime? removedAt,
-  }) async {
-    final removedAtUtc = removedAt?.toUtc();
-    if (removedAtUtc == null) {
-      return false;
-    }
-
-    final group = await _groupRepo.getGroup(groupId);
-    if (group == null || group.isDissolved) {
-      return false;
-    }
-
-    final selfMember = await _groupRepo.getMember(groupId, selfPeerId);
-    final latestKey = await _groupRepo.getLatestKey(groupId);
-    if (selfMember == null ||
-        latestKey == null ||
-        latestKey.keyGeneration <= 0 ||
-        latestKey.encryptedKey.trim().isEmpty) {
-      return false;
-    }
-
-    final selfRejoinedAfterRemoval = selfMember.joinedAt.toUtc().isAfter(
-      removedAtUtc,
-    );
-    final membershipAdvancedAfterRemoval =
-        group.lastMembershipEventAt?.toUtc().isAfter(removedAtUtc) ?? false;
-    if (!selfRejoinedAfterRemoval && !membershipAdvancedAfterRemoval) {
-      return false;
-    }
-
-    final bridge = _bridge;
-    if (bridge == null) {
-      return false;
-    }
-
-    final members = await _groupRepo.getMembers(groupId);
-    if (!members.any((member) => member.peerId == selfPeerId)) {
-      return false;
-    }
-
-    final groupConfig = buildGroupConfigPayload(group, members);
-    try {
-      await callGroupJoinWithConfig(
-        bridge,
-        groupId: groupId,
-        groupConfig: groupConfig,
-        groupKey: latestKey.encryptedKey,
-        keyEpoch: latestKey.keyGeneration,
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIRED_AFTER_READD',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'keyEpoch': latestKey.keyGeneration,
-        },
-      );
-      return true;
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIR_FAILED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'error': e.toString(),
-        },
-      );
-      rethrow;
-    }
   }
 
   Future<void> _closeGroupForEmptyMembership(
@@ -4000,6 +4146,7 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
   }) async {
@@ -4062,27 +4209,43 @@ class GroupMessageListener {
       return;
     }
 
+    final getSelfPeerId = _getSelfPeerId;
+    if (getSelfPeerId != null) {
+      final selfPeerId = await getSelfPeerId();
+      if (selfPeerId != null && selfPeerId == event.targetPeerId) {
+        if (_bridge == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_AUTHORITY_UNAVAILABLE',
+            details: {'groupId': groupId},
+          );
+          return;
+        }
+        final completed = await _retainSelfRemovedLocalHistory(
+          groupId,
+          selfPeerId: selfPeerId,
+          senderId: senderId,
+          senderUsername: senderUsername,
+          removedUsername: event.targetUsername,
+          retainedTimelineMessage: timelineMessage,
+          eventAt: event.eventAt,
+          removalEventId: removalEventId,
+          msgRepo: msgRepo,
+          appendSystemEventLog: appendSystemEventLog,
+        );
+        if (completed) {
+          _emitGroupRemoved(groupId);
+        }
+        return;
+      }
+    }
+
     await appendSystemEventLog();
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
       msgRepo,
     );
     _emitGroupMessage(savedTimelineMessage);
-
-    final getSelfPeerId = _getSelfPeerId;
-    final bridge = _bridge;
-    if (getSelfPeerId != null && bridge != null) {
-      final selfPeerId = await getSelfPeerId();
-      if (selfPeerId == event.targetPeerId) {
-        await leaveGroup(
-          bridge: bridge,
-          groupRepo: _groupRepo,
-          groupId: groupId,
-        );
-        _emitGroupRemoved(groupId);
-        return;
-      }
-    }
 
     await _groupRepo.removeMember(groupId, event.targetPeerId);
 
@@ -4534,51 +4697,66 @@ class GroupMessageListener {
     required String senderUsername,
     DateTime? eventAt,
     required GroupMessageRepository msgRepo,
+    required Future<void> Function() appendSystemEventLog,
   }) async {
-    final group = await _groupRepo.getGroup(groupId);
-    if (group == null) {
-      return;
-    }
-
-    final resolvedEventAt = (eventAt ?? DateTime.now().toUtc()).toUtc();
-    await _groupRepo.updateGroup(
-      group.copyWith(
-        isDissolved: true,
-        dissolvedAt: resolvedEventAt,
-        dissolvedBy: senderId.isEmpty ? group.dissolvedBy : senderId,
-        lastMembershipEventAt: resolvedEventAt,
-      ),
-    );
-
-    final timelineMessage = buildGroupDissolvedTimelineMessage(
+    final guarded = await runSelfRemovedGroupLifecycleLeaf<GroupMessage?>(
+      groupRepo: _groupRepo,
       groupId: groupId,
-      senderId: senderId,
-      senderUsername: senderUsername,
-      eventAt: resolvedEventAt,
-    );
-    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
-      timelineMessage,
-      msgRepo,
-    );
-    _emitGroupMessage(savedTimelineMessage);
+      action: (group) async {
+        // A terminal dissolve owns one phase from the fresh unmarked check
+        // through native leave. B3-first skips every effect; dissolve-first
+        // completes before B3 can mark the shell.
+        if (group.isDissolved) return null;
 
-    await _recordMembershipEventWatermark(groupId, resolvedEventAt);
-
-    final bridge = _bridge;
-    if (bridge != null) {
-      try {
-        await callGroupLeave(bridge, groupId);
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_MESSAGE_LISTENER_DISSOLVE_LEAVE_ERROR',
-          details: {
-            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-            'error': e.toString(),
-          },
+        await appendSystemEventLog();
+        final resolvedEventAt = (eventAt ?? DateTime.now().toUtc()).toUtc();
+        await _groupRepo.updateGroup(
+          group.copyWith(
+            isDissolved: true,
+            dissolvedAt: resolvedEventAt,
+            dissolvedBy: senderId.isEmpty ? group.dissolvedBy : senderId,
+            lastMembershipEventAt: resolvedEventAt,
+          ),
         );
-      }
-    }
+
+        final timelineMessage = buildGroupDissolvedTimelineMessage(
+          groupId: groupId,
+          senderId: senderId,
+          senderUsername: senderUsername,
+          eventAt: resolvedEventAt,
+        );
+        final savedTimelineMessage =
+            await _saveTimelineMessagePreservingReadState(
+              timelineMessage,
+              msgRepo,
+            );
+        await _recordMembershipEventWatermark(groupId, resolvedEventAt);
+
+        final bridge = _bridge;
+        if (bridge != null) {
+          try {
+            await callGroupLeave(bridge, groupId);
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_MESSAGE_LISTENER_DISSOLVE_LEAVE_ERROR',
+              details: {
+                'groupId': groupId.length > 8
+                    ? groupId.substring(0, 8)
+                    : groupId,
+                'error': e.toString(),
+              },
+            );
+          }
+        }
+        return savedTimelineMessage;
+      },
+    );
+    final savedTimelineMessage = guarded.value;
+    if (!guarded.didRun || savedTimelineMessage == null) return;
+
+    // Stream callbacks stay outside the non-reentrant membership phase.
+    _emitGroupMessage(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',

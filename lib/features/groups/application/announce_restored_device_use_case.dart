@@ -6,6 +6,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_device_announce_marker.dart';
 import 'package:flutter_app/features/groups/application/group_system_publish_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -55,7 +56,7 @@ Future<int> announceRestoredDeviceToGroups({
   var announced = 0;
 
   for (final group in groups) {
-    if (group.isDissolved) {
+    if (group.isDissolved || group.selfRemovedAt != null) {
       continue;
     }
     final sourceEventId =
@@ -79,23 +80,32 @@ Future<int> announceRestoredDeviceToGroups({
     };
 
     try {
-      final signed = await signGroupSystemTransitionPayload(
-        bridge: bridge,
+      final guardedSigning = await runSelfRemovedGroupLifecycleLeaf<String?>(
         groupRepo: groupRepo,
         groupId: group.id,
-        transitionType: 'device_announce',
-        sourceEventId: sourceEventId,
-        eventAt: now,
-        actorPeerId: selfPeerId,
-        actorUsername: selfUsername,
-        actorSigningPublicKey: accountSigningPublicKey,
-        actorPrivateKey: accountSigningPrivateKey,
-        actorDeviceId: announcedDevice.deviceId,
-        actorTransportPeerId: announcedDevice.transportPeerId,
-        actorKeyPackageId: announcedDevice.keyPackageId,
-        systemPayload: systemPayload,
+        action: (currentGroup) async {
+          if (currentGroup.isDissolved) return null;
+          final signed = await signGroupSystemTransitionPayload(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: group.id,
+            transitionType: 'device_announce',
+            sourceEventId: sourceEventId,
+            eventAt: now,
+            actorPeerId: selfPeerId,
+            actorUsername: selfUsername,
+            actorSigningPublicKey: accountSigningPublicKey,
+            actorPrivateKey: accountSigningPrivateKey,
+            actorDeviceId: announcedDevice.deviceId,
+            actorTransportPeerId: announcedDevice.transportPeerId,
+            actorKeyPackageId: announcedDevice.keyPackageId,
+            systemPayload: systemPayload,
+          );
+          return jsonEncode(signed);
+        },
       );
-      final encoded = jsonEncode(signed);
+      final encoded = guardedSigning.value;
+      if (!guardedSigning.didRun || encoded == null) continue;
       await publishGroupSystemMessage(
         bridge: bridge,
         groupRepo: groupRepo,

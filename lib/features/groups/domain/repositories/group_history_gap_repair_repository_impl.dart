@@ -2,11 +2,18 @@ import '../models/group_history_gap_repair.dart';
 import 'group_history_gap_repair_repository.dart';
 
 class GroupHistoryGapRepairRepositoryImpl
-    implements GroupHistoryGapRepairRepository {
+    implements
+        GroupHistoryGapRepairRepository,
+        GroupHistoryGapRepairExactRepository {
   final Future<bool> Function(Map<String, Object?> row)
   dbUpsertGroupHistoryGapRepair;
   final Future<void> Function(Map<String, Object?> row)
   dbSaveGroupHistoryGapRepair;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required Map<String, Object?> replacement,
+  })?
+  dbReplaceGroupHistoryGapRepairIfExact;
   final Future<Map<String, Object?>?> Function({
     required String groupId,
     required String gapId,
@@ -23,6 +30,7 @@ class GroupHistoryGapRepairRepositoryImpl
   GroupHistoryGapRepairRepositoryImpl({
     required this.dbUpsertGroupHistoryGapRepair,
     required this.dbSaveGroupHistoryGapRepair,
+    this.dbReplaceGroupHistoryGapRepairIfExact,
     required this.dbLoadGroupHistoryGapRepair,
     required this.dbLoadLatestGroupHistoryGapRepair,
     required this.dbLoadVisibleGroupHistoryGapRepairs,
@@ -178,5 +186,32 @@ class GroupHistoryGapRepairRepositoryImpl
     if (existing == null) return;
     final next = update(existing, DateTime.now().toUtc());
     await dbSaveGroupHistoryGapRepair(next.toMap());
+  }
+
+  @override
+  Future<bool> replaceIfExact({
+    required GroupHistoryGapRepair expected,
+    required GroupHistoryGapRepair replacement,
+  }) async {
+    if (replacement.groupId != expected.groupId ||
+        replacement.gapId != expected.gapId) {
+      return false;
+    }
+    final exact = dbReplaceGroupHistoryGapRepairIfExact;
+    if (exact != null) {
+      return exact(
+        expected: expected.toMap(),
+        replacement: replacement.toMap(),
+      );
+    }
+    final current = await getRepair(
+      groupId: expected.groupId,
+      gapId: expected.gapId,
+    );
+    if (current == null || !sameExactGroupHistoryGapRepair(current, expected)) {
+      return false;
+    }
+    await dbSaveGroupHistoryGapRepair(replacement.toMap());
+    return true;
   }
 }

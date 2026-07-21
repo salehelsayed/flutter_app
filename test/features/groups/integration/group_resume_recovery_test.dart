@@ -18,6 +18,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_missed_message_telemetry.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -4317,6 +4318,20 @@ void main() {
         );
         await pump();
 
+        final removalEntry = (await admin.loadGroupMessages(groupId))
+            .firstWhere(
+              (message) => message.id.startsWith(
+                'sys-member_removed:$groupId:${bob.peerId}:',
+              ),
+            );
+        final removedAt = removalEntry.timestamp.toUtc();
+        final removalEventId = canonicalMembershipEventId(
+          transitionType: 'member_removed',
+          groupId: groupId,
+          actorPeerId: admin.peerId,
+          eventAt: removedAt,
+        );
+
         expect(await bob.groupRepo.getGroup(groupId), isNotNull);
         expect(removedGroups, isEmpty);
 
@@ -4325,6 +4340,7 @@ void main() {
         final removalSystemMessage = jsonEncode({
           '__sys': 'member_removed',
           'member': {'peerId': bob.peerId, 'username': 'Bob'},
+          'removedAt': removedAt.toIso8601String(),
           'groupConfig': {
             'name': group!.name,
             'groupType': group.type.toValue(),
@@ -4355,7 +4371,8 @@ void main() {
             'senderUsername': admin.username,
             'keyEpoch': 0,
             'text': removalSystemMessage,
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'timestamp': removedAt.toIso8601String(),
+            'messageId': removalEventId,
           }),
           keyInfo: GroupKeyInfo(
             groupId: groupId,
@@ -4411,10 +4428,10 @@ void main() {
           text: 'Should not send after offline removal',
         );
 
-        // B3: the group is retained, so a post-removal send is rejected as
-        // unauthorized (sender no longer a configured member) rather than
-        // groupNotFound — the removed member still CANNOT send.
-        expect(result, SendGroupMessageResult.unauthorized);
+        // B3: retained shells remain visible locally but expose no outbound
+        // group authority. The send boundary intentionally reports the same
+        // fail-closed result as an absent parent.
+        expect(result, SendGroupMessageResult.groupNotFound);
         expect(message, isNull);
         expect(
           bob.bridge.commandLog.where((command) => command == 'group:publish'),
@@ -4511,11 +4528,26 @@ void main() {
         await _saveKey(charlie, groupId, 2, 'k2');
         await pump();
 
+        final removalEntry = (await admin.loadGroupMessages(groupId))
+            .firstWhere(
+              (message) => message.id.startsWith(
+                'sys-member_removed:$groupId:${bob.peerId}:',
+              ),
+            );
+        final removedAt = removalEntry.timestamp.toUtc();
+        final removalEventId = canonicalMembershipEventId(
+          transitionType: 'member_removed',
+          groupId: groupId,
+          actorPeerId: admin.peerId,
+          eventAt: removedAt,
+        );
+
         final group = await admin.groupRepo.getGroup(groupId);
         final remainingMembers = await admin.groupRepo.getMembers(groupId);
         final removalSystemMessage = jsonEncode({
           '__sys': 'member_removed',
           'member': {'peerId': bob.peerId, 'username': 'Bob'},
+          'removedAt': removedAt.toIso8601String(),
           'groupConfig': {
             'name': group!.name,
             'groupType': group.type.toValue(),
@@ -4546,7 +4578,8 @@ void main() {
             'senderUsername': admin.username,
             'keyEpoch': 0,
             'text': removalSystemMessage,
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'timestamp': removedAt.toIso8601String(),
+            'messageId': removalEventId,
           }),
           keyInfo: GroupKeyInfo(
             groupId: groupId,
@@ -4572,6 +4605,7 @@ void main() {
           groupRepo: bob.groupRepo,
           msgRepo: bob.msgRepo,
           groupMessageListener: bob.groupMessageListener,
+          selfPeerId: bob.peerId,
         );
 
         expect(removedGroups, contains(groupId));
@@ -10857,11 +10891,16 @@ void main() {
             },
           );
 
-          await resumeRetryInvoked.future.timeout(const Duration(seconds: 2));
+          // Rejoin and retry are both lifecycle-guarded for this group. The
+          // resume pass must queue behind the in-flight manual retry rather
+          // than overtaking its gated publish.
+          await pump();
+          expect(resumeRetryInvoked.isCompleted, isFalse);
           publishGate.complete();
           adminBridge.commandGates.remove('group:publish');
 
           final manualRetryCount = await manualRetry;
+          await resumeRetryInvoked.future.timeout(const Duration(seconds: 2));
           await resumeFuture;
 
           expect(manualRetryCount, 1);

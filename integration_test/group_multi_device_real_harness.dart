@@ -772,6 +772,19 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           lastError: lastError,
           updatedAt: updatedAt,
         ),
+    dbUpdateGroupReactionReplayOutboxEntryStatusIfExact:
+        ({
+          required expected,
+          required deliveryStatus,
+          lastError,
+          required updatedAt,
+        }) => dbUpdateGroupReactionReplayOutboxEntryStatusIfExact(
+          db,
+          expected: expected,
+          deliveryStatus: deliveryStatus,
+          lastError: lastError,
+          updatedAt: updatedAt,
+        ),
     dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
         dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
   );

@@ -63,6 +63,41 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> pumpExplicitSheet(
+    WidgetTester tester, {
+    required Widget sheet,
+    Locale locale = const Locale('en'),
+    TextScaler textScaler = TextScaler.noScaling,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: child!,
+        ),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => sheet,
+                ),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets(
     'sole admin guidance is non-destructive and handles no eligible successor',
     (tester) async {
@@ -297,5 +332,186 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(GroupExitRecoverySheet), findsNothing);
     semantics.dispose();
+  });
+
+  testWidgets(
+    'PB264-15 pending stage uses exact hierarchy and is single-flight without destructive escape',
+    (tester) async {
+      final queueGate = Completer<bool>();
+      var queueCalls = 0;
+      var retryCalls = 0;
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.pendingRoleSync(
+          groupName: 'Night Owls',
+          onLeaveWhenSyncCompletes: () {
+            queueCalls++;
+            return queueGate.future;
+          },
+          onTryAgain: () async {
+            retryCalls++;
+            return false;
+          },
+        ),
+      );
+
+      const title = 'Finishing a role change';
+      const body =
+          'You can leave this screen. We’ll leave the group as soon as the role '
+          'update is safely delivered.';
+      const queue = 'Leave when sync completes';
+      const retry = 'Try again';
+      const stay = 'Stay in group';
+      expect(find.text(title), findsOneWidget);
+      expect(find.text(body), findsOneWidget);
+      expect(find.text(queue), findsOneWidget);
+      expect(find.text(retry), findsOneWidget);
+      expect(find.text(stay), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text(queue)).dy,
+        lessThan(tester.getTopLeft(find.text(retry)).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text(retry)).dy,
+        lessThan(tester.getTopLeft(find.text(stay)).dy),
+      );
+      expect(find.byKey(const ValueKey('group-exit-dissolve')), findsNothing);
+      expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
+      expect(
+        find.textContaining(RegExp(r'discard|force', caseSensitive: false)),
+        findsNothing,
+      );
+
+      final queueFinder = find.byKey(
+        const ValueKey('group-exit-leave-when-synced'),
+      );
+      await tester.tap(queueFinder);
+      await tester.pump();
+      await tester.tap(queueFinder, warnIfMissed: false);
+      expect(queueCalls, 1);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const ValueKey('group-exit-close')))
+            .onPressed,
+        isNull,
+      );
+
+      queueGate.complete(false);
+      await tester.pumpAndSettle();
+      expect(find.byType(GroupExitRecoverySheet), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('group-exit-try-again')));
+      await tester.pumpAndSettle();
+      expect(retryCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'PB264-15 queued stage retries and refreshes truthful too-late cancellation single-flight',
+    (tester) async {
+      final retryGate = Completer<bool>();
+      final refreshGate = Completer<void>();
+      var retryCalls = 0;
+      var cancelCalls = 0;
+      var refreshCalls = 0;
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.queuedLeave(
+          groupName: 'Night Owls',
+          onTryAgain: () {
+            retryCalls++;
+            return retryGate.future;
+          },
+          onCancelQueuedLeave: () async {
+            cancelCalls++;
+            return GroupExitQueuedCancelUiResult.tooLate;
+          },
+          onRefreshQueuedState: () {
+            refreshCalls++;
+            return refreshGate.future;
+          },
+        ),
+      );
+
+      expect(find.text('Finishing a role change'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('Cancel queued leave'), findsOneWidget);
+      expect(find.text('Close'), findsOneWidget);
+      expect(find.text('Leave when sync completes'), findsNothing);
+      expect(find.text('Stay in group'), findsNothing);
+      expect(find.byKey(const ValueKey('group-exit-dissolve')), findsNothing);
+      expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
+      expect(
+        find.textContaining(RegExp(r'discard|force', caseSensitive: false)),
+        findsNothing,
+      );
+
+      final retryFinder = find.byKey(
+        const ValueKey('group-exit-try-again'),
+      );
+      await tester.tap(retryFinder);
+      await tester.pump();
+      await tester.tap(retryFinder, warnIfMissed: false);
+      expect(retryCalls, 1);
+      retryGate.complete(false);
+      await tester.pumpAndSettle();
+
+      final cancelFinder = find.byKey(
+        const ValueKey('group-exit-cancel-queued'),
+      );
+      await tester.tap(cancelFinder);
+      await tester.pump();
+      await tester.tap(cancelFinder, warnIfMissed: false);
+      expect(cancelCalls, 1);
+      expect(refreshCalls, 1);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const ValueKey('group-exit-close')))
+            .onPressed,
+        isNull,
+      );
+      refreshGate.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Leaving has already started and can’t be cancelled.'),
+        findsOneWidget,
+      );
+      expect(find.byType(GroupExitRecoverySheet), findsOneWidget);
+    },
+  );
+
+  testWidgets('PB264-15 pending and queued recovery are 2x-text RTL safe', (
+    tester,
+  ) async {
+    for (final sheet in <Widget>[
+      GroupExitRecoverySheet.pendingRoleSync(
+        groupName: 'Night Owls',
+        onLeaveWhenSyncCompletes: () async => false,
+        onTryAgain: () async => false,
+      ),
+      GroupExitRecoverySheet.queuedLeave(
+        groupName: 'Night Owls',
+        onTryAgain: () async => false,
+        onCancelQueuedLeave: () async =>
+            GroupExitQueuedCancelUiResult.failed,
+        onRefreshQueuedState: () async {},
+      ),
+    ]) {
+      await pumpExplicitSheet(
+        tester,
+        sheet: sheet,
+        locale: const Locale('ar'),
+        textScaler: const TextScaler.linear(2),
+      );
+      expect(
+        Directionality.of(tester.element(find.byType(GroupExitRecoverySheet))),
+        TextDirection.rtl,
+      );
+      expect(find.byType(SingleChildScrollView), findsOneWidget);
+      expect(find.byKey(const ValueKey('group-exit-dissolve')), findsNothing);
+      expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const ValueKey('group-exit-close')));
+      await tester.pumpAndSettle();
+    }
   });
 }

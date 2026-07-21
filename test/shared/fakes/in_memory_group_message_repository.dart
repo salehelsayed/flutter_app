@@ -9,12 +9,45 @@ import 'package:flutter_app/features/groups/domain/repositories/group_thread_pre
 import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
 import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 
+bool _sameExactOutgoingRetryTuple(
+  GroupMessage current,
+  GroupMessage expected,
+) =>
+    current.id == expected.id &&
+    current.groupId == expected.groupId &&
+    current.senderPeerId == expected.senderPeerId &&
+    current.transportPeerId == expected.transportPeerId &&
+    current.senderUsername == expected.senderUsername &&
+    current.text == expected.text &&
+    current.timestamp.toUtc() == expected.timestamp.toUtc() &&
+    current.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc() &&
+    current.quotedMessageId == expected.quotedMessageId &&
+    current.logicalDeliveryId == expected.logicalDeliveryId &&
+    current.keyGeneration == expected.keyGeneration &&
+    current.status == expected.status &&
+    current.isIncoming == expected.isIncoming &&
+    current.isForwarded == expected.isForwarded &&
+    current.privateMediaPolicy == expected.privateMediaPolicy &&
+    current.mediaReceivedAt == expected.mediaReceivedAt &&
+    current.mediaExpiresAt == expected.mediaExpiresAt &&
+    current.mediaLastCheckedAt == expected.mediaLastCheckedAt &&
+    current.mediaConsumedAt == expected.mediaConsumedAt &&
+    current.mediaExpiredAt == expected.mediaExpiredAt &&
+    current.mediaCleanupPending == expected.mediaCleanupPending &&
+    current.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    current.wireEnvelope == expected.wireEnvelope &&
+    current.inboxStored == expected.inboxStored &&
+    current.inboxRetryPayload == expected.inboxRetryPayload &&
+    current.retryAttemptCount == expected.retryAttemptCount &&
+    current.nextEligibleAt?.toUtc() == expected.nextEligibleAt?.toUtc();
+
 /// In-memory [GroupMessageRepository] for integration tests.
 class InMemoryGroupMessageRepository
     implements
         GroupMessageRepository,
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
+        GroupInboxStoreRetryCompletionRepository,
         GroupMembershipRepairDeletionRepository,
         GroupConversationReadEventSource,
         GroupOutgoingLocalMessageChangeSource,
@@ -529,6 +562,22 @@ class InMemoryGroupMessageRepository
     if (msg != null) {
       _messages[id] = msg.copyWith(wireEnvelope: envelope);
     }
+  }
+
+  @override
+  Future<bool> completeInboxStoreRetry(GroupMessage expected) async {
+    final current = _messages[expected.id];
+    if (current == null || !_sameExactOutgoingRetryTuple(current, expected)) {
+      return false;
+    }
+    final completed = current.copyWith(
+      inboxStored: true,
+      inboxRetryPayload: null,
+      status: 'sent',
+    );
+    _messages[expected.id] = completed;
+    _emitOutgoingStatusChangeIfNeeded(previous: current, saved: completed);
+    return true;
   }
 
   @override

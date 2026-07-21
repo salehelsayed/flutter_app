@@ -47,6 +47,7 @@ import 'package:flutter_app/features/home/application/identity_avatar_resolver.d
 import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
@@ -149,6 +150,7 @@ class OrbitWired extends StatefulWidget {
   final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
+  final DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell;
 
   /// 235: production Delete-for-me coordinator, threaded into every group
   /// conversation this shell opens. Null keeps the action hidden.
@@ -221,6 +223,7 @@ class OrbitWired extends StatefulWidget {
     this.groupPendingKeyRepairRepository,
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
+    this.deleteSelfRemovedGroupShell,
     this.groupMediaDeleteForMeCoordinator,
     this.groupMessageListener,
     this.groupInviteListener,
@@ -2957,6 +2960,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       case GroupExitDisposition.deleteDissolvedLocally:
         await _confirmDeleteDissolvedGroup(group.id);
         return;
+      case GroupExitDisposition.selfRemovedDeleteLocally:
+        await _confirmDeleteSelfRemovedGroupShell(group.id);
+        return;
       case GroupExitDisposition.soleAdminRecovery:
       case GroupExitDisposition.pendingRoleSync:
         await _showGroupExitRecovery(snapshot);
@@ -3286,6 +3292,59 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _confirmDeleteSelfRemovedGroupShell(String groupId) async {
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: l10n.group_removed_delete_title,
+      description: l10n.group_removed_delete_body,
+      confirmLabel: l10n.group_removed_delete_action,
+    );
+    if (!confirmed || !mounted) return;
+
+    final identity = await widget.identityRepo.loadIdentity();
+    if (!mounted) return;
+    final deleteShell =
+        widget.deleteSelfRemovedGroupShell ??
+        defaultDeleteSelfRemovedGroupShell;
+    if (identity == null || deleteShell == null) {
+      _markGroupChanged(groupId);
+      await _refreshOrbitGroup(groupId);
+      if (mounted) _showSnackBar(l10n.group_removed_delete_failed);
+      return;
+    }
+
+    DeleteSelfRemovedGroupShellResult result;
+    try {
+      result = await deleteShell(groupId: groupId, selfPeerId: identity.peerId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+        details: {'groupId': groupId, 'error': error.toString()},
+      );
+      result = DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+    }
+    if (!mounted) return;
+
+    _markGroupChanged(groupId);
+    switch (result) {
+      case DeleteSelfRemovedGroupShellResult.deleted:
+      case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+        _openRowNotifier.value = null;
+        await _refreshOrbitGroup(groupId);
+        return;
+      case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+        await _refreshOrbitGroup(groupId);
+        return;
+      case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+        await _refreshOrbitGroup(groupId);
+        if (mounted) _showSnackBar(l10n.group_removed_delete_failed);
+        return;
+    }
+  }
+
   void _showSnackBar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3324,6 +3383,38 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onLeaveStuckGroup(OrbitGroup group) async {
     final groupRepository = widget.groupRepository;
     if (groupRepository == null) return;
+    GroupExitSnapshot? snapshot;
+    try {
+      snapshot = await _resolveFreshGroupExit(group.group.id);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_STUCK_EXIT_CLASSIFY_ERROR',
+        details: {'groupId': group.group.id, 'error': error.toString()},
+      );
+    }
+    if (!mounted) return;
+    if (snapshot == null) {
+      final l10n = AppLocalizations.of(context)!;
+      _showSnackBar(
+        group.group.selfRemovedAt != null
+            ? l10n.group_removed_delete_failed
+            : l10n.group_info_leave_failed,
+      );
+      return;
+    } else if (snapshot.group == null) {
+      _markGroupChanged(group.group.id);
+      await _refreshOrbitGroup(group.group.id);
+      return;
+    } else if (snapshot.disposition ==
+        GroupExitDisposition.selfRemovedDeleteLocally) {
+      await _confirmDeleteSelfRemovedGroupShell(group.group.id);
+      return;
+    } else if (snapshot.disposition == GroupExitDisposition.noOp) {
+      _markGroupChanged(group.group.id);
+      await _refreshOrbitGroup(group.group.id);
+      return;
+    }
     try {
       await leaveGroup(
         bridge: widget.bridge,

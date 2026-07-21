@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -122,6 +124,21 @@ Future<GroupPendingKeyRepairRunner> _seedKeyedGroupRepair({
   );
 }
 
+Future<void> _seedActiveRepairGroup(
+  InMemoryGroupRepository groupRepo,
+  DateTime createdAt,
+) => groupRepo.saveGroup(
+  GroupModel(
+    id: 'group-1',
+    name: 'Group 1',
+    type: GroupType.chat,
+    topicName: 'topic-group-1',
+    createdAt: createdAt,
+    createdBy: 'peer-self',
+    myRole: GroupRole.member,
+  ),
+);
+
 void main() {
   test(
     'live decrypt repair without replay envelope records waiting attempt and stays pending',
@@ -131,6 +148,17 @@ void main() {
       final msgRepo = InMemoryGroupMessageRepository();
       final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
       final now = DateTime.utc(2026, 5, 24, 12);
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Group 1',
+          type: GroupType.chat,
+          topicName: 'topic-group-1',
+          createdAt: now,
+          createdBy: 'peer-self',
+          myRole: GroupRole.member,
+        ),
+      );
       final repairId = liveGroupPendingKeyRepairId(
         groupId: 'group-1',
         senderPeerId: 'peer-sender',
@@ -174,7 +202,8 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         pendingKeyRepairRepo: pendingRepo,
-        nowUtc: () => now, // within TTL: assert the waiting (not self-clear) path
+        nowUtc: () =>
+            now, // within TTL: assert the waiting (not self-clear) path
       );
 
       final repairedCount = await runner.retryPendingRepairsForKey(
@@ -210,6 +239,20 @@ void main() {
       debugSetFlowEventSink(flowEvents.add);
       addTearDown(() => debugSetFlowEventSink(null));
       final now = DateTime.utc(2026, 5, 24, 12);
+
+      for (final id in const ['group-1', 'group-2']) {
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: id,
+            name: id,
+            type: GroupType.chat,
+            topicName: 'topic-$id',
+            createdAt: now,
+            createdBy: 'peer-self',
+            myRole: GroupRole.member,
+          ),
+        );
+      }
 
       // Two null-envelope pending repairs in DIFFERENT groups/epochs — a
       // per-(group,epoch) retry could never reach both in a single pass.
@@ -279,71 +322,149 @@ void main() {
     },
   );
 
-  // ---- UDM-C: bounded, classified "undecryptable" finalization (§H) ----
-
   test(
-    'UDM-C confirmed crypto failure with key present below the cap stays '
-    'pending (not finalized)',
+    'loaded key repair keeps listener callback outside the membership phase and reacquires exact completion',
     () async {
       final bridge = FakeBridge();
       final groupRepo = InMemoryGroupRepository();
       final msgRepo = InMemoryGroupMessageRepository();
       final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
+      final replayEntered = Completer<void>();
+      final releaseReplay = Completer<void>();
       final runner = await _seedKeyedGroupRepair(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         pendingRepo: pendingRepo,
-        repairId: 'offline:group-1:udmc-soft',
-        messageId: 'udmc-soft',
-        attempts: 3,
+        repairId: 'repair-guarded',
+        messageId: 'message-guarded',
+        replayGroupEnvelope: (payload) async {
+          replayEntered.complete();
+          await releaseReplay.future;
+          final placeholder = await msgRepo.getMessage('message-guarded');
+          await msgRepo.saveMessage(
+            placeholder!.copyWith(text: 'recovered', status: 'delivered'),
+          );
+        },
       );
-      // Force an authenticity failure (signature_invalid) on replay.
-      bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+      final markedAt = DateTime.utc(2026, 7, 20, 13);
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup(
+          'group-1',
+        ))!.copyWith(selfRemovedAt: markedAt),
+      );
+      bridge.commandLog.clear();
 
-      final repaired = await runner.retryPendingRepairsForKey(
+      expect(
+        await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1),
+        0,
+      );
+      expect(bridge.commandLog, isNot(contains('group.decrypt')));
+      expect(
+        (await pendingRepo.getRepair('repair-guarded'))!.status,
+        groupPendingKeyRepairStatusPendingKey,
+      );
+
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup('group-1'))!.copyWith(selfRemovedAt: null),
+      );
+      final activeRetry = runner.retryPendingRepairsForKey(
         groupId: 'group-1',
         keyEpoch: 1,
       );
+      await replayEntered.future;
 
-      expect(repaired, 0);
-      final repair = await pendingRepo.getRepair('offline:group-1:udmc-soft');
-      expect(repair!.status, groupPendingKeyRepairStatusPendingKey);
-      expect(repair.finalizedAt, isNull);
-      expect(repair.attempts, 4); // one increment this cycle, not finalized
-      final message = await msgRepo.getMessage('udmc-soft');
-      expect(message!.text, groupPendingKeyRepairPlaceholderText);
-    },
-  );
-
-  test(
-    'UDM-C confirmed crypto failure with key present at the cap finalizes '
-    'undecryptable (the only terminal path)',
-    () async {
-      final bridge = FakeBridge();
-      final groupRepo = InMemoryGroupRepository();
-      final msgRepo = InMemoryGroupMessageRepository();
-      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
-      final runner = await _seedKeyedGroupRepair(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        pendingRepo: pendingRepo,
-        repairId: 'offline:group-1:udmc-hard',
-        messageId: 'udmc-hard',
-        attempts: kGroupKeyRepairMaxAttempts,
+      var markerCommitted = false;
+      final queuedMarker = runGroupMembershipMutationLocked(
+        groupId: 'group-1',
+        action: () async {
+          await groupRepo.updateGroup(
+            (await groupRepo.getGroup(
+              'group-1',
+            ))!.copyWith(selfRemovedAt: markedAt),
+          );
+          markerCommitted = true;
+        },
       );
-      bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+      await queuedMarker;
+      expect(
+        markerCommitted,
+        isTrue,
+        reason: 'a listener callback must never hold the membership phase',
+      );
 
-      await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
-
-      final repair = await pendingRepo.getRepair('offline:group-1:udmc-hard');
-      expect(repair!.status, groupPendingKeyRepairStatusUndecryptable);
-      expect(repair.finalizedAt, isNotNull);
-      final message = await msgRepo.getMessage('udmc-hard');
-      expect(message!.text, 'Message could not be decrypted.');
+      releaseReplay.complete();
+      expect(
+        await activeRetry,
+        0,
+        reason: 'completion reacquires authority and skips after B3',
+      );
+      expect(
+        (await pendingRepo.getRepair('repair-guarded'))!.status,
+        groupPendingKeyRepairStatusPendingKey,
+      );
     },
   );
+
+  // ---- UDM-C: bounded, classified "undecryptable" finalization (§H) ----
+
+  test('UDM-C confirmed crypto failure with key present below the cap stays '
+      'pending (not finalized)', () async {
+    final bridge = FakeBridge();
+    final groupRepo = InMemoryGroupRepository();
+    final msgRepo = InMemoryGroupMessageRepository();
+    final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
+    final runner = await _seedKeyedGroupRepair(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      pendingRepo: pendingRepo,
+      repairId: 'offline:group-1:udmc-soft',
+      messageId: 'udmc-soft',
+      attempts: 3,
+    );
+    // Force an authenticity failure (signature_invalid) on replay.
+    bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+
+    final repaired = await runner.retryPendingRepairsForKey(
+      groupId: 'group-1',
+      keyEpoch: 1,
+    );
+
+    expect(repaired, 0);
+    final repair = await pendingRepo.getRepair('offline:group-1:udmc-soft');
+    expect(repair!.status, groupPendingKeyRepairStatusPendingKey);
+    expect(repair.finalizedAt, isNull);
+    expect(repair.attempts, 4); // one increment this cycle, not finalized
+    final message = await msgRepo.getMessage('udmc-soft');
+    expect(message!.text, groupPendingKeyRepairPlaceholderText);
+  });
+
+  test('UDM-C confirmed crypto failure with key present at the cap finalizes '
+      'undecryptable (the only terminal path)', () async {
+    final bridge = FakeBridge();
+    final groupRepo = InMemoryGroupRepository();
+    final msgRepo = InMemoryGroupMessageRepository();
+    final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
+    final runner = await _seedKeyedGroupRepair(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      pendingRepo: pendingRepo,
+      repairId: 'offline:group-1:udmc-hard',
+      messageId: 'udmc-hard',
+      attempts: kGroupKeyRepairMaxAttempts,
+    );
+    bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+
+    await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
+
+    final repair = await pendingRepo.getRepair('offline:group-1:udmc-hard');
+    expect(repair!.status, groupPendingKeyRepairStatusUndecryptable);
+    expect(repair.finalizedAt, isNotNull);
+    final message = await msgRepo.getMessage('udmc-hard');
+    expect(message!.text, 'Message could not be decrypted.');
+  });
 
   test(
     'UDM-C transient bridge decrypt failure (BRIDGE_TIMEOUT) stays pending',
@@ -437,95 +558,96 @@ void main() {
     },
   );
 
-  test('UDM-C does not double-count attempts across transient cycles', () async {
-    final bridge = FakeBridge();
-    final groupRepo = InMemoryGroupRepository();
-    final msgRepo = InMemoryGroupMessageRepository();
-    final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
-    final runner = await _seedKeyedGroupRepair(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      pendingRepo: pendingRepo,
-      repairId: 'offline:group-1:udmc-count',
-      messageId: 'udmc-count',
-    );
-    bridge.responses['group.decrypt'] = {
-      'ok': false,
-      'errorCode': 'BRIDGE_TIMEOUT',
-    };
-
-    await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
-    await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
-
-    final repair = await pendingRepo.getRepair('offline:group-1:udmc-count');
-    expect(repair!.attempts, 2); // exactly one increment per cycle
-  });
-
-  // ---- UDM-D: TTL self-clear for no-envelope live placeholders (§G tail) ----
-
   test(
-    'UDM-D stale no-envelope live placeholder self-clears (DELETED, not '
-    'undecryptable)',
+    'UDM-C does not double-count attempts across transient cycles',
     () async {
       final bridge = FakeBridge();
       final groupRepo = InMemoryGroupRepository();
       final msgRepo = InMemoryGroupMessageRepository();
       final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
-      final flowEvents = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(flowEvents.add);
-      addTearDown(() => debugSetFlowEventSink(null));
-
-      final now = DateTime.utc(2026, 6, 1, 12);
-      final createdAt = now.subtract(const Duration(hours: 25));
-      const repairId = 'live:group-1:peer-sender:3:2';
-      await pendingRepo.upsertPendingRepair(
-        GroupPendingKeyRepair(
-          id: repairId,
-          groupId: 'group-1',
-          messageId: repairId,
-          senderPeerId: 'peer-sender',
-          transportPeerId: 'peer-sender',
-          payloadType: groupOfflineReplayPayloadTypeMessage,
-          keyEpoch: 3,
-          replayEnvelopeJson: null,
-          status: groupPendingKeyRepairStatusPendingKey,
-          createdAt: createdAt,
-          updatedAt: createdAt,
-        ),
-      );
-      await msgRepo.saveMessage(
-        GroupMessage(
-          id: repairId,
-          groupId: 'group-1',
-          senderPeerId: 'peer-sender',
-          transportPeerId: 'peer-sender',
-          senderUsername: null,
-          text: groupPendingKeyRepairPlaceholderText,
-          timestamp: createdAt,
-          keyGeneration: 3,
-          status: groupPendingKeyRepairStatusPendingKey,
-          isIncoming: true,
-          createdAt: createdAt,
-        ),
-      );
-      final runner = GroupPendingKeyRepairRunner(
+      final runner = await _seedKeyedGroupRepair(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
-        pendingKeyRepairRepo: pendingRepo,
-        nowUtc: () => now,
+        pendingRepo: pendingRepo,
+        repairId: 'offline:group-1:udmc-count',
+        messageId: 'udmc-count',
       );
+      bridge.responses['group.decrypt'] = {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+      };
 
-      await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 3);
+      await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
+      await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 1);
 
-      expect(await pendingRepo.getRepair(repairId), isNull); // row DELETED
-      expect(await msgRepo.getMessage(repairId), isNull); // placeholder gone
-      final encoded = jsonEncode(flowEvents);
-      expect(encoded, contains('GROUP_PENDING_KEY_REPAIR_SELF_CLEARED'));
-      expect(encoded, isNot(contains('WAITING_FOR_REPLAY_ENVELOPE')));
+      final repair = await pendingRepo.getRepair('offline:group-1:udmc-count');
+      expect(repair!.attempts, 2); // exactly one increment per cycle
     },
   );
+
+  // ---- UDM-D: TTL self-clear for no-envelope live placeholders (§G tail) ----
+
+  test('UDM-D stale no-envelope live placeholder self-clears (DELETED, not '
+      'undecryptable)', () async {
+    final bridge = FakeBridge();
+    final groupRepo = InMemoryGroupRepository();
+    final msgRepo = InMemoryGroupMessageRepository();
+    final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
+
+    final now = DateTime.utc(2026, 6, 1, 12);
+    final createdAt = now.subtract(const Duration(hours: 25));
+    await _seedActiveRepairGroup(groupRepo, createdAt);
+    const repairId = 'live:group-1:peer-sender:3:2';
+    await pendingRepo.upsertPendingRepair(
+      GroupPendingKeyRepair(
+        id: repairId,
+        groupId: 'group-1',
+        messageId: repairId,
+        senderPeerId: 'peer-sender',
+        transportPeerId: 'peer-sender',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyEpoch: 3,
+        replayEnvelopeJson: null,
+        status: groupPendingKeyRepairStatusPendingKey,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      ),
+    );
+    await msgRepo.saveMessage(
+      GroupMessage(
+        id: repairId,
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        transportPeerId: 'peer-sender',
+        senderUsername: null,
+        text: groupPendingKeyRepairPlaceholderText,
+        timestamp: createdAt,
+        keyGeneration: 3,
+        status: groupPendingKeyRepairStatusPendingKey,
+        isIncoming: true,
+        createdAt: createdAt,
+      ),
+    );
+    final runner = GroupPendingKeyRepairRunner(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      pendingKeyRepairRepo: pendingRepo,
+      nowUtc: () => now,
+    );
+
+    await runner.retryPendingRepairsForKey(groupId: 'group-1', keyEpoch: 3);
+
+    expect(await pendingRepo.getRepair(repairId), isNull); // row DELETED
+    expect(await msgRepo.getMessage(repairId), isNull); // placeholder gone
+    final encoded = jsonEncode(flowEvents);
+    expect(encoded, contains('GROUP_PENDING_KEY_REPAIR_SELF_CLEARED'));
+    expect(encoded, isNot(contains('WAITING_FOR_REPLAY_ENVELOPE')));
+  });
 
   test(
     'UDM-D a within-TTL no-envelope live placeholder stays pending',
@@ -537,6 +659,7 @@ void main() {
 
       final now = DateTime.utc(2026, 6, 1, 12);
       final createdAt = now.subtract(const Duration(hours: 1));
+      await _seedActiveRepairGroup(groupRepo, createdAt);
       const repairId = 'live:group-1:peer-sender:3:2';
       await pendingRepo.upsertPendingRepair(
         GroupPendingKeyRepair(

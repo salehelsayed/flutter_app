@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -26,7 +28,8 @@ void main() {
     peerId: selfPeerId,
     publicKey: 'selfPubKey',
     privateKey: 'selfPrivKey',
-    mnemonic12: 'one two three four five six seven eight nine ten eleven twelve',
+    mnemonic12:
+        'one two three four five six seven eight nine ten eleven twelve',
     mlKemPublicKey: 'selfMlKem',
     username: 'Self',
     createdAt: DateTime.utc(2026, 6, 16).toIso8601String(),
@@ -143,30 +146,34 @@ void main() {
     expect(row.attempts, 1);
   });
 
-  test('INV-D2 distributes the CURRENT key even when the row epoch is stale', () async {
-    await seedGroup(daveMlKem: 'daveMlKem');
-    // Row records the stale epoch 1 while the live key is epoch 2.
-    await pendingRepo.enqueue(daveRow(keyEpoch: 1));
+  test(
+    'INV-D2 distributes the CURRENT key even when the row epoch is stale',
+    () async {
+      await seedGroup(daveMlKem: 'daveMlKem');
+      // Row records the stale epoch 1 while the live key is epoch 2.
+      await pendingRepo.enqueue(daveRow(keyEpoch: 1));
 
-    final captured = <String>[];
-    await runner(
-      send: (peerId, message) async {
-        captured.add(message);
-        return true;
-      },
-    ).drainPendingForPeer(groupId: groupId, peerId: 'peer-dave');
+      final captured = <String>[];
+      await runner(
+        send: (peerId, message) async {
+          captured.add(message);
+          return true;
+        },
+      ).drainPendingForPeer(groupId: groupId, peerId: 'peer-dave');
 
-    // The passthrough bridge surfaces plaintext as ciphertext, so we can decode
-    // the distributed key-update and assert the CURRENT epoch-2 key was sent,
-    // never the row's stale epoch-1.
-    expect(captured, hasLength(1));
-    final envelope = jsonDecode(captured.single) as Map<String, dynamic>;
-    final ciphertext =
-        (envelope['encrypted'] as Map<String, dynamic>)['ciphertext'] as String;
-    final keyPayload = jsonDecode(ciphertext) as Map<String, dynamic>;
-    expect(keyPayload['keyGeneration'], 2);
-    expect(keyPayload['encryptedKey'], 'epoch2Key==');
-  });
+      // The passthrough bridge surfaces plaintext as ciphertext, so we can decode
+      // the distributed key-update and assert the CURRENT epoch-2 key was sent,
+      // never the row's stale epoch-1.
+      expect(captured, hasLength(1));
+      final envelope = jsonDecode(captured.single) as Map<String, dynamic>;
+      final ciphertext =
+          (envelope['encrypted'] as Map<String, dynamic>)['ciphertext']
+              as String;
+      final keyPayload = jsonDecode(ciphertext) as Map<String, dynamic>;
+      expect(keyPayload['keyGeneration'], 2);
+      expect(keyPayload['encryptedKey'], 'epoch2Key==');
+    },
+  );
 
   test('INV-D3 finalizes unreachable after the attempt cap', () async {
     await seedGroup(daveMlKem: null); // permanently keyless
@@ -193,24 +200,97 @@ void main() {
     await pendingRepo.enqueue(daveRow());
 
     final r = runner();
-    expect(await r.drainPendingForPeer(groupId: groupId, peerId: 'peer-dave'), 1);
-    // Already distributed → the second drain finds no pending rows.
-    expect(await r.drainPendingForPeer(groupId: groupId, peerId: 'peer-dave'), 0);
-  });
-
-  test('member-key-arrival trigger fires the process-wide drain sink', () async {
-    final drained = <(String, String)>[];
-    setDeferredDistributionDrainSink(({required groupId, required peerId}) async {
-      drained.add((groupId, peerId));
-    });
-    addTearDown(() => setDeferredDistributionDrainSink(null));
-
-    await triggerDeferredDistributionDrainForPeer(
-      groupId: 'group-1',
-      peerId: 'peer-dave',
+    expect(
+      await r.drainPendingForPeer(groupId: groupId, peerId: 'peer-dave'),
+      1,
     );
-    expect(drained, <(String, String)>[('group-1', 'peer-dave')]);
+    // Already distributed → the second drain finds no pending rows.
+    expect(
+      await r.drainPendingForPeer(groupId: groupId, peerId: 'peer-dave'),
+      0,
+    );
   });
+
+  test(
+    'loaded distribution skips a marked shell and serializes send plus exact completion before removal',
+    () async {
+      await seedGroup(daveMlKem: 'daveMlKem');
+      await pendingRepo.enqueue(daveRow());
+      final markedAt = DateTime.utc(2026, 7, 20, 12);
+      final current = await groupRepo.getGroup(groupId);
+      await groupRepo.updateGroup(current!.copyWith(selfRemovedAt: markedAt));
+
+      var sends = 0;
+      expect(
+        await runner(
+          send: (_, _) async {
+            sends++;
+            return true;
+          },
+        ).drainPendingForGroup(groupId: groupId),
+        0,
+      );
+      expect(sends, 0);
+      expect((await pendingRepo.getDistribution(daveRowId))!.attempts, 0);
+
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup(groupId))!.copyWith(selfRemovedAt: null),
+      );
+      final sendEntered = Completer<void>();
+      final releaseSend = Completer<void>();
+      final activeDrain = runner(
+        send: (_, _) async {
+          sendEntered.complete();
+          await releaseSend.future;
+          return true;
+        },
+      ).drainPendingForGroup(groupId: groupId);
+      await sendEntered.future;
+
+      var markerCommitted = false;
+      final queuedMarker = runGroupMembershipMutationLocked(
+        groupId: groupId,
+        action: () async {
+          final active = await groupRepo.getGroup(groupId);
+          await groupRepo.updateGroup(
+            active!.copyWith(selfRemovedAt: markedAt),
+          );
+          markerCommitted = true;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(markerCommitted, isFalse);
+
+      releaseSend.complete();
+      expect(await activeDrain, 1);
+      expect(
+        (await pendingRepo.getDistribution(daveRowId))!.status,
+        groupPendingKeyDistributionStatusDistributed,
+      );
+      await queuedMarker;
+      expect(markerCommitted, isTrue);
+    },
+  );
+
+  test(
+    'member-key-arrival trigger fires the process-wide drain sink',
+    () async {
+      final drained = <(String, String)>[];
+      setDeferredDistributionDrainSink(({
+        required groupId,
+        required peerId,
+      }) async {
+        drained.add((groupId, peerId));
+      });
+      addTearDown(() => setDeferredDistributionDrainSink(null));
+
+      await triggerDeferredDistributionDrainForPeer(
+        groupId: 'group-1',
+        peerId: 'peer-dave',
+      );
+      expect(drained, <(String, String)>[('group-1', 'peer-dave')]);
+    },
+  );
 
   test('member-key-arrival trigger is a no-op when no sink is set', () async {
     setDeferredDistributionDrainSink(null);
@@ -249,15 +329,18 @@ void main() {
           mlKemPublicKey: mlKem,
         );
 
-    test('first persisted save carrying a usable key fires (existing null)', () {
-      expect(
-        groupMemberRegainedDeliverableKey(
-          existing: null,
-          saved: member(mlKemPublicKey: 'mlkem-dave'),
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'first persisted save carrying a usable key fires (existing null)',
+      () {
+        expect(
+          groupMemberRegainedDeliverableKey(
+            existing: null,
+            saved: member(mlKemPublicKey: 'mlkem-dave'),
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('keyless -> keyed transition fires', () {
       expect(
@@ -404,7 +487,8 @@ class _InMemoryGroupPendingKeyDistributionRepository
   @override
   Future<void> recordAttempt(String id, {required String? lastError}) async {
     final existing = rows[id];
-    if (existing == null || existing.status != groupPendingKeyDistributionStatusPending) {
+    if (existing == null ||
+        existing.status != groupPendingKeyDistributionStatusPending) {
       return;
     }
     rows[id] = existing.copyWith(
@@ -427,7 +511,10 @@ class _InMemoryGroupPendingKeyDistributionRepository
   }
 
   @override
-  Future<void> finalizeUnreachable(String id, {required String lastError}) async {
+  Future<void> finalizeUnreachable(
+    String id, {
+    required String lastError,
+  }) async {
     final existing = rows[id];
     if (existing == null || existing.finalizedAt != null) return;
     final now = DateTime.now().toUtc();

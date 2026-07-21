@@ -5,6 +5,40 @@ const groupHistoryGapRepairStatusRepairing = 'repairing';
 const groupHistoryGapRepairStatusRepaired = 'repaired';
 const groupHistoryGapRepairStatusFailed = 'failed';
 
+bool sameExactGroupHistoryGapRepair(
+  GroupHistoryGapRepair current,
+  GroupHistoryGapRepair expected,
+) =>
+    current.groupId == expected.groupId &&
+    current.gapId == expected.gapId &&
+    current.missingAfterMessageId == expected.missingAfterMessageId &&
+    current.missingBeforeMessageId == expected.missingBeforeMessageId &&
+    current.expectedRangeHash == expected.expectedRangeHash &&
+    current.expectedHeadMessageId == expected.expectedHeadMessageId &&
+    _sameStringList(
+      current.candidateSourcePeerIds,
+      expected.candidateSourcePeerIds,
+    ) &&
+    _sameStringList(
+      current.attemptedSourcePeerIds,
+      expected.attemptedSourcePeerIds,
+    ) &&
+    _sameStringList(current.repairedMessageIds, expected.repairedMessageIds) &&
+    current.status == expected.status &&
+    current.failureReason == expected.failureReason &&
+    current.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    current.updatedAt.toUtc() == expected.updatedAt.toUtc() &&
+    current.repairedAt?.toUtc() == expected.repairedAt?.toUtc() &&
+    current.failedAt?.toUtc() == expected.failedAt?.toUtc();
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
 class GroupHistoryGapRepair {
   final String groupId;
   final String gapId;

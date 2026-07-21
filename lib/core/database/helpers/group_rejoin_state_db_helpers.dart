@@ -1,5 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import 'group_parent_write_guard.dart';
+
 /// Finding 05 Phase 3: per-group rejoin retry state helpers.
 ///
 /// A row exists only for a group that has failed to rejoin its topic; a healthy
@@ -9,8 +11,12 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 /// (`group_id`, `rejoin_attempt_count`, `next_eligible_at`).
 Future<List<Map<String, Object?>>> dbLoadGroupRejoinStates(
   DatabaseExecutor db,
-) {
-  return db.query('group_rejoin_state');
+) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_rejoin_state.group_id',
+  );
+  return db.rawQuery('SELECT * FROM group_rejoin_state WHERE $parent');
 }
 
 /// Records a failed rejoin attempt for [groupId]: increments the attempt count
@@ -21,12 +27,32 @@ Future<void> dbRecordGroupRejoinFailure(
   String groupId, {
   required int nextEligibleAtMs,
 }) async {
+  if (!await dbHasSelfRemovedGroupWriteGuard(db)) {
+    await db.rawInsert(
+      'INSERT INTO group_rejoin_state '
+      '(group_id, rejoin_attempt_count, next_eligible_at) VALUES (?, 1, ?) '
+      'ON CONFLICT(group_id) DO UPDATE SET '
+      'rejoin_attempt_count = rejoin_attempt_count + 1, '
+      'next_eligible_at = ?',
+      [groupId, nextEligibleAtMs, nextEligibleAtMs],
+    );
+    return;
+  }
   await db.rawInsert(
     'INSERT INTO group_rejoin_state '
-    '(group_id, rejoin_attempt_count, next_eligible_at) VALUES (?, 1, ?) '
+    '(group_id, rejoin_attempt_count, next_eligible_at) '
+    'SELECT ?, 1, ? WHERE EXISTS ('
+    'SELECT 1 FROM groups parent '
+    'WHERE parent.id = ? AND parent.self_removed_at IS NULL'
+    ') '
     'ON CONFLICT(group_id) DO UPDATE SET '
-    'rejoin_attempt_count = rejoin_attempt_count + 1, next_eligible_at = ?',
-    [groupId, nextEligibleAtMs, nextEligibleAtMs],
+    'rejoin_attempt_count = rejoin_attempt_count + 1, next_eligible_at = ? '
+    'WHERE EXISTS ('
+    'SELECT 1 FROM groups parent '
+    'WHERE parent.id = excluded.group_id '
+    'AND parent.self_removed_at IS NULL'
+    ')',
+    [groupId, nextEligibleAtMs, groupId, nextEligibleAtMs],
   );
 }
 
@@ -52,9 +78,11 @@ Future<void> dbForceGroupRejoinEligible(
   DatabaseExecutor db,
   String groupId,
 ) async {
-  await db.update(
-    'group_rejoin_state',
-    {'next_eligible_at': 0},
+  await dbUpdateOrdinaryGroupOwnedRows(
+    db,
+    table: 'group_rejoin_state',
+    groupId: groupId,
+    values: const {'next_eligible_at': 0},
     where: 'group_id = ?',
     whereArgs: [groupId],
   );

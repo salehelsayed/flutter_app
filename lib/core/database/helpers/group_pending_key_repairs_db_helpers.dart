@@ -1,7 +1,32 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_parent_write_guard.dart';
 import '../../../features/groups/domain/models/group_pending_key_repair.dart';
+
+const _pendingKeyRepairExactFields = <String>[
+  'id',
+  'group_id',
+  'message_id',
+  'sender_peer_id',
+  'transport_peer_id',
+  'payload_type',
+  'key_epoch',
+  'replay_envelope_json',
+  'status',
+  'trigger_count',
+  'attempts',
+  'last_error',
+  'created_at',
+  'updated_at',
+  'finalized_at',
+];
+
+String get _pendingKeyRepairExactWhere =>
+    _pendingKeyRepairExactFields.map((field) => '"$field" IS ?').join(' AND ');
+
+List<Object?> _pendingKeyRepairExactArgs(Map<String, Object?> expected) =>
+    _pendingKeyRepairExactFields.map((field) => expected[field]).toList();
 
 Future<bool> dbUpsertGroupPendingKeyRepair(
   Database db,
@@ -21,13 +46,17 @@ Future<bool> dbUpsertGroupPendingKeyRepair(
       event: 'GROUP_PENDING_KEY_REPAIR_DB_INSERT_START',
       details: {'id': _safeId(id)},
     );
-    await db.insert('group_pending_key_repairs', row);
+    final inserted = await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_pending_key_repairs',
+      row: row,
+    );
     emitFlowEvent(
       layer: 'DB',
       event: 'GROUP_PENDING_KEY_REPAIR_DB_INSERT_SUCCESS',
       details: {'id': _safeId(id)},
     );
-    return true;
+    return inserted;
   }
 
   final current = existing.single;
@@ -35,9 +64,11 @@ Future<bool> dbUpsertGroupPendingKeyRepair(
     return false;
   }
 
-  await db.update(
-    'group_pending_key_repairs',
-    {
+  await dbUpdateOrdinaryGroupOwnedRows(
+    db,
+    table: 'group_pending_key_repairs',
+    groupId: row['group_id'] as String? ?? '',
+    values: {
       'sender_peer_id': row['sender_peer_id'] ?? current['sender_peer_id'],
       'transport_peer_id':
           row['transport_peer_id'] ?? current['transport_peer_id'],
@@ -55,11 +86,14 @@ Future<Map<String, Object?>?> dbLoadGroupPendingKeyRepair(
   Database db,
   String id,
 ) async {
-  final rows = await db.query(
-    'group_pending_key_repairs',
-    where: 'id = ?',
-    whereArgs: [id],
-    limit: 1,
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  final rows = await db.rawQuery(
+    'SELECT * FROM group_pending_key_repairs '
+    'WHERE id = ? AND $parent LIMIT 1',
+    [id],
   );
   return rows.isEmpty ? null : rows.single;
 }
@@ -69,26 +103,32 @@ Future<List<Map<String, Object?>>> dbLoadPendingGroupKeyRepairsForEpoch(
   required String groupId,
   required int keyEpoch,
   int limit = 50,
-}) {
-  return db.query(
-    'group_pending_key_repairs',
-    where: 'group_id = ? AND key_epoch = ? AND status = ?',
-    whereArgs: [groupId, keyEpoch, groupPendingKeyRepairStatusPendingKey],
-    orderBy: 'created_at ASC, id ASC',
-    limit: limit,
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_key_repairs '
+    'WHERE group_id = ? AND key_epoch = ? AND status = ? AND $parent '
+    'ORDER BY created_at ASC, id ASC LIMIT ?',
+    [groupId, keyEpoch, groupPendingKeyRepairStatusPendingKey, limit],
   );
 }
 
 Future<List<Map<String, Object?>>> dbLoadAllPendingGroupKeyRepairs(
   Database db, {
   int limit = 200,
-}) {
-  return db.query(
-    'group_pending_key_repairs',
-    where: 'status = ?',
-    whereArgs: [groupPendingKeyRepairStatusPendingKey],
-    orderBy: 'created_at ASC, id ASC',
-    limit: limit,
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_key_repairs '
+    'WHERE status = ? AND $parent '
+    'ORDER BY created_at ASC, id ASC LIMIT ?',
+    [groupPendingKeyRepairStatusPendingKey, limit],
   );
 }
 
@@ -96,13 +136,16 @@ Future<List<Map<String, Object?>>> dbLoadPendingGroupKeyRepairsForGroup(
   Database db, {
   required String groupId,
   int limit = 100,
-}) {
-  return db.query(
-    'group_pending_key_repairs',
-    where: 'group_id = ? AND status = ?',
-    whereArgs: [groupId, groupPendingKeyRepairStatusPendingKey],
-    orderBy: 'created_at ASC, id ASC',
-    limit: limit,
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_key_repairs '
+    'WHERE group_id = ? AND status = ? AND $parent '
+    'ORDER BY created_at ASC, id ASC LIMIT ?',
+    [groupId, groupPendingKeyRepairStatusPendingKey, limit],
   );
 }
 
@@ -112,7 +155,28 @@ Future<void> dbDeleteGroupPendingKeyRepair(Database db, String id) async {
     event: 'GROUP_PENDING_KEY_REPAIR_DB_DELETE',
     details: {'id': _safeId(id)},
   );
-  await db.delete('group_pending_key_repairs', where: 'id = ?', whereArgs: [id]);
+  await db.delete(
+    'group_pending_key_repairs',
+    where: 'id = ?',
+    whereArgs: [id],
+  );
+}
+
+Future<bool> dbDeleteGroupPendingKeyRepairIfExact(
+  Database db,
+  Map<String, Object?> expected,
+) async {
+  final groupId = expected['group_id'] as String? ?? '';
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  final deleted = await db.delete(
+    'group_pending_key_repairs',
+    where: '($_pendingKeyRepairExactWhere) AND group_id = ? AND $parent',
+    whereArgs: [..._pendingKeyRepairExactArgs(expected), groupId],
+  );
+  return deleted == 1;
 }
 
 Future<void> dbRecordGroupPendingKeyRepairAttempt(
@@ -121,16 +185,44 @@ Future<void> dbRecordGroupPendingKeyRepairAttempt(
   required String? lastError,
   required String updatedAt,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
   await db.rawUpdate(
     '''
 UPDATE group_pending_key_repairs
 SET attempts = attempts + 1,
     last_error = ?,
     updated_at = ?
-WHERE id = ? AND status = ?
+WHERE id = ? AND status = ? AND $parent
 ''',
     [lastError, updatedAt, id, groupPendingKeyRepairStatusPendingKey],
   );
+}
+
+Future<bool> dbRecordGroupPendingKeyRepairAttemptIfExact(
+  Database db,
+  Map<String, Object?> expected, {
+  required String? lastError,
+  required String updatedAt,
+}) async {
+  final groupId = expected['group_id'] as String? ?? '';
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  final updated = await db.rawUpdate(
+    '''
+UPDATE group_pending_key_repairs
+SET attempts = attempts + 1,
+    last_error = ?,
+    updated_at = ?
+WHERE ($_pendingKeyRepairExactWhere) AND group_id = ? AND $parent
+''',
+    [lastError, updatedAt, ..._pendingKeyRepairExactArgs(expected), groupId],
+  );
+  return updated == 1;
 }
 
 Future<void> dbFinalizeGroupPendingKeyRepair(
@@ -140,6 +232,10 @@ Future<void> dbFinalizeGroupPendingKeyRepair(
   required String lastError,
   required String finalizedAt,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
   await db.rawUpdate(
     '''
 UPDATE group_pending_key_repairs
@@ -150,10 +246,44 @@ SET status = ?,
     END,
     updated_at = ?,
     finalized_at = ?
-WHERE id = ? AND finalized_at IS NULL
+WHERE id = ? AND finalized_at IS NULL AND $parent
 ''',
     [status, lastError, lastError, finalizedAt, finalizedAt, id],
   );
+}
+
+Future<bool> dbFinalizeGroupPendingKeyRepairIfExact(
+  Database db,
+  Map<String, Object?> expected, {
+  required String status,
+  required String lastError,
+  required String finalizedAt,
+}) async {
+  final groupId = expected['group_id'] as String? ?? '';
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_key_repairs.group_id',
+  );
+  final updated = await db.rawUpdate(
+    '''
+UPDATE group_pending_key_repairs
+SET status = ?,
+    last_error = CASE WHEN ? = '' THEN last_error ELSE ? END,
+    updated_at = ?,
+    finalized_at = ?
+WHERE ($_pendingKeyRepairExactWhere) AND group_id = ? AND $parent
+''',
+    [
+      status,
+      lastError,
+      lastError,
+      finalizedAt,
+      finalizedAt,
+      ..._pendingKeyRepairExactArgs(expected),
+      groupId,
+    ],
+  );
+  return updated == 1;
 }
 
 String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;

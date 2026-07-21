@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_parent_write_guard.dart';
 
 /// Inserts a group member into the database.
 Future<void> dbInsertGroupMember(Database db, Map<String, Object?> row) async {
@@ -17,11 +18,20 @@ Future<void> dbInsertGroupMember(Database db, Map<String, Object?> row) async {
   );
 
   try {
-    await db.insert(
-      'group_members',
-      row,
+    final inserted = await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_members',
+      row: row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    if (!inserted) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_MEMBERS_DB_INSERT_REFUSED_PARENT',
+        details: {'groupId': groupId},
+      );
+      return;
+    }
 
     emitFlowEvent(
       layer: 'DB',

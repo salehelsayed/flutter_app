@@ -15,6 +15,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -36,6 +37,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -460,6 +462,7 @@ Future<void> _pumpEditableGroupInfo(
   ImageProcessor? imageProcessor,
   UploadGroupAvatarFn? uploadGroupAvatarFn,
   InMemoryGroupMessageRepository? msgRepo,
+  DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell,
 }) async {
   await tester.pumpWidget(
     _localizedMaterialApp(
@@ -467,6 +470,7 @@ Future<void> _pumpEditableGroupInfo(
         group: group ?? makeAdminGroup(),
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        deleteSelfRemovedGroupShell: deleteSelfRemovedGroupShell,
         contactRepo: InMemoryContactRepository(),
         bridge: bridge ?? FakeBridge(),
         identityRepo:
@@ -3285,23 +3289,23 @@ void main() {
         await _seedEditableGroup(groupRepo);
         var uploadCalls = 0;
         Future<GroupAvatarUpload?> uploadAndStartRecovery({
-              required Bridge bridge,
-              required String localFilePath,
-              required String groupId,
-              required List<String> allowedPeers,
-              String? blobId,
-              String mime = 'image/jpeg',
-            }) {
-              uploadCalls += 1;
-              groupRecoveryGate.begin();
-              return Future<GroupAvatarUpload?>.value(
-                const GroupAvatarUpload(
-                  id: 'avatar-new',
-                  mime: 'image/jpeg',
-                  size: 4,
-                ),
-              );
-            }
+          required Bridge bridge,
+          required String localFilePath,
+          required String groupId,
+          required List<String> allowedPeers,
+          String? blobId,
+          String mime = 'image/jpeg',
+        }) {
+          uploadCalls += 1;
+          groupRecoveryGate.begin();
+          return Future<GroupAvatarUpload?>.value(
+            const GroupAvatarUpload(
+              id: 'avatar-new',
+              mime: 'image/jpeg',
+              size: 4,
+            ),
+          );
+        }
 
         await _pumpEditableGroupInfo(
           tester,
@@ -3546,23 +3550,23 @@ void main() {
         String? capturedLocalFilePath;
         List<String>? capturedAllowedPeers;
         Future<GroupAvatarUpload?> captureUpload({
-              required Bridge bridge,
-              required String localFilePath,
-              required String groupId,
-              required List<String> allowedPeers,
-              String? blobId,
-              String mime = 'image/jpeg',
-            }) async {
-              uploadCalls += 1;
-              capturedGroupId = groupId;
-              capturedLocalFilePath = localFilePath;
-              capturedAllowedPeers = List<String>.from(allowedPeers);
-              return GroupAvatarUpload(
-                id: 'blob-test-3-avatar',
-                mime: mime,
-                size: File(localFilePath).lengthSync(),
-              );
-            }
+          required Bridge bridge,
+          required String localFilePath,
+          required String groupId,
+          required List<String> allowedPeers,
+          String? blobId,
+          String mime = 'image/jpeg',
+        }) async {
+          uploadCalls += 1;
+          capturedGroupId = groupId;
+          capturedLocalFilePath = localFilePath;
+          capturedAllowedPeers = List<String>.from(allowedPeers);
+          return GroupAvatarUpload(
+            id: 'blob-test-3-avatar',
+            mime: mime,
+            size: File(localFilePath).lengthSync(),
+          );
+        }
 
         await _pumpEditableGroupInfo(
           tester,
@@ -4450,7 +4454,10 @@ void main() {
           MemberRole.writer,
         );
         expect(find.text('فشل تحديث دور العضو'), findsOneWidget);
-        expect(find.text('Failed to sign group transition audit'), findsNothing);
+        expect(
+          find.text('Failed to sign group transition audit'),
+          findsNothing,
+        );
         expect(bridge.commandLog, isNot(contains('group:updateConfig')));
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
@@ -4666,6 +4673,223 @@ void main() {
         // Verify popped back to first route
         expect(find.byType(GroupInfoScreen), findsNothing);
         expect(find.text('Open Info'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'removed-member Group Info exit deletes the local shell without voluntary leave',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final l10n = AppLocalizationsEn();
+        final marker = DateTime.utc(2026, 7, 20, 13);
+
+        GroupModel removedGroup(String id, String name) => GroupModel(
+          id: id,
+          name: name,
+          type: GroupType.chat,
+          topicName: 'topic-$id',
+          createdAt: marker,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+          selfRemovedAt: marker,
+          lastMembershipEventAt: marker,
+        );
+
+        Future<void> pumpInfoRoute({
+          required GroupModel group,
+          required InMemoryGroupRepository groupRepo,
+          required InMemoryGroupMessageRepository msgRepo,
+          required FakeBridge bridge,
+          required FakeP2PService p2pService,
+          required DeleteSelfRemovedGroupShellCallback callback,
+        }) async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          await tester.pumpWidget(
+            _localizedMaterialApp(
+              home: Builder(
+                builder: (context) => Scaffold(
+                  body: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => GroupInfoWired(
+                            group: group,
+                            groupRepo: groupRepo,
+                            msgRepo: msgRepo,
+                            deleteSelfRemovedGroupShell: callback,
+                            contactRepo: InMemoryContactRepository(),
+                            bridge: bridge,
+                            identityRepo: FakeIdentityRepository(
+                              identity: testIdentity,
+                            ),
+                            p2pService: p2pService,
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('Open Removed Info'),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.tap(find.text('Open Removed Info'));
+          await pumpFrames(tester, count: 20);
+        }
+
+        final cancelRepo = InMemoryGroupRepository();
+        final cancelMessages = InMemoryGroupMessageRepository();
+        final cancelBridge = FakeBridge();
+        final cancelP2P = FakeP2PService();
+        final cancelGroup = removedGroup(
+          'group-info-removed-cancel',
+          'Removed Info Cancel',
+        );
+        await cancelRepo.saveGroup(cancelGroup);
+        var cancelCalls = 0;
+        await pumpInfoRoute(
+          group: cancelGroup,
+          groupRepo: cancelRepo,
+          msgRepo: cancelMessages,
+          bridge: cancelBridge,
+          p2pService: cancelP2P,
+          callback:
+              ({required String groupId, required String selfPeerId}) async {
+                cancelCalls++;
+                return DeleteSelfRemovedGroupShellResult.deleted;
+              },
+        );
+        await tapLeaveGroupButton(tester);
+
+        expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+        expect(find.text(l10n.group_removed_delete_body), findsOneWidget);
+        expect(cancelCalls, 0, reason: 'the first tap only confirms');
+        expect(cancelBridge.commandLog, isEmpty);
+        expect(cancelP2P.sendMessageCallCount, 0);
+        expect(cancelP2P.storeInInboxCallCount, 0);
+        await tester.tap(find.text(l10n.btn_cancel));
+        await pumpFrames(tester);
+        expect(cancelCalls, 0);
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(await cancelRepo.getGroup(cancelGroup.id), isNotNull);
+
+        final staleRepo = _FaultingMembersGroupRepository();
+        final staleMessages = InMemoryGroupMessageRepository();
+        final staleBridge = FakeBridge();
+        final staleP2P = FakeP2PService();
+        final staleCaptured = removedGroup(
+          'group-info-stale-before-removal',
+          'Info Stale Before Removal',
+        ).copyWith(selfRemovedAt: null, lastMembershipEventAt: null);
+        await staleRepo.saveGroup(staleCaptured);
+        var staleDeleteCalls = 0;
+        await pumpInfoRoute(
+          group: staleCaptured,
+          groupRepo: staleRepo,
+          msgRepo: staleMessages,
+          bridge: staleBridge,
+          p2pService: staleP2P,
+          callback:
+              ({required String groupId, required String selfPeerId}) async {
+                staleDeleteCalls++;
+                return DeleteSelfRemovedGroupShellResult.deleted;
+              },
+        );
+        await staleRepo.updateGroup(
+          staleCaptured.copyWith(
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          ),
+        );
+        staleRepo.failMembers = true;
+        await tapLeaveGroupButton(tester);
+        await pumpFrames(tester, count: 10);
+        expect(staleDeleteCalls, 0);
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(await staleRepo.getGroup(staleCaptured.id), isNotNull);
+        expect(staleBridge.commandLog, isNot(contains('group:leave')));
+        expect(staleP2P.sendMessageCallCount, 0);
+        expect(staleP2P.storeInInboxCallCount, 0);
+
+        for (final outcome in DeleteSelfRemovedGroupShellResult.values) {
+          final repo = InMemoryGroupRepository();
+          final messages = InMemoryGroupMessageRepository();
+          final bridge = FakeBridge();
+          final p2p = FakeP2PService();
+          final group = removedGroup(
+            'group-info-removed-${outcome.name}',
+            'Removed Info ${outcome.name}',
+          );
+          await repo.saveGroup(group);
+          var localDeleteCalls = 0;
+          await pumpInfoRoute(
+            group: group,
+            groupRepo: repo,
+            msgRepo: messages,
+            bridge: bridge,
+            p2pService: p2p,
+            callback:
+                ({required String groupId, required String selfPeerId}) async {
+                  localDeleteCalls++;
+                  expect(groupId, group.id);
+                  expect(selfPeerId, testIdentity.peerId);
+                  if (outcome == DeleteSelfRemovedGroupShellResult.deleted ||
+                      outcome ==
+                          DeleteSelfRemovedGroupShellResult.alreadyAbsent) {
+                    await repo.deleteGroup(groupId);
+                  } else if (outcome ==
+                      DeleteSelfRemovedGroupShellResult.refusedStateChanged) {
+                    await repo.updateGroup(
+                      group.copyWith(name: '${group.name} refreshed'),
+                    );
+                  }
+                  return outcome;
+                },
+          );
+          await tapLeaveGroupButton(tester);
+          expect(localDeleteCalls, 0);
+          expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+          await tester.tap(find.text(l10n.group_removed_delete_action));
+          await pumpFrames(tester, count: 20);
+
+          expect(localDeleteCalls, 1);
+          switch (outcome) {
+            case DeleteSelfRemovedGroupShellResult.deleted:
+            case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+              expect(find.byType(GroupInfoScreen), findsNothing);
+              expect(find.text('Open Removed Info'), findsOneWidget);
+            case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+              expect(find.byType(GroupInfoScreen), findsOneWidget);
+              expect(find.text('${group.name} refreshed'), findsOneWidget);
+              expect(find.text(l10n.group_removed_delete_failed), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+              expect(find.byType(GroupInfoScreen), findsOneWidget);
+              expect(find.text(group.name), findsOneWidget);
+              expect(
+                find.text(l10n.group_removed_delete_failed),
+                findsOneWidget,
+              );
+          }
+          expect(
+            bridge.commandLog,
+            isNot(
+              contains(
+                anyOf(
+                  'payload.sign',
+                  'group:publish',
+                  'group:inboxStore',
+                  'group:leave',
+                ),
+              ),
+            ),
+          );
+          expect(p2p.sendMessageCallCount, 0);
+          expect(p2p.storeInInboxCallCount, 0);
+        }
       },
     );
 
@@ -6586,4 +6810,16 @@ void main() {
       expect(bridge.commandLog, isEmpty);
     });
   });
+}
+
+class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
+  bool failMembers = false;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) {
+    if (failMembers) {
+      throw StateError('member read failed');
+    }
+    return super.getMembers(groupId);
+  }
 }

@@ -11,9 +11,11 @@ import 'package:flutter_app/features/groups/application/decline_pending_group_in
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
@@ -25,6 +27,7 @@ import 'package:flutter_app/features/groups/domain/models/group_welcome_key_pack
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -465,6 +468,7 @@ void main() {
     required String name,
     required String description,
     required DateTime metadataUpdatedAt,
+    DateTime? membershipEventAt,
     String? avatarBlobId,
     String? avatarMime,
   }) async {
@@ -481,7 +485,7 @@ void main() {
         createdBy: '12D3KooWAlice',
         myRole: GroupRole.member,
         lastMetadataEventAt: metadataUpdatedAt,
-        lastMembershipEventAt: metadataUpdatedAt,
+        lastMembershipEventAt: membershipEventAt ?? metadataUpdatedAt,
       ),
     );
     await groupRepo.saveKey(
@@ -1483,13 +1487,19 @@ void main() {
           avatarBlobId: 'stale-avatar',
           avatarMime: 'image/png',
         );
-        await pendingInviteRepo.savePendingInvite(
-          makeInvite(groupConfig: staleConfig, receivedAt: inviteReceivedAt),
+        final invite = makeInvite(
+          groupConfig: staleConfig,
+          receivedAt: inviteReceivedAt,
         );
+        await pendingInviteRepo.savePendingInvite(invite);
         await saveCompatibleMaterializedInviteGroup(
           name: 'test 2',
           description: '222',
           metadataUpdatedAt: staleMetadataAt,
+          membershipEventAt: invite
+              .toPayload()!
+              .membershipFreshnessProof!
+              .issuedAt,
           avatarBlobId: 'stale-avatar',
           avatarMime: 'image/png',
         );
@@ -1522,6 +1532,312 @@ void main() {
     );
 
     test(
+      'duplicate native retry rechecks durable binding and self authority inside its phase',
+      () async {
+        final retryRepository = _MutatingAcceptedRetryRepository();
+        groupRepo = retryRepository;
+        final now = DateTime.now().toUtc();
+        final removedAt = now.subtract(const Duration(hours: 8));
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Retained shell',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+            lastMembershipEventId: 'remove-before-retry',
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'grp-abc123',
+            keyGeneration: 1,
+            encryptedKey: 'retained-terminal-key',
+            createdAt: removedAt,
+          ),
+        );
+        final invite = makeInvite(
+          receivedAt: now,
+          membershipWatermark: now
+              .subtract(const Duration(hours: 4))
+              .toIso8601String(),
+        );
+        final payload = invite.toPayload()!;
+        await pendingInviteRepo.savePendingInvite(invite);
+        final materialized = await materializeAcceptedGroupInvitePayload(
+          payload: payload,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWReceiver',
+        );
+        expect(materialized.$1, HandleGroupInviteResult.success);
+        bridge.commandLog.clear();
+
+        retryRepository.rollbackBeforeRetryAuthorization = true;
+        final (result, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.repairPending);
+        expect(acceptedGroup, isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        final restored = await groupRepo.getGroup('grp-abc123');
+        expect(restored?.selfRemovedAt, removedAt);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNull,
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'duplicate retry revalidates policy and proof expiry after waiting for its phase',
+      () async {
+        for (final policyExpiry in <bool>[false, true]) {
+          pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+          final signalingRepository = _ReadSignalingRepository();
+          groupRepo = signalingRepository;
+          bridge = FakeBridge();
+          var clock = DateTime.utc(2026, 7, 20, 12);
+          final proofExpiresAt = clock.add(const Duration(minutes: 1));
+          final metadataAt = clock.subtract(const Duration(hours: 1));
+          final config = metadataGroupConfig(
+            name: 'test 2',
+            description: '222',
+            metadataUpdatedAt: metadataAt,
+          );
+          final invite = makeInvite(
+            groupConfig: config,
+            receivedAt: clock,
+            membershipProofExpiresAt: proofExpiresAt,
+          );
+          final payload = invite.toPayload()!;
+          await pendingInviteRepo.savePendingInvite(invite);
+          await saveCompatibleMaterializedInviteGroup(
+            name: 'test 2',
+            description: '222',
+            metadataUpdatedAt: metadataAt,
+            membershipEventAt: payload.membershipFreshnessProof!.issuedAt,
+          );
+
+          final blockerEntered = Completer<void>();
+          final releaseBlocker = Completer<void>();
+          final blocker = runGroupMembershipMutationLocked<void>(
+            groupId: invite.groupId,
+            action: () async {
+              blockerEntered.complete();
+              await releaseBlocker.future;
+            },
+          );
+          await blockerEntered.future;
+          signalingRepository.signalAfterAdditionalGroupReads(3);
+          final acceptance = acceptPendingGroupInvite(
+            pendingInviteRepo: pendingInviteRepo,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            msgRepo: msgRepo,
+            bridge: bridge,
+            groupId: invite.groupId,
+            senderPeerId: '12D3KooWReceiver',
+            nowUtc: () => clock,
+          );
+          await signalingRepository.nextGroupRead!.future;
+          await Future<void>.delayed(Duration.zero);
+          clock = policyExpiry
+              ? invite.expiresAt.add(const Duration(seconds: 1))
+              : proofExpiresAt.add(const Duration(seconds: 1));
+          releaseBlocker.complete();
+          await blocker;
+
+          final (result, acceptedGroup) = await acceptance;
+          expect(
+            result,
+            policyExpiry
+                ? AcceptPendingGroupInviteResult.expired
+                : AcceptPendingGroupInviteResult.expiredFreshness,
+          );
+          expect(acceptedGroup, isNull);
+          expect(bridge.commandLog, isNot(contains('group:join')));
+          expect(
+            await pendingInviteRepo.getPendingInvite(invite.groupId),
+            isNull,
+          );
+        }
+      },
+    );
+
+    test(
+      'outer rollback waits for membership phase and preserves newer no-floor authority',
+      () async {
+        final schedulingBridge = _CommandSchedulingBridge(
+          command: 'group:inboxRetrieveCursor',
+        );
+        bridge = schedulingBridge;
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final staleConfig = metadataGroupConfig(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+        );
+        final invite = makeInvite(
+          groupConfig: staleConfig,
+          receivedAt: inviteReceivedAt,
+        );
+        final acceptedAt = invite
+            .toPayload()!
+            .membershipFreshnessProof!
+            .issuedAt;
+        await pendingInviteRepo.savePendingInvite(invite);
+        await saveCompatibleMaterializedInviteGroup(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+          membershipEventAt: acceptedAt,
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        schedulingBridge.onCommandReturn = () =>
+            runGroupMembershipMutationLocked<void>(
+              groupId: 'grp-abc123',
+              action: () async {
+                final current = (await groupRepo.getGroup('grp-abc123'))!;
+                await groupRepo.updateGroup(
+                  current.copyWith(
+                    lastMembershipEventAt: acceptedAt.add(
+                      const Duration(minutes: 1),
+                    ),
+                    lastMembershipEventId: 'newer-membership-won',
+                  ),
+                );
+              },
+            );
+        final (result, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(acceptedGroup, isNull);
+        final preserved = await groupRepo.getGroup('grp-abc123');
+        expect(preserved, isNotNull);
+        expect(preserved?.lastMembershipEventId, 'newer-membership-won');
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'removed-shell accept recovery never generically deletes accepted or newer authority',
+      () async {
+        final now = DateTime.now().toUtc();
+        final removedAt = now.subtract(const Duration(hours: 8));
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Retained shell',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+            lastMembershipEventId: 'remove-before-accept',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'grp-abc123',
+            keyGeneration: 1,
+            encryptedKey: 'retained-terminal-key',
+            createdAt: removedAt,
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            inviteId: 'accepted-reentry-auth',
+            receivedAt: now,
+            membershipWatermark: removedAt
+                .add(const Duration(hours: 1))
+                .toIso8601String(),
+          ),
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNull);
+        final restored = await groupRepo.getGroup('grp-abc123');
+        expect(restored, isNotNull);
+        expect(restored?.selfRemovedAt, removedAt);
+        expect(restored?.lastMembershipEventAt, removedAt);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNull,
+        );
+        expect(
+          (await groupRepo.getLatestKey('grp-abc123'))?.encryptedKey,
+          'retained-terminal-key',
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+      },
+    );
+
+    test(
       'GCA-103 duplicate retry join bridgeError keeps stale materialization pending',
       () async {
         final inviteReceivedAt = DateTime.now().toUtc();
@@ -1533,13 +1849,19 @@ void main() {
           description: '222',
           metadataUpdatedAt: staleMetadataAt,
         );
-        await pendingInviteRepo.savePendingInvite(
-          makeInvite(groupConfig: staleConfig, receivedAt: inviteReceivedAt),
+        final invite = makeInvite(
+          groupConfig: staleConfig,
+          receivedAt: inviteReceivedAt,
         );
+        await pendingInviteRepo.savePendingInvite(invite);
         await saveCompatibleMaterializedInviteGroup(
           name: 'test 2',
           description: '222',
           metadataUpdatedAt: staleMetadataAt,
+          membershipEventAt: invite
+              .toPayload()!
+              .membershipFreshnessProof!
+              .issuedAt,
         );
         bridge.responses['group:join'] = {
           'ok': false,
@@ -3158,6 +3480,15 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWReceiver',
+            username: 'Receiver',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
 
         final (result, group) = await acceptPendingGroupInvite(
           pendingInviteRepo: pendingInviteRepo,
@@ -3868,7 +4199,9 @@ void main() {
 }
 
 class _InMemoryGroupPendingKeyRepairRepository
-    implements GroupPendingKeyRepairRepository {
+    implements
+        GroupPendingKeyRepairRepository,
+        GroupPendingKeyRepairExactRepository {
   final Map<String, GroupPendingKeyRepair> repairs = {};
 
   @override
@@ -3964,6 +4297,29 @@ class _InMemoryGroupPendingKeyRepairRepository
   }
 
   @override
+  Future<GroupPendingKeyRepair?> recordAttemptIfExact(
+    GroupPendingKeyRepair expected, {
+    required String? lastError,
+  }) async {
+    final current = repairs[expected.id];
+    if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+      return null;
+    }
+    await recordAttempt(expected.id, lastError: lastError);
+    return repairs[expected.id];
+  }
+
+  @override
+  Future<bool> deleteRepairIfExact(GroupPendingKeyRepair expected) async {
+    final current = repairs[expected.id];
+    if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+      return false;
+    }
+    repairs.remove(expected.id);
+    return true;
+  }
+
+  @override
   Future<void> finalizeRepaired(String id) async {
     final existing = repairs[id];
     if (existing == null) return;
@@ -3973,6 +4329,16 @@ class _InMemoryGroupPendingKeyRepairRepository
       finalizedAt: DateTime.now().toUtc(),
       updatedAt: DateTime.now().toUtc(),
     );
+  }
+
+  @override
+  Future<bool> finalizeRepairedIfExact(GroupPendingKeyRepair expected) async {
+    final current = repairs[expected.id];
+    if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+      return false;
+    }
+    await finalizeRepaired(expected.id);
+    return true;
   }
 
   @override
@@ -3988,5 +4354,93 @@ class _InMemoryGroupPendingKeyRepairRepository
       finalizedAt: DateTime.now().toUtc(),
       updatedAt: DateTime.now().toUtc(),
     );
+  }
+
+  @override
+  Future<bool> finalizeUndecryptableIfExact(
+    GroupPendingKeyRepair expected, {
+    required String lastError,
+  }) async {
+    final current = repairs[expected.id];
+    if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+      return false;
+    }
+    await finalizeUndecryptable(expected.id, lastError: lastError);
+    return true;
+  }
+}
+
+class _MutatingAcceptedRetryRepository extends InMemoryGroupRepository {
+  bool rollbackBeforeRetryAuthorization = false;
+
+  @override
+  Future<SelfRemovedAcceptedRetryAuthorizationOutcome>
+  authorizeAcceptedReentryRetry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+  }) async {
+    if (rollbackBeforeRetryAuthorization) {
+      rollbackBeforeRetryAuthorization = false;
+      await super.rollbackAcceptedReentry(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+      );
+    }
+    return super.authorizeAcceptedReentryRetry(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      authorizationId: authorizationId,
+      signedMembershipWatermark: signedMembershipWatermark,
+      signedIssuedAt: signedIssuedAt,
+      keyGeneration: keyGeneration,
+    );
+  }
+}
+
+class _ReadSignalingRepository extends InMemoryGroupRepository {
+  Completer<void>? nextGroupRead;
+  var groupReadCount = 0;
+  var _signalAtRead = 0;
+
+  void signalAfterAdditionalGroupReads(int count) {
+    nextGroupRead = Completer<void>();
+    _signalAtRead = groupReadCount + count;
+  }
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    final result = await super.getGroup(id);
+    groupReadCount++;
+    final signal = nextGroupRead;
+    if (signal != null &&
+        !signal.isCompleted &&
+        groupReadCount >= _signalAtRead) {
+      signal.complete();
+    }
+    return result;
+  }
+}
+
+class _CommandSchedulingBridge extends FakeBridge {
+  _CommandSchedulingBridge({required this.command});
+
+  final String command;
+  Future<void> Function()? onCommandReturn;
+  var _used = false;
+
+  @override
+  Future<String> send(String message) async {
+    final decoded = jsonDecode(message) as Map<String, dynamic>;
+    final response = await super.send(message);
+    if (!_used && decoded['cmd'] == command) {
+      _used = true;
+      unawaited(onCommandReturn?.call());
+    }
+    return response;
   }
 }

@@ -27,6 +27,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -286,6 +287,8 @@ void main() {
     Future<void> Function()? waitForGroupMembershipUpdateIdle,
     List<NavigatorObserver>? navigatorObservers,
     InMemoryFeedClearedRepository? feedClearedRepository,
+    DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell,
+    Key? orbitKey,
     Locale locale = const Locale('en'),
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
@@ -316,6 +319,7 @@ void main() {
         _FakeGroupMessageListener(groupMessageStreamController.stream);
 
     final orbitWidget = OrbitWired(
+      key: orbitKey,
       identityRepo: identityRepo,
       contactRepo: effectiveContactRepo,
       contactRequestRepo: contactRequestRepo,
@@ -333,6 +337,7 @@ void main() {
       reactionRepository: reactionRepository,
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
+      deleteSelfRemovedGroupShell: deleteSelfRemovedGroupShell,
       groupMessageListener: gmListener,
       groupInviteListener: groupInviteListener,
       waitForGroupMembershipUpdateIdle: waitForGroupMembershipUpdateIdle,
@@ -891,6 +896,251 @@ void main() {
         );
         expect(await groupRepo.getGroup('g-1'), isNotNull);
         expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
+    testWidgets(
+      'removed-member stuck row uses guarded local delete while ordinary stuck leave is preserved',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final marker = DateTime.utc(2026, 7, 20, 12);
+
+        final cancelRepo = InMemoryGroupRepository();
+        const cancelGroupId = 'g-removed-stuck-cancel';
+        await cancelRepo.saveGroup(
+          GroupModel(
+            id: cancelGroupId,
+            name: 'Removed Stuck Cancel',
+            type: GroupType.chat,
+            topicName: 'topic-$cancelGroupId',
+            createdAt: marker,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          ),
+        );
+        final cancelFuture = marker.add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await cancelRepo.recordGroupRejoinFailure(
+            cancelGroupId,
+            nextEligibleAt: cancelFuture,
+          );
+        }
+        var cancelCalls = 0;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            orbitKey: const ValueKey('tc14-cancel'),
+            groupRepository: cancelRepo,
+            groupMessageRepository: InMemoryGroupMessageRepository(),
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  cancelCalls++;
+                  return DeleteSelfRemovedGroupShellResult.deleted;
+                },
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await tester.tap(
+          find.byKey(
+            const ValueKey('orbit-group-stuck-leave-g-removed-stuck-cancel'),
+          ),
+        );
+        await tester.pump();
+        expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+        await tester.tap(find.text(l10n.btn_cancel));
+        await pumpOrbitFrames(tester, count: 3);
+        expect(cancelCalls, 0);
+        expect(await cancelRepo.getGroup(cancelGroupId), isNotNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        final staleRepo = _FaultingMembersGroupRepository();
+        const staleGroupId = 'g-stale-before-self-removal';
+        final staleCaptured = GroupModel(
+          id: staleGroupId,
+          name: 'Stale Before Self Removal',
+          type: GroupType.chat,
+          topicName: 'topic-$staleGroupId',
+          createdAt: marker,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        );
+        await staleRepo.saveGroup(staleCaptured);
+        for (var i = 0; i < 11; i++) {
+          await staleRepo.recordGroupRejoinFailure(
+            staleGroupId,
+            nextEligibleAt: cancelFuture,
+          );
+        }
+        var staleDeleteCalls = 0;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            orbitKey: const ValueKey('tc14-stale-marker'),
+            groupRepository: staleRepo,
+            groupMessageRepository: InMemoryGroupMessageRepository(),
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  staleDeleteCalls++;
+                  return DeleteSelfRemovedGroupShellResult.deleted;
+                },
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await staleRepo.updateGroup(
+          staleCaptured.copyWith(
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          ),
+        );
+        staleRepo.failMembers = true;
+        await tester.tap(
+          find.byKey(
+            const ValueKey(
+              'orbit-group-stuck-leave-g-stale-before-self-removal',
+            ),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(staleDeleteCalls, 0);
+        expect(await staleRepo.getGroup(staleGroupId), isNotNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        for (final outcome in DeleteSelfRemovedGroupShellResult.values) {
+          final repo = InMemoryGroupRepository();
+          final messages = InMemoryGroupMessageRepository();
+          final groupId = 'g-removed-stuck-${outcome.name}';
+          final groupName = 'Removed Stuck ${outcome.name}';
+          await repo.saveGroup(
+            GroupModel(
+              id: groupId,
+              name: groupName,
+              type: GroupType.chat,
+              topicName: 'topic-$groupId',
+              createdAt: marker,
+              createdBy: 'peer-admin',
+              myRole: GroupRole.member,
+              selfRemovedAt: marker,
+              lastMembershipEventAt: marker,
+            ),
+          );
+          final future = marker.add(const Duration(days: 1));
+          for (var i = 0; i < 11; i++) {
+            await repo.recordGroupRejoinFailure(
+              groupId,
+              nextEligibleAt: future,
+            );
+          }
+          var localDeleteCalls = 0;
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              orbitKey: ValueKey('tc14-$groupId'),
+              groupRepository: repo,
+              groupMessageRepository: messages,
+              deleteSelfRemovedGroupShell:
+                  ({
+                    required String groupId,
+                    required String selfPeerId,
+                  }) async {
+                    localDeleteCalls++;
+                    expect(selfPeerId, testIdentity.peerId);
+                    if (outcome == DeleteSelfRemovedGroupShellResult.deleted ||
+                        outcome ==
+                            DeleteSelfRemovedGroupShellResult.alreadyAbsent) {
+                      await repo.deleteGroup(groupId);
+                    }
+                    return outcome;
+                  },
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          await switchToAllChats(tester);
+
+          await tester.tap(
+            find.byKey(ValueKey('orbit-group-stuck-leave-$groupId')),
+          );
+          await tester.pump();
+          expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+          expect(localDeleteCalls, 0);
+          expect(bridge.commandLog, isNot(contains('group:leave')));
+
+          await tester.tap(find.text(l10n.group_removed_delete_action));
+          await pumpOrbitFrames(tester, count: 8);
+
+          expect(localDeleteCalls, 1);
+          switch (outcome) {
+            case DeleteSelfRemovedGroupShellResult.deleted:
+            case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+              expect(find.text(groupName), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+              expect(find.text(groupName), findsOneWidget);
+              expect(find.text(l10n.group_removed_delete_failed), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+              expect(find.text(groupName), findsOneWidget);
+              expect(
+                find.text(l10n.group_removed_delete_failed),
+                findsOneWidget,
+              );
+          }
+          expect(bridge.commandLog, isNot(contains('group:leave')));
+          expect(p2pService.sendMessageCallCount, 0);
+          expect(p2pService.storeInInboxCallCount, 0);
+        }
+
+        final ordinaryRepo = InMemoryGroupRepository();
+        final ordinaryMessages = InMemoryGroupMessageRepository();
+        const ordinaryGroupId = 'g-ordinary-stuck-control';
+        await ordinaryRepo.saveGroup(
+          GroupModel(
+            id: ordinaryGroupId,
+            name: 'Ordinary Stuck Control',
+            type: GroupType.chat,
+            topicName: 'topic-$ordinaryGroupId',
+            createdAt: marker,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        final future = marker.add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await ordinaryRepo.recordGroupRejoinFailure(
+            ordinaryGroupId,
+            nextEligibleAt: future,
+          );
+        }
+        var unexpectedLocalDeleteCalls = 0;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            orbitKey: const ValueKey('tc14-ordinary-control'),
+            groupRepository: ordinaryRepo,
+            groupMessageRepository: ordinaryMessages,
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  unexpectedLocalDeleteCalls++;
+                  return DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+                },
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await tester.tap(
+          find.byKey(
+            const ValueKey('orbit-group-stuck-leave-g-ordinary-stuck-control'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(unexpectedLocalDeleteCalls, 0);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(await ordinaryRepo.getGroup(ordinaryGroupId), isNull);
       },
     );
 
@@ -2685,6 +2935,186 @@ void main() {
       expect(find.text('Newer Group'), findsOneWidget);
       expect(find.text('Bob'), findsWidgets);
     });
+
+    testWidgets(
+      'removed-member Orbit exit confirms local deletion without voluntary leave',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final marker = DateTime.utc(2026, 7, 20, 11);
+        final previousDefault = defaultDeleteSelfRemovedGroupShell;
+        defaultDeleteSelfRemovedGroupShell = null;
+        addTearDown(() => defaultDeleteSelfRemovedGroupShell = previousDefault);
+
+        Future<void> openRemovedExit(String groupName) async {
+          final center = tester.getCenter(find.text(groupName));
+          await tester.flingFrom(center, const Offset(-350, 0), 1000);
+          await pumpOrbitFrames(tester, count: 6);
+          await tester.tap(find.text(l10n.orbit_leave_action));
+          await tester.pump();
+        }
+
+        Future<void> seedRemovedGroup(
+          InMemoryGroupRepository repo, {
+          required String groupId,
+          required String groupName,
+        }) => repo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: marker,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          ),
+        );
+
+        final cancelRepo = InMemoryGroupRepository();
+        final cancelMessages = InMemoryGroupMessageRepository();
+        const cancelGroupId = 'g-removed-cancel';
+        const cancelGroupName = 'Removed Cancel Group';
+        await seedRemovedGroup(
+          cancelRepo,
+          groupId: cancelGroupId,
+          groupName: cancelGroupName,
+        );
+        var cancelCalls = 0;
+        await tester.pumpWidget(
+          buildOrbitWired(
+            orbitKey: const ValueKey(cancelGroupId),
+            groupRepository: cancelRepo,
+            groupMessageRepository: cancelMessages,
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  cancelCalls++;
+                  return DeleteSelfRemovedGroupShellResult.deleted;
+                },
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await openRemovedExit(cancelGroupName);
+
+        expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+        expect(find.text(l10n.group_removed_delete_body), findsOneWidget);
+        expect(cancelCalls, 0, reason: 'the first tap only confirms');
+        expect(bridge.commandLog, isEmpty);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+
+        await tester.tap(find.text(l10n.btn_cancel));
+        await pumpOrbitFrames(tester, count: 3);
+        expect(cancelCalls, 0);
+        expect(await cancelRepo.getGroup(cancelGroupId), isNotNull);
+        expect(find.text(cancelGroupName), findsOneWidget);
+
+        final missingRepo = InMemoryGroupRepository();
+        final missingMessages = InMemoryGroupMessageRepository();
+        const missingGroupId = 'g-removed-missing-callback';
+        const missingGroupName = 'Removed Missing Callback';
+        await seedRemovedGroup(
+          missingRepo,
+          groupId: missingGroupId,
+          groupName: missingGroupName,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            orbitKey: const ValueKey(missingGroupId),
+            groupRepository: missingRepo,
+            groupMessageRepository: missingMessages,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await openRemovedExit(missingGroupName);
+        await tester.tap(find.text(l10n.group_removed_delete_action));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.text(l10n.group_removed_delete_failed), findsOneWidget);
+        expect(find.text(missingGroupName), findsOneWidget);
+        expect(await missingRepo.getGroup(missingGroupId), isNotNull);
+        expect(bridge.commandLog, isEmpty);
+
+        for (final outcome in DeleteSelfRemovedGroupShellResult.values) {
+          final repo = InMemoryGroupRepository();
+          final messages = InMemoryGroupMessageRepository();
+          final groupId = 'g-removed-primary-${outcome.name}';
+          final groupName = 'Removed Primary ${outcome.name}';
+          await seedRemovedGroup(repo, groupId: groupId, groupName: groupName);
+          var localDeleteCalls = 0;
+          await tester.pumpWidget(
+            buildOrbitWired(
+              orbitKey: ValueKey(groupId),
+              groupRepository: repo,
+              groupMessageRepository: messages,
+              deleteSelfRemovedGroupShell:
+                  ({
+                    required String groupId,
+                    required String selfPeerId,
+                  }) async {
+                    localDeleteCalls++;
+                    expect(selfPeerId, testIdentity.peerId);
+                    if (outcome == DeleteSelfRemovedGroupShellResult.deleted ||
+                        outcome ==
+                            DeleteSelfRemovedGroupShellResult.alreadyAbsent) {
+                      await repo.deleteGroup(groupId);
+                    } else if (outcome ==
+                        DeleteSelfRemovedGroupShellResult.refusedStateChanged) {
+                      final current = await repo.getGroup(groupId);
+                      await repo.updateGroup(
+                        current!.copyWith(name: '$groupName refreshed'),
+                      );
+                    }
+                    return outcome;
+                  },
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          await switchToAllChats(tester);
+          await openRemovedExit(groupName);
+
+          expect(localDeleteCalls, 0);
+          expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+          await tester.tap(find.text(l10n.group_removed_delete_action));
+          await pumpOrbitFrames(tester, count: 8);
+
+          expect(localDeleteCalls, 1);
+          switch (outcome) {
+            case DeleteSelfRemovedGroupShellResult.deleted:
+            case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+              expect(find.text(groupName), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+              expect(find.text('$groupName refreshed'), findsOneWidget);
+              expect(find.text(l10n.group_removed_delete_failed), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+              expect(find.text(groupName), findsOneWidget);
+              expect(
+                find.text(l10n.group_removed_delete_failed),
+                findsOneWidget,
+              );
+          }
+          expect(
+            bridge.commandLog,
+            isNot(
+              contains(
+                anyOf(
+                  'payload.sign',
+                  'group:publish',
+                  'group:inboxStore',
+                  'group:leave',
+                ),
+              ),
+            ),
+          );
+          expect(p2pService.sendMessageCallCount, 0);
+          expect(p2pService.storeInInboxCallCount, 0);
+        }
+      },
+    );
 
     testWidgets(
       'active Leave and dissolved Delete dispatch distinct exit branches',
@@ -7855,4 +8285,16 @@ class _NoOpMsgRepo implements GroupMessageRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
+  bool failMembers = false;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) {
+    if (failMembers) {
+      throw StateError('member read failed');
+    }
+    return super.getMembers(groupId);
+  }
 }

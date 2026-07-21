@@ -638,6 +638,105 @@ void main() {
     );
 
     test(
+      'exact group upload completion stores only a secure reference and compensates CAS refusal',
+      () async {
+        Future<({Map<String, Object?> parent, MediaAttachment attachment})>
+        seedPending(String suffix) async {
+          final messageId = 'group-upload-$suffix';
+          final attachmentId = 'group-upload-attachment-$suffix';
+          await fixture.seedGroupParent(messageId);
+          await fixture.db.update(
+            'group_messages',
+            {'status': 'failed', 'is_incoming': 0},
+            where: 'id = ?',
+            whereArgs: [messageId],
+          );
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              localPath: 'pending_uploads/$attachmentId.jpg',
+              downloadStatus: 'upload_pending',
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          final parent = (await fixture.db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: [messageId],
+          )).single;
+          final attachment = (await fixture.repo.getAttachmentById(
+            attachmentId,
+          ))!;
+          return (parent: parent, attachment: attachment);
+        }
+
+        final success = await seedPending('success');
+        const rawKey = 'raw-group-upload-key';
+        final completed = success.attachment.copyWith(
+          downloadStatus: 'done',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: rawKey,
+          encryptionNonce: 'group-upload-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        expect(
+          await fixture.repo.completeGroupUploadRetrySecurely(
+            expectedParent: success.parent,
+            expectedAttachment: success.attachment,
+            completedAttachment: completed,
+          ),
+          isTrue,
+        );
+        final keyName = mediaAttachmentEncryptionKeyStoreName(completed.id);
+        expect(await fixture.secureKeyStore.read(keyName), rawKey);
+        expect(
+          (await rawRow(completed.id))!['encryption_key_base64'],
+          secureStoreReferenceForKey(keyName),
+        );
+        expect(
+          (await rawRow(completed.id))!['encryption_key_base64'],
+          isNot(rawKey),
+        );
+
+        final refused = await seedPending('refused');
+        await fixture.db.update(
+          'group_messages',
+          {'status': 'send_failed'},
+          where: 'id = ?',
+          whereArgs: [refused.parent['id']],
+        );
+        final refusedCompletion = refused.attachment.copyWith(
+          downloadStatus: 'done',
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: 'refused-raw-key',
+          encryptionNonce: 'refused-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        expect(
+          await fixture.repo.completeGroupUploadRetrySecurely(
+            expectedParent: refused.parent,
+            expectedAttachment: refused.attachment,
+            completedAttachment: refusedCompletion,
+          ),
+          isFalse,
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(refusedCompletion.id),
+          ),
+          isFalse,
+        );
+        expect(
+          (await rawRow(refusedCompletion.id))!['download_status'],
+          'upload_pending',
+        );
+      },
+    );
+
+    test(
       'new-message rollback removes exact group rows and secure keys only',
       () async {
         for (final id in const ['rollback-a', 'rollback-b']) {

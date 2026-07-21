@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
 /// Whether an explicit manual Retry can act on the complete attachment set.
 ///
@@ -91,6 +92,20 @@ abstract interface class GroupUploadRetryProjectionRepository {
     required String messageId,
     required String attachmentId,
     required UploadMediaFailed failure,
+  });
+}
+
+/// Exact post-upload CAS for a group-owned attachment retry.
+///
+/// The expected parent and pending attachment fingerprints are checked with a
+/// current unmarked group parent in the same transaction that records the
+/// completed attachment. This prevents an upload response from an older
+/// membership window from overwriting B3 terminalization after re-entry.
+abstract interface class GroupUploadRetryCompletionRepository {
+  Future<bool> completeUploadRetry({
+    required GroupMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
   });
 }
 

@@ -16,8 +16,10 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -74,6 +76,7 @@ class GroupInfoWired extends StatefulWidget {
   final P2PService p2pService;
   final GroupMessageRepository? msgRepo;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
+  final DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final UploadGroupAvatarFn uploadGroupAvatarFn;
@@ -91,6 +94,7 @@ class GroupInfoWired extends StatefulWidget {
     required this.p2pService,
     this.msgRepo,
     this.inviteDeliveryAttemptRepo,
+    this.deleteSelfRemovedGroupShell,
     this.imageProcessor,
     this.mediaPicker,
     this.uploadGroupAvatarFn = uploadGroupAvatar,
@@ -119,6 +123,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   bool _isUpdatingMute = false;
   bool _isDissolving = false;
   bool _isDeletingLocally = false;
+  bool _isDeletingSelfRemovedShell = false;
   late final LeaveGroupAndDeleteLocalHistoryUseCase _leaveAction;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
@@ -448,12 +453,65 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     if (repo is! PendingSiblingDeviceRepository) return;
     await rejectPendingSiblingDevice(
       pendingRepo: repo as PendingSiblingDeviceRepository,
+      groupRepo: widget.groupRepo,
       pending: device,
     );
     await _loadGroupInfo();
   }
 
   Future<void> _onLeave() async {
+    final identity = await widget.identityRepo.loadIdentity();
+    GroupExitSnapshot? snapshot;
+    if (identity != null) {
+      try {
+        snapshot = await resolveGroupExitSnapshot(
+          groupRepo: widget.groupRepo,
+          groupId: _group.id,
+          selfPeerId: identity.peerId,
+          messageRepo: widget.msgRepo,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          loadPendingBroadcasts: loadGroupPendingBroadcasts,
+        );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INFO_FL_EXIT_CLASSIFY_ERROR',
+          details: {'groupId': _group.id, 'error': error.toString()},
+        );
+      }
+    }
+    if (!mounted) return;
+
+    if (snapshot == null) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _group.selfRemovedAt != null
+                ? l10n.group_removed_delete_failed
+                : l10n.group_info_leave_failed,
+          ),
+        ),
+      );
+      return;
+    }
+    if (snapshot.group == null) {
+      _didMutateGroup = true;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      return;
+    }
+    if (snapshot.disposition == GroupExitDisposition.selfRemovedDeleteLocally) {
+      await _confirmDeleteSelfRemovedGroupShell(
+        groupId: _group.id,
+        selfPeerId: identity!.peerId,
+      );
+      return;
+    }
+    if (snapshot.disposition == GroupExitDisposition.noOp) {
+      await _loadGroupInfo();
+      return;
+    }
+
     final result = await _leaveAction.call(_group.id);
     if (!mounted) return;
     switch (result.status) {
@@ -486,6 +544,87 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           ),
         );
         return;
+    }
+  }
+
+  Future<void> _confirmDeleteSelfRemovedGroupShell({
+    required String groupId,
+    required String selfPeerId,
+  }) async {
+    if (!mounted || _isDeletingSelfRemovedShell) return;
+    _isDeletingSelfRemovedShell = true;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final shouldDelete = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          final dialogL10n = AppLocalizations.of(context)!;
+          return AlertDialog(
+            title: Text(dialogL10n.group_removed_delete_title),
+            content: Text(dialogL10n.group_removed_delete_body),
+            actions: [
+              TextButton(
+                key: const ValueKey('group-self-removed-delete-cancel'),
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(dialogL10n.btn_cancel),
+              ),
+              FilledButton(
+                key: const ValueKey('group-self-removed-delete-confirm'),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(dialogL10n.group_removed_delete_action),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldDelete != true || !mounted) return;
+
+      final deleteShell =
+          widget.deleteSelfRemovedGroupShell ??
+          defaultDeleteSelfRemovedGroupShell;
+      if (deleteShell == null) {
+        await _loadGroupInfo();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(l10n.group_removed_delete_failed)),
+          );
+        }
+        return;
+      }
+
+      DeleteSelfRemovedGroupShellResult result;
+      try {
+        result = await deleteShell(groupId: groupId, selfPeerId: selfPeerId);
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INFO_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+          details: {'groupId': groupId, 'error': error.toString()},
+        );
+        result = DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+      }
+      if (!mounted) return;
+
+      switch (result) {
+        case DeleteSelfRemovedGroupShellResult.deleted:
+        case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+          _didMutateGroup = true;
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          return;
+        case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+          await _loadGroupInfo();
+          return;
+        case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+          await _loadGroupInfo();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.group_removed_delete_failed)),
+            );
+          }
+          return;
+      }
+    } finally {
+      _isDeletingSelfRemovedShell = false;
     }
   }
 
@@ -580,7 +719,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
 
     // Captured pre-gap: thrown after awaits, when this State may be unmounted.
-    final noIdentityError = AppLocalizations.of(context)!.group_info_no_identity;
+    final noIdentityError = AppLocalizations.of(
+      context,
+    )!.group_info_no_identity;
     setState(() => _isDissolving = true);
 
     try {
@@ -1815,7 +1956,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
 
     // Captured pre-gap: thrown after awaits, when this State may be unmounted.
-    final noIdentityError = AppLocalizations.of(context)!.group_info_no_identity;
+    final noIdentityError = AppLocalizations.of(
+      context,
+    )!.group_info_no_identity;
     setState(() => _resendingInvitePeerIds.add(member.peerId));
     try {
       final identity = await widget.identityRepo.loadIdentity();

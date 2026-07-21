@@ -219,6 +219,16 @@ abstract class GroupMessageRepository {
   }
 }
 
+/// Atomic completion for one previously-qualified relay-inbox retry.
+///
+/// Implementations compare the complete expected outgoing tuple and current
+/// unmarked group parent in the same transaction that records custody. A late
+/// completion from an older membership window therefore becomes a typed no-op
+/// after removal terminalization or a later accepted re-entry.
+abstract interface class GroupInboxStoreRetryCompletionRepository {
+  Future<bool> completeInboxStoreRetry(GroupMessage expected);
+}
+
 /// Narrow durable authority for device-local group private-media lifecycle.
 ///
 /// Kept separate from the broad repository surface so lightweight group fakes

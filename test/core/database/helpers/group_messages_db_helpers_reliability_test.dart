@@ -7,6 +7,7 @@ import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
@@ -25,6 +26,7 @@ void main() {
     await runGroupMessageReliabilityColumnsMigration(db);
     await runGroupMessageTransportPeerIdMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
+    await runGroupMessageRetryBackoffColumnsMigration(db);
   });
 
   tearDown(() async {
@@ -1101,6 +1103,215 @@ void main() {
       expect(bystander['inbox_stored'], 0);
       expect(bystander['wire_envelope'], isNull);
       expect(bystander['inbox_retry_payload'], isNull);
+    });
+  });
+
+  group('v102 removed-parent authority', () {
+    setUp(() async {
+      await db.execute('''
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY,
+  self_removed_at TEXT
+)
+''');
+      await db.insert('groups', {
+        'id': 'active-group',
+        'self_removed_at': null,
+      });
+      await db.insert('groups', {
+        'id': 'marked-group',
+        'self_removed_at': '2026-07-20T10:00:00.000Z',
+      });
+    });
+
+    test(
+      'absent or marked group refuses ordinary message writes while exact removal timeline remains allowed',
+      () async {
+        await dbInsertGroupMessage(
+          db,
+          makeRow(id: 'absent-message', groupId: 'absent-group'),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(id: 'marked-message', groupId: 'marked-group'),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(id: 'active-message', groupId: 'active-group'),
+        );
+
+        expect(
+          await db.query(
+            'group_messages',
+            where: 'id IN (?, ?)',
+            whereArgs: ['absent-message', 'marked-message'],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: ['active-message'],
+          ),
+          hasLength(1),
+        );
+
+        final timeline = makeRow(
+          id: 'sys-member_removed:marked-group:self-peer:1',
+          groupId: 'marked-group',
+          status: 'sent',
+          isIncoming: 1,
+        );
+        expect(
+          await dbInsertExactSelfRemovalTimelineMessage(
+            db,
+            timeline,
+            expectedSelfRemovedAt: 'wrong-marker',
+          ),
+          isFalse,
+        );
+        expect(
+          await dbInsertExactSelfRemovalTimelineMessage(
+            db,
+            timeline,
+            expectedSelfRemovedAt: '2026-07-20T10:00:00.000Z',
+          ),
+          isTrue,
+        );
+        expect(
+          await db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: [timeline['id']],
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'terminalized outgoing rows cannot be manually rearmed or overwritten without evidence',
+      () async {
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: 'terminal-no-evidence',
+            groupId: 'active-group',
+            status: 'send_failed',
+            isIncoming: 0,
+            inboxStored: 0,
+          ),
+        );
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: 'terminal-with-evidence',
+            groupId: 'active-group',
+            status: 'send_failed',
+            isIncoming: 0,
+            wireEnvelope: '{"wire":true}',
+          ),
+        );
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: 'terminal-empty-evidence',
+            groupId: 'active-group',
+            status: 'send_failed',
+            isIncoming: 0,
+            wireEnvelope: '',
+            inboxRetryPayload: '',
+          ),
+        );
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: 'marked-with-evidence',
+            groupId: 'marked-group',
+            status: 'send_failed',
+            isIncoming: 0,
+            wireEnvelope: '{"wire":true}',
+          ),
+        );
+
+        await dbResetGroupMessageRetryState(db, 'terminal-no-evidence');
+        await dbResetGroupMessageRetryState(db, 'terminal-with-evidence');
+        await dbResetGroupMessageRetryState(db, 'terminal-empty-evidence');
+        await dbResetGroupMessageRetryState(db, 'marked-with-evidence');
+
+        expect(
+          (await dbLoadGroupMessage(db, 'terminal-no-evidence'))!['status'],
+          'send_failed',
+        );
+        expect(
+          (await dbLoadGroupMessage(db, 'terminal-with-evidence'))!['status'],
+          'failed',
+        );
+        expect(
+          (await dbLoadGroupMessage(db, 'terminal-empty-evidence'))!['status'],
+          'send_failed',
+        );
+        expect(
+          (await dbLoadGroupMessage(db, 'marked-with-evidence'))!['status'],
+          'send_failed',
+        );
+
+        await dbUpdateGroupMessageInboxStored(
+          db,
+          'terminal-no-evidence',
+          stored: true,
+        );
+        await dbUpdateGroupMessageInboxRetryPayload(
+          db,
+          'terminal-no-evidence',
+          '{"retry":true}',
+        );
+        await dbUpdateGroupMessageWireEnvelope(
+          db,
+          'terminal-no-evidence',
+          '{"wire":true}',
+        );
+        await dbUpdateGroupMessageStatus(db, 'terminal-no-evidence', 'sent');
+
+        final terminal = await dbLoadGroupMessage(db, 'terminal-no-evidence');
+        expect(terminal!['status'], 'send_failed');
+        expect(terminal['inbox_stored'], 0);
+        expect(terminal['inbox_retry_payload'], isNull);
+        expect(terminal['wire_envelope'], isNull);
+      },
+    );
+
+    test('outgoing retry and repush loaders exclude marked parents', () async {
+      for (final groupId in ['active-group', 'marked-group']) {
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: '$groupId-retry',
+            groupId: groupId,
+            status: 'failed',
+            isIncoming: 0,
+          ),
+        );
+        await db.insert(
+          'group_messages',
+          makeRow(
+            id: '$groupId-repush',
+            groupId: groupId,
+            status: 'sent',
+            isIncoming: 0,
+            inboxStored: 0,
+            inboxRetryPayload: '{"retry":true}',
+          ),
+        );
+      }
+
+      final failed = await dbLoadFailedOutgoingGroupMessages(db);
+      final retryable = await dbLoadRetryableOutgoingGroupMessages(db);
+      final repush = await dbLoadGroupMessagesWithFailedInboxStore(db);
+      expect(failed.map((row) => row['id']), ['active-group-retry']);
+      expect(retryable.map((row) => row['id']), ['active-group-retry']);
+      expect(repush.map((row) => row['id']), ['active-group-repush']);
     });
   });
 

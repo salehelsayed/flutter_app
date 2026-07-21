@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_parent_write_guard.dart';
 
 Future<Map<String, Object?>> dbUpsertGroupPendingMembershipMessage(
   Database db,
@@ -29,7 +30,11 @@ Future<Map<String, Object?>> dbUpsertGroupPendingMembershipMessage(
       event: 'GROUP_PENDING_MEMBERSHIP_MESSAGE_DB_INSERT_START',
       details: {'id': _safeId(id), 'groupId': _safeId(groupId)},
     );
-    await db.insert('group_pending_membership_messages', row);
+    await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_pending_membership_messages',
+      row: row,
+    );
     emitFlowEvent(
       layer: 'DB',
       event: 'GROUP_PENDING_MEMBERSHIP_MESSAGE_DB_INSERT_SUCCESS',
@@ -40,9 +45,11 @@ Future<Map<String, Object?>> dbUpsertGroupPendingMembershipMessage(
 
   final existingRow = existing.single;
   final existingId = existingRow['id'] as String;
-  await db.update(
-    'group_pending_membership_messages',
-    {
+  await dbUpdateOrdinaryGroupOwnedRows(
+    db,
+    table: 'group_pending_membership_messages',
+    groupId: groupId,
+    values: {
       'sender_peer_id': row['sender_peer_id'],
       'message_id': row['message_id'],
       'payload_json': row['payload_json'],
@@ -58,17 +65,21 @@ Future<Map<String, Object?>> dbUpsertGroupPendingMembershipMessage(
     whereArgs: [existingId],
     limit: 1,
   );
-  return loaded.single;
+  return loaded.isEmpty ? row : loaded.single;
 }
 
 Future<List<Map<String, Object?>>> dbLoadGroupPendingMembershipMessages(
   Database db, {
   int limit = 200,
-}) {
-  return db.query(
-    'group_pending_membership_messages',
-    orderBy: 'received_at ASC, id ASC',
-    limit: limit,
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_membership_messages.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_membership_messages '
+    'WHERE $parent ORDER BY received_at ASC, id ASC LIMIT ?',
+    [limit],
   );
 }
 
@@ -78,19 +89,22 @@ dbLoadGroupPendingMembershipMessagesForSenders(
   required String groupId,
   required Iterable<String> senderPeerIds,
   int limit = 50,
-}) {
+}) async {
   final senders = senderPeerIds
       .where((sender) => sender.isNotEmpty)
       .toSet()
       .toList(growable: false);
   if (senders.isEmpty) return Future.value(const <Map<String, Object?>>[]);
   final placeholders = List.filled(senders.length, '?').join(', ');
-  return db.query(
-    'group_pending_membership_messages',
-    where: 'group_id = ? AND sender_peer_id IN ($placeholders)',
-    whereArgs: [groupId, ...senders],
-    orderBy: 'received_at ASC, id ASC',
-    limit: limit,
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_membership_messages.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_membership_messages '
+    'WHERE group_id = ? AND sender_peer_id IN ($placeholders) '
+    'AND $parent ORDER BY received_at ASC, id ASC LIMIT ?',
+    [groupId, ...senders, limit],
   );
 }
 

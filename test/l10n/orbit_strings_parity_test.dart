@@ -76,8 +76,21 @@ void main() {
     'group_exit_stay_in_group',
     'group_exit_admin_sync_pending_title',
     'group_exit_admin_sync_pending_body',
+    'group_exit_sync_finishing_title',
+    'group_exit_sync_finishing_body',
+    'group_exit_leave_when_sync_completes',
+    'group_exit_try_again',
+    'group_exit_cancel_queued_leave',
+    'group_exit_cancel_queued_leave_body',
+    'group_exit_leaving_status',
+    'group_exit_leaving_read_only',
+    'group_exit_cancel_too_late',
     'group_exit_leave_uncertain',
     'group_exit_cleanup_incomplete',
+    'group_removed_delete_title',
+    'group_removed_delete_body',
+    'group_removed_delete_action',
+    'group_removed_delete_failed',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -119,8 +132,21 @@ void main() {
         expect(l10n.group_exit_stay_in_group.trim(), isNotEmpty);
         expect(l10n.group_exit_admin_sync_pending_title.trim(), isNotEmpty);
         expect(l10n.group_exit_admin_sync_pending_body.trim(), isNotEmpty);
+        expect(l10n.group_exit_sync_finishing_title.trim(), isNotEmpty);
+        expect(l10n.group_exit_sync_finishing_body.trim(), isNotEmpty);
+        expect(l10n.group_exit_leave_when_sync_completes.trim(), isNotEmpty);
+        expect(l10n.group_exit_try_again.trim(), isNotEmpty);
+        expect(l10n.group_exit_cancel_queued_leave.trim(), isNotEmpty);
+        expect(l10n.group_exit_cancel_queued_leave_body.trim(), isNotEmpty);
+        expect(l10n.group_exit_leaving_status.trim(), isNotEmpty);
+        expect(l10n.group_exit_leaving_read_only.trim(), isNotEmpty);
+        expect(l10n.group_exit_cancel_too_late.trim(), isNotEmpty);
         expect(l10n.group_exit_leave_uncertain.trim(), isNotEmpty);
         expect(l10n.group_exit_cleanup_incomplete.trim(), isNotEmpty);
+        expect(l10n.group_removed_delete_title.trim(), isNotEmpty);
+        expect(l10n.group_removed_delete_body.trim(), isNotEmpty);
+        expect(l10n.group_removed_delete_action.trim(), isNotEmpty);
+        expect(l10n.group_removed_delete_failed.trim(), isNotEmpty);
       }
       final en = AppLocalizationsEn();
       expect(en.orbit_leave_action, 'Leave');
@@ -130,6 +156,39 @@ void main() {
         en.group_exit_only_admin_body('Night Owls'),
         'A group needs at least one admin before you can leave. '
         'Choose what should happen to Night Owls.',
+      );
+      expect(
+        en.group_removed_delete_body,
+        'This deletes the retained messages from this device only. '
+        'You will not leave or notify the group.',
+      );
+      expect(
+        en.group_exit_sync_finishing_title,
+        'Finishing a role change',
+      );
+      expect(
+        en.group_exit_sync_finishing_body,
+        'You can leave this screen. We’ll leave the group as soon as the role '
+        'update is safely delivered.',
+      );
+      expect(
+        en.group_exit_leave_when_sync_completes,
+        'Leave when sync completes',
+      );
+      expect(en.group_exit_try_again, 'Try again');
+      expect(en.group_exit_cancel_queued_leave, 'Cancel queued leave');
+      expect(
+        en.group_exit_cancel_queued_leave_body,
+        'This cancels automatic leave. The role change will keep syncing.',
+      );
+      expect(en.group_exit_leaving_status, 'Leaving…');
+      expect(
+        en.group_exit_leaving_read_only,
+        'This group is read-only while we finish leaving.',
+      );
+      expect(
+        en.group_exit_cancel_too_late,
+        'Leaving has already started and can’t be cancelled.',
       );
     });
 

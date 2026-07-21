@@ -5,7 +5,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -126,186 +128,41 @@ Future<int> retryFailedGroupInboxStores({
   int retriedCount = 0;
 
   for (final msg in messages) {
-    try {
-      GroupPrivateMediaLifecycleRepository? privateLifecycleRepository;
-      if (msg.privateMediaPolicy.isUnsupported) {
-        continue;
-      }
-      if (msg.privateMediaPolicy.isPrivate) {
-        if (!privateMediaAvailability.isEnabled) {
-          continue;
-        }
-        if (groupRepo == null || identityRepo == null) {
-          continue;
-        }
-        if (msgRepo is GroupPrivateMediaLifecycleRepository) {
-          privateLifecycleRepository =
-              msgRepo as GroupPrivateMediaLifecycleRepository;
-        }
-        final identity = await identityRepo.loadIdentity();
-        if (identity == null || identity.peerId != msg.senderPeerId) {
-          continue;
-        }
-        final qualification = await qualifyCurrentPrivateGroupMediaSend(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          expectedParent: msg,
-          senderPeerId: identity.peerId,
-        );
-        final persistedRecipients = _privateRetryRecipientPeerIds(
-          msg.inboxRetryPayload!,
-        );
-        if (qualification == null ||
-            persistedRecipients == null ||
-            !_matchesCurrentPrivateRetryRecipients(
-              persisted: persistedRecipients,
-              currentRemoteRecipients: qualification.recipientPeerIds,
-              senderPeerId: identity.peerId,
-            )) {
-          continue;
-        }
-      }
-
-      await storeGroupOfflineReplayFromRetryPayload(
-        bridge: bridge,
-        inboxRetryPayload: msg.inboxRetryPayload!,
-      );
-
-      if (msg.privateMediaPolicy.isPrivate) {
-        final anchoredAt =
-            privateMediaNowMs?.call() ??
-            DateTime.now().toUtc().millisecondsSinceEpoch;
-        var anchored = false;
-        if (privateLifecycleRepository != null) {
-          anchored = await privateLifecycleRepository
-              .anchorOutgoingGroupPrivateMediaCustody(
-                msg.id,
-                nowMs: anchoredAt,
-              );
-        } else {
-          // Lightweight repositories used outside production do not expose
-          // the atomic lifecycle capability. Preserve their behavior without
-          // ever recreating a deleted or drifted row; production always takes
-          // the guarded branch above.
-          final current = await msgRepo.getMessage(msg.id);
-          if (current != null &&
-              current.mediaReceivedAt == null &&
-              sameExactGroupPrivateMediaDispatchParent(current, msg)) {
-            final expiresAt =
-                current.privateMediaPolicy.lifecycle ==
-                    GroupMediaLifecycle.disappearing
-                ? anchoredAt +
-                      (current.privateMediaPolicy.durationSeconds! * 1000)
-                : null;
-            await msgRepo.saveMessage(
-              current.copyWith(
-                mediaReceivedAt: anchoredAt,
-                mediaExpiresAt: expiresAt,
-                mediaLastCheckedAt: expiresAt == null ? null : anchoredAt,
-              ),
-            );
-            anchored = true;
-          }
-        }
-        if (anchored &&
-            msg.privateMediaPolicy.lifecycle ==
-                GroupMediaLifecycle.disappearing) {
-          signalGroupPrivateMediaExpiryChanged();
-        }
-      }
-
-      await msgRepo.updateInboxStored(msg.id, stored: true);
-      await msgRepo.updateInboxRetryPayload(msg.id, null);
-      await msgRepo.updateMessageStatus(msg.id, 'sent');
-      retriedCount++;
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
-        details: {
-          'messageId': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-        },
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_INBOX_STORE_ERROR',
-        details: {
-          'messageId': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-          'error': e.toString(),
-        },
-      );
-      // Non-fatal: continue to next message
-    }
+    Future<bool> retryCandidate() => _retryFailedGroupInboxMessageCandidate(
+      bridge: bridge,
+      msgRepo: msgRepo,
+      groupRepo: groupRepo,
+      identityRepo: identityRepo,
+      privateMediaAvailability: privateMediaAvailability,
+      privateMediaNowMs: privateMediaNowMs,
+      expected: msg,
+    );
+    final retried = groupRepo == null
+        ? await retryCandidate()
+        : (await runSelfRemovedGroupLifecycleLeaf<bool>(
+                groupRepo: groupRepo,
+                groupId: msg.groupId,
+                action: (_) => retryCandidate(),
+              )).value ==
+              true;
+    if (retried) retriedCount++;
   }
 
   for (final entry in reactionEntries) {
-    try {
-      await storeGroupOfflineReplayFromRetryPayload(
-        bridge: bridge,
-        inboxRetryPayload: entry.inboxRetryPayload,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_ERROR',
-        details: {
-          'reactionId': entry.reactionId.length > 8
-              ? entry.reactionId.substring(0, 8)
-              : entry.reactionId,
-          'error': e.toString(),
-        },
-      );
-      try {
-        await reactionReplayOutboxRepo!.updateEntryStatus(
-          entry.reactionId,
-          deliveryStatus: GroupReactionReplayOutboxStatus.failed,
-          lastError: e.toString(),
-        );
-      } catch (statusError) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_FAILED_ERROR',
-          details: {
-            'reactionId': entry.reactionId.length > 8
-                ? entry.reactionId.substring(0, 8)
-                : entry.reactionId,
-            'error': statusError.toString(),
-          },
-        );
-      }
-      continue;
-    }
-
-    try {
-      await reactionReplayOutboxRepo!.updateEntryStatus(
-        entry.reactionId,
-        deliveryStatus: GroupReactionReplayOutboxStatus.stored,
-      );
-      retriedCount++;
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_OK',
-        details: {
-          'reactionId': entry.reactionId.length > 8
-              ? entry.reactionId.substring(0, 8)
-              : entry.reactionId,
-          'action': entry.action,
-        },
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_STORED_ERROR',
-        details: {
-          'reactionId': entry.reactionId.length > 8
-              ? entry.reactionId.substring(0, 8)
-              : entry.reactionId,
-          'error': e.toString(),
-        },
-      );
-    }
+    Future<bool> retryCandidate() => _retryGroupReactionReplayCandidate(
+      bridge: bridge,
+      repository: reactionReplayOutboxRepo!,
+      expected: entry,
+    );
+    final retried = groupRepo == null
+        ? await retryCandidate()
+        : (await runSelfRemovedGroupLifecycleLeaf<bool>(
+                groupRepo: groupRepo,
+                groupId: entry.groupId,
+                action: (_) => retryCandidate(),
+              )).value ==
+              true;
+    if (retried) retriedCount++;
   }
 
   emitFlowEvent(
@@ -325,4 +182,246 @@ Future<int> retryFailedGroupInboxStores({
   );
 
   return retriedCount;
+}
+
+Future<bool> _retryFailedGroupInboxMessageCandidate({
+  required Bridge bridge,
+  required GroupMessageRepository msgRepo,
+  required GroupRepository? groupRepo,
+  required IdentityRepository? identityRepo,
+  required GroupPrivateMediaAvailability privateMediaAvailability,
+  required int Function()? privateMediaNowMs,
+  required GroupMessage expected,
+}) async {
+  try {
+    final current = await msgRepo.getMessage(expected.id);
+    if (current == null ||
+        !sameExactGroupPrivateMediaDispatchParent(current, expected)) {
+      return false;
+    }
+
+    GroupPrivateMediaLifecycleRepository? privateLifecycleRepository;
+    if (current.privateMediaPolicy.isUnsupported) return false;
+    if (current.privateMediaPolicy.isPrivate) {
+      if (!privateMediaAvailability.isEnabled ||
+          groupRepo == null ||
+          identityRepo == null) {
+        return false;
+      }
+      if (msgRepo is GroupPrivateMediaLifecycleRepository) {
+        privateLifecycleRepository =
+            msgRepo as GroupPrivateMediaLifecycleRepository;
+      }
+      final identity = await identityRepo.loadIdentity();
+      if (identity == null || identity.peerId != current.senderPeerId) {
+        return false;
+      }
+      final qualification = await qualifyCurrentPrivateGroupMediaSend(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        expectedParent: current,
+        senderPeerId: identity.peerId,
+      );
+      final persistedRecipients = _privateRetryRecipientPeerIds(
+        current.inboxRetryPayload!,
+      );
+      if (qualification == null ||
+          persistedRecipients == null ||
+          !_matchesCurrentPrivateRetryRecipients(
+            persisted: persistedRecipients,
+            currentRemoteRecipients: qualification.recipientPeerIds,
+            senderPeerId: identity.peerId,
+          )) {
+        return false;
+      }
+    }
+
+    await storeGroupOfflineReplayFromRetryPayload(
+      bridge: bridge,
+      inboxRetryPayload: current.inboxRetryPayload!,
+    );
+
+    final exactCompletion = msgRepo is GroupInboxStoreRetryCompletionRepository
+        ? msgRepo as GroupInboxStoreRetryCompletionRepository
+        : null;
+    final applied = exactCompletion != null
+        ? await exactCompletion.completeInboxStoreRetry(current)
+        : await _completeLegacyInboxStoreRetry(msgRepo, current);
+    if (!applied) return false;
+
+    if (current.privateMediaPolicy.isPrivate) {
+      final anchoredAt =
+          privateMediaNowMs?.call() ??
+          DateTime.now().toUtc().millisecondsSinceEpoch;
+      var anchored = false;
+      if (privateLifecycleRepository != null) {
+        anchored = await privateLifecycleRepository
+            .anchorOutgoingGroupPrivateMediaCustody(
+              current.id,
+              nowMs: anchoredAt,
+            );
+      } else {
+        final completed = current.copyWith(
+          status: 'sent',
+          inboxStored: true,
+          inboxRetryPayload: null,
+        );
+        final latest = await msgRepo.getMessage(current.id);
+        if (latest != null &&
+            latest.mediaReceivedAt == null &&
+            sameExactGroupPrivateMediaDispatchParent(latest, completed)) {
+          final expiresAt =
+              latest.privateMediaPolicy.lifecycle ==
+                  GroupMediaLifecycle.disappearing
+              ? anchoredAt + (latest.privateMediaPolicy.durationSeconds! * 1000)
+              : null;
+          await msgRepo.saveMessage(
+            latest.copyWith(
+              mediaReceivedAt: anchoredAt,
+              mediaExpiresAt: expiresAt,
+              mediaLastCheckedAt: expiresAt == null ? null : anchoredAt,
+            ),
+          );
+          anchored = true;
+        }
+      }
+      if (anchored &&
+          current.privateMediaPolicy.lifecycle ==
+              GroupMediaLifecycle.disappearing) {
+        signalGroupPrivateMediaExpiryChanged();
+      }
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
+      details: {
+        'messageId': current.id.length > 8
+            ? current.id.substring(0, 8)
+            : current.id,
+      },
+    );
+    return true;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_INBOX_STORE_ERROR',
+      details: {
+        'messageId': expected.id.length > 8
+            ? expected.id.substring(0, 8)
+            : expected.id,
+        'error': e.toString(),
+      },
+    );
+    return false;
+  }
+}
+
+Future<bool> _completeLegacyInboxStoreRetry(
+  GroupMessageRepository repository,
+  GroupMessage expected,
+) async {
+  final current = await repository.getMessage(expected.id);
+  if (current == null ||
+      !sameExactGroupPrivateMediaDispatchParent(current, expected)) {
+    return false;
+  }
+  await repository.updateInboxStored(expected.id, stored: true);
+  await repository.updateInboxRetryPayload(expected.id, null);
+  await repository.updateMessageStatus(expected.id, 'sent');
+  return true;
+}
+
+bool _sameReactionReplayCandidate(
+  GroupReactionReplayOutboxEntry current,
+  GroupReactionReplayOutboxEntry expected,
+) =>
+    current.reactionId == expected.reactionId &&
+    current.groupId == expected.groupId &&
+    current.messageId == expected.messageId &&
+    current.senderPeerId == expected.senderPeerId &&
+    current.emoji == expected.emoji &&
+    current.action == expected.action &&
+    current.inboxRetryPayload == expected.inboxRetryPayload &&
+    current.deliveryStatus == expected.deliveryStatus &&
+    current.lastError == expected.lastError &&
+    current.createdAt == expected.createdAt &&
+    current.updatedAt == expected.updatedAt;
+
+Future<bool> _retryGroupReactionReplayCandidate({
+  required Bridge bridge,
+  required GroupReactionReplayOutboxRepository repository,
+  required GroupReactionReplayOutboxEntry expected,
+}) async {
+  final current = await repository.getEntry(expected.reactionId);
+  if (current == null || !_sameReactionReplayCandidate(current, expected)) {
+    return false;
+  }
+  try {
+    await storeGroupOfflineReplayFromRetryPayload(
+      bridge: bridge,
+      inboxRetryPayload: current.inboxRetryPayload,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_ERROR',
+      details: {
+        'reactionId': current.reactionId.length > 8
+            ? current.reactionId.substring(0, 8)
+            : current.reactionId,
+        'error': e.toString(),
+      },
+    );
+    try {
+      await repository.updateEntryStatusIfExact(
+        current,
+        deliveryStatus: GroupReactionReplayOutboxStatus.failed,
+        lastError: e.toString(),
+      );
+    } catch (statusError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_FAILED_ERROR',
+        details: {
+          'reactionId': current.reactionId.length > 8
+              ? current.reactionId.substring(0, 8)
+              : current.reactionId,
+          'error': statusError.toString(),
+        },
+      );
+    }
+    return false;
+  }
+
+  try {
+    final completed = await repository.updateEntryStatusIfExact(
+      current,
+      deliveryStatus: GroupReactionReplayOutboxStatus.stored,
+    );
+    if (!completed) return false;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_OK',
+      details: {
+        'reactionId': current.reactionId.length > 8
+            ? current.reactionId.substring(0, 8)
+            : current.reactionId,
+        'action': current.action,
+      },
+    );
+    return true;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_STORED_ERROR',
+      details: {
+        'reactionId': current.reactionId.length > 8
+            ? current.reactionId.substring(0, 8)
+            : current.reactionId,
+        'error': e.toString(),
+      },
+    );
+    return false;
+  }
 }

@@ -213,4 +213,83 @@ void main() {
       expect(await dbLoadPendingGroupKeyRotation(db, 'group-2'), isNotNull);
     });
   });
+
+  test(
+    'v102 hides retained keys and refuses absent or marked key writes',
+    () async {
+      await db.execute('''
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY,
+  self_removed_at TEXT
+)
+''');
+      await db.insert('groups', {
+        'id': 'active-group',
+        'self_removed_at': null,
+      });
+      await db.insert('groups', {
+        'id': 'marked-group',
+        'self_removed_at': '2026-07-20T10:00:00.000Z',
+      });
+      await db.insert(
+        'group_keys',
+        makeKeyRow(groupId: 'marked-group', encryptedKey: 'retained-key'),
+      );
+
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(groupId: 'absent-group', keyGeneration: 2),
+      );
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(groupId: 'marked-group', keyGeneration: 2),
+      );
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(groupId: 'active-group', keyGeneration: 2),
+      );
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(groupId: 'absent-group', keyGeneration: 3),
+      );
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(groupId: 'marked-group', keyGeneration: 3),
+      );
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(groupId: 'active-group', keyGeneration: 3),
+      );
+
+      expect(
+        await db.query(
+          'group_keys',
+          where: 'group_id = ? AND key_generation = ?',
+          whereArgs: ['absent-group', 2],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'group_keys',
+          where: 'group_id = ? AND key_generation = ?',
+          whereArgs: ['marked-group', 2],
+        ),
+        isEmpty,
+      );
+      expect(
+        await dbLoadGroupKeyByGeneration(db, 'active-group', 2),
+        isNotNull,
+      );
+      expect(await dbLoadLatestGroupKey(db, 'marked-group'), isNull);
+      expect(await dbLoadGroupKeyByGeneration(db, 'marked-group', 1), isNull);
+      expect(await dbLoadAllGroupKeys(db, 'marked-group'), isEmpty);
+      expect(await dbLoadPendingGroupKeyRotation(db, 'absent-group'), isNull);
+      expect(await dbLoadPendingGroupKeyRotation(db, 'marked-group'), isNull);
+      expect(
+        await dbLoadPendingGroupKeyRotation(db, 'active-group'),
+        isNotNull,
+      );
+    },
+  );
 }

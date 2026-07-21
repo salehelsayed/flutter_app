@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:uuid/uuid.dart';
@@ -15,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
@@ -970,7 +970,9 @@ bool sameExactGroupPrivateMediaDispatchParent(
     durable.createdAt.toUtc() == expected.createdAt.toUtc() &&
     durable.wireEnvelope == expected.wireEnvelope &&
     durable.inboxStored == expected.inboxStored &&
-    durable.inboxRetryPayload == expected.inboxRetryPayload;
+    durable.inboxRetryPayload == expected.inboxRetryPayload &&
+    durable.retryAttemptCount == expected.retryAttemptCount &&
+    durable.nextEligibleAt?.toUtc() == expected.nextEligibleAt?.toUtc();
 
 /// Reloads and fail-closed qualifies the exact current private parent while
 /// returning the current roster-derived fanout snapshot.
@@ -1125,45 +1127,6 @@ Future<T?> runQualifiedPrivateGroupMediaInitialUpload<T>({
   return upload();
 }
 
-void _finalizeSuccessfulPublishInboxStoreInBackground({
-  required Future<bool> inboxFuture,
-  required GroupMessageRepository msgRepo,
-  required String messageId,
-}) {
-  unawaited(() async {
-    try {
-      final inboxOk = await inboxFuture;
-      if (inboxOk) {
-        await msgRepo.updateInboxStored(messageId, stored: true);
-        await msgRepo.updateInboxRetryPayload(messageId, null);
-        await msgRepo.updateMessageStatus(messageId, 'sent');
-      }
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_SEND_MSG_USE_CASE_INBOX_STORE_BACKGROUND_RESULT',
-        details: {
-          'messageId': messageId.length > 8
-              ? messageId.substring(0, 8)
-              : messageId,
-          'inboxOk': inboxOk,
-        },
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_SEND_MSG_USE_CASE_INBOX_STORE_BACKGROUND_ERROR',
-        details: {
-          'messageId': messageId.length > 8
-              ? messageId.substring(0, 8)
-              : messageId,
-          'error': e.toString(),
-        },
-      );
-    }
-  }());
-}
-
 /// Sends a message to a group.
 ///
 /// Owns optimistic persistence for ALL production callers:
@@ -1210,6 +1173,74 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   bool emitTimingEvent = true,
   bool includeSenderPeerIdInDurableRecipients = false,
   int Function()? privateMediaNowMs,
+  GroupMessage? expectedRetryParentBeforeDispatch,
+}) {
+  return runGroupMembershipMutationLocked(
+    groupId: groupId,
+    action: () => _sendGroupMessageAssumingMembershipPhaseHeld(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      text: text,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderUsername: senderUsername,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      messageId: messageId,
+      logicalDeliveryId: logicalDeliveryId,
+      messageIdFactory: messageIdFactory,
+      timestamp: timestamp,
+      quotedMessageId: quotedMessageId,
+      isForwarded: isForwarded,
+      privateMediaPolicy: privateMediaPolicy,
+      privateMediaAvailability: privateMediaAvailability,
+      expectedPrivateParentBeforeDispatch: expectedPrivateParentBeforeDispatch,
+      expectedRetryParentBeforeDispatch: expectedRetryParentBeforeDispatch,
+      mediaAttachments: mediaAttachments,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      emitTimingEvent: emitTimingEvent,
+      includeSenderPeerIdInDurableRecipients:
+          includeSenderPeerIdInDurableRecipients,
+      privateMediaNowMs: privateMediaNowMs,
+    ),
+  );
+}
+
+Future<(SendGroupMessageResult, GroupMessage?)>
+_sendGroupMessageAssumingMembershipPhaseHeld({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String text,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String senderUsername,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? messageId,
+  String? logicalDeliveryId,
+  GroupMessageIdFactory? messageIdFactory,
+  DateTime? timestamp,
+  String? quotedMessageId,
+  bool isForwarded = false,
+  GroupPrivateMediaPolicy privateMediaPolicy =
+      const GroupPrivateMediaPolicy.ordinary(),
+  GroupPrivateMediaAvailability privateMediaAvailability =
+      productionGroupPrivateMediaAvailability,
+  GroupMessage? expectedPrivateParentBeforeDispatch,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  bool emitTimingEvent = true,
+  bool includeSenderPeerIdInDurableRecipients = false,
+  int Function()? privateMediaNowMs,
+  GroupMessage? expectedRetryParentBeforeDispatch,
 }) async {
   int currentPrivateMediaNowMs() =>
       privateMediaNowMs?.call() ??
@@ -1253,7 +1284,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   // 1. Load group from repo (verify exists)
   final group = await groupRepo.getGroup(groupId);
-  if (group == null) {
+  if (group == null || group.selfRemovedAt != null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_NOT_FOUND',
@@ -1474,27 +1505,42 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.groupDissolved, null);
   }
-  final expectedPrivateParent = expectedPrivateParentBeforeDispatch;
-  String? resolvedMessageId;
-  if (privateMediaPolicy.isPrivate && expectedPrivateParent != null) {
-    final qualification = await qualifyCurrentPrivateGroupMediaSend(
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      expectedParent: expectedPrivateParent,
-      senderPeerId: senderPeerId,
-      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-      includeSenderPeerIdInDurableRecipients:
-          includeSenderPeerIdInDurableRecipients,
+  if (expectedPrivateParentBeforeDispatch != null &&
+      expectedRetryParentBeforeDispatch != null &&
+      !identical(
+        expectedPrivateParentBeforeDispatch,
+        expectedRetryParentBeforeDispatch,
+      )) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'conflicting_expected_parents'},
     );
-    final currentParent = await msgRepo.getMessage(expectedPrivateParent.id);
-    if (qualification == null ||
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final expectedDispatchParent =
+      expectedPrivateParentBeforeDispatch ?? expectedRetryParentBeforeDispatch;
+  String? resolvedMessageId;
+  if (expectedDispatchParent != null) {
+    final qualification = privateMediaPolicy.isPrivate
+        ? await qualifyCurrentPrivateGroupMediaSend(
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            expectedParent: expectedDispatchParent,
+            senderPeerId: senderPeerId,
+            inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+            includeSenderPeerIdInDurableRecipients:
+                includeSenderPeerIdInDurableRecipients,
+          )
+        : null;
+    final currentParent = await msgRepo.getMessage(expectedDispatchParent.id);
+    if ((privateMediaPolicy.isPrivate && qualification == null) ||
         currentParent == null ||
         !sameExactGroupPrivateMediaDispatchParent(
           currentParent,
-          expectedPrivateParent,
+          expectedDispatchParent,
         ) ||
         !_matchesExpectedPrivateGroupMediaRequest(
-          expected: expectedPrivateParent,
+          expected: expectedDispatchParent,
           requestedMessageId: messageId,
           groupId: groupId,
           senderPeerId: senderPeerId,
@@ -1510,7 +1556,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       );
       return (SendGroupMessageResult.unauthorized, currentParent);
     }
-    resolvedMessageId = expectedPrivateParent.id;
+    resolvedMessageId = expectedDispatchParent.id;
   } else {
     resolvedMessageId = await _resolveOutgoingMessageId(
       msgRepo: msgRepo,
@@ -1680,11 +1726,11 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           .toList(growable: false) ??
       const <MediaAttachment>[];
   final preExistingMessage = await msgRepo.getMessage(resolvedMessageId);
-  if (expectedPrivateParent != null &&
+  if (expectedDispatchParent != null &&
       (preExistingMessage == null ||
           !sameExactGroupPrivateMediaDispatchParent(
             preExistingMessage,
-            expectedPrivateParent,
+            expectedDispatchParent,
           ))) {
     emitGroupSendTiming(
       outcome: 'unauthorized',
@@ -1705,12 +1751,12 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     if (!mediaWereDurableBeforeParent) {
       throw StateError('outgoing group media pre-persist was rejected');
     }
-    if (expectedPrivateParent != null) {
+    if (expectedDispatchParent != null) {
       final currentParent = await msgRepo.getMessage(resolvedMessageId);
       if (currentParent == null ||
           !sameExactGroupPrivateMediaDispatchParent(
             currentParent,
-            expectedPrivateParent,
+            expectedDispatchParent,
           )) {
         emitGroupSendTiming(
           outcome: 'unauthorized',
@@ -2256,10 +2302,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   if (topicPeers == null) {
     // Missing topicPeers key — legacy success (backward compat, assume peers > 0)
-    if (inboxResult == null) {
-      await Future<void>.value();
-    }
-    final resolvedInboxOk = inboxResult;
+    final resolvedInboxOk = inboxResult ?? await inboxFuture;
     final finalMessage = _withPrivateMediaCustodyAnchor(
       prePersistMessage.copyWith(
         status: resolvedInboxOk == true ? 'sent' : 'pending',
@@ -2285,14 +2328,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           )
           .toList(growable: false),
     );
-
-    if (resolvedInboxOk == null) {
-      _finalizeSuccessfulPublishInboxStoreInBackground(
-        inboxFuture: inboxFuture,
-        msgRepo: msgRepo,
-        messageId: resolvedMessageId,
-      );
-    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -2328,10 +2363,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   if (topicPeers > 0) {
     // Normal success: explicit live peers make the message visibly sent.
     // Offline inbox custody remains tracked separately for retry.
-    if (inboxResult == null) {
-      await Future<void>.value();
-    }
-    final resolvedInboxOk = inboxResult;
+    final resolvedInboxOk = inboxResult ?? await inboxFuture;
     final finalMessage = _withPrivateMediaCustodyAnchor(
       prePersistMessage.copyWith(
         status: 'sent',
@@ -2355,14 +2387,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           )
           .toList(growable: false),
     );
-
-    if (resolvedInboxOk == null) {
-      _finalizeSuccessfulPublishInboxStoreInBackground(
-        inboxFuture: inboxFuture,
-        msgRepo: msgRepo,
-        messageId: resolvedMessageId,
-      );
-    }
 
     emitFlowEvent(
       layer: 'FL',

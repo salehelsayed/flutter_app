@@ -3,6 +3,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// The reason for calling rejoinGroupTopics.
@@ -24,7 +25,14 @@ enum RejoinReason {
 /// Per-group result of a single rejoin pass. Exposed so callers (and a future
 /// per-group Go ack) can reason about which specific groups are still
 /// un-recovered rather than only the batch aggregates.
-enum RejoinOutcome { joined, skippedNoKey, error, skippedDissolved, deferred }
+enum RejoinOutcome {
+  joined,
+  skippedNoKey,
+  error,
+  skippedDissolved,
+  skippedSelfRemoved,
+  deferred,
+}
 
 class RejoinGroupTopicsResult {
   final int joinedGroupCount;
@@ -121,7 +129,93 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     final groupStopwatch = Stopwatch()..start();
     final rejoinState = rejoinStates[group.id];
     try {
-      if (group.isDissolved) {
+      final guarded =
+          await runSelfRemovedGroupLifecycleLeaf<
+            ({
+              RejoinOutcome outcome,
+              int? keyEpoch,
+              int memberCount,
+              DateTime? dissolvedAt,
+            })
+          >(
+            groupRepo: groupRepo,
+            groupId: group.id,
+            action: (currentGroup) async {
+              if (currentGroup.isDissolved) {
+                return (
+                  outcome: RejoinOutcome.skippedDissolved,
+                  keyEpoch: null,
+                  memberCount: 0,
+                  dissolvedAt: currentGroup.dissolvedAt,
+                );
+              }
+
+              final keyInfo = await groupRepo.getLatestKey(group.id);
+              if (keyInfo == null) {
+                return (
+                  outcome: RejoinOutcome.skippedNoKey,
+                  keyEpoch: null,
+                  memberCount: 0,
+                  dissolvedAt: null,
+                );
+              }
+
+              // Finding 05 Phase 3: skip a group still inside its rejoin-backoff
+              // window. The shortlist is batch-loaded, but the external join still
+              // owns a fresh lifecycle read in this per-group phase.
+              if (rejoinState?.nextEligibleAt != null &&
+                  rejoinState!.nextEligibleAt!.isAfter(nowUtc)) {
+                return (
+                  outcome: RejoinOutcome.deferred,
+                  keyEpoch: keyInfo.keyGeneration,
+                  memberCount: 0,
+                  dissolvedAt: null,
+                );
+              }
+
+              final members = await groupRepo.getMembers(group.id);
+              final groupConfig = buildGroupConfigPayload(
+                currentGroup,
+                members,
+              );
+              await callGroupJoinWithConfig(
+                bridge,
+                groupId: group.id,
+                groupConfig: groupConfig,
+                groupKey: keyInfo.encryptedKey,
+                keyEpoch: keyInfo.keyGeneration,
+              );
+              if (rejoinState != null) {
+                try {
+                  await groupRepo.clearGroupRejoinState(group.id);
+                } catch (_) {}
+              }
+              return (
+                outcome: RejoinOutcome.joined,
+                keyEpoch: keyInfo.keyGeneration,
+                memberCount: members.length,
+                dissolvedAt: null,
+              );
+            },
+          );
+
+      if (!guarded.didRun) {
+        perGroupOutcomes[group.id] = RejoinOutcome.skippedSelfRemoved;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_SKIP_SELF_REMOVED',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+            'disposition': guarded.disposition.name,
+          },
+        );
+        continue;
+      }
+
+      final leaf = guarded.value!;
+      if (leaf.outcome == RejoinOutcome.skippedDissolved) {
         perGroupOutcomes[group.id] = RejoinOutcome.skippedDissolved;
         emitFlowEvent(
           layer: 'FL',
@@ -130,8 +224,8 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
             'groupId': group.id.length > 8
                 ? group.id.substring(0, 8)
                 : group.id,
-            if (group.dissolvedAt != null)
-              'dissolvedAt': group.dissolvedAt!.toUtc().toIso8601String(),
+            if (leaf.dissolvedAt != null)
+              'dissolvedAt': leaf.dissolvedAt!.toUtc().toIso8601String(),
           },
         );
         emitFlowEvent(
@@ -149,8 +243,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
         continue;
       }
 
-      final keyInfo = await groupRepo.getLatestKey(group.id);
-      if (keyInfo == null) {
+      if (leaf.outcome == RejoinOutcome.skippedNoKey) {
         skippedNoKeyCount++;
         perGroupOutcomes[group.id] = RejoinOutcome.skippedNoKey;
         emitFlowEvent(
@@ -177,12 +270,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
         continue;
       }
 
-      // Finding 05 Phase 3: skip a group still inside its rejoin-backoff window
-      // (a prior attempt failed); it retries once next_eligible_at passes. This
-      // does NOT block the node-wide ack — it was not attempted this pass so it
-      // is not an error (mirrors the no-key carve-out).
-      if (rejoinState?.nextEligibleAt != null &&
-          rejoinState!.nextEligibleAt!.isAfter(nowUtc)) {
+      if (leaf.outcome == RejoinOutcome.deferred) {
         deferredCount++;
         perGroupOutcomes[group.id] = RejoinOutcome.deferred;
         emitFlowEvent(
@@ -192,31 +280,14 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
             'groupId': group.id.length > 8
                 ? group.id.substring(0, 8)
                 : group.id,
-            'attempt': rejoinState.attemptCount,
+            'attempt': rejoinState!.attemptCount,
           },
         );
         continue;
       }
 
-      final members = await groupRepo.getMembers(group.id);
-
-      final groupConfig = buildGroupConfigPayload(group, members);
-
-      await callGroupJoinWithConfig(
-        bridge,
-        groupId: group.id,
-        groupConfig: groupConfig,
-        groupKey: keyInfo.encryptedKey,
-        keyEpoch: keyInfo.keyGeneration,
-      );
       joinedGroupCount++;
       perGroupOutcomes[group.id] = RejoinOutcome.joined;
-      if (rejoinState != null) {
-        // Healthy again — drop the backoff row (best-effort cleanup).
-        try {
-          await groupRepo.clearGroupRejoinState(group.id);
-        } catch (_) {}
-      }
 
       // Finding 07 (S2b / G4): now that this group's topic is rejoined, drain
       // any durable broadcasts (metadata/membership edits) that failed to leave
@@ -230,8 +301,8 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
         event: 'GROUP_REJOIN_TOPICS_JOINED',
         details: {
           'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
-          'keyEpoch': keyInfo.keyGeneration,
-          'memberCount': members.length,
+          'keyEpoch': leaf.keyEpoch,
+          'memberCount': leaf.memberCount,
         },
       );
       emitFlowEvent(
@@ -242,7 +313,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           'elapsedMs': groupStopwatch.elapsedMilliseconds,
           'outcome': 'joined',
           'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
-          'memberCount': members.length,
+          'memberCount': leaf.memberCount,
         },
       );
     } catch (e) {

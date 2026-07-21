@@ -1108,6 +1108,30 @@ abstract class AppLocalizations {
   /// **'You left the group, but its local history could not be fully removed.'**
   String get group_exit_cleanup_incomplete;
 
+  /// No description provided for @group_removed_delete_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this group from this device?'**
+  String get group_removed_delete_title;
+
+  /// No description provided for @group_removed_delete_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This deletes the retained messages from this device only. You will not leave or notify the group.'**
+  String get group_removed_delete_body;
+
+  /// No description provided for @group_removed_delete_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete from Device'**
+  String get group_removed_delete_action;
+
+  /// No description provided for @group_removed_delete_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t delete this group from this device. Try again.'**
+  String get group_removed_delete_failed;
+
   /// No description provided for @conversation_hint.
   ///
   /// In en, this message translates to:

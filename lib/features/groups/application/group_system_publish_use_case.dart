@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -40,7 +41,58 @@ Future<GroupSystemPublishResult> publishGroupSystemMessage({
   List<String> recipientPeerIds = const [],
   GroupMessageRepository? msgRepo,
   GroupMessage? timelineMessage,
+}) {
+  return runGroupMembershipMutationLocked(
+    groupId: groupId,
+    action: () => _publishGroupSystemMessageAssumingMembershipPhaseHeld(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      text: text,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      messageId: messageId,
+      replayPlaintext: replayPlaintext,
+      senderUsername: senderUsername,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      senderDevicePublicKey: senderDevicePublicKey,
+      senderKeyPackageId: senderKeyPackageId,
+      recipientPeerIds: recipientPeerIds,
+      msgRepo: msgRepo,
+      timelineMessage: timelineMessage,
+    ),
+  );
+}
+
+Future<GroupSystemPublishResult>
+_publishGroupSystemMessageAssumingMembershipPhaseHeld({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String text,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String messageId,
+  required String replayPlaintext,
+  String senderUsername = '',
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderDevicePublicKey,
+  String? senderKeyPackageId,
+  List<String> recipientPeerIds = const [],
+  GroupMessageRepository? msgRepo,
+  GroupMessage? timelineMessage,
 }) async {
+  final currentGroup = await groupRepo.getGroup(groupId);
+  if (currentGroup == null || currentGroup.selfRemovedAt != null) {
+    throw StateError(
+      'group system publish has no current membership authority',
+    );
+  }
+
   final publishResult = await callGroupPublish(
     bridge,
     groupId: groupId,

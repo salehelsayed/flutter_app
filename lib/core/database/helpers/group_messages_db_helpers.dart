@@ -1,12 +1,19 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
 import 'group_message_local_deletions_db_helpers.dart';
+import 'group_parent_write_guard.dart';
 
 const _groupRemovalCutoffMessageIdLike = 'sys-member_removed_cutoff:%';
 
 /// Inserts a group message into the database.
-Future<void> dbInsertGroupMessage(
+///
+/// Returns whether the requested message identity was accepted by the current
+/// parent authority. A locally deleted message, an absent/marked parent, or a
+/// conflicting message identity returns false without granting projection or
+/// outgoing-work authority to the caller.
+Future<bool> dbInsertGroupMessage(
   DatabaseExecutor db,
   Map<String, Object?> row,
 ) async {
@@ -25,16 +32,30 @@ Future<void> dbInsertGroupMessage(
         event: 'GROUP_MESSAGES_DB_INSERT_SKIPPED_LOCAL_DELETION',
         details: {'id': id.length > 8 ? id.substring(0, 8) : id},
       );
-      return;
+      return false;
     }
 
     try {
-      await db.insert('group_messages', row);
+      final inserted = await dbInsertOrdinaryGroupOwnedRow(
+        db,
+        table: 'group_messages',
+        row: row,
+      );
+      if (!inserted) {
+        emitFlowEvent(
+          layer: 'DB',
+          event: 'GROUP_MESSAGES_DB_INSERT_REFUSED_PARENT',
+          details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+        );
+        return false;
+      }
     } on DatabaseException catch (e) {
       if (!_isGroupMessageIdUniqueConflict(e)) {
         rethrow;
       }
-      await _handleDuplicateGroupMessageInsert(db, row);
+      if (!await _handleDuplicateGroupMessageInsert(db, row)) {
+        return false;
+      }
     }
 
     emitFlowEvent(
@@ -42,6 +63,7 @@ Future<void> dbInsertGroupMessage(
       event: 'GROUP_MESSAGES_DB_INSERT_SUCCESS',
       details: {'id': id.length > 8 ? id.substring(0, 8) : id},
     );
+    return true;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',
@@ -52,13 +74,49 @@ Future<void> dbInsertGroupMessage(
   }
 }
 
+/// The only low-level message insert allowed for a marked group. It accepts a
+/// visible self-removal timeline row bound to the exact current marker; absent,
+/// changed, or unmarked parents perform no write. Ordinary callers must use
+/// [dbInsertGroupMessage].
+Future<bool> dbInsertExactSelfRemovalTimelineMessage(
+  DatabaseExecutor db,
+  Map<String, Object?> row, {
+  required String expectedSelfRemovedAt,
+}) async {
+  final groupId = row['group_id'] as String? ?? '';
+  final id = row['id'] as String? ?? '';
+  if (groupId.isEmpty ||
+      !id.startsWith('sys-member_removed:$groupId:') ||
+      await dbIsGroupMessageLocallyDeleted(db, id)) {
+    return false;
+  }
+  try {
+    return await dbInsertExactMarkedGroupOwnedRow(
+      db,
+      table: 'group_messages',
+      row: row,
+      expectedSelfRemovedAt: expectedSelfRemovedAt,
+    );
+  } on DatabaseException catch (error) {
+    if (!_isGroupMessageIdUniqueConflict(error)) rethrow;
+    final existing = await db.query(
+      'group_messages',
+      where: 'id = ? AND group_id = ?',
+      whereArgs: [id, groupId],
+      limit: 1,
+    );
+    return existing.isNotEmpty &&
+        _sameGroupMessageIdentity(existing.single, row);
+  }
+}
+
 bool _isGroupMessageIdUniqueConflict(DatabaseException error) {
   final message = error.toString().toLowerCase();
   return message.contains('unique constraint failed') &&
       message.contains('group_messages.id');
 }
 
-Future<void> _handleDuplicateGroupMessageInsert(
+Future<bool> _handleDuplicateGroupMessageInsert(
   DatabaseExecutor db,
   Map<String, Object?> row,
 ) async {
@@ -75,34 +133,38 @@ Future<void> _handleDuplicateGroupMessageInsert(
 
   final existing = existingRows.first;
   if (!_sameGroupMessageIdentity(existing, row)) {
-    return;
+    return false;
   }
 
   final existingIncoming = _isIncomingGroupMessageRow(existing);
   final incoming = _isIncomingGroupMessageRow(row);
   if (!existingIncoming && !incoming) {
-    await _updateGroupMessageRow(db, row);
-    return;
+    return _updateGroupMessageRow(db, row);
   }
 
   if (existingIncoming && incoming) {
     if (_isRepairPlaceholderRow(existing) && !_isRepairPlaceholderRow(row)) {
-      await _updateGroupMessageRow(db, row);
-      return;
+      return _updateGroupMessageRow(db, row);
     }
     final existingQuote = existing['quoted_message_id'] as String?;
     final incomingQuote = row['quoted_message_id'] as String?;
     if ((existingQuote == null || existingQuote.isEmpty) &&
         incomingQuote != null &&
         incomingQuote.isNotEmpty) {
-      await db.update(
-        'group_messages',
-        {'quoted_message_id': incomingQuote},
-        where: 'id = ?',
-        whereArgs: [row['id']],
-      );
+      return await dbUpdateOrdinaryGroupOwnedRows(
+            db,
+            table: 'group_messages',
+            groupId: row['group_id'] as String? ?? '',
+            values: {'quoted_message_id': incomingQuote},
+            where:
+                "id = ? AND NOT (status = 'send_failed' "
+                'AND wire_envelope IS NULL AND inbox_retry_payload IS NULL)',
+            whereArgs: [row['id']],
+          ) >
+          0;
     }
   }
+  return true;
 }
 
 bool _sameGroupMessageIdentity(
@@ -130,18 +192,23 @@ bool _isRepairPlaceholderRow(Map<String, Object?> row) {
   return status == 'pending_key' || status == 'undecryptable';
 }
 
-Future<void> _updateGroupMessageRow(
+Future<bool> _updateGroupMessageRow(
   DatabaseExecutor db,
   Map<String, Object?> row,
 ) async {
   final updates = Map<String, Object?>.from(row)..remove('id');
-  if (updates.isEmpty) return;
-  await db.update(
-    'group_messages',
-    updates,
-    where: 'id = ?',
-    whereArgs: [row['id']],
-  );
+  if (updates.isEmpty) return true;
+  return await dbUpdateOrdinaryGroupOwnedRows(
+        db,
+        table: 'group_messages',
+        groupId: row['group_id'] as String? ?? '',
+        values: updates,
+        where:
+            "id = ? AND NOT (status = 'send_failed' "
+            'AND wire_envelope IS NULL AND inbox_retry_payload IS NULL)',
+        whereArgs: [row['id']],
+      ) >
+      0;
 }
 
 /// Loads a page of group messages, ordered by timestamp ASC, id ASC.
@@ -321,12 +388,17 @@ Future<List<Map<String, Object?>>> dbLoadAuthoredGroupMessagesForProjection(
   final normalizedAccountPeerId = accountPeerId.trim();
   if (normalizedAccountPeerId.isEmpty) return const [];
   if (limit <= 0) throw ArgumentError.value(limit, 'limit', 'must be positive');
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'gm.group_id',
+  );
   return db.rawQuery(
     '''
       SELECT gm.*
       FROM group_messages gm
       WHERE gm.sender_peer_id = ?
         AND gm.id NOT LIKE ?
+        AND $parent
         AND NOT EXISTS (
           SELECT 1
           FROM group_message_local_deletions deleted
@@ -648,11 +720,21 @@ Future<void> dbUpdateGroupMessageStatus(
   );
 
   try {
-    await db.update(
+    final existing = await db.query(
       'group_messages',
-      {'status': status},
+      columns: const ['group_id'],
       where: 'id = ?',
       whereArgs: [id],
+      limit: 1,
+    );
+    if (existing.isEmpty) return;
+    await dbUpdateOrdinaryGroupOwnedRows(
+      db,
+      table: 'group_messages',
+      groupId: existing.single['group_id'] as String? ?? '',
+      values: {'status': status},
+      where: "id = ? AND (status != 'send_failed' OR ? = 'send_failed')",
+      whereArgs: [id, status],
     );
 
     emitFlowEvent(
@@ -966,8 +1048,13 @@ Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
   DatabaseExecutor db, {
   int? limit,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   final sql = StringBuffer(
-    "SELECT * FROM group_messages WHERE status = 'failed' AND is_incoming = 0 ORDER BY timestamp ASC, id ASC",
+    "SELECT * FROM group_messages WHERE status = 'failed' "
+    'AND is_incoming = 0 AND $parent ORDER BY timestamp ASC, id ASC',
   );
   if (limit != null) {
     sql.write(' LIMIT ?');
@@ -986,12 +1073,17 @@ Future<List<Map<String, dynamic>>> dbLoadRetryableOutgoingGroupMessages(
   int? nowMs,
 }) async {
   final now = nowMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   // Finding 05 Phase 4: skip rows still inside their exponential-backoff
   // window. The terminal 'send_failed' status is intentionally NOT included so
   // an exhausted row is never auto-retried — only a manual retry re-arms it.
   final sql = StringBuffer(
     "SELECT * FROM group_messages WHERE status IN ('failed', 'pending') "
     'AND is_incoming = 0 '
+    'AND $parent '
     'AND (next_eligible_at IS NULL OR next_eligible_at <= ?) '
     'ORDER BY timestamp ASC, id ASC',
   );
@@ -1014,12 +1106,17 @@ Future<void> dbRecordGroupMessageRetryFailure(
   required int nextEligibleAtMs,
   required bool markTerminal,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   final statusClause = markTerminal ? ", status = 'send_failed'" : '';
   await db.rawUpdate(
     'UPDATE group_messages '
     'SET retry_attempt_count = retry_attempt_count + 1, '
     'next_eligible_at = ?$statusClause '
-    "WHERE id = ? AND is_incoming = 0 AND status IN ('failed', 'pending')",
+    "WHERE id = ? AND is_incoming = 0 AND status IN ('failed', 'pending') "
+    'AND $parent',
     [nextEligibleAtMs, messageId],
   );
 }
@@ -1029,10 +1126,14 @@ Future<void> dbRecordGroupMessageRetryFailure(
 /// transition (a reconnect always grants one immediate attempt). Leaves
 /// terminal `send_failed` rows untouched. Returns the number of rows re-armed.
 Future<int> dbClearGroupMessageRetryBackoff(DatabaseExecutor db) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   return db.rawUpdate(
     'UPDATE group_messages SET next_eligible_at = NULL '
     "WHERE is_incoming = 0 AND status IN ('failed', 'pending') "
-    'AND next_eligible_at IS NOT NULL',
+    'AND next_eligible_at IS NOT NULL AND $parent',
   );
 }
 
@@ -1044,10 +1145,17 @@ Future<void> dbResetGroupMessageRetryState(
   DatabaseExecutor db,
   String messageId,
 ) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   await db.rawUpdate(
     "UPDATE group_messages SET status = 'failed', retry_attempt_count = 0, "
     'next_eligible_at = NULL '
-    "WHERE id = ? AND is_incoming = 0 AND status = 'send_failed'",
+    "WHERE id = ? AND is_incoming = 0 AND status = 'send_failed' "
+    'AND ((wire_envelope IS NOT NULL AND length(wire_envelope) > 0) '
+    'OR (inbox_retry_payload IS NOT NULL AND length(inbox_retry_payload) > 0)) '
+    'AND $parent',
     [messageId],
   );
 }
@@ -1067,8 +1175,15 @@ Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
   DatabaseExecutor db, {
   int limit = 50,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   return db.rawQuery(
-    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending', 'queued_offline') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC, id ASC LIMIT ?",
+    "SELECT * FROM group_messages WHERE is_incoming = 0 "
+    "AND inbox_stored = 0 AND status IN ('sent', 'pending', 'queued_offline') "
+    'AND inbox_retry_payload IS NOT NULL AND $parent '
+    'ORDER BY timestamp ASC, id ASC LIMIT ?',
     [limit],
   );
 }
@@ -1095,6 +1210,10 @@ Future<int> dbTransitionGroupSendingToFailed(
   DatabaseExecutor db, {
   DateTime? olderThan,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   final hasMediaAttachments = (await db.rawQuery(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' "
     "AND name = 'media_attachments' LIMIT 1",
@@ -1111,6 +1230,7 @@ Future<int> dbTransitionGroupSendingToFailed(
       "WHERE (status = 'sending' "
       "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL)) "
       'AND is_incoming = 0 '
+      'AND $parent '
       '$pendingUploadExclusion',
     );
   }
@@ -1122,6 +1242,7 @@ Future<int> dbTransitionGroupSendingToFailed(
     "AND ((status = 'sending' "
     'AND COALESCE(last_send_attempt_at, timestamp) < ?) '
     "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL)) "
+    'AND $parent '
     '$pendingUploadExclusion',
     [threshold],
   );
@@ -1133,8 +1254,13 @@ Future<void> dbUpdateGroupMessageInboxStored(
   String id, {
   required bool stored,
 }) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   await db.rawUpdate(
-    'UPDATE group_messages SET inbox_stored = ? WHERE id = ?',
+    'UPDATE group_messages SET inbox_stored = ? '
+    "WHERE id = ? AND status != 'send_failed' AND $parent",
     [stored ? 1 : 0, id],
   );
 }
@@ -1145,8 +1271,13 @@ Future<void> dbUpdateGroupMessageInboxRetryPayload(
   String id,
   String? inboxRetryPayload,
 ) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   await db.rawUpdate(
-    'UPDATE group_messages SET inbox_retry_payload = ? WHERE id = ?',
+    'UPDATE group_messages SET inbox_retry_payload = ? '
+    "WHERE id = ? AND status != 'send_failed' AND $parent",
     [inboxRetryPayload, id],
   );
 }
@@ -1157,10 +1288,104 @@ Future<void> dbUpdateGroupMessageWireEnvelope(
   String id,
   String? wireEnvelope,
 ) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_messages.group_id',
+  );
   await db.rawUpdate(
-    'UPDATE group_messages SET wire_envelope = ? WHERE id = ?',
+    'UPDATE group_messages SET wire_envelope = ? '
+    "WHERE id = ? AND status != 'send_failed' AND $parent",
     [wireEnvelope, id],
   );
+}
+
+const _groupOutgoingRetryAuthorityFields = <String>[
+  'id',
+  'group_id',
+  'sender_peer_id',
+  'transport_peer_id',
+  'sender_username',
+  'text',
+  'timestamp',
+  'last_send_attempt_at',
+  'quoted_message_id',
+  'logical_delivery_id',
+  'key_generation',
+  'status',
+  'is_incoming',
+  'is_forwarded',
+  'media_policy_version',
+  'media_lifecycle',
+  'media_duration_seconds',
+  'media_protected',
+  'media_received_at',
+  'media_expires_at',
+  'media_last_checked_at',
+  'media_consumed_at',
+  'media_expired_at',
+  'media_cleanup_pending',
+  'created_at',
+  'wire_envelope',
+  'inbox_stored',
+  'inbox_retry_payload',
+  'retry_attempt_count',
+  'next_eligible_at',
+];
+
+bool _sameGroupOutgoingRetryAuthority(
+  Map<String, Object?> current,
+  Map<String, Object?> expected,
+) {
+  for (final field in _groupOutgoingRetryAuthorityFields) {
+    final left = current[field];
+    final right = expected[field];
+    if (left is num && right is num) {
+      if (left.toInt() != right.toInt()) return false;
+      continue;
+    }
+    if (left != right) return false;
+  }
+  return true;
+}
+
+/// Atomically commits custody for one exact group inbox-retry tuple.
+///
+/// The group predicate and complete message fingerprint are evaluated inside
+/// the same SQL transaction as the three-field completion. A B3 terminal row
+/// (or the same row observed after accepted re-entry) cannot be revived by a
+/// response that belongs to the earlier membership window.
+Future<bool> dbCompleteGroupInboxStoreRetry(
+  Database db,
+  Map<String, Object?> expected,
+) {
+  return dbWriteTransaction(db, (txn) async {
+    final messageId = expected['id'] as String? ?? '';
+    final groupId = expected['group_id'] as String? ?? '';
+    if (messageId.isEmpty ||
+        groupId.isEmpty ||
+        !await dbAllowsOrdinaryGroupWrite(txn, groupId)) {
+      return false;
+    }
+    final rows = await txn.query(
+      'group_messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty ||
+        !_sameGroupOutgoingRetryAuthority(rows.single, expected)) {
+      return false;
+    }
+    final count = await txn.rawUpdate(
+      "UPDATE group_messages SET inbox_stored = 1, "
+      "inbox_retry_payload = NULL, status = 'sent' "
+      "WHERE id = ? AND group_id = ? AND is_incoming = 0 "
+      "AND status != 'send_failed' AND inbox_stored = 0 "
+      'AND inbox_retry_payload = ?',
+      [messageId, groupId, expected['inbox_retry_payload']],
+    );
+    return count == 1;
+  });
 }
 
 // ---------------------------------------------------------------------------

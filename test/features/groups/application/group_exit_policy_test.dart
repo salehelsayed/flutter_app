@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
@@ -16,6 +17,8 @@ void main() {
   GroupModel group({
     GroupRole myRole = GroupRole.admin,
     bool isDissolved = false,
+    DateTime? selfRemovedAt,
+    DateTime? lastMembershipEventAt,
   }) => GroupModel(
     id: groupId,
     name: 'Orbit group',
@@ -25,6 +28,8 @@ void main() {
     createdBy: selfPeerId,
     myRole: myRole,
     isDissolved: isDissolved,
+    selfRemovedAt: selfRemovedAt,
+    lastMembershipEventAt: lastMembershipEventAt,
   );
 
   GroupMember member(String peerId, MemberRole role) => GroupMember(
@@ -184,6 +189,183 @@ void main() {
       reason: 'roster joinedAt/admin-add-only state is not accepted',
     );
   });
+
+  test(
+    'durably removed shell outranks stale pending-role and removed-admin snapshots',
+    () async {
+      for (final role in GroupRole.values) {
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          group(myRole: role, selfRemovedAt: now, lastMembershipEventAt: now),
+        );
+
+        final snapshot = await resolveGroupExitSnapshot(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          loadPendingBroadcasts: (_) async => [pending('member_role_updated')],
+        );
+
+        expect(
+          snapshot.disposition,
+          GroupExitDisposition.selfRemovedDeleteLocally,
+          reason: 'stale $role and pending-role state must not hide the shell',
+        );
+      }
+    },
+  );
+
+  test(
+    'removed authority ignores stale key cleanup residue but refuses missing marker self restored dissolved or newer membership',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+
+      Future<GroupExitDisposition> resolve() async =>
+          (await resolveGroupExitSnapshot(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            selfPeerId: selfPeerId,
+          )).disposition;
+
+      await groupRepo.saveGroup(
+        group(selfRemovedAt: now, lastMembershipEventAt: now),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: 'stale-cleanup-address',
+          createdAt: now,
+        ),
+      );
+      expect(await resolve(), GroupExitDisposition.selfRemovedDeleteLocally);
+
+      await groupRepo.updateGroup(group(lastMembershipEventAt: now));
+      expect(
+        await resolve(),
+        isNot(GroupExitDisposition.selfRemovedDeleteLocally),
+      );
+
+      await groupRepo.updateGroup(
+        group(selfRemovedAt: now, lastMembershipEventAt: now),
+      );
+      await groupRepo.saveMember(member(selfPeerId, MemberRole.writer));
+      expect(
+        await resolve(),
+        isNot(GroupExitDisposition.selfRemovedDeleteLocally),
+      );
+
+      await groupRepo.removeMember(groupId, selfPeerId);
+      await groupRepo.updateGroup(
+        group(
+          selfRemovedAt: now,
+          lastMembershipEventAt: now.add(const Duration(seconds: 1)),
+        ),
+      );
+      expect(
+        await resolve(),
+        isNot(GroupExitDisposition.selfRemovedDeleteLocally),
+      );
+
+      await groupRepo.updateGroup(
+        group(
+          isDissolved: true,
+          selfRemovedAt: now,
+          lastMembershipEventAt: now,
+        ),
+      );
+      expect(await resolve(), GroupExitDisposition.deleteDissolvedLocally);
+    },
+  );
+
+  test(
+    'fresh marked state fails closed on dependent read faults without blocking proven local deletion',
+    () async {
+      final groupRepo = _FaultingMembersGroupRepository();
+      await groupRepo.saveGroup(
+        group(selfRemovedAt: now, lastMembershipEventAt: now),
+      );
+
+      groupRepo.failMembers = true;
+      var pendingLoads = 0;
+      final memberFault = await resolveGroupExitSnapshot(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        loadPendingBroadcasts: (_) async {
+          pendingLoads++;
+          throw StateError('pending read must not follow roster failure');
+        },
+      );
+      expect(memberFault.disposition, GroupExitDisposition.noOp);
+      expect(memberFault.group?.selfRemovedAt, now);
+      expect(pendingLoads, 0);
+
+      groupRepo.failMembers = false;
+      final provenRemoved = await resolveGroupExitSnapshot(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        loadPendingBroadcasts: (_) async {
+          pendingLoads++;
+          throw StateError('stale pending state must not hide a removed shell');
+        },
+      );
+      expect(
+        provenRemoved.disposition,
+        GroupExitDisposition.selfRemovedDeleteLocally,
+      );
+      expect(pendingLoads, 0);
+
+      await groupRepo.saveMember(member(selfPeerId, MemberRole.writer));
+      final pendingFault = await resolveGroupExitSnapshot(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        loadPendingBroadcasts: (_) async {
+          pendingLoads++;
+          throw StateError('pending read failed');
+        },
+      );
+      expect(pendingFault.disposition, GroupExitDisposition.noOp);
+      expect(pendingLoads, 1);
+
+      await groupRepo.updateGroup(
+        group(
+          isDissolved: true,
+          selfRemovedAt: now,
+          lastMembershipEventAt: now,
+        ),
+      );
+      groupRepo.failMembers = true;
+      final dissolved = await resolveGroupExitSnapshot(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        loadPendingBroadcasts: (_) async {
+          pendingLoads++;
+          throw StateError('dissolved classification must not depend on queue');
+        },
+      );
+      expect(
+        dissolved.disposition,
+        GroupExitDisposition.deleteDissolvedLocally,
+      );
+      expect(pendingLoads, 1);
+    },
+  );
 }
 
 class _EvidenceMessageRepository extends InMemoryGroupMessageRepository {}
+
+class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
+  bool failMembers = false;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) {
+    if (failMembers) {
+      throw StateError('member read failed');
+    }
+    return super.getMembers(groupId);
+  }
+}

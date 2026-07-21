@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
@@ -395,12 +396,14 @@ Future<void> _drainGroupInbox({
   var sawTimestampedRetentionPayload = false;
 
   do {
-    final result = await callGroupInboxRetrieveWithCursor(
-      bridge,
-      groupId,
-      cursor,
-      pageSize,
+    final guardedPage = await runSelfRemovedGroupLifecycleLeaf<GroupInboxPage>(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      action: (_) =>
+          callGroupInboxRetrieveWithCursor(bridge, groupId, cursor, pageSize),
     );
+    if (!guardedPage.didRun) return;
+    final result = guardedPage.value!;
 
     final messages = result.messages;
     final relayNextCursor = result.cursor;
@@ -416,6 +419,25 @@ Future<void> _drainGroupInbox({
     var stopGroupDrain = false;
 
     final deferredUnknownSenderMessages = <Map<String, dynamic>>[];
+
+    Future<bool> hasFreshRouteAuthority(String routeGroupId) async {
+      final authority = await runSelfRemovedGroupLifecycleLeaf<bool>(
+        groupRepo: groupRepo,
+        groupId: routeGroupId,
+        action: (_) async => true,
+      );
+      if (authority.didRun) return true;
+      stopGroupDrain = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_ROUTE_AUTHORITY_LOST',
+        details: {
+          'groupId': _safeId(routeGroupId),
+          'disposition': authority.disposition.name,
+        },
+      );
+      return false;
+    }
 
     Future<bool> handleDecodeError(
       Object error,
@@ -632,6 +654,7 @@ Future<void> _drainGroupInbox({
       if (payload['type'] == 'group_reaction') {
         final reactionJson = payload['reaction'] as String? ?? '';
         if (reactionRepo != null && reactionJson.isNotEmpty) {
+          if (!await hasFreshRouteAuthority(groupId)) return;
           await handleIncomingGroupReaction(
             groupRepo: groupRepo,
             reactionRepo: reactionRepo,
@@ -684,6 +707,7 @@ Future<void> _drainGroupInbox({
           : transportSenderId;
 
       if (groupMessageListener != null && text.startsWith('{"__sys":')) {
+        if (!await hasFreshRouteAuthority(resolvedGroupId)) return;
         final sysWireMessageId = payload['messageId'] as String?;
         if (sysWireMessageId != null && sysWireMessageId.isNotEmpty) {
           phase1PersistedMessageIds.add(sysWireMessageId);
@@ -767,6 +791,7 @@ Future<void> _drainGroupInbox({
       }
 
       if (groupMessageListener != null) {
+        if (!await hasFreshRouteAuthority(resolvedGroupId)) return;
         final listenerWireMessageId = payload['messageId'] as String?;
         if (listenerWireMessageId != null && listenerWireMessageId.isNotEmpty) {
           phase1PersistedMessageIds.add(listenerWireMessageId);
@@ -818,6 +843,7 @@ Future<void> _drainGroupInbox({
       }
 
       final wireMessageId = payload['messageId'] as String?;
+      if (!await hasFreshRouteAuthority(resolvedGroupId)) return;
       if (wireMessageId != null && wireMessageId.isNotEmpty) {
         phase1PersistedMessageIds.add(wireMessageId);
       }
@@ -897,13 +923,18 @@ Future<void> _drainGroupInbox({
         if (await shouldSkipPreJoinReplay(msg)) {
           continue;
         }
-        payload = await decodeInboxMessage(
-          bridge,
-          groupRepo,
-          msg,
-          groupId,
+        final guardedPayload = await _decodeActiveGroupInboxMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          envelope: msg,
+          groupId: groupId,
           expectedRecipientPeerId: selfPeerId,
         );
+        if (!guardedPayload.didRun) {
+          stopGroupDrain = true;
+          break;
+        }
+        payload = guardedPayload.value!;
       } catch (e) {
         await handleDecodeError(e, msg, allowUnknownSenderDeferral: true);
         continue;
@@ -919,13 +950,18 @@ Future<void> _drainGroupInbox({
           if (await shouldSkipPreJoinReplay(msg)) {
             continue;
           }
-          payload = await decodeInboxMessage(
-            bridge,
-            groupRepo,
-            msg,
-            groupId,
+          final guardedPayload = await _decodeActiveGroupInboxMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            envelope: msg,
+            groupId: groupId,
             expectedRecipientPeerId: selfPeerId,
           );
+          if (!guardedPayload.didRun) {
+            stopGroupDrain = true;
+            break;
+          }
+          payload = guardedPayload.value!;
         } catch (e) {
           await handleDecodeError(e, msg, allowUnknownSenderDeferral: false);
           continue;
@@ -1259,43 +1295,86 @@ Future<void> _repairHistoryGapsFromPage({
 
   for (final gap in gaps.where((gap) => gap.groupId == groupId)) {
     // Detection already persisted in Phase 2a; just transition to repairing.
-    await historyGapRepairRepo.markRepairing(
-      groupId: gap.groupId,
-      gapId: gap.gapId,
-    );
+    final started =
+        await runSelfRemovedGroupLifecycleLeaf<GroupHistoryGapRepair?>(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          action: (_) async {
+            final current = await historyGapRepairRepo.getRepair(
+              groupId: gap.groupId,
+              gapId: gap.gapId,
+            );
+            if (current == null || current.isTerminal) return null;
+            final next = current.copyWith(
+              status: groupHistoryGapRepairStatusRepairing,
+              failureReason: null,
+              updatedAt: DateTime.now().toUtc(),
+            );
+            final replaced = await replaceGroupHistoryGapRepairIfExact(
+              historyGapRepairRepo,
+              expected: current,
+              replacement: next,
+            );
+            if (!replaced) return null;
+            return historyGapRepairRepo.getRepair(
+              groupId: gap.groupId,
+              gapId: gap.gapId,
+            );
+          },
+        );
+    if (!started.didRun) continue;
+    final startedRepair = started.value;
+    if (startedRepair == null) continue;
+    var expectedRepair = startedRepair;
 
     final authorizedSources = <String>[];
+    var repairAuthorityLost = false;
     for (final sourcePeerId in gap.candidateSourcePeerIds) {
       if (!authorizedPeerIds.contains(sourcePeerId)) {
-        await historyGapRepairRepo.recordAttempt(
-          groupId: gap.groupId,
-          gapId: gap.gapId,
+        final next = await _recordHistoryGapAttemptIfActive(
+          groupRepo: groupRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          expected: expectedRepair,
           sourcePeerId: sourcePeerId,
           lastError: 'unauthorized_source',
         );
+        if (next == null) {
+          repairAuthorityLost = true;
+          break;
+        }
+        expectedRepair = next;
         continue;
       }
       if (normalizedSelfPeerId != null &&
           normalizedSelfPeerId.isNotEmpty &&
           sourcePeerId == normalizedSelfPeerId) {
-        await historyGapRepairRepo.recordAttempt(
-          groupId: gap.groupId,
-          gapId: gap.gapId,
+        final next = await _recordHistoryGapAttemptIfActive(
+          groupRepo: groupRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          expected: expectedRepair,
           sourcePeerId: sourcePeerId,
           lastError: 'local_source_skipped',
         );
+        if (next == null) {
+          repairAuthorityLost = true;
+          break;
+        }
+        expectedRepair = next;
         continue;
       }
       if (!authorizedSources.contains(sourcePeerId)) {
         authorizedSources.add(sourcePeerId);
       }
     }
+    if (repairAuthorityLost) continue;
 
     if (authorizedSources.isEmpty) {
-      await historyGapRepairRepo.markFailed(
-        groupId: gap.groupId,
-        gapId: gap.gapId,
-        reason: 'no_authorized_sources',
+      await _finalizeHistoryGapIfActive(
+        groupRepo: groupRepo,
+        historyGapRepairRepo: historyGapRepairRepo,
+        expected: expectedRepair,
+        status: groupHistoryGapRepairStatusFailed,
+        failureReason: 'no_authorized_sources',
       );
       continue;
     }
@@ -1303,28 +1382,80 @@ Future<void> _repairHistoryGapsFromPage({
     var repaired = false;
     var lastError = 'no_matching_source';
     for (final sourcePeerId in authorizedSources) {
-      await historyGapRepairRepo.recordAttempt(
-        groupId: gap.groupId,
-        gapId: gap.gapId,
-        sourcePeerId: sourcePeerId,
-        lastError: null,
-      );
-
-      late final GroupHistoryRepairRangeResult repairResult;
-      try {
-        repairResult = await requestHistoryRepairRange(
-          gap: gap,
-          sourcePeerId: sourcePeerId,
-          limit: pageSize,
-        );
-      } catch (e) {
+      final guardedRequest =
+          await runSelfRemovedGroupLifecycleLeaf<
+            ({
+              GroupHistoryRepairRangeResult? result,
+              Object? error,
+              GroupHistoryGapRepair expected,
+            })?
+          >(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            action: (_) async {
+              final current = await historyGapRepairRepo.getRepair(
+                groupId: gap.groupId,
+                gapId: gap.gapId,
+              );
+              final currentSource = await groupRepo.getMember(
+                groupId,
+                sourcePeerId,
+              );
+              if (current == null ||
+                  currentSource == null ||
+                  !sameExactGroupHistoryGapRepair(current, expectedRepair)) {
+                return null;
+              }
+              final next = _historyGapAttemptReplacement(
+                current,
+                sourcePeerId: sourcePeerId,
+                lastError: null,
+              );
+              final replaced = await replaceGroupHistoryGapRepairIfExact(
+                historyGapRepairRepo,
+                expected: current,
+                replacement: next,
+              );
+              if (!replaced) return null;
+              final carried = await historyGapRepairRepo.getRepair(
+                groupId: gap.groupId,
+                gapId: gap.gapId,
+              );
+              if (carried == null) return null;
+              try {
+                final result = await requestHistoryRepairRange(
+                  gap: gap,
+                  sourcePeerId: sourcePeerId,
+                  limit: pageSize,
+                );
+                return (result: result, error: null, expected: carried);
+              } catch (error) {
+                return (result: null, error: error, expected: carried);
+              }
+            },
+          );
+      if (!guardedRequest.didRun) return;
+      final requested = guardedRequest.value;
+      if (requested == null) {
+        repairAuthorityLost = true;
+        break;
+      }
+      expectedRepair = requested.expected;
+      final requestError = requested.error;
+      if (requestError != null) {
         lastError = 'request_failed';
-        await historyGapRepairRepo.recordAttempt(
-          groupId: gap.groupId,
-          gapId: gap.gapId,
+        final next = await _recordHistoryGapAttemptIfActive(
+          groupRepo: groupRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          expected: expectedRepair,
           sourcePeerId: sourcePeerId,
           lastError: lastError,
         );
+        if (next == null) {
+          repairAuthorityLost = true;
+          break;
+        }
+        expectedRepair = next;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_HISTORY_GAP_REPAIR_SOURCE_REJECTED',
@@ -1332,11 +1463,12 @@ Future<void> _repairHistoryGapsFromPage({
             'groupId': _safeId(groupId),
             'gapId': _safeId(gap.gapId),
             'sourcePeerId': _safeId(sourcePeerId),
-            'reason': e.toString(),
+            'reason': requestError.toString(),
           },
         );
         continue;
       }
+      final repairResult = requested.result!;
 
       final validationError = _validateHistoryRepairResult(
         gap: gap,
@@ -1345,12 +1477,18 @@ Future<void> _repairHistoryGapsFromPage({
       );
       if (validationError != null) {
         lastError = validationError;
-        await historyGapRepairRepo.recordAttempt(
-          groupId: gap.groupId,
-          gapId: gap.gapId,
+        final next = await _recordHistoryGapAttemptIfActive(
+          groupRepo: groupRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          expected: expectedRepair,
           sourcePeerId: sourcePeerId,
           lastError: validationError,
         );
+        if (next == null) {
+          repairAuthorityLost = true;
+          break;
+        }
+        expectedRepair = next;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_HISTORY_GAP_REPAIR_SOURCE_REJECTED',
@@ -1377,20 +1515,29 @@ Future<void> _repairHistoryGapsFromPage({
 
       if (repairedMessageIds.length != repairResult.messages.length) {
         lastError = 'application_rejected_message';
-        await historyGapRepairRepo.recordAttempt(
-          groupId: gap.groupId,
-          gapId: gap.gapId,
+        final next = await _recordHistoryGapAttemptIfActive(
+          groupRepo: groupRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          expected: expectedRepair,
           sourcePeerId: sourcePeerId,
           lastError: lastError,
         );
+        if (next == null) {
+          repairAuthorityLost = true;
+          break;
+        }
+        expectedRepair = next;
         continue;
       }
 
-      await historyGapRepairRepo.markRepaired(
-        groupId: gap.groupId,
-        gapId: gap.gapId,
+      final completed = await _finalizeHistoryGapIfActive(
+        groupRepo: groupRepo,
+        historyGapRepairRepo: historyGapRepairRepo,
+        expected: expectedRepair,
+        status: groupHistoryGapRepairStatusRepaired,
         repairedMessageIds: repairedMessageIds,
       );
+      if (!completed) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HISTORY_GAP_REPAIR_DONE',
@@ -1405,14 +1552,119 @@ Future<void> _repairHistoryGapsFromPage({
       break;
     }
 
-    if (!repaired) {
-      await historyGapRepairRepo.markFailed(
-        groupId: gap.groupId,
-        gapId: gap.gapId,
-        reason: lastError,
+    if (!repaired && !repairAuthorityLost) {
+      await _finalizeHistoryGapIfActive(
+        groupRepo: groupRepo,
+        historyGapRepairRepo: historyGapRepairRepo,
+        expected: expectedRepair,
+        status: groupHistoryGapRepairStatusFailed,
+        failureReason: lastError,
       );
     }
   }
+}
+
+GroupHistoryGapRepair _historyGapAttemptReplacement(
+  GroupHistoryGapRepair current, {
+  required String sourcePeerId,
+  required String? lastError,
+}) {
+  final attempted = <String>{
+    ...current.attemptedSourcePeerIds,
+    sourcePeerId,
+  }.toList(growable: false);
+  return current.copyWith(
+    status: groupHistoryGapRepairStatusRepairing,
+    attemptedSourcePeerIds: attempted,
+    failureReason: lastError,
+    updatedAt: DateTime.now().toUtc(),
+  );
+}
+
+Future<GroupHistoryGapRepair?> _recordHistoryGapAttemptIfActive({
+  required GroupRepository groupRepo,
+  required GroupHistoryGapRepairRepository historyGapRepairRepo,
+  required GroupHistoryGapRepair expected,
+  required String sourcePeerId,
+  required String? lastError,
+}) async {
+  final guarded =
+      await runSelfRemovedGroupLifecycleLeaf<GroupHistoryGapRepair?>(
+        groupRepo: groupRepo,
+        groupId: expected.groupId,
+        action: (_) async {
+          final current = await historyGapRepairRepo.getRepair(
+            groupId: expected.groupId,
+            gapId: expected.gapId,
+          );
+          if (current == null ||
+              !sameExactGroupHistoryGapRepair(current, expected)) {
+            return null;
+          }
+          final next = _historyGapAttemptReplacement(
+            current,
+            sourcePeerId: sourcePeerId,
+            lastError: lastError,
+          );
+          final replaced = await replaceGroupHistoryGapRepairIfExact(
+            historyGapRepairRepo,
+            expected: current,
+            replacement: next,
+          );
+          if (!replaced) return null;
+          return historyGapRepairRepo.getRepair(
+            groupId: expected.groupId,
+            gapId: expected.gapId,
+          );
+        },
+      );
+  return guarded.didRun ? guarded.value : null;
+}
+
+Future<bool> _finalizeHistoryGapIfActive({
+  required GroupRepository groupRepo,
+  required GroupHistoryGapRepairRepository historyGapRepairRepo,
+  required GroupHistoryGapRepair expected,
+  required String status,
+  String? failureReason,
+  List<String> repairedMessageIds = const <String>[],
+}) async {
+  final guarded = await runSelfRemovedGroupLifecycleLeaf<bool>(
+    groupRepo: groupRepo,
+    groupId: expected.groupId,
+    action: (_) async {
+      final current = await historyGapRepairRepo.getRepair(
+        groupId: expected.groupId,
+        gapId: expected.gapId,
+      );
+      if (current == null ||
+          !sameExactGroupHistoryGapRepair(current, expected)) {
+        return false;
+      }
+      final now = DateTime.now().toUtc();
+      final replacement = status == groupHistoryGapRepairStatusRepaired
+          ? current.copyWith(
+              status: status,
+              repairedMessageIds: repairedMessageIds,
+              failureReason: null,
+              updatedAt: now,
+              repairedAt: now,
+              failedAt: null,
+            )
+          : current.copyWith(
+              status: status,
+              failureReason: failureReason,
+              updatedAt: now,
+              failedAt: now,
+            );
+      return replaceGroupHistoryGapRepairIfExact(
+        historyGapRepairRepo,
+        expected: current,
+        replacement: replacement,
+      );
+    },
+  );
+  return guarded.didRun && (guarded.value ?? false);
 }
 
 String? _validateHistoryRepairResult({
@@ -1450,13 +1702,15 @@ Future<List<String>> _applyRepairedHistoryMessages({
   for (final msg in messages) {
     late final Map<String, dynamic> payload;
     try {
-      payload = await decodeInboxMessage(
-        bridge,
-        groupRepo,
-        msg,
-        groupId,
+      final guardedPayload = await _decodeActiveGroupInboxMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        envelope: msg,
+        groupId: groupId,
         expectedRecipientPeerId: selfPeerId,
       );
+      if (!guardedPayload.didRun) return const <String>[];
+      payload = guardedPayload.value!;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1475,6 +1729,9 @@ Future<List<String>> _applyRepairedHistoryMessages({
     final mediaRaw = payload['media'] as List<dynamic>?;
     final media = mediaRaw?.cast<Map<String, dynamic>>();
     final resolvedGroupId = payload['groupId'] as String? ?? groupId;
+    if (resolvedGroupId != groupId) {
+      return const <String>[];
+    }
     final transportSenderId = msg['from'] as String? ?? '';
     final senderId =
         payload['senderId'] as String? ?? (msg['from'] as String? ?? '');
@@ -1493,6 +1750,18 @@ Future<List<String>> _applyRepairedHistoryMessages({
         : transportSenderId;
     final messageId = payload['messageId'] as String?;
     if (messageId == null || messageId.isEmpty) {
+      return const <String>[];
+    }
+
+    // Decrypt can be arbitrarily slow. Re-enter the membership phase only to
+    // make a fresh routing decision, then release it before invoking the
+    // listener/native handler (which may acquire the same phase itself).
+    final routeAuthority = await runSelfRemovedGroupLifecycleLeaf<bool>(
+      groupRepo: groupRepo,
+      groupId: resolvedGroupId,
+      action: (_) async => true,
+    );
+    if (!routeAuthority.didRun || routeAuthority.value != true) {
       return const <String>[];
     }
 
@@ -1726,6 +1995,27 @@ Future<Map<String, dynamic>> _decodeV3GroupMessageEnvelope({
     decoded['messageId'] = messageId;
   }
   return decoded;
+}
+
+Future<SelfRemovedGroupLifecycleResult<Map<String, dynamic>>>
+_decodeActiveGroupInboxMessage({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required Map<String, dynamic> envelope,
+  required String groupId,
+  String? expectedRecipientPeerId,
+}) {
+  return runSelfRemovedGroupLifecycleLeaf<Map<String, dynamic>>(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    action: (_) => decodeInboxMessage(
+      bridge,
+      groupRepo,
+      envelope,
+      groupId,
+      expectedRecipientPeerId: expectedRecipientPeerId,
+    ),
+  );
 }
 
 /// Decodes an inbox message from the relay's envelope format.

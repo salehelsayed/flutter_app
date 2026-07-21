@@ -20,6 +20,21 @@ const String sharedGroupReactionAuthoredTargetsKey =
 const String sharedGroupReactionLatestStatesKey =
     'group_reaction_latest_states_v1';
 
+typedef GroupReactionNotificationContextSnapshot = ({
+  List<GroupModel> groups,
+  Map<String, List<GroupMember>> membersByGroup,
+  Map<String, GroupKeyInfo?> latestKeysByGroup,
+});
+
+typedef LoadGroupReactionNotificationContextSnapshot =
+    Future<GroupReactionNotificationContextSnapshot> Function();
+
+typedef LoadGroupReactionNotificationAuthoredTargets =
+    Future<List<GroupMessage>> Function(
+      String accountPeerId, {
+      required int limit,
+    });
+
 /// Mirrors only recipient-owned group-reaction display and eligibility state.
 ///
 /// Reaction emoji remains inside the encrypted payload. Message text, group
@@ -32,6 +47,7 @@ class GroupReactionNotificationProjection {
   final int maxReactionComparands;
   Future<void> _tail = Future<void>.value();
   String? _expectedAccountPeerId;
+  final Set<String> _terminalGroupIds = <String>{};
 
   GroupReactionNotificationProjection({
     required SecureKeyStore store,
@@ -56,6 +72,9 @@ class GroupReactionNotificationProjection {
     final normalizedAccount = _nonEmpty(accountPeerId);
     final normalizedDevice = _nonEmpty(deviceId);
     final normalizedTransport = _nonEmpty(transportPeerId);
+    if (_expectedAccountPeerId != normalizedAccount) {
+      _terminalGroupIds.clear();
+    }
     _expectedAccountPeerId = normalizedAccount;
     return _enqueue(() async {
       if (normalizedAccount == null ||
@@ -108,38 +127,55 @@ class GroupReactionNotificationProjection {
 
   Future<void> clearForLogout() {
     _expectedAccountPeerId = null;
+    _terminalGroupIds.clear();
     return _enqueue(_deleteAllDocuments, propagateError: true);
   }
 
-  Future<void> upsertGroup(GroupModel group) => _enqueue(() async {
-    final contexts = await _readContexts();
-    if (!_ownsContexts(contexts)) return;
-    if (!_supportedGroupType(group.type)) {
-      contexts.groups.remove(group.id);
-      await _writeContexts(contexts);
-      return;
-    }
-
+  Future<void> upsertGroup(GroupModel group) {
     final groupId = group.id.trim();
-    final name = group.name.trim();
-    if (groupId.isEmpty || name.isEmpty) {
-      contexts.groups.remove(groupId);
-      await _writeContexts(contexts);
-      return;
+    if (group.selfRemovedAt != null && groupId.isNotEmpty) {
+      _terminalGroupIds.add(groupId);
     }
-    final previous = contexts.groups[groupId];
-    contexts.groups[groupId] = <String, Object?>{
-      'name': name,
-      'type': group.type.toValue(),
-      'muted': group.isMuted,
-      'archived': group.isArchived,
-      'dissolved': group.isDissolved || group.dissolvedAt != null,
-      if (previous?['keyEpoch'] is int)
-        'keyEpoch': previous!['keyEpoch'] as int,
-      'members': _copyMembers(previous?['members']),
-    };
-    await _writeContexts(contexts);
-  });
+    return _enqueue(() async {
+      final contexts = await _readContexts();
+      if (!_ownsContexts(contexts)) return;
+      if (group.selfRemovedAt != null) {
+        contexts.groups.remove(groupId);
+        await _writeContexts(contexts);
+        final targets = await _readTargets(
+          expectedAccountPeerId: contexts.accountPeerId,
+        );
+        targets.removeWhere((target) => target.groupId == groupId);
+        await _writeTargetsAndPruneComparands(contexts.accountPeerId, targets);
+        return;
+      }
+      if (!_supportedGroupType(group.type)) {
+        contexts.groups.remove(group.id);
+        await _writeContexts(contexts);
+        return;
+      }
+
+      final name = group.name.trim();
+      if (groupId.isEmpty || name.isEmpty) {
+        contexts.groups.remove(groupId);
+        await _writeContexts(contexts);
+        return;
+      }
+      final previous = contexts.groups[groupId];
+      _terminalGroupIds.remove(groupId);
+      contexts.groups[groupId] = <String, Object?>{
+        'name': name,
+        'type': group.type.toValue(),
+        'muted': group.isMuted,
+        'archived': group.isArchived,
+        'dissolved': group.isDissolved || group.dissolvedAt != null,
+        if (previous?['keyEpoch'] is int)
+          'keyEpoch': previous!['keyEpoch'] as int,
+        'members': _copyMembers(previous?['members']),
+      };
+      await _writeContexts(contexts);
+    });
+  }
 
   Future<void> removeGroup(String groupId) => _enqueue(() async {
     final contexts = await _readContexts();
@@ -152,6 +188,32 @@ class GroupReactionNotificationProjection {
     targets.removeWhere((target) => target.groupId == groupId);
     await _writeTargetsAndPruneComparands(contexts.accountPeerId, targets);
   });
+
+  /// Fail-closed variant used when group authority is being destroyed.
+  ///
+  /// Ordinary projection maintenance remains best effort, but a removed shell
+  /// cannot discard its retry addresses until notification authorization has
+  /// definitely been removed from the shared store.
+  Future<void> removeGroupStrict(String groupId) {
+    final normalizedGroupId = groupId.trim();
+    if (normalizedGroupId.isNotEmpty) {
+      // Register the terminal generation before queueing storage work. A
+      // backfill that already captured SQL rows can therefore never republish
+      // this context or any authored target after strict removal returns.
+      _terminalGroupIds.add(normalizedGroupId);
+    }
+    return _enqueue(() async {
+      final contexts = await _readContexts();
+      if (!_ownsContexts(contexts)) return;
+      contexts.groups.remove(normalizedGroupId);
+      await _writeContexts(contexts);
+      final targets = await _readTargets(
+        expectedAccountPeerId: contexts.accountPeerId,
+      );
+      targets.removeWhere((target) => target.groupId == normalizedGroupId);
+      await _writeTargetsAndPruneComparands(contexts.accountPeerId, targets);
+    }, propagateError: true);
+  }
 
   Future<void> upsertMember(GroupMember member) => _enqueue(() async {
     final contexts = await _readContexts();
@@ -226,12 +288,102 @@ class GroupReactionNotificationProjection {
     await _writeContexts(contexts);
   });
 
+  /// Strictly replaces one accepted group's complete notification context.
+  ///
+  /// Accepted post-removal re-entry must not publish group, roster, and key
+  /// authority through separate best-effort writes: a later write could fail
+  /// after an earlier one exposed a partial context. This method constructs
+  /// the complete replacement in memory, commits it with one queued document
+  /// write, and propagates storage failures to the authority owner so it can
+  /// perform its exact rollback. The terminal-generation guard is cleared only
+  /// after that write succeeds.
+  Future<void> replaceAcceptedGroupContextStrict({
+    required GroupModel group,
+    required Iterable<GroupMember> members,
+    required GroupKeyInfo key,
+  }) {
+    final groupId = group.id.trim();
+    final name = group.name.trim();
+    if (groupId.isEmpty ||
+        name.isEmpty ||
+        group.selfRemovedAt != null ||
+        !_supportedGroupType(group.type) ||
+        key.groupId != groupId ||
+        key.keyGeneration < 0) {
+      throw ArgumentError('Invalid accepted group projection material.');
+    }
+
+    final projectedMembers = <String, Map<String, Object?>>{};
+    for (final member in members) {
+      if (member.groupId != groupId) {
+        throw ArgumentError('Accepted roster contains another group.');
+      }
+      final peerId = member.peerId.trim();
+      final username = member.username?.trim() ?? '';
+      if (peerId.isEmpty || username.isEmpty) continue;
+      final devices = member.activeDevicesWithLegacyFallback();
+      projectedMembers[peerId] = <String, Object?>{
+        'username': username,
+        'role': member.role.toValue(),
+        'deviceIds': _sortedUnique(devices.map((device) => device.deviceId)),
+        'transportPeerIds': _sortedUnique(
+          devices.map((device) => device.transportPeerId),
+        ),
+      };
+    }
+
+    final replacement = <String, Object?>{
+      'name': name,
+      'type': group.type.toValue(),
+      'muted': group.isMuted,
+      'archived': group.isArchived,
+      'dissolved': group.isDissolved || group.dissolvedAt != null,
+      'keyEpoch': key.keyGeneration,
+      'members': projectedMembers,
+    };
+    return _enqueue(() async {
+      final contexts = await _readContexts();
+      if (!_ownsContexts(contexts)) return;
+      contexts.groups[groupId] = replacement;
+      await _writeContexts(contexts);
+      _terminalGroupIds.remove(groupId);
+    }, propagateError: true);
+  }
+
   /// Launch-time authoritative replacement from committed SQLCipher rows.
   Future<void> replaceContexts({
     required Iterable<GroupModel> groups,
     required Map<String, List<GroupMember>> membersByGroup,
     required Map<String, GroupKeyInfo?> latestKeysByGroup,
-  }) => _enqueue(() async {
+  }) => _enqueue(
+    () => _replaceContextsAssumingQueued(
+      groups: groups,
+      membersByGroup: membersByGroup,
+      latestKeysByGroup: latestKeysByGroup,
+    ),
+  );
+
+  /// Loads and replaces the launch snapshot as one projection-queue unit.
+  ///
+  /// Keeping the authoritative SQL read inside the queue prevents a snapshot
+  /// captured before terminal removal from being published after a later
+  /// accepted membership has replaced that terminal generation.
+  Future<void> replaceContextsFromAuthoritativeLoader(
+    LoadGroupReactionNotificationContextSnapshot load,
+  ) => _enqueue(() async {
+    final snapshot = await load();
+    await _replaceContextsAssumingQueued(
+      groups: snapshot.groups,
+      membersByGroup: snapshot.membersByGroup,
+      latestKeysByGroup: snapshot.latestKeysByGroup,
+    );
+  }, propagateError: true);
+
+  Future<void> _replaceContextsAssumingQueued({
+    required Iterable<GroupModel> groups,
+    required Map<String, List<GroupMember>> membersByGroup,
+    required Map<String, GroupKeyInfo?> latestKeysByGroup,
+  }) async {
     final current = await _readContexts();
     if (!_ownsContexts(current)) return;
     final accountPeerId = current.accountPeerId;
@@ -239,7 +391,12 @@ class GroupReactionNotificationProjection {
     final replacement = <String, Map<String, Object?>>{};
     final sortedGroups =
         groups
-            .where((group) => _supportedGroupType(group.type))
+            .where(
+              (group) =>
+                  group.selfRemovedAt == null &&
+                  !_terminalGroupIds.contains(group.id.trim()) &&
+                  _supportedGroupType(group.type),
+            )
             .toList(growable: false)
           ..sort((left, right) => left.id.compareTo(right.id));
     for (final group in sortedGroups) {
@@ -280,7 +437,7 @@ class GroupReactionNotificationProjection {
         groups: replacement,
       ),
     );
-  });
+  }
 
   Future<void> upsertAuthoredTarget(GroupMessage message) => _enqueue(() async {
     final contexts = await _readContexts();
@@ -289,7 +446,11 @@ class GroupReactionNotificationProjection {
     if (accountPeerId == null) return;
     final targets = await _readTargets(expectedAccountPeerId: accountPeerId);
     targets.removeWhere((target) => target.id == message.id);
-    if (_isAuthoredBy(message, accountPeerId)) {
+    final groupId = message.groupId.trim();
+    if (_isAuthoredBy(message, accountPeerId) &&
+        groupId.isNotEmpty &&
+        !_terminalGroupIds.contains(groupId) &&
+        contexts.groups.containsKey(groupId)) {
       targets.add(_ProjectedGroupTarget.fromMessage(message));
     }
     await _writeTargetsAndPruneComparands(
@@ -322,20 +483,45 @@ class GroupReactionNotificationProjection {
 
   /// Launch/retention self-heal from an authoritative committed-row query.
   Future<void> replaceAuthoredTargets(Iterable<GroupMessage> messages) =>
-      _enqueue(() async {
-        final contexts = await _readContexts();
-        if (!_ownsContexts(contexts)) return;
-        final accountPeerId = contexts.accountPeerId;
-        if (accountPeerId == null) return;
-        final targets = messages
-            .where((message) => _isAuthoredBy(message, accountPeerId))
-            .map(_ProjectedGroupTarget.fromMessage)
-            .toList(growable: true);
-        await _writeTargetsAndPruneComparands(
-          accountPeerId,
-          _boundedTargets(targets),
-        );
-      });
+      _enqueue(() => _replaceAuthoredTargetsAssumingQueued(messages));
+
+  /// Loads and replaces authored targets as one projection-queue unit.
+  ///
+  /// This gives the target backfill the same terminal-generation ordering as
+  /// the group-context backfill, so accepted re-entry cannot make an old
+  /// pre-removal target snapshot eligible again.
+  Future<void> replaceAuthoredTargetsFromAuthoritativeLoader(
+    LoadGroupReactionNotificationAuthoredTargets load,
+  ) => _enqueue(() async {
+    final initial = await _readContexts();
+    final accountPeerId = _ownedAccountPeerId(initial);
+    if (accountPeerId == null) return;
+    final messages = await load(accountPeerId, limit: maxAuthoredTargets);
+    await _replaceAuthoredTargetsAssumingQueued(messages);
+  }, propagateError: true);
+
+  Future<void> _replaceAuthoredTargetsAssumingQueued(
+    Iterable<GroupMessage> messages,
+  ) async {
+    final contexts = await _readContexts();
+    if (!_ownsContexts(contexts)) return;
+    final accountPeerId = contexts.accountPeerId;
+    if (accountPeerId == null) return;
+    final targets = messages
+        .where((message) {
+          final groupId = message.groupId.trim();
+          return _isAuthoredBy(message, accountPeerId) &&
+              groupId.isNotEmpty &&
+              !_terminalGroupIds.contains(groupId) &&
+              contexts.groups.containsKey(groupId);
+        })
+        .map(_ProjectedGroupTarget.fromMessage)
+        .toList(growable: true);
+    await _writeTargetsAndPruneComparands(
+      accountPeerId,
+      _boundedTargets(targets),
+    );
+  }
 
   /// Projects the committed last-writer-wins state for a reaction on a
   /// locally-authored group target. Non-group/direct targets are ignored.

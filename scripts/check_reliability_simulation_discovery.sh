@@ -495,6 +495,10 @@ classify_path() {
       record "group" "$path" "test" "238 GPL-01D group private-media v101 SQLCipher lifecycle migration device proof"
       return
       ;;
+    integration_test/group_self_removed_marker_sqlcipher_proof_test.dart)
+      record "group" "$path" "test" "263 GSR-102D removed-member shell v102 SQLCipher authority migration device proof"
+      return
+      ;;
     integration_test/group_private_media_platform_proof_test.dart)
       record "ignored" "$path" "ignored" "238 GPL-11 manual Android/iOS native group private-media capture proof outside reliability-sim"
       return

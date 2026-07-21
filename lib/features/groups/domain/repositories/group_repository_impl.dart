@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart'
+    as shell_db;
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
@@ -20,6 +24,11 @@ String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
 /// PushSharedKeyNames.groupMuted(groupId:).
 String sharedGroupMutedKeyName(String groupId) => 'group_muted:$groupId';
 
+bool _sameInstant(DateTime? left, DateTime? right) {
+  if (left == null || right == null) return left == null && right == null;
+  return left.toUtc().isAtSameMomentAs(right.toUtc());
+}
+
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl
     implements
@@ -28,7 +37,9 @@ class GroupRepositoryImpl
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
         PendingSiblingDeviceRepository,
-        GroupKeyRotationDraftRepository {
+        GroupKeyRotationDraftRepository,
+        GroupMembershipWatermarkRepository,
+        SelfRemovedGroupShellRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
@@ -38,6 +49,12 @@ class GroupRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadActiveGroups;
   final Future<void> Function(String id) dbArchiveGroup;
   final Future<void> Function(String id) dbUnarchiveGroup;
+  final Future<bool> Function({
+    required String groupId,
+    required String eventAt,
+    required String? eventId,
+  })?
+  dbAdvanceGroupMembershipWatermark;
   final Future<
     ({
       Map<String, Object?>? groupRow,
@@ -105,6 +122,125 @@ class GroupRepositoryImpl
   final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
   final GroupReactionNotificationProjection? groupReactionProjection;
+  final bool selfRemovedShellAuthorityEnabled;
+  final Future<shell_db.SelfRemovedGroupShellAuthoritySnapshot> Function({
+    required String groupId,
+    required String selfPeerId,
+  })?
+  dbLoadSelfRemovedGroupShellAuthority;
+  final Future<shell_db.SelfRemovalAuthorityCommitResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+    required DateTime removalAt,
+    required String removalEventId,
+  })?
+  dbCommitSelfRemovalAuthorityFn;
+  final Future<shell_db.SelfRemovedGroupKeyReferenceLoadResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+  })?
+  dbLoadRawSelfRemovedGroupKeyReferencesFn;
+  final Future<shell_db.SelfRemovedGroupShellMutationResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+    required List<shell_db.SelfRemovedGroupKeyReference> expectedReferences,
+  })?
+  dbFinalizeSelfRemovedGroupKeyReferencesFn;
+  final Future<shell_db.SelfRemovedGroupMediaParentLoadResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+    required int limit,
+  })?
+  dbLoadSelfRemovedGroupMediaParentsFn;
+  final Future<shell_db.SelfRemovedGroupFreshnessFloorAppendResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+  })?
+  dbAppendSelfRemovedGroupFreshnessFloorFn;
+  final Future<shell_db.SelfRemovedGroupFreshnessFloor?> Function(
+    String groupId,
+  )?
+  dbLoadSelfRemovedGroupFreshnessFloorFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedReentryPreparationResult>
+  Function({
+    required Map<String, Object?> groupRow,
+    required List<Map<String, Object?>> rosterRows,
+    required Map<String, Object?> stagedKeyRow,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required String bindingNonce,
+  })?
+  dbPrepareSelfRemovedGroupAcceptedReentryFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedReentryStageResult> Function({
+    required shell_db.SelfRemovedGroupAcceptedReentryPreparation preparation,
+    required Map<String, Object?> stagedKeyRow,
+  })?
+  dbStageSelfRemovedGroupAcceptedReentryKeyFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedReentryResult> Function({
+    required shell_db.SelfRemovedGroupAcceptedReentryPreparation preparation,
+    required Map<String, Object?> groupRow,
+    required List<Map<String, Object?>> rosterRows,
+    required Map<String, Object?> stagedKeyRow,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required String bindingNonce,
+  })?
+  dbCommitSelfRemovedGroupAcceptedReentryFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedReentryStageResult> Function({
+    required shell_db.SelfRemovedGroupAcceptedReentryPreparation preparation,
+    required Map<String, Object?> stagedKeyRow,
+  })?
+  dbFinalizeSelfRemovedGroupAcceptedReentryStagingFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedReentryStageResult> Function({
+    required String groupId,
+    required String selfPeerId,
+    required shell_db.SelfRemovedGroupAcceptedReentryBinding binding,
+  })?
+  dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedRollbackResult> Function({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required shell_db.SelfRemovedGroupAcceptedRollbackQualification
+    qualification,
+  })?
+  dbRollbackSelfRemovedGroupAcceptedReentryFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedRollbackQualificationResult>
+  Function({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+  })?
+  dbQualifySelfRemovedGroupAcceptedRollbackFn;
+  final Future<shell_db.SelfRemovedGroupFreshAcceptedRollbackPreparationResult>
+  Function({
+    required String groupId,
+    required String selfPeerId,
+    required int keyGeneration,
+    required DateTime expectedMembershipAt,
+    required DateTime? expectedMetadataAt,
+  })?
+  dbPrepareFreshAcceptedMaterializationRollbackFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedRollbackResult> Function({
+    required shell_db.SelfRemovedGroupFreshAcceptedRollbackPreparation
+    preparation,
+  })?
+  dbCommitFreshAcceptedMaterializationRollbackFn;
+  final Future<shell_db.SelfRemovedGroupAcceptedRetryAuthorizationDisposition>
+  Function({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+  })?
+  dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn;
+  final Future<shell_db.SelfRemovedGroupShellMutationResult> Function({
+    required shell_db.SelfRemovedGroupShellAuthoritySnapshot expected,
+    required shell_db.SelfRemovedGroupFreshnessFloor floor,
+    required DateTime deletedAt,
+  })?
+  dbPurgeSelfRemovedGroupShellFn;
 
   // Finding 05 Phase 3: bounded per-group rejoin retry state.
   final Future<List<Map<String, Object?>>> Function()?
@@ -115,6 +251,7 @@ class GroupRepositoryImpl
   final Future<void> Function(String groupId)? dbForceGroupRejoinEligibleFn;
 
   final Map<String, GroupKeyInfo> _pendingKeyRotationFallback = {};
+  final Map<String, Future<void>> _groupMutationTails = {};
 
   GroupRepositoryImpl({
     required this.dbInsertGroup,
@@ -125,6 +262,7 @@ class GroupRepositoryImpl
     required this.dbLoadActiveGroups,
     required this.dbArchiveGroup,
     required this.dbUnarchiveGroup,
+    this.dbAdvanceGroupMembershipWatermark,
     this.dbLoadGroupForwardAuthorizationSnapshot,
     required this.dbInsertGroupMember,
     required this.dbLoadAllGroupMembers,
@@ -157,6 +295,25 @@ class GroupRepositoryImpl
     this.groupKeyStore,
     this.pushSharedKeyStore,
     this.groupReactionProjection,
+    this.selfRemovedShellAuthorityEnabled = false,
+    this.dbLoadSelfRemovedGroupShellAuthority,
+    this.dbCommitSelfRemovalAuthorityFn,
+    this.dbLoadRawSelfRemovedGroupKeyReferencesFn,
+    this.dbFinalizeSelfRemovedGroupKeyReferencesFn,
+    this.dbLoadSelfRemovedGroupMediaParentsFn,
+    this.dbAppendSelfRemovedGroupFreshnessFloorFn,
+    this.dbLoadSelfRemovedGroupFreshnessFloorFn,
+    this.dbPrepareSelfRemovedGroupAcceptedReentryFn,
+    this.dbStageSelfRemovedGroupAcceptedReentryKeyFn,
+    this.dbCommitSelfRemovedGroupAcceptedReentryFn,
+    this.dbFinalizeSelfRemovedGroupAcceptedReentryStagingFn,
+    this.dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn,
+    this.dbRollbackSelfRemovedGroupAcceptedReentryFn,
+    this.dbQualifySelfRemovedGroupAcceptedRollbackFn,
+    this.dbPrepareFreshAcceptedMaterializationRollbackFn,
+    this.dbCommitFreshAcceptedMaterializationRollbackFn,
+    this.dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn,
+    this.dbPurgeSelfRemovedGroupShellFn,
   });
 
   // --- Groups ---
@@ -172,8 +329,10 @@ class GroupRepositoryImpl
     );
 
     try {
-      await dbInsertGroup(group.toMap());
-      await groupReactionProjection?.upsertGroup(group);
+      await _runGroupMutation(group.id, () async {
+        await dbInsertGroup(group.toMap());
+        await _projectAuthoritativeGroup(group.id);
+      });
 
       emitFlowEvent(
         layer: 'FL',
@@ -207,17 +366,29 @@ class GroupRepositoryImpl
 
   @override
   Future<void> updateGroup(GroupModel group) async {
-    await dbUpdateGroup(group.toMap());
-    await groupReactionProjection?.upsertGroup(group);
-    // 04-P0 SI-1 NSE: keep the shared-Keychain mute projection in sync so the
-    // iOS NSE honors mute (idempotent; no-op when pushSharedKeyStore is unset).
-    await _mirrorGroupMutedForPush(group.id, group.isMuted);
+    await _runGroupMutation(group.id, () async {
+      await dbUpdateGroup(group.toMap());
+      final authoritative = await _projectAuthoritativeGroup(group.id);
+      if (authoritative != null && authoritative.selfRemovedAt == null) {
+        // 04-P0 SI-1 NSE: keep the shared-Keychain mute projection in sync so
+        // the iOS NSE honors mute.
+        await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
+      }
+    });
   }
 
   @override
   Future<void> deleteGroup(String id) async {
-    await dbDeleteGroup(id);
-    await groupReactionProjection?.removeGroup(id);
+    await _runGroupMutation(id, () async {
+      final group = await _loadGroupModel(id);
+      if (group?.selfRemovedAt != null) {
+        throw StateError(
+          'A marked removed-member shell requires terminal cleanup.',
+        );
+      }
+      await dbDeleteGroup(id);
+      await groupReactionProjection?.removeGroup(id);
+    });
   }
 
   @override
@@ -228,14 +399,20 @@ class GroupRepositoryImpl
 
   @override
   Future<void> archiveGroup(String id) async {
-    await dbArchiveGroup(id);
-    await _mirrorGroupContextForPush(id);
+    await _runGroupMutation(id, () async {
+      await _requireOrdinaryGroupAuthority(id);
+      await dbArchiveGroup(id);
+      await _mirrorGroupContextForPush(id);
+    });
   }
 
   @override
   Future<void> unarchiveGroup(String id) async {
-    await dbUnarchiveGroup(id);
-    await _mirrorGroupContextForPush(id);
+    await _runGroupMutation(id, () async {
+      await _requireOrdinaryGroupAuthority(id);
+      await dbUnarchiveGroup(id);
+      await _mirrorGroupContextForPush(id);
+    });
   }
 
   @override
@@ -253,6 +430,713 @@ class GroupRepositoryImpl
     );
   }
 
+  @override
+  Future<bool> advanceGroupMembershipWatermark({
+    required String groupId,
+    required DateTime eventAt,
+    String? eventId,
+  }) {
+    final advance = dbAdvanceGroupMembershipWatermark;
+    if (advance == null) return Future<bool>.value(false);
+    return _runGroupMutation(
+      groupId,
+      () => advance(
+        groupId: groupId,
+        eventAt: eventAt.toUtc().toIso8601String(),
+        eventId: eventId,
+      ),
+    );
+  }
+
+  @override
+  Future<SelfRemovedShellAuthoritySnapshot> loadSelfRemovedShellAuthority({
+    required String groupId,
+    required String selfPeerId,
+  }) async {
+    final load = dbLoadSelfRemovedGroupShellAuthority;
+    if (load == null) {
+      throw StateError('Removed-shell persistence capability is unavailable.');
+    }
+    return _wrapShellAuthority(
+      await load(groupId: groupId, selfPeerId: selfPeerId),
+    );
+  }
+
+  @override
+  Future<SelfRemovalAuthorityCommitOutcome> commitSelfRemovalAuthority({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime expectedSelfJoinedAt,
+    required DateTime removalAt,
+    required String removalEventId,
+    required Future<void> Function() leaveNative,
+  }) async {
+    final load = dbLoadSelfRemovedGroupShellAuthority;
+    final commit = dbCommitSelfRemovalAuthorityFn;
+    if (load == null || commit == null) {
+      throw StateError('Removed-shell persistence capability is unavailable.');
+    }
+    return _runGroupMutation(groupId, () async {
+      final expected = await load(groupId: groupId, selfPeerId: selfPeerId);
+      if (expected.shape !=
+              shell_db
+                  .SelfRemovedGroupShellAuthorityShape
+                  .unmarkedSelfPresent ||
+          expected.selfJoinedAt == null ||
+          !expected.selfJoinedAt!.toUtc().isAtSameMomentAs(
+            expectedSelfJoinedAt.toUtc(),
+          )) {
+        return SelfRemovalAuthorityCommitOutcome.refusedStateChanged;
+      }
+      if (_isStaleRemovalAuthority(
+        removalAt: removalAt,
+        removalEventId: removalEventId,
+        lastAt: expected.lastMembershipEventAt,
+        lastEventId: expected.lastMembershipEventId,
+      )) {
+        return SelfRemovalAuthorityCommitOutcome.refusedStaleRemoval;
+      }
+      // Native leave is intentionally inside the repository mutation unit.
+      // SQL remains unchanged when this throws.
+      await leaveNative();
+      final result = await commit(
+        expected: expected,
+        removalAt: removalAt.toUtc(),
+        removalEventId: removalEventId,
+      );
+      return _mapCommitOutcome(result.disposition);
+    });
+  }
+
+  @override
+  Future<SelfRemovedShellMediaBatch> loadSelfRemovedShellMediaParents({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required int limit,
+  }) async {
+    final load = dbLoadSelfRemovedGroupMediaParentsFn;
+    if (load == null) {
+      throw StateError('Removed-shell media capability is unavailable.');
+    }
+    final result = await load(
+      expected: _unwrapShellAuthority(expected),
+      limit: limit,
+    );
+    return SelfRemovedShellMediaBatch(
+      outcome: _mapMutationOutcome(result.disposition),
+      authority: _wrapShellAuthority(result.authority),
+      parents: result.batch.parents
+          .map(
+            (parent) => SelfRemovedShellMediaParent(
+              messageId: parent.messageId,
+              timestamp: parent.timestamp,
+            ),
+          )
+          .toList(growable: false),
+      hasOverflow: result.batch.hasOverflow,
+    );
+  }
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> terminalizeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) async {
+    final loadReferences = dbLoadRawSelfRemovedGroupKeyReferencesFn;
+    final finalizeReferences = dbFinalizeSelfRemovedGroupKeyReferencesFn;
+    if (loadReferences == null || finalizeReferences == null) {
+      throw StateError('Removed-shell terminal capability is unavailable.');
+    }
+    return _runGroupMutation(expected.groupId, () async {
+      final rawExpected = _unwrapShellAuthority(expected);
+      final loaded = await loadReferences(expected: rawExpected);
+      if (!loaded.loaded) return _mapMutationOutcome(loaded.disposition);
+
+      // Fail closed in authorization order. Unlike ordinary mirror cleanup,
+      // none of these terminal deletions may swallow an error.
+      await groupReactionProjection?.removeGroupStrict(expected.groupId);
+      for (final reference in loaded.references) {
+        if (isSecureStoreReference(reference.encryptedKeyReference)) {
+          final primary = groupKeyStore;
+          if (primary == null) {
+            throw StateError('Primary group-key store is unavailable.');
+          }
+          await primary.delete(
+            secureStoreKeyFromReference(reference.encryptedKeyReference),
+          );
+        }
+      }
+      final mirror = pushSharedKeyStore;
+      if (mirror != null) {
+        for (final reference in loaded.references) {
+          await mirror.delete(
+            sharedGroupPushKeyName(reference.groupId, reference.keyGeneration),
+          );
+        }
+        await mirror.delete(sharedGroupMutedKeyName(expected.groupId));
+      }
+      final finalized = await finalizeReferences(
+        expected: rawExpected,
+        expectedReferences: loaded.references,
+      );
+      return _mapMutationOutcome(finalized.disposition);
+    });
+  }
+
+  @override
+  Future<SelfRemovedShellFreshnessFloor> appendSelfRemovedShellFreshnessFloor({
+    required SelfRemovedShellAuthoritySnapshot expected,
+  }) async {
+    final append = dbAppendSelfRemovedGroupFreshnessFloorFn;
+    if (append == null) {
+      throw StateError('Removed-shell freshness-floor capability unavailable.');
+    }
+    try {
+      final result = await _runGroupMutation(
+        expected.groupId,
+        () => append(expected: _unwrapShellAuthority(expected)),
+      );
+      return _wrapFreshnessFloor(result.floor);
+    } on shell_db.SelfRemovedGroupShellStateChangedException {
+      throw const SelfRemovedShellStateChangedException();
+    }
+  }
+
+  @override
+  Future<SelfRemovedShellFreshnessFloor?> loadSelfRemovedShellFreshnessFloor(
+    String groupId,
+  ) async {
+    final load = dbLoadSelfRemovedGroupFreshnessFloorFn;
+    if (load == null) {
+      throw StateError('Removed-shell freshness-floor capability unavailable.');
+    }
+    final floor = await load(groupId);
+    return floor == null ? null : _wrapFreshnessFloor(floor);
+  }
+
+  @override
+  Future<SelfRemovedAcceptedReentryResult> commitAcceptedReentry({
+    required GroupModel group,
+    required List<GroupMember> roster,
+    required GroupKeyInfo key,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required String bindingNonce,
+  }) async {
+    final prepare = dbPrepareSelfRemovedGroupAcceptedReentryFn;
+    final stage = dbStageSelfRemovedGroupAcceptedReentryKeyFn;
+    final commit = dbCommitSelfRemovedGroupAcceptedReentryFn;
+    final rollback = dbRollbackSelfRemovedGroupAcceptedReentryFn;
+    final qualifyRollback = dbQualifySelfRemovedGroupAcceptedRollbackFn;
+    final finalizeStaging = dbFinalizeSelfRemovedGroupAcceptedReentryStagingFn;
+    final finalizeRollback = dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn;
+    if (prepare == null ||
+        stage == null ||
+        commit == null ||
+        rollback == null ||
+        qualifyRollback == null ||
+        finalizeStaging == null ||
+        finalizeRollback == null) {
+      throw StateError('Accepted removed-shell capability is unavailable.');
+    }
+    if (group.id != key.groupId ||
+        roster.any((member) => member.groupId != group.id)) {
+      return const SelfRemovedAcceptedReentryResult(
+        outcome: SelfRemovedAcceptedReentryOutcome.refusedInvalidMaterial,
+      );
+    }
+
+    return _runGroupMutation(group.id, () async {
+      final staged = _acceptedStorageRowAddress(
+        key,
+        bindingNonce: bindingNonce,
+      );
+      shell_db.SelfRemovedGroupAcceptedReentryPreparation? preparation;
+      var addressStaged = false;
+      var committed = false;
+      try {
+        final prepared = await prepare(
+          groupRow: group.toMap(),
+          rosterRows: roster.map((member) => member.toMap()).toList(),
+          stagedKeyRow: staged.row,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        );
+        if (!prepared.prepared) {
+          return SelfRemovedAcceptedReentryResult(
+            outcome: _mapAcceptedReentryOutcome(prepared.disposition),
+          );
+        }
+        preparation = prepared.preparation!;
+
+        // The durable floor/origin now precede every destructive boundary.
+        // Retire old authority strictly while its SQL addresses remain the
+        // retry enumeration, then atomically replace them with the accepted
+        // address before primary material is written.
+        await groupReactionProjection?.removeGroupStrict(group.id);
+        await _terminalizeAcceptedPriorMaterial(
+          groupId: group.id,
+          references: preparation.retiringKeyReferences,
+        );
+        final stagedResult = await stage(
+          preparation: preparation,
+          stagedKeyRow: staged.row,
+        );
+        if (!stagedResult.staged) {
+          return SelfRemovedAcceptedReentryResult(
+            outcome: _mapAcceptedReentryOutcome(stagedResult.disposition),
+          );
+        }
+        addressStaged = true;
+        await _writeOwnedAcceptedStaging(staged);
+
+        final result = await commit(
+          preparation: preparation,
+          groupRow: group.toMap(),
+          rosterRows: roster.map((member) => member.toMap()).toList(),
+          stagedKeyRow: staged.row,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        );
+        if (!result.committed) {
+          await _purgePreparedAcceptedStaging(
+            groupId: group.id,
+            staged: staged,
+            preparation: preparation,
+            finalize: finalizeStaging,
+          );
+          addressStaged = false;
+          return SelfRemovedAcceptedReentryResult(
+            outcome: _mapAcceptedReentryOutcome(result.disposition),
+          );
+        }
+        committed = true;
+        await _projectAcceptedReentry(
+          groupId: group.id,
+          keyGeneration: key.keyGeneration,
+        );
+        return SelfRemovedAcceptedReentryResult(
+          outcome: SelfRemovedAcceptedReentryOutcome.committed,
+          acceptedAt: result.acceptedAt,
+        );
+      } catch (_) {
+        // A derived projection failure must not let native join observe a
+        // partially exposed accepted state. Use the durable authorization
+        // binding to restore the exact prior shape before surfacing failure.
+        if (committed) {
+          try {
+            final qualified = await qualifyRollback(
+              groupId: group.id,
+              selfPeerId: selfPeerId,
+              authorizationId: authorizationId,
+            );
+            final qualification = qualified.qualification;
+            if (!qualified.qualified || qualification == null) {
+              rethrow;
+            }
+            // Never cross back to marked/absent while accepted notification
+            // authorization may remain. If strict removal fails, preserve the
+            // committed accepted DB/key/binding as the only safe retry owner.
+            await groupReactionProjection?.removeGroupStrict(group.id);
+            final restored = await rollback(
+              groupId: group.id,
+              selfPeerId: selfPeerId,
+              authorizationId: authorizationId,
+              qualification: qualification,
+            );
+            if (restored.rolledBack) {
+              await _deleteAcceptedBindingMaterial(
+                groupId: group.id,
+                binding: restored.binding,
+              );
+              final binding = restored.binding;
+              if (binding == null) {
+                throw StateError(
+                  'Accepted rollback did not return its key address.',
+                );
+              }
+              final finalized = await finalizeRollback(
+                groupId: group.id,
+                selfPeerId: selfPeerId,
+                binding: binding,
+              );
+              if (!finalized.staged) {
+                throw StateError(
+                  'Accepted rollback key address changed before finalize.',
+                );
+              }
+            }
+          } catch (_) {
+            // Preserve the original failure. The durable binding remains the
+            // retry address when exact rollback could not finish here.
+          }
+        } else if (addressStaged && preparation != null) {
+          try {
+            await _purgePreparedAcceptedStaging(
+              groupId: group.id,
+              staged: staged,
+              preparation: preparation,
+              finalize: finalizeStaging,
+            );
+          } catch (_) {
+            // Preserve the original fault. The SQL address remains the
+            // marker/floor-bound retry enumeration if cleanup cannot finish.
+          }
+        }
+        rethrow;
+      }
+    });
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRollbackOutcome> rollbackAcceptedReentry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+  }) async {
+    final rollback = dbRollbackSelfRemovedGroupAcceptedReentryFn;
+    final qualify = dbQualifySelfRemovedGroupAcceptedRollbackFn;
+    final finalizeRollback = dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn;
+    if (rollback == null || qualify == null || finalizeRollback == null) {
+      throw StateError('Accepted removed-shell rollback is unavailable.');
+    }
+    return _runGroupMutation(groupId, () async {
+      final qualified = await qualify(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+      );
+      final qualification = qualified.qualification;
+      if (!qualified.qualified || qualification == null) {
+        return _mapAcceptedRollbackQualificationOutcome(qualified.disposition);
+      }
+      // Revoke recipient-owned notification authority before changing the DB
+      // back to a marked or absent shape. Failure leaves accepted SQL and its
+      // secure key address intact for an exact retry.
+      await groupReactionProjection?.removeGroupStrict(groupId);
+      final result = await rollback(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+        qualification: qualification,
+      );
+      if (result.rolledBack) {
+        await _deleteAcceptedBindingMaterial(
+          groupId: groupId,
+          binding: result.binding,
+        );
+        final binding = result.binding;
+        if (binding == null) {
+          throw StateError('Accepted rollback did not return its key address.');
+        }
+        final finalized = await finalizeRollback(
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          binding: binding,
+        );
+        if (!finalized.staged) {
+          throw StateError(
+            'Accepted rollback key address changed before finalize.',
+          );
+        }
+      } else {
+        // The coordinator excludes repository writers between qualification
+        // and CAS. A lower-level CAS refusal therefore signals out-of-band
+        // state change; restore projection from the surviving accepted state.
+        try {
+          final currentKey = await dbLoadLatestGroupKey(groupId);
+          if (currentKey != null) {
+            await _projectAcceptedReentry(
+              groupId: groupId,
+              keyGeneration: GroupKeyInfo.fromMap(currentKey).keyGeneration,
+            );
+          }
+        } catch (_) {
+          // Preserve the exact refusal. A later authoritative backfill can
+          // retry projection if the out-of-band writer also damaged material.
+        }
+      }
+      return _mapAcceptedRollbackOutcome(result.disposition);
+    });
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRetryAuthorizationOutcome>
+  authorizeAcceptedReentryRetry({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+  }) async {
+    final authorize = dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn;
+    if (authorize == null) {
+      throw StateError(
+        'Accepted removed-shell retry authorization is unavailable.',
+      );
+    }
+    return _runGroupMutation(groupId, () async {
+      final result = await authorize(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+        signedMembershipWatermark: signedMembershipWatermark,
+        signedIssuedAt: signedIssuedAt,
+        keyGeneration: keyGeneration,
+      );
+      return _mapAcceptedRetryAuthorizationOutcome(result);
+    });
+  }
+
+  @override
+  Future<SelfRemovedAcceptedNativeRetryResult> retryAcceptedReentryNative({
+    required String groupId,
+    required String selfPeerId,
+    required String authorizationId,
+    required String signedMembershipWatermark,
+    required String signedIssuedAt,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedFreshMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+    required Future<void> Function() joinNative,
+  }) async {
+    final authorize = dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn;
+    final loadAuthority = dbLoadSelfRemovedGroupShellAuthority;
+    final loadFloor = dbLoadSelfRemovedGroupFreshnessFloorFn;
+    if (authorize == null || loadAuthority == null || loadFloor == null) {
+      throw StateError(
+        'Accepted removed-shell retry authorization is unavailable.',
+      );
+    }
+    return _runGroupMutation(groupId, () async {
+      final durable = await authorize(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+        signedMembershipWatermark: signedMembershipWatermark,
+        signedIssuedAt: signedIssuedAt,
+        keyGeneration: keyGeneration,
+      );
+      final mapped = _mapAcceptedRetryAuthorizationOutcome(durable);
+      final group = await _loadGroupModel(groupId);
+      final selfRow = await dbLoadGroupMember(groupId, selfPeerId);
+      final latestRow = await dbLoadLatestGroupKey(groupId);
+      final latestKey = latestRow == null
+          ? null
+          : await _groupKeyFromRow(latestRow);
+      if (group == null ||
+          group.selfRemovedAt != null ||
+          group.isDissolved ||
+          selfRow == null ||
+          latestKey == null ||
+          latestKey.keyGeneration != keyGeneration ||
+          latestKey.encryptedKey != expectedKeyMaterial) {
+        return const SelfRemovedAcceptedNativeRetryResult(
+          outcome:
+              SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged,
+        );
+      }
+
+      if (mapped == SelfRemovedAcceptedRetryAuthorizationOutcome.authorized) {
+        await joinNative();
+        return SelfRemovedAcceptedNativeRetryResult(
+          outcome: mapped,
+          group: group,
+        );
+      }
+      if (mapped !=
+          SelfRemovedAcceptedRetryAuthorizationOutcome.refusedBindingMissing) {
+        return SelfRemovedAcceptedNativeRetryResult(outcome: mapped);
+      }
+
+      final floor = await loadFloor(groupId);
+      final authority = await loadAuthority(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+      );
+      if (floor != null ||
+          authority.shape !=
+              shell_db
+                  .SelfRemovedGroupShellAuthorityShape
+                  .unmarkedSelfPresent ||
+          authority.lastMembershipEventId != null ||
+          !_sameInstant(
+            group.lastMembershipEventAt,
+            expectedFreshMembershipAt,
+          ) ||
+          !_sameInstant(group.lastMetadataEventAt, latestAllowedMetadataAt)) {
+        return const SelfRemovedAcceptedNativeRetryResult(
+          outcome:
+              SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged,
+        );
+      }
+      await joinNative();
+      return SelfRemovedAcceptedNativeRetryResult(
+        outcome: SelfRemovedAcceptedRetryAuthorizationOutcome.authorized,
+        group: group,
+      );
+    });
+  }
+
+  @override
+  Future<void> commitFreshDirectJoin({
+    required GroupModel group,
+    required GroupMember selfMember,
+    required GroupKeyInfo key,
+    required Future<void> Function() joinNative,
+  }) async {
+    final loadAuthority = dbLoadSelfRemovedGroupShellAuthority;
+    final loadFloor = dbLoadSelfRemovedGroupFreshnessFloorFn;
+    if (loadAuthority == null || loadFloor == null) {
+      throw StateError('Fresh direct-join authority is unavailable.');
+    }
+    if (selfMember.groupId != group.id || key.groupId != group.id) {
+      throw ArgumentError('Fresh direct-join material has mixed group ids.');
+    }
+    await _runGroupMutation(group.id, () async {
+      final authority = await loadAuthority(
+        groupId: group.id,
+        selfPeerId: selfMember.peerId,
+      );
+      final floor = await loadFloor(group.id);
+      if (authority.shape !=
+              shell_db.SelfRemovedGroupShellAuthorityShape.absent ||
+          floor != null) {
+        throw StateError(
+          'Direct join is fresh-only for an absent group without a floor.',
+        );
+      }
+      await joinNative();
+
+      // Private assumes-coordinated persistence: no public repository method
+      // may reacquire this non-reentrant coordinator between native and writes.
+      await dbInsertGroup(group.toMap());
+      await dbInsertGroupMember(selfMember.toMap());
+      final storageRow = await _toStorageRow(key);
+      await dbInsertGroupKey(storageRow);
+      await _projectAcceptedReentry(
+        groupId: group.id,
+        keyGeneration: key.keyGeneration,
+      );
+    });
+  }
+
+  @override
+  Future<SelfRemovedAcceptedRollbackOutcome>
+  rollbackFreshAcceptedMaterialization({
+    required String groupId,
+    required String selfPeerId,
+    required int keyGeneration,
+    required String expectedKeyMaterial,
+    required DateTime expectedMembershipAt,
+    required DateTime? latestAllowedMetadataAt,
+  }) async {
+    final prepare = dbPrepareFreshAcceptedMaterializationRollbackFn;
+    final commit = dbCommitFreshAcceptedMaterializationRollbackFn;
+    final primary = groupKeyStore;
+    if (prepare == null || commit == null || primary == null) {
+      throw StateError('Fresh accepted rollback is unavailable.');
+    }
+    return _runGroupMutation(groupId, () async {
+      final prepared = await prepare(
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        keyGeneration: keyGeneration,
+        expectedMembershipAt: expectedMembershipAt.toUtc(),
+        expectedMetadataAt: latestAllowedMetadataAt?.toUtc(),
+      );
+      final preparation = prepared.preparation;
+      if (!prepared.prepared || preparation == null) {
+        return _mapAcceptedRollbackQualificationOutcome(prepared.disposition);
+      }
+
+      final primaryStoreKey = secureStoreKeyFromReference(
+        preparation.encryptedKeyReference,
+      );
+      final currentPrimaryMaterial = await primary.read(primaryStoreKey);
+      if (currentPrimaryMaterial != null &&
+          currentPrimaryMaterial != expectedKeyMaterial) {
+        return SelfRemovedAcceptedRollbackOutcome.refusedStateChanged;
+      }
+
+      // The projection and external key stores are revoked while the exact SQL
+      // fingerprint still owns their addresses. The final DB transaction then
+      // performs one all-or-nothing CAS deletion of group, roster, and key.
+      await groupReactionProjection?.removeGroupStrict(groupId);
+      var externalDeletionStarted = false;
+      try {
+        externalDeletionStarted = true;
+        await primary.delete(primaryStoreKey);
+        final mirror = pushSharedKeyStore;
+        if (mirror != null) {
+          await mirror.delete(
+            sharedGroupPushKeyName(groupId, preparation.keyGeneration),
+          );
+          await mirror.delete(sharedGroupMutedKeyName(groupId));
+        }
+        final result = await commit(preparation: preparation);
+        if (!result.rolledBack) {
+          try {
+            await _restoreFreshAcceptedMaterializationAfterRefusal(
+              groupId: groupId,
+              primaryStoreKey: primaryStoreKey,
+              expectedKeyMaterial: expectedKeyMaterial,
+            );
+          } catch (_) {
+            // Preserve the exact CAS refusal. SQL still retains the retry
+            // address if an out-of-band writer also prevents projection repair.
+          }
+        }
+        return _mapAcceptedRollbackOutcome(result.disposition);
+      } catch (_) {
+        if (externalDeletionStarted) {
+          try {
+            await _restoreFreshAcceptedMaterializationAfterRefusal(
+              groupId: groupId,
+              primaryStoreKey: primaryStoreKey,
+              expectedKeyMaterial: expectedKeyMaterial,
+            );
+          } catch (_) {
+            // Preserve the original fault. SQL still retains the exact address
+            // so a later authoritative repair can retry external projection.
+          }
+        }
+        rethrow;
+      }
+    });
+  }
+
+  @override
+  Future<SelfRemovedShellMutationOutcome> purgeSelfRemovedShell({
+    required SelfRemovedShellAuthoritySnapshot expected,
+    required SelfRemovedShellFreshnessFloor floor,
+    required DateTime deletedAt,
+  }) async {
+    final purge = dbPurgeSelfRemovedGroupShellFn;
+    if (purge == null) {
+      throw StateError('Removed-shell purge capability is unavailable.');
+    }
+    return _runGroupMutation(expected.groupId, () async {
+      final result = await purge(
+        expected: _unwrapShellAuthority(expected),
+        floor: _unwrapFreshnessFloor(floor),
+        deletedAt: deletedAt.toUtc(),
+      );
+      // Strict projection removal is an earlier, retryable step owned by
+      // terminalizeSelfRemovedShell. No fallible external write may follow the
+      // group-last SQL commit because its marker retry authority is now gone.
+      return _mapMutationOutcome(result.disposition);
+    });
+  }
+
   // --- Members ---
 
   @override
@@ -261,15 +1145,30 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(member.peerId, 'peerId', peerIdRejectReason);
     }
-    final duplicateRejectReason = groupMemberDuplicatePeerIdVariantRejectReason(
-      await getMembers(member.groupId),
-      member,
-    );
-    if (duplicateRejectReason != null) {
-      throw StateError(duplicateRejectReason);
-    }
-    await dbInsertGroupMember(member.toMap());
-    await groupReactionProjection?.upsertMember(member);
+    await _runGroupMutation(member.groupId, () async {
+      await _requireOrdinaryGroupAuthority(member.groupId);
+      final duplicateRejectReason =
+          groupMemberDuplicatePeerIdVariantRejectReason(
+            await getMembers(member.groupId),
+            member,
+          );
+      if (duplicateRejectReason != null) {
+        throw StateError(duplicateRejectReason);
+      }
+      await dbInsertGroupMember(member.toMap());
+      final authoritative = await _loadGroupModel(member.groupId);
+      final stored = await dbLoadGroupMember(member.groupId, member.peerId);
+      if ((selfRemovedShellAuthorityEnabled && authoritative == null) ||
+          authoritative?.selfRemovedAt != null) {
+        await groupReactionProjection?.removeGroup(member.groupId);
+        throw StateError('Group membership authority changed during save.');
+      }
+      if (stored != null) {
+        await groupReactionProjection?.upsertMember(
+          GroupMember.fromMap(stored),
+        );
+      }
+    });
   }
 
   @override
@@ -295,16 +1194,19 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
-    await dbUpdateGroupMemberRole(groupId, peerId, role.toValue());
-    final row = await dbLoadGroupMember(groupId, peerId);
-    if (row == null) {
-      await groupReactionProjection?.removeMember(
-        groupId: groupId,
-        peerId: peerId,
-      );
-    } else {
-      await groupReactionProjection?.upsertMember(GroupMember.fromMap(row));
-    }
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      await dbUpdateGroupMemberRole(groupId, peerId, role.toValue());
+      final row = await dbLoadGroupMember(groupId, peerId);
+      if (row == null) {
+        await groupReactionProjection?.removeMember(
+          groupId: groupId,
+          peerId: peerId,
+        );
+      } else {
+        await groupReactionProjection?.upsertMember(GroupMember.fromMap(row));
+      }
+    });
   }
 
   @override
@@ -313,11 +1215,14 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
-    await dbDeleteGroupMember(groupId, peerId);
-    await groupReactionProjection?.removeMember(
-      groupId: groupId,
-      peerId: peerId,
-    );
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      await dbDeleteGroupMember(groupId, peerId);
+      await groupReactionProjection?.removeMember(
+        groupId: groupId,
+        peerId: peerId,
+      );
+    });
   }
 
   @override
@@ -428,25 +1333,46 @@ class GroupRepositoryImpl
 
   @override
   Future<void> removeAllMembers(String groupId) async {
-    await dbDeleteAllGroupMembers(groupId);
-    await groupReactionProjection?.removeAllMembers(groupId);
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      await dbDeleteAllGroupMembers(groupId);
+      await groupReactionProjection?.removeAllMembers(groupId);
+    });
   }
 
   // --- Keys ---
 
   @override
   Future<void> saveKey(GroupKeyInfo key) async {
-    await dbInsertGroupKey(await _toStorageRow(key));
-    await groupReactionProjection?.upsertKeyEpoch(key);
-    final hydratedKey = await _hydrateGroupKey(key);
-    if (hydratedKey != null) {
-      await _mirrorGroupKeyForPush(hydratedKey);
-    }
-    await _pruneObsoleteKeys(key.groupId);
+    await _runGroupMutation(key.groupId, () async {
+      await _requireOrdinaryGroupAuthority(key.groupId);
+      final storageRow = await _toStorageRow(key);
+      await dbInsertGroupKey(storageRow);
+      final authoritative = await _loadGroupModel(key.groupId);
+      final stored = await dbLoadGroupKeyByGeneration(
+        key.groupId,
+        key.keyGeneration,
+      );
+      if ((selfRemovedShellAuthorityEnabled && authoritative == null) ||
+          authoritative?.selfRemovedAt != null ||
+          stored == null) {
+        await _deleteGroupKeyMirror(key);
+        await _deleteGroupKeyMaterial(key);
+        await groupReactionProjection?.removeGroup(key.groupId);
+        throw StateError('Group key authority changed during save.');
+      }
+      await groupReactionProjection?.upsertKeyEpoch(key);
+      final hydratedKey = await _hydrateGroupKey(key);
+      if (hydratedKey != null) {
+        await _mirrorGroupKeyForPush(hydratedKey);
+      }
+      await _pruneObsoleteKeys(key.groupId);
+    });
   }
 
   @override
   Future<GroupKeyInfo?> getLatestKey(String groupId) async {
+    if (!await _hasOrdinaryGroupAuthority(groupId)) return null;
     final row = await dbLoadLatestGroupKey(groupId);
     if (row == null) return null;
     return _groupKeyFromRow(row);
@@ -504,6 +1430,7 @@ class GroupRepositoryImpl
     String groupId,
     int generation,
   ) async {
+    if (!await _hasOrdinaryGroupAuthority(groupId)) return null;
     final row = await dbLoadGroupKeyByGeneration(groupId, generation);
     if (row == null) return null;
     return _groupKeyFromRow(row);
@@ -511,34 +1438,48 @@ class GroupRepositoryImpl
 
   @override
   Future<void> removeAllKeys(String groupId) async {
-    final existingKeys =
-        (pushSharedKeyStore == null && groupKeyStore == null) ||
-            dbLoadAllGroupKeys == null
-        ? const <Map<String, Object?>>[]
-        : await dbLoadAllGroupKeys!(groupId);
-    await dbDeleteAllGroupKeys(groupId);
-    await groupReactionProjection?.clearKeyEpoch(groupId);
-    await clearPendingKeyRotations(groupId);
-    for (final row in existingKeys) {
-      final key = GroupKeyInfo.fromMap(row);
-      await _deleteGroupKeyMirror(key);
-      await _deleteGroupKeyMaterial(key);
-    }
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      final existingKeys =
+          (pushSharedKeyStore == null && groupKeyStore == null) ||
+              dbLoadAllGroupKeys == null
+          ? const <Map<String, Object?>>[]
+          : await dbLoadAllGroupKeys!(groupId);
+      await dbDeleteAllGroupKeys(groupId);
+      await groupReactionProjection?.clearKeyEpoch(groupId);
+      await _clearPendingKeyRotationsAssumesCoordinated(groupId);
+      for (final row in existingKeys) {
+        final key = GroupKeyInfo.fromMap(row);
+        await _deleteGroupKeyMirror(key);
+        await _deleteGroupKeyMaterial(key);
+      }
+    });
   }
 
   @override
   Future<void> savePendingKeyRotation(GroupKeyInfo key) async {
-    final upsertPending = dbUpsertPendingGroupKeyRotation;
-    if (upsertPending == null) {
-      _pendingKeyRotationFallback[key.groupId] = key;
-      return;
-    }
-
-    await upsertPending(await _toStorageRow(key));
+    await _runGroupMutation(key.groupId, () async {
+      await _requireOrdinaryGroupAuthority(key.groupId);
+      final upsertPending = dbUpsertPendingGroupKeyRotation;
+      if (upsertPending == null) {
+        _pendingKeyRotationFallback[key.groupId] = key;
+        return;
+      }
+      await upsertPending(await _toStorageRow(key));
+      final authoritative = await _loadGroupModel(key.groupId);
+      final stored = await dbLoadPendingGroupKeyRotation?.call(key.groupId);
+      if ((selfRemovedShellAuthorityEnabled && authoritative == null) ||
+          authoritative?.selfRemovedAt != null ||
+          stored == null) {
+        await _deleteGroupKeyMaterial(key);
+        throw StateError('Group key-draft authority changed during save.');
+      }
+    });
   }
 
   @override
   Future<GroupKeyInfo?> getPendingKeyRotation(String groupId) async {
+    if (!await _hasOrdinaryGroupAuthority(groupId)) return null;
     final loadPending = dbLoadPendingGroupKeyRotation;
     if (loadPending == null) {
       return _pendingKeyRotationFallback[groupId];
@@ -554,35 +1495,18 @@ class GroupRepositoryImpl
     String groupId,
     int keyGeneration,
   ) async {
-    final deletePending = dbDeletePendingGroupKeyRotation;
-    if (deletePending == null) {
-      final pending = _pendingKeyRotationFallback[groupId];
-      if (pending?.keyGeneration == keyGeneration) {
-        _pendingKeyRotationFallback.remove(groupId);
-      }
-      return;
-    }
-
-    await deletePending(groupId, keyGeneration);
-    await _deletePendingKeyMaterialIfUncommitted(groupId, keyGeneration);
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      await _clearPendingKeyRotationAssumesCoordinated(groupId, keyGeneration);
+    });
   }
 
   @override
   Future<void> clearPendingKeyRotations(String groupId) async {
-    final pending = await getPendingKeyRotation(groupId);
-    final deletePending = dbDeletePendingGroupKeyRotations;
-    if (deletePending == null) {
-      _pendingKeyRotationFallback.remove(groupId);
-    } else {
-      await deletePending(groupId);
-    }
-
-    if (pending != null) {
-      await _deletePendingKeyMaterialIfUncommitted(
-        groupId,
-        pending.keyGeneration,
-      );
-    }
+    await _runGroupMutation(groupId, () async {
+      await _requireOrdinaryGroupAuthority(groupId);
+      await _clearPendingKeyRotationsAssumesCoordinated(groupId);
+    });
   }
 
   Future<void> mirrorAllKeysToSecureStore() async {
@@ -593,17 +1517,19 @@ class GroupRepositoryImpl
     final groups = await dbLoadAllGroups();
     for (final group in groups) {
       final groupId = group['id'] as String?;
-      if (groupId == null) {
-        continue;
-      }
-      final keyRows = await dbLoadAllGroupKeys!(groupId);
-      for (final row in keyRows) {
-        final key = await _groupKeyFromRow(row);
-        if (key == null) {
-          continue;
+      if (groupId == null) continue;
+      await _runGroupMutation(groupId, () async {
+        final authoritative = await dbLoadGroup(groupId);
+        if (authoritative == null || authoritative['self_removed_at'] != null) {
+          return;
         }
-        await _mirrorGroupKeyForPush(key);
-      }
+        final keyRows = await dbLoadAllGroupKeys!(groupId);
+        for (final row in keyRows) {
+          final key = await _groupKeyFromRow(row);
+          if (key == null) continue;
+          await _mirrorGroupKeyForPush(key);
+        }
+      });
     }
   }
 
@@ -618,11 +1544,15 @@ class GroupRepositoryImpl
     final groups = await dbLoadAllGroups();
     for (final group in groups) {
       final groupId = group['id'] as String?;
-      if (groupId == null) {
-        continue;
-      }
-      final isMuted = (group['is_muted'] as int? ?? 0) == 1;
-      await _mirrorGroupMutedForPush(groupId, isMuted);
+      if (groupId == null) continue;
+      await _runGroupMutation(groupId, () async {
+        final authoritative = await dbLoadGroup(groupId);
+        if (authoritative == null || authoritative['self_removed_at'] != null) {
+          return;
+        }
+        final isMuted = (authoritative['is_muted'] as int? ?? 0) == 1;
+        await _mirrorGroupMutedForPush(groupId, isMuted);
+      });
     }
   }
 
@@ -634,25 +1564,30 @@ class GroupRepositoryImpl
     final projection = groupReactionProjection;
     if (projection == null) return;
     try {
-      final rows = await dbLoadAllGroups();
-      final groups = rows.map(GroupModel.fromMap).toList(growable: false);
-      final membersByGroup = <String, List<GroupMember>>{};
-      final latestKeysByGroup = <String, GroupKeyInfo?>{};
-      for (final group in groups) {
-        final memberRows = await dbLoadAllGroupMembers(group.id);
-        membersByGroup[group.id] = memberRows
-            .map(GroupMember.fromMap)
+      await projection.replaceContextsFromAuthoritativeLoader(() async {
+        final rows = await dbLoadAllGroups();
+        final groups = rows
+            .map(GroupModel.fromMap)
+            .where((group) => group.selfRemovedAt == null)
             .toList(growable: false);
-        final keyRow = await dbLoadLatestGroupKey(group.id);
-        latestKeysByGroup[group.id] = keyRow == null
-            ? null
-            : GroupKeyInfo.fromMap(keyRow);
-      }
-      await projection.replaceContexts(
-        groups: groups,
-        membersByGroup: membersByGroup,
-        latestKeysByGroup: latestKeysByGroup,
-      );
+        final membersByGroup = <String, List<GroupMember>>{};
+        final latestKeysByGroup = <String, GroupKeyInfo?>{};
+        for (final group in groups) {
+          final memberRows = await dbLoadAllGroupMembers(group.id);
+          membersByGroup[group.id] = memberRows
+              .map(GroupMember.fromMap)
+              .toList(growable: false);
+          final keyRow = await dbLoadLatestGroupKey(group.id);
+          latestKeysByGroup[group.id] = keyRow == null
+              ? null
+              : GroupKeyInfo.fromMap(keyRow);
+        }
+        return (
+          groups: groups,
+          membersByGroup: membersByGroup,
+          latestKeysByGroup: latestKeysByGroup,
+        );
+      });
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -670,7 +1605,108 @@ class GroupRepositoryImpl
       await projection.removeGroup(groupId);
       return;
     }
-    await projection.upsertGroup(GroupModel.fromMap(row));
+    final group = GroupModel.fromMap(row);
+    if (group.selfRemovedAt != null) {
+      await projection.removeGroupStrict(groupId);
+      return;
+    }
+    await projection.upsertGroup(group);
+  }
+
+  Future<void> _clearPendingKeyRotationAssumesCoordinated(
+    String groupId,
+    int keyGeneration,
+  ) async {
+    final deletePending = dbDeletePendingGroupKeyRotation;
+    if (deletePending == null) {
+      final pending = _pendingKeyRotationFallback[groupId];
+      if (pending?.keyGeneration == keyGeneration) {
+        _pendingKeyRotationFallback.remove(groupId);
+      }
+      return;
+    }
+    await deletePending(groupId, keyGeneration);
+    await _deletePendingKeyMaterialIfUncommitted(groupId, keyGeneration);
+  }
+
+  Future<void> _clearPendingKeyRotationsAssumesCoordinated(
+    String groupId,
+  ) async {
+    final loadPending = dbLoadPendingGroupKeyRotation;
+    final pendingRow = loadPending == null ? null : await loadPending(groupId);
+    final pending = pendingRow == null
+        ? _pendingKeyRotationFallback[groupId]
+        : GroupKeyInfo.fromMap(pendingRow);
+    final deletePending = dbDeletePendingGroupKeyRotations;
+    if (deletePending == null) {
+      _pendingKeyRotationFallback.remove(groupId);
+    } else {
+      await deletePending(groupId);
+    }
+    if (pending != null) {
+      await _deletePendingKeyMaterialIfUncommitted(
+        groupId,
+        pending.keyGeneration,
+      );
+    }
+  }
+
+  Future<T> _runGroupMutation<T>(
+    String groupId,
+    Future<T> Function() action,
+  ) async {
+    final previous = _groupMutationTails[groupId];
+    final gate = Completer<void>();
+    final current = (previous ?? Future<void>.value())
+        .catchError((_) {})
+        .then((_) => gate.future);
+    _groupMutationTails[groupId] = current;
+    if (previous != null) {
+      try {
+        await previous;
+      } catch (_) {
+        // A failed mutation must not poison later retry attempts.
+      }
+    }
+    try {
+      return await action();
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      if (identical(_groupMutationTails[groupId], current)) {
+        _groupMutationTails.remove(groupId);
+      }
+    }
+  }
+
+  Future<GroupModel?> _loadGroupModel(String groupId) async {
+    final row = await dbLoadGroup(groupId);
+    return row == null ? null : GroupModel.fromMap(row);
+  }
+
+  Future<bool> _hasOrdinaryGroupAuthority(String groupId) async {
+    final group = await _loadGroupModel(groupId);
+    return (group != null || !selfRemovedShellAuthorityEnabled) &&
+        group?.selfRemovedAt == null;
+  }
+
+  Future<GroupModel?> _requireOrdinaryGroupAuthority(String groupId) async {
+    final group = await _loadGroupModel(groupId);
+    if ((selfRemovedShellAuthorityEnabled && group == null) ||
+        group?.selfRemovedAt != null) {
+      throw StateError('Group is absent or has been locally self-removed.');
+    }
+    return group;
+  }
+
+  Future<GroupModel?> _projectAuthoritativeGroup(String groupId) async {
+    final projection = groupReactionProjection;
+    final authoritative = await _loadGroupModel(groupId);
+    if (authoritative == null || authoritative.selfRemovedAt != null) {
+      await projection?.removeGroupStrict(groupId);
+      return authoritative;
+    }
+    await projection?.upsertGroup(authoritative);
+    return authoritative;
   }
 
   Future<void> _pruneObsoleteKeys(String groupId) async {
@@ -722,6 +1758,174 @@ class GroupRepositoryImpl
     await store.write(secureStoreKey, key.encryptedKey);
     row['encrypted_key'] = secureStoreReferenceForKey(secureStoreKey);
     return row;
+  }
+
+  ({Map<String, Object?> row, String ownedStoreKey, String keyMaterial})
+  _acceptedStorageRowAddress(GroupKeyInfo key, {required String bindingNonce}) {
+    final row = Map<String, Object?>.from(key.toMap());
+    final store = groupKeyStore;
+    if (store == null || key.encryptedKey.isEmpty) {
+      throw StateError('Accepted primary group-key material is unavailable.');
+    }
+    final storeKey = groupAcceptedKeyMaterialStoreName(
+      key.groupId,
+      key.keyGeneration,
+      bindingNonce,
+    );
+    row['encrypted_key'] = secureStoreReferenceForKey(storeKey);
+    return (row: row, ownedStoreKey: storeKey, keyMaterial: key.encryptedKey);
+  }
+
+  Future<void> _writeOwnedAcceptedStaging(
+    ({Map<String, Object?> row, String ownedStoreKey, String keyMaterial})
+    staged,
+  ) async {
+    final store = groupKeyStore;
+    if (store == null) {
+      throw StateError('Primary group-key store is unavailable.');
+    }
+    await store.write(staged.ownedStoreKey, staged.keyMaterial);
+  }
+
+  Future<void> _purgePreparedAcceptedStaging({
+    required String groupId,
+    required ({
+      Map<String, Object?> row,
+      String ownedStoreKey,
+      String keyMaterial,
+    })
+    staged,
+    required shell_db.SelfRemovedGroupAcceptedReentryPreparation preparation,
+    required Future<shell_db.SelfRemovedGroupAcceptedReentryStageResult>
+    Function({
+      required shell_db.SelfRemovedGroupAcceptedReentryPreparation preparation,
+      required Map<String, Object?> stagedKeyRow,
+    })
+    finalize,
+  }) async {
+    final store = groupKeyStore;
+    if (store == null) {
+      throw StateError('Primary group-key store is unavailable.');
+    }
+    await store.delete(staged.ownedStoreKey);
+    final mirror = pushSharedKeyStore;
+    if (mirror != null) {
+      final generation = staged.row['key_generation'];
+      if (generation is! int) {
+        throw StateError('Accepted staged key generation is malformed.');
+      }
+      await mirror.delete(sharedGroupPushKeyName(groupId, generation));
+      await mirror.delete(sharedGroupMutedKeyName(groupId));
+    }
+    final finalized = await finalize(
+      preparation: preparation,
+      stagedKeyRow: staged.row,
+    );
+    if (!finalized.staged) {
+      throw StateError('Accepted staged key address changed before finalize.');
+    }
+  }
+
+  Future<void> _deleteAcceptedBindingMaterial({
+    required String groupId,
+    required shell_db.SelfRemovedGroupAcceptedReentryBinding? binding,
+  }) async {
+    if (binding == null) {
+      throw StateError('Accepted rollback did not return its key address.');
+    }
+    if (isSecureStoreReference(binding.encryptedKeyReference)) {
+      final store = groupKeyStore;
+      if (store == null) {
+        throw StateError('Primary group-key store is unavailable.');
+      }
+      await store.delete(
+        secureStoreKeyFromReference(binding.encryptedKeyReference),
+      );
+    }
+    final mirror = pushSharedKeyStore;
+    if (mirror != null) {
+      await mirror.delete(
+        sharedGroupPushKeyName(groupId, binding.keyGeneration),
+      );
+      await mirror.delete(sharedGroupMutedKeyName(groupId));
+    }
+  }
+
+  Future<void> _restoreFreshAcceptedMaterializationAfterRefusal({
+    required String groupId,
+    required String primaryStoreKey,
+    required String expectedKeyMaterial,
+  }) async {
+    final primary = groupKeyStore;
+    if (primary == null) {
+      throw StateError('Primary group-key store is unavailable.');
+    }
+    await primary.write(primaryStoreKey, expectedKeyMaterial);
+    final currentKeyRow = await dbLoadLatestGroupKey(groupId);
+    if (currentKeyRow == null) return;
+    await _projectAcceptedReentry(
+      groupId: groupId,
+      keyGeneration: GroupKeyInfo.fromMap(currentKeyRow).keyGeneration,
+    );
+  }
+
+  Future<void> _terminalizeAcceptedPriorMaterial({
+    required String groupId,
+    required List<shell_db.SelfRemovedGroupKeyReference>? references,
+  }) async {
+    if (references == null) {
+      throw StateError(
+        'Accepted transition did not return prior key addresses.',
+      );
+    }
+    final primary = groupKeyStore;
+    for (final reference in references) {
+      if (isSecureStoreReference(reference.encryptedKeyReference)) {
+        if (primary == null) {
+          throw StateError('Primary group-key store is unavailable.');
+        }
+        await primary.delete(
+          secureStoreKeyFromReference(reference.encryptedKeyReference),
+        );
+      }
+    }
+    final mirror = pushSharedKeyStore;
+    if (mirror != null) {
+      for (final reference in references) {
+        await mirror.delete(
+          sharedGroupPushKeyName(groupId, reference.keyGeneration),
+        );
+      }
+      await mirror.delete(sharedGroupMutedKeyName(groupId));
+    }
+  }
+
+  Future<void> _projectAcceptedReentry({
+    required String groupId,
+    required int keyGeneration,
+  }) async {
+    final authoritative = await _loadGroupModel(groupId);
+    if (authoritative == null || authoritative.selfRemovedAt != null) {
+      throw StateError('Accepted group authority did not commit.');
+    }
+    final memberRows = await dbLoadAllGroupMembers(groupId);
+    final keyRow = await dbLoadGroupKeyByGeneration(groupId, keyGeneration);
+    if (keyRow == null) {
+      throw StateError('Accepted group key did not commit.');
+    }
+    final hydratedKey = await _groupKeyFromRow(keyRow);
+    if (hydratedKey == null) {
+      throw StateError('Accepted group key material is unavailable.');
+    }
+
+    final members = memberRows.map(GroupMember.fromMap).toList(growable: false);
+    await groupReactionProjection?.replaceAcceptedGroupContextStrict(
+      group: authoritative,
+      members: members,
+      key: hydratedKey,
+    );
+    await _mirrorGroupKeyForPush(hydratedKey);
+    await _mirrorGroupMutedForPush(groupId, authoritative.isMuted);
   }
 
   Future<GroupKeyInfo?> _groupKeyFromRow(Map<String, Object?> row) async {
@@ -877,4 +2081,194 @@ class GroupRepositoryImpl
 
     await store.delete(groupKeyMaterialStoreName(groupId, keyGeneration));
   }
+}
+
+SelfRemovedShellAuthoritySnapshot _wrapShellAuthority(
+  shell_db.SelfRemovedGroupShellAuthoritySnapshot snapshot,
+) {
+  return SelfRemovedShellAuthoritySnapshot(
+    groupId: snapshot.groupId,
+    selfPeerId: snapshot.selfPeerId,
+    shape: switch (snapshot.shape) {
+      shell_db.SelfRemovedGroupShellAuthorityShape.absent =>
+        SelfRemovedShellAuthorityShape.absent,
+      shell_db.SelfRemovedGroupShellAuthorityShape.unmarkedSelfPresent =>
+        SelfRemovedShellAuthorityShape.unmarkedSelfPresent,
+      shell_db.SelfRemovedGroupShellAuthorityShape.unmarkedSelfAbsent =>
+        SelfRemovedShellAuthorityShape.unmarkedSelfAbsent,
+      shell_db.SelfRemovedGroupShellAuthorityShape.markedSelfPresent =>
+        SelfRemovedShellAuthorityShape.markedSelfPresent,
+      shell_db.SelfRemovedGroupShellAuthorityShape.markedSelfAbsent =>
+        SelfRemovedShellAuthorityShape.markedSelfAbsent,
+    },
+    selfRemovedAt: snapshot.selfRemovedAt,
+    lastMembershipEventAt: snapshot.lastMembershipEventAt,
+    lastMembershipEventId: snapshot.lastMembershipEventId,
+    selfJoinedAt: snapshot.selfJoinedAt,
+    persistenceToken: snapshot,
+  );
+}
+
+shell_db.SelfRemovedGroupShellAuthoritySnapshot _unwrapShellAuthority(
+  SelfRemovedShellAuthoritySnapshot snapshot,
+) {
+  final token = snapshot.persistenceToken;
+  if (token is! shell_db.SelfRemovedGroupShellAuthoritySnapshot) {
+    throw ArgumentError.value(snapshot, 'expected', 'invalid authority token');
+  }
+  return token;
+}
+
+SelfRemovalAuthorityCommitOutcome _mapCommitOutcome(
+  shell_db.SelfRemovalAuthorityCommitDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovalAuthorityCommitDisposition.committed =>
+    SelfRemovalAuthorityCommitOutcome.committed,
+  shell_db.SelfRemovalAuthorityCommitDisposition.refusedStateChanged =>
+    SelfRemovalAuthorityCommitOutcome.refusedStateChanged,
+  shell_db.SelfRemovalAuthorityCommitDisposition.refusedStaleRemoval =>
+    SelfRemovalAuthorityCommitOutcome.refusedStaleRemoval,
+};
+
+SelfRemovedAcceptedReentryOutcome _mapAcceptedReentryOutcome(
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.committed =>
+    SelfRemovedAcceptedReentryOutcome.committed,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedMissingFloor =>
+    SelfRemovedAcceptedReentryOutcome.refusedMissingFloor,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedStateChanged =>
+    SelfRemovedAcceptedReentryOutcome.refusedStateChanged,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial =>
+    SelfRemovedAcceptedReentryOutcome.refusedInvalidMaterial,
+  shell_db
+      .SelfRemovedGroupAcceptedReentryDisposition
+      .refusedMalformedAuthority =>
+    SelfRemovedAcceptedReentryOutcome.refusedMalformedAuthority,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedStaleAuthority =>
+    SelfRemovedAcceptedReentryOutcome.refusedStaleAuthority,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedKeyState =>
+    SelfRemovedAcceptedReentryOutcome.refusedKeyState,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedEvidenceInvalid =>
+    SelfRemovedAcceptedReentryOutcome.refusedEvidenceInvalid,
+  shell_db.SelfRemovedGroupAcceptedReentryDisposition.refusedBindingCollision =>
+    SelfRemovedAcceptedReentryOutcome.refusedBindingCollision,
+};
+
+SelfRemovedAcceptedRollbackOutcome _mapAcceptedRollbackOutcome(
+  shell_db.SelfRemovedGroupAcceptedRollbackDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovedGroupAcceptedRollbackDisposition.rolledBack =>
+    SelfRemovedAcceptedRollbackOutcome.rolledBack,
+  shell_db.SelfRemovedGroupAcceptedRollbackDisposition.refusedBindingMissing =>
+    SelfRemovedAcceptedRollbackOutcome.refusedBindingMissing,
+  shell_db
+      .SelfRemovedGroupAcceptedRollbackDisposition
+      .refusedAuthorizationMismatch =>
+    SelfRemovedAcceptedRollbackOutcome.refusedAuthorizationMismatch,
+  shell_db.SelfRemovedGroupAcceptedRollbackDisposition.refusedStateChanged =>
+    SelfRemovedAcceptedRollbackOutcome.refusedStateChanged,
+  shell_db.SelfRemovedGroupAcceptedRollbackDisposition.refusedEvidenceInvalid =>
+    SelfRemovedAcceptedRollbackOutcome.refusedEvidenceInvalid,
+};
+
+SelfRemovedAcceptedRollbackOutcome _mapAcceptedRollbackQualificationOutcome(
+  shell_db.SelfRemovedGroupAcceptedRollbackQualificationDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovedGroupAcceptedRollbackQualificationDisposition.qualified =>
+    throw StateError('Qualified rollback is not a refusal.'),
+  shell_db
+      .SelfRemovedGroupAcceptedRollbackQualificationDisposition
+      .refusedBindingMissing =>
+    SelfRemovedAcceptedRollbackOutcome.refusedBindingMissing,
+  shell_db
+      .SelfRemovedGroupAcceptedRollbackQualificationDisposition
+      .refusedAuthorizationMismatch =>
+    SelfRemovedAcceptedRollbackOutcome.refusedAuthorizationMismatch,
+  shell_db
+      .SelfRemovedGroupAcceptedRollbackQualificationDisposition
+      .refusedStateChanged =>
+    SelfRemovedAcceptedRollbackOutcome.refusedStateChanged,
+  shell_db
+      .SelfRemovedGroupAcceptedRollbackQualificationDisposition
+      .refusedEvidenceInvalid =>
+    SelfRemovedAcceptedRollbackOutcome.refusedEvidenceInvalid,
+};
+
+SelfRemovedAcceptedRetryAuthorizationOutcome
+_mapAcceptedRetryAuthorizationOutcome(
+  shell_db.SelfRemovedGroupAcceptedRetryAuthorizationDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovedGroupAcceptedRetryAuthorizationDisposition.authorized =>
+    SelfRemovedAcceptedRetryAuthorizationOutcome.authorized,
+  shell_db
+      .SelfRemovedGroupAcceptedRetryAuthorizationDisposition
+      .refusedBindingMissing =>
+    SelfRemovedAcceptedRetryAuthorizationOutcome.refusedBindingMissing,
+  shell_db
+      .SelfRemovedGroupAcceptedRetryAuthorizationDisposition
+      .refusedAuthorizationMismatch =>
+    SelfRemovedAcceptedRetryAuthorizationOutcome.refusedAuthorizationMismatch,
+  shell_db
+      .SelfRemovedGroupAcceptedRetryAuthorizationDisposition
+      .refusedStateChanged =>
+    SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged,
+  shell_db
+      .SelfRemovedGroupAcceptedRetryAuthorizationDisposition
+      .refusedEvidenceInvalid =>
+    SelfRemovedAcceptedRetryAuthorizationOutcome.refusedEvidenceInvalid,
+};
+
+SelfRemovedShellMutationOutcome _mapMutationOutcome(
+  shell_db.SelfRemovedGroupShellMutationDisposition disposition,
+) => switch (disposition) {
+  shell_db.SelfRemovedGroupShellMutationDisposition.committed =>
+    SelfRemovedShellMutationOutcome.committed,
+  shell_db.SelfRemovedGroupShellMutationDisposition.refusedStateChanged =>
+    SelfRemovedShellMutationOutcome.refusedStateChanged,
+  shell_db
+      .SelfRemovedGroupShellMutationDisposition
+      .refusedOutstandingReferences =>
+    SelfRemovedShellMutationOutcome.refusedOutstandingReferences,
+  shell_db.SelfRemovedGroupShellMutationDisposition.refusedMediaRemaining =>
+    SelfRemovedShellMutationOutcome.refusedMediaRemaining,
+  shell_db.SelfRemovedGroupShellMutationDisposition.refusedFloorMissing =>
+    SelfRemovedShellMutationOutcome.refusedFloorMissing,
+  shell_db.SelfRemovedGroupShellMutationDisposition.refusedTombstoneConflict =>
+    SelfRemovedShellMutationOutcome.refusedTombstoneConflict,
+};
+
+SelfRemovedShellFreshnessFloor _wrapFreshnessFloor(
+  shell_db.SelfRemovedGroupFreshnessFloor floor,
+) => SelfRemovedShellFreshnessFloor(
+  groupId: floor.groupId,
+  selfPeerId: floor.selfPeerId,
+  selfRemovedAt: floor.selfRemovedAt,
+  persistenceToken: floor,
+);
+
+shell_db.SelfRemovedGroupFreshnessFloor _unwrapFreshnessFloor(
+  SelfRemovedShellFreshnessFloor floor,
+) {
+  final token = floor.persistenceToken;
+  if (token is! shell_db.SelfRemovedGroupFreshnessFloor) {
+    throw ArgumentError.value(floor, 'floor', 'invalid freshness-floor token');
+  }
+  return token;
+}
+
+bool _isStaleRemovalAuthority({
+  required DateTime removalAt,
+  required String removalEventId,
+  required DateTime? lastAt,
+  required String? lastEventId,
+}) {
+  if (removalEventId.trim().isEmpty) return true;
+  final stored = lastAt?.toUtc();
+  if (stored == null) return false;
+  final incoming = removalAt.toUtc();
+  if (incoming.isBefore(stored)) return true;
+  if (incoming.isAfter(stored)) return false;
+  if (lastEventId == null) return true;
+  return removalEventId.compareTo(lastEventId) <= 0;
 }

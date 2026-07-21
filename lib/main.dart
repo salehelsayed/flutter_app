@@ -46,6 +46,7 @@ import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_he
 import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -144,6 +145,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_media_deletion_journal_reconciler.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -1386,6 +1389,17 @@ void main() async {
             ),
     dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
         dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
+    dbCompleteGroupUploadRetryExact:
+        ({
+          required expectedParent,
+          required expectedAttachment,
+          required completedAttachment,
+        }) => dbCompleteGroupUploadRetry(
+          db,
+          expectedParent: expectedParent,
+          expectedAttachment: expectedAttachment,
+          completedAttachment: completedAttachment,
+        ),
     secureKeyStore: secureKeyStore,
     refreshDirectPrivateMediaParent:
         messageRepository.refreshPrivateMediaLifecycleAfterExternalMutation,
@@ -1549,6 +1563,19 @@ void main() async {
               lastError: lastError,
               updatedAt: updatedAt,
             ),
+        dbUpdateGroupReactionReplayOutboxEntryStatusIfExact:
+            ({
+              required expected,
+              required deliveryStatus,
+              lastError,
+              required updatedAt,
+            }) => dbUpdateGroupReactionReplayOutboxEntryStatusIfExact(
+              db,
+              expected: expected,
+              deliveryStatus: deliveryStatus,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
         dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
             dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
       );
@@ -1563,6 +1590,14 @@ void main() async {
     dbLoadActiveGroups: () => dbLoadActiveGroups(db),
     dbArchiveGroup: (id) => dbArchiveGroup(db, id),
     dbUnarchiveGroup: (id) => dbUnarchiveGroup(db, id),
+    dbAdvanceGroupMembershipWatermark:
+        ({required groupId, required eventAt, required eventId}) =>
+            dbAdvanceGroupMembershipWatermark(
+              db,
+              groupId: groupId,
+              eventAt: eventAt,
+              eventId: eventId,
+            ),
     dbLoadGroupForwardAuthorizationSnapshot: (groupId) =>
         dbLoadGroupForwardAuthorizationSnapshot(db, groupId),
     dbInsertGroupMember: (row) => dbInsertGroupMember(db, row),
@@ -1620,7 +1655,203 @@ void main() async {
     groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
     groupReactionProjection: groupReactionNotificationProjection,
+    selfRemovedShellAuthorityEnabled: true,
+    dbLoadSelfRemovedGroupShellAuthority:
+        ({required groupId, required selfPeerId}) =>
+            dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+            ),
+    dbCommitSelfRemovalAuthorityFn:
+        ({required expected, required removalAt, required removalEventId}) =>
+            dbCommitSelfRemovalAuthority(
+              db,
+              expected: expected,
+              removalAt: removalAt,
+              removalEventId: removalEventId,
+            ),
+    dbLoadRawSelfRemovedGroupKeyReferencesFn: ({required expected}) =>
+        dbLoadRawSelfRemovedGroupKeyReferences(db, expected: expected),
+    dbFinalizeSelfRemovedGroupKeyReferencesFn:
+        ({required expected, required expectedReferences}) =>
+            dbFinalizeSelfRemovedGroupKeyReferences(
+              db,
+              expected: expected,
+              expectedReferences: expectedReferences,
+            ),
+    dbLoadSelfRemovedGroupMediaParentsFn:
+        ({required expected, required limit}) =>
+            dbLoadSelfRemovedGroupMediaParents(
+              db,
+              expected: expected,
+              limit: limit,
+            ),
+    dbAppendSelfRemovedGroupFreshnessFloorFn: ({required expected}) =>
+        dbAppendSelfRemovedGroupFreshnessFloor(db, expected: expected),
+    dbLoadSelfRemovedGroupFreshnessFloorFn: (groupId) =>
+        dbLoadLatestSelfRemovedGroupFreshnessFloor(db, groupId),
+    dbPrepareSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required groupRow,
+          required rosterRows,
+          required stagedKeyRow,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required bindingNonce,
+        }) => dbPrepareSelfRemovedGroupAcceptedReentry(
+          db,
+          groupRow: groupRow,
+          rosterRows: rosterRows,
+          stagedKeyRow: stagedKeyRow,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        ),
+    dbStageSelfRemovedGroupAcceptedReentryKeyFn:
+        ({required preparation, required stagedKeyRow}) =>
+            dbStageSelfRemovedGroupAcceptedReentryKey(
+              db,
+              preparation: preparation,
+              stagedKeyRow: stagedKeyRow,
+            ),
+    dbCommitSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required preparation,
+          required groupRow,
+          required rosterRows,
+          required stagedKeyRow,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required bindingNonce,
+        }) => dbCommitSelfRemovedGroupAcceptedReentry(
+          db,
+          preparation: preparation,
+          groupRow: groupRow,
+          rosterRows: rosterRows,
+          stagedKeyRow: stagedKeyRow,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        ),
+    dbFinalizeSelfRemovedGroupAcceptedReentryStagingFn:
+        ({required preparation, required stagedKeyRow}) =>
+            dbFinalizeSelfRemovedGroupAcceptedReentryStaging(
+              db,
+              preparation: preparation,
+              stagedKeyRow: stagedKeyRow,
+            ),
+    dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn:
+        ({required groupId, required selfPeerId, required binding}) =>
+            dbFinalizeSelfRemovedGroupAcceptedRollbackKey(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              binding: binding,
+            ),
+    dbRollbackSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required authorizationId,
+          required qualification,
+        }) => dbRollbackSelfRemovedGroupAcceptedReentry(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          qualification: qualification,
+        ),
+    dbQualifySelfRemovedGroupAcceptedRollbackFn:
+        ({required groupId, required selfPeerId, required authorizationId}) =>
+            dbQualifySelfRemovedGroupAcceptedRollback(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              authorizationId: authorizationId,
+            ),
+    dbPrepareFreshAcceptedMaterializationRollbackFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required keyGeneration,
+          required expectedMembershipAt,
+          required expectedMetadataAt,
+        }) => dbPrepareFreshAcceptedMaterializationRollback(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          keyGeneration: keyGeneration,
+          expectedMembershipAt: expectedMembershipAt,
+          expectedMetadataAt: expectedMetadataAt,
+        ),
+    dbCommitFreshAcceptedMaterializationRollbackFn: ({required preparation}) =>
+        dbCommitFreshAcceptedMaterializationRollback(
+          db,
+          preparation: preparation,
+        ),
+    dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required keyGeneration,
+        }) => dbAuthorizeSelfRemovedGroupAcceptedReentryRetry(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          keyGeneration: keyGeneration,
+        ),
+    dbPurgeSelfRemovedGroupShellFn:
+        ({required expected, required floor, required deletedAt}) =>
+            dbPurgeSelfRemovedGroupShell(
+              db,
+              expected: expected,
+              floor: floor,
+              deletedAt: deletedAt,
+            ),
   );
+  var selfRemovedShellOperationSequence = 0;
+  final deleteSelfRemovedGroupShellUseCase = DeleteSelfRemovedGroupShellUseCase(
+    repository: groupRepository,
+    prepareMedia:
+        ({
+          required String groupId,
+          required String messageId,
+          required String operationId,
+        }) => dbPrepareGroupMediaDeleteForMe(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          operationId: operationId,
+        ),
+    runMediaReconciler: groupMediaDeletionReconciler.runBounded,
+    snapshotAvatarPath: (groupId) async {
+      final group = await groupRepository.getGroup(groupId);
+      return group?.avatarPath ?? groupAvatarRelativePath(groupId);
+    },
+    deleteAvatar: (path) => deleteGroupAvatar(storedPath: path),
+    operationIdFactory: () {
+      selfRemovedShellOperationSequence++;
+      return 'self-removed-shell:'
+          '${DateTime.now().toUtc().microsecondsSinceEpoch}:'
+          '$selfRemovedShellOperationSequence';
+    },
+  );
+  defaultDeleteSelfRemovedGroupShell = deleteSelfRemovedGroupShellUseCase.call;
   // 164 (cold-start-3): the shared-Keychain mirror backfill (every group key ×
   // generation + every mute projection, re-written on every launch) is unbounded
   // work that scales with group history. Move it OFF the pre-runApp critical path
@@ -1716,6 +1947,13 @@ void main() async {
   }) {
     return GroupMessageRepositoryImpl(
       dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+      dbInsertExactSelfRemovalTimelineMessageFn:
+          (row, {required expectedSelfRemovedAt}) =>
+              dbInsertExactSelfRemovalTimelineMessage(
+                executor,
+                row,
+                expectedSelfRemovedAt: expectedSelfRemovedAt,
+              ),
       dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
           dbLoadGroupMessagesPage(
             executor,
@@ -1794,6 +2032,35 @@ void main() async {
               disposition: disposition,
             )
           : null,
+      dbCompleteGroupUploadRetryFn: executor is Database
+          ? ({
+              required expectedParent,
+              required expectedAttachment,
+              required completedAttachment,
+            }) => dbCompleteGroupUploadRetry(
+              executor,
+              expectedParent: expectedParent,
+              expectedAttachment: expectedAttachment,
+              completedAttachment: completedAttachment,
+            )
+          : null,
+      completeGroupUploadRetrySecurelyFn: executor is Database
+          ? ({
+              required expectedParent,
+              required expectedAttachment,
+              required completedAttachment,
+            }) => mediaAttachmentRepository.completeGroupUploadRetrySecurely(
+              expectedParent: <String, Object?>{
+                ...expectedParent.toMap(),
+                'retry_attempt_count': expectedParent.retryAttemptCount,
+                'next_eligible_at': expectedParent.nextEligibleAt
+                    ?.toUtc()
+                    .millisecondsSinceEpoch,
+              },
+              expectedAttachment: expectedAttachment,
+              completedAttachment: completedAttachment,
+            )
+          : null,
       dbRearmGroupUploadRetryForManualRetryFn: executor is Database
           ? ({required messageId, required attachments}) =>
                 dbRearmGroupUploadRetryForManualRetry(
@@ -1810,6 +2077,9 @@ void main() async {
           dbUpdateGroupMessageInboxRetryPayload(executor, id, payload),
       dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
           dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
+      dbCompleteGroupInboxStoreRetryFn: executor is Database
+          ? (expected) => dbCompleteGroupInboxStoreRetry(executor, expected)
+          : null,
       dbRecordGroupMessageRetryFailureFn:
           (id, {required nextEligibleAtMs, required markTerminal}) =>
               dbRecordGroupMessageRetryFailure(
@@ -1932,11 +2202,21 @@ void main() async {
             ),
     dbDeleteGroupPendingKeyRepair: (id) =>
         dbDeleteGroupPendingKeyRepair(db, id),
+    dbDeleteGroupPendingKeyRepairIfExact: (expected) =>
+        dbDeleteGroupPendingKeyRepairIfExact(db, expected),
     dbRecordGroupPendingKeyRepairAttempt:
         (id, {required lastError, required updatedAt}) =>
             dbRecordGroupPendingKeyRepairAttempt(
               db,
               id,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
+    dbRecordGroupPendingKeyRepairAttemptIfExact:
+        (expected, {required lastError, required updatedAt}) =>
+            dbRecordGroupPendingKeyRepairAttemptIfExact(
+              db,
+              expected,
               lastError: lastError,
               updatedAt: updatedAt,
             ),
@@ -1949,6 +2229,19 @@ void main() async {
               lastError: lastError,
               finalizedAt: finalizedAt,
             ),
+    dbFinalizeGroupPendingKeyRepairIfExact:
+        (
+          expected, {
+          required status,
+          required lastError,
+          required finalizedAt,
+        }) => dbFinalizeGroupPendingKeyRepairIfExact(
+          db,
+          expected,
+          status: status,
+          lastError: lastError,
+          finalizedAt: finalizedAt,
+        ),
   );
 
   final groupPendingKeyDistributionRepository =
@@ -1982,6 +2275,14 @@ void main() async {
                   lastError: lastError,
                   updatedAt: updatedAt,
                 ),
+        dbRecordGroupPendingKeyDistributionAttemptIfExact:
+            (expected, {required lastError, required updatedAt}) =>
+                dbRecordGroupPendingKeyDistributionAttemptIfExact(
+                  db,
+                  expected,
+                  lastError: lastError,
+                  updatedAt: updatedAt,
+                ),
         dbFinalizeGroupPendingKeyDistribution:
             (id, {required status, required lastError, required finalizedAt}) =>
                 dbFinalizeGroupPendingKeyDistribution(
@@ -1991,6 +2292,19 @@ void main() async {
                   lastError: lastError,
                   finalizedAt: finalizedAt,
                 ),
+        dbFinalizeGroupPendingKeyDistributionIfExact:
+            (
+              expected, {
+              required status,
+              required lastError,
+              required finalizedAt,
+            }) => dbFinalizeGroupPendingKeyDistributionIfExact(
+              db,
+              expected,
+              status: status,
+              lastError: lastError,
+              finalizedAt: finalizedAt,
+            ),
       );
 
   // Slice 2 (Finding 03): persist deferred key distributions from EVERY rotate
@@ -2090,6 +2404,13 @@ void main() async {
     dbUpsertGroupHistoryGapRepair: (row) =>
         dbUpsertGroupHistoryGapRepair(db, row),
     dbSaveGroupHistoryGapRepair: (row) => dbSaveGroupHistoryGapRepair(db, row),
+    dbReplaceGroupHistoryGapRepairIfExact:
+        ({required expected, required replacement}) =>
+            dbReplaceGroupHistoryGapRepairIfExact(
+              db,
+              expected: expected,
+              replacement: replacement,
+            ),
     dbLoadGroupHistoryGapRepair: ({required groupId, required gapId}) =>
         dbLoadGroupHistoryGapRepair(db, groupId: groupId, gapId: gapId),
     dbLoadLatestGroupHistoryGapRepair: ({required groupId}) =>
@@ -3369,15 +3690,19 @@ void main() async {
     dbCountForGroup: (groupId) =>
         dbCountPendingGroupBroadcastsForGroup(db, groupId),
     dbDelete: (id) => dbDeletePendingGroupBroadcast(db, id),
+    dbDeleteIfExact: (expected) =>
+        dbDeletePendingGroupBroadcastIfExact(db, expected),
     dbDeleteForGroup: (groupId) =>
         dbDeletePendingGroupBroadcastsForGroup(db, groupId),
   );
   final groupPendingBroadcastRunner = GroupPendingBroadcastRunner(
     repository: groupPendingBroadcastRepository,
+    rePushFinalizesSuccess: true,
     rePush: buildGroupPendingBroadcastRePush(
       bridge: bridge,
       groupRepo: groupRepository,
       loadIdentity: repository.loadIdentity,
+      pendingRepository: groupPendingBroadcastRepository,
     ),
   );
   setGroupPendingBroadcastEnqueueSink(groupPendingBroadcastRepository.enqueue);

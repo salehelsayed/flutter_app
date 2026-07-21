@@ -1,5 +1,6 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
 
 /// Inserts a group into the database.
@@ -13,11 +14,33 @@ Future<void> dbInsertGroup(Database db, Map<String, Object?> row) async {
   );
 
   try {
-    await db.insert(
-      'groups',
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await dbWriteTransaction(db, (txn) async {
+      final hasRemovalAuthority = await _hasSelfRemovedAtColumn(txn);
+      final existing = await txn.query(
+        'groups',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      final committedRow = Map<String, Object?>.from(row);
+      if (hasRemovalAuthority && existing.isNotEmpty) {
+        _preserveGroupAuthority(committedRow, existing.single);
+      } else if (hasRemovalAuthority &&
+          await _hasRetainedSelfRemovalFloor(txn, id)) {
+        throw StateError(
+          'Ordinary group creation cannot cross a retained self-removal floor.',
+        );
+      } else if (!hasRemovalAuthority) {
+        // Focused legacy/upgrade fixtures can legitimately exercise this
+        // helper before v102. Do not send the future model column to SQLite.
+        committedRow.remove('self_removed_at');
+      }
+      await txn.insert(
+        'groups',
+        committedRow,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -36,17 +59,10 @@ Future<void> dbInsertGroup(Database db, Map<String, Object?> row) async {
 
 /// Loads all groups from the database, ordered by created_at DESC.
 Future<List<Map<String, Object?>>> dbLoadAllGroups(Database db) async {
-  emitFlowEvent(
-    layer: 'DB',
-    event: 'GROUPS_DB_LOAD_ALL_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'DB', event: 'GROUPS_DB_LOAD_ALL_START', details: {});
 
   try {
-    final results = await db.query(
-      'groups',
-      orderBy: 'created_at DESC',
-    );
+    final results = await db.query('groups', orderBy: 'created_at DESC');
 
     emitFlowEvent(
       layer: 'DB',
@@ -117,12 +133,27 @@ Future<void> dbUpdateGroup(Database db, Map<String, Object?> row) async {
   );
 
   try {
-    await db.update(
-      'groups',
-      row,
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await dbWriteTransaction(db, (txn) async {
+      final existing = await txn.query(
+        'groups',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (existing.isEmpty) return;
+      final committedRow = Map<String, Object?>.from(row);
+      if (await _hasSelfRemovedAtColumn(txn)) {
+        _preserveGroupAuthority(committedRow, existing.single);
+      } else {
+        committedRow.remove('self_removed_at');
+      }
+      await txn.update(
+        'groups',
+        committedRow,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -139,6 +170,131 @@ Future<void> dbUpdateGroup(Database db, Map<String, Object?> row) async {
   }
 }
 
+/// Dedicated authenticated-membership seam. Ordinary full-row writes never
+/// clear a removal marker or advance its membership watermark; this exact CAS
+/// is intentionally the only low-level replacement that may do both.
+Future<bool> dbReplaceAcceptedGroupAuthority(
+  Database db, {
+  required Map<String, Object?> row,
+  required String expectedSelfRemovedAt,
+  required String acceptedMembershipEventAt,
+  required String? acceptedMembershipEventId,
+}) {
+  final groupId = row['id'] as String? ?? '';
+  return dbWriteTransaction(db, (txn) async {
+    final existing = await txn.query(
+      'groups',
+      where: 'id = ? AND self_removed_at = ?',
+      whereArgs: [groupId, expectedSelfRemovedAt],
+      limit: 1,
+    );
+    if (existing.isEmpty) return false;
+
+    final acceptedAt = DateTime.tryParse(acceptedMembershipEventAt)?.toUtc();
+    final markerAt = DateTime.tryParse(expectedSelfRemovedAt)?.toUtc();
+    final currentAt = DateTime.tryParse(
+      existing.single['last_membership_event_at'] as String? ?? '',
+    )?.toUtc();
+    if (acceptedAt == null ||
+        markerAt == null ||
+        !acceptedAt.isAfter(markerAt) ||
+        (currentAt != null && !acceptedAt.isAfter(currentAt))) {
+      return false;
+    }
+
+    final committedRow = Map<String, Object?>.from(row)
+      ..['self_removed_at'] = null
+      ..['last_membership_event_at'] = acceptedAt.toIso8601String()
+      ..['last_membership_event_id'] = acceptedMembershipEventId;
+    final updated = await txn.update(
+      'groups',
+      committedRow,
+      where: 'id = ? AND self_removed_at = ?',
+      whereArgs: [groupId, expectedSelfRemovedAt],
+    );
+    return updated == 1;
+  });
+}
+
+/// Monotonically advances the protected membership watermark without exposing
+/// it to ordinary full-row metadata writes.
+Future<bool> dbAdvanceGroupMembershipWatermark(
+  Database db, {
+  required String groupId,
+  required String eventAt,
+  required String? eventId,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'groups',
+      columns: const ['last_membership_event_at', 'last_membership_event_id'],
+      where: 'id = ?',
+      whereArgs: [groupId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final incoming = DateTime.tryParse(eventAt)?.toUtc();
+    if (incoming == null) return false;
+    final stored = DateTime.tryParse(
+      rows.single['last_membership_event_at'] as String? ?? '',
+    )?.toUtc();
+    if (stored != null) {
+      if (incoming.isBefore(stored)) return false;
+      if (incoming.isAtSameMomentAs(stored)) {
+        final storedId = rows.single['last_membership_event_id'] as String?;
+        if (eventId == null ||
+            storedId == null ||
+            eventId.compareTo(storedId) <= 0) {
+          return false;
+        }
+      }
+    }
+    return await txn.update(
+          'groups',
+          {
+            'last_membership_event_at': incoming.toIso8601String(),
+            'last_membership_event_id': eventId,
+          },
+          where: 'id = ?',
+          whereArgs: [groupId],
+        ) ==
+        1;
+  });
+}
+
+void _preserveGroupAuthority(
+  Map<String, Object?> target,
+  Map<String, Object?> stored,
+) {
+  target['self_removed_at'] = stored['self_removed_at'];
+  target['last_membership_event_at'] = stored['last_membership_event_at'];
+  target['last_membership_event_id'] = stored['last_membership_event_id'];
+}
+
+Future<bool> _hasSelfRemovedAtColumn(DatabaseExecutor db) async {
+  final columns = await db.rawQuery('PRAGMA table_info(groups)');
+  return columns.any((row) => row['name'] == 'self_removed_at');
+}
+
+Future<bool> _hasRetainedSelfRemovalFloor(
+  DatabaseExecutor db,
+  String groupId,
+) async {
+  final eventLog = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'group_event_log' LIMIT 1",
+  );
+  if (eventLog.isEmpty) return false;
+  final rows = await db.query(
+    'group_event_log',
+    columns: const ['id'],
+    where: 'group_id = ? AND event_type = ?',
+    whereArgs: [groupId, 'local_self_removed_freshness_floor'],
+    limit: 1,
+  );
+  return rows.isNotEmpty;
+}
+
 /// Deletes a group by ID.
 Future<void> dbDeleteGroup(Database db, String id) async {
   emitFlowEvent(
@@ -148,11 +304,7 @@ Future<void> dbDeleteGroup(Database db, String id) async {
   );
 
   try {
-    await db.delete(
-      'groups',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await db.delete('groups', where: 'id = ?', whereArgs: [id]);
 
     emitFlowEvent(
       layer: 'DB',
@@ -240,11 +392,7 @@ Future<void> dbUnarchiveGroup(Database db, String id) async {
 
 /// Loads only active (non-archived) groups.
 Future<List<Map<String, Object?>>> dbLoadActiveGroups(Database db) async {
-  emitFlowEvent(
-    layer: 'DB',
-    event: 'GROUPS_DB_LOAD_ACTIVE_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'DB', event: 'GROUPS_DB_LOAD_ACTIVE_START', details: {});
 
   try {
     final results = await db.rawQuery(

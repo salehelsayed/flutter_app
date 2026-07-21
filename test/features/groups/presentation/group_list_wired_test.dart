@@ -6,6 +6,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -15,6 +16,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_consumpti
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -26,6 +28,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_list_wire
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -543,12 +546,15 @@ void main() {
       GroupMessageListener? groupMessageListener,
       FakeReactionRepository? reactionRepo,
       GroupInviteConversationLauncher? openInviteConversation,
+      DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell,
+      Key? groupListKey,
     }) {
       return MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: GroupListWired(
+          key: groupListKey,
           groupRepo: groupRepo,
           msgRepo: msgRepo,
           groupMessageListener:
@@ -558,6 +564,7 @@ void main() {
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
+          deleteSelfRemovedGroupShell: deleteSelfRemovedGroupShell,
           groupInviteListener: groupInviteListener,
           reactionRepo: reactionRepo,
           openInviteConversation: openInviteConversation,
@@ -595,7 +602,10 @@ void main() {
         // Stuck: 11 failures, backoff a day out (would otherwise be deferred).
         final future = DateTime.now().toUtc().add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
-          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+          await groupRepo.recordGroupRejoinFailure(
+            'g-1',
+            nextEligibleAt: future,
+          );
         }
 
         await tester.pumpWidget(buildWidget());
@@ -625,7 +635,10 @@ void main() {
         await groupRepo.saveGroup(group);
         final future = DateTime.now().toUtc().add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
-          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+          await groupRepo.recordGroupRejoinFailure(
+            'g-1',
+            nextEligibleAt: future,
+          );
         }
 
         await tester.pumpWidget(buildWidget());
@@ -641,6 +654,215 @@ void main() {
 
         expect(bridge.commandLog, contains('group:leave'));
         expect(await groupRepo.getGroup('g-1'), isNull);
+      },
+    );
+
+    testWidgets(
+      'removed-member stuck row uses guarded local delete while ordinary stuck leave is preserved',
+      (tester) async {
+        final l10n = AppLocalizationsEn();
+        final marker = DateTime.utc(2026, 7, 20, 14);
+
+        groupRepo = InMemoryGroupRepository();
+        msgRepo = InMemoryGroupMessageRepository();
+        const cancelGroupId = 'group-list-removed-cancel';
+        final cancelGroup =
+            makeGroup(id: cancelGroupId, name: 'Removed List Cancel').copyWith(
+              myRole: GroupRole.member,
+              selfRemovedAt: marker,
+              lastMembershipEventAt: marker,
+            );
+        await groupRepo.saveGroup(cancelGroup);
+        final cancelFuture = marker.add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            cancelGroupId,
+            nextEligibleAt: cancelFuture,
+          );
+        }
+        var cancelCalls = 0;
+        await tester.pumpWidget(
+          buildWidget(
+            groupListKey: const ValueKey('group-list-removed-cancel'),
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  cancelCalls++;
+                  return DeleteSelfRemovedGroupShellResult.deleted;
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(
+          find.byKey(
+            const ValueKey('group-stuck-leave-group-list-removed-cancel'),
+          ),
+        );
+        await tester.pump();
+        expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+        await tester.tap(find.text(l10n.btn_cancel));
+        await pumpFrames(tester);
+        expect(cancelCalls, 0);
+        expect(await groupRepo.getGroup(cancelGroupId), isNotNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        final staleRepo = _FaultingMembersGroupRepository();
+        groupRepo = staleRepo;
+        msgRepo = InMemoryGroupMessageRepository();
+        const staleGroupId = 'group-list-stale-before-removal';
+        final staleCaptured = makeGroup(
+          id: staleGroupId,
+          name: 'List Stale Before Removal',
+        ).copyWith(myRole: GroupRole.member);
+        await staleRepo.saveGroup(staleCaptured);
+        for (var i = 0; i < 11; i++) {
+          await staleRepo.recordGroupRejoinFailure(
+            staleGroupId,
+            nextEligibleAt: cancelFuture,
+          );
+        }
+        var staleDeleteCalls = 0;
+        await tester.pumpWidget(
+          buildWidget(
+            groupListKey: const ValueKey('group-list-stale-marker'),
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  staleDeleteCalls++;
+                  return DeleteSelfRemovedGroupShellResult.deleted;
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        await staleRepo.updateGroup(
+          staleCaptured.copyWith(
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          ),
+        );
+        staleRepo.failMembers = true;
+        await tester.tap(
+          find.byKey(
+            const ValueKey('group-stuck-leave-group-list-stale-before-removal'),
+          ),
+        );
+        await pumpFrames(tester);
+        expect(staleDeleteCalls, 0);
+        expect(await staleRepo.getGroup(staleGroupId), isNotNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+
+        for (final outcome in DeleteSelfRemovedGroupShellResult.values) {
+          groupRepo = InMemoryGroupRepository();
+          msgRepo = InMemoryGroupMessageRepository();
+          final groupId = 'group-list-removed-${outcome.name}';
+          final groupName = 'Removed List ${outcome.name}';
+          final group = makeGroup(id: groupId, name: groupName).copyWith(
+            myRole: GroupRole.member,
+            selfRemovedAt: marker,
+            lastMembershipEventAt: marker,
+          );
+          await groupRepo.saveGroup(group);
+          final future = marker.add(const Duration(days: 1));
+          for (var i = 0; i < 11; i++) {
+            await groupRepo.recordGroupRejoinFailure(
+              groupId,
+              nextEligibleAt: future,
+            );
+          }
+          var localDeleteCalls = 0;
+
+          await tester.pumpWidget(
+            buildWidget(
+              groupListKey: ValueKey(groupId),
+              deleteSelfRemovedGroupShell:
+                  ({
+                    required String groupId,
+                    required String selfPeerId,
+                  }) async {
+                    localDeleteCalls++;
+                    expect(selfPeerId, testIdentity.peerId);
+                    if (outcome == DeleteSelfRemovedGroupShellResult.deleted ||
+                        outcome ==
+                            DeleteSelfRemovedGroupShellResult.alreadyAbsent) {
+                      await groupRepo.deleteGroup(groupId);
+                    } else if (outcome ==
+                        DeleteSelfRemovedGroupShellResult.refusedStateChanged) {
+                      await groupRepo.updateGroup(
+                        group.copyWith(name: '$groupName refreshed'),
+                      );
+                    }
+                    return outcome;
+                  },
+            ),
+          );
+          await pumpFrames(tester);
+          await tester.tap(find.byKey(ValueKey('group-stuck-leave-$groupId')));
+          await tester.pump();
+
+          expect(find.text(l10n.group_removed_delete_title), findsOneWidget);
+          expect(localDeleteCalls, 0);
+          expect(bridge.commandLog, isNot(contains('group:leave')));
+          await tester.tap(find.text(l10n.group_removed_delete_action));
+          await pumpFrames(tester, count: 20);
+
+          expect(localDeleteCalls, 1);
+          switch (outcome) {
+            case DeleteSelfRemovedGroupShellResult.deleted:
+            case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+              expect(find.text(groupName), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+              expect(find.text('$groupName refreshed'), findsOneWidget);
+              expect(find.text(l10n.group_removed_delete_failed), findsNothing);
+            case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+              expect(find.text(groupName), findsOneWidget);
+              expect(
+                find.text(l10n.group_removed_delete_failed),
+                findsOneWidget,
+              );
+          }
+          expect(bridge.commandLog, isNot(contains('group:leave')));
+          expect(p2pService.sendMessageCallCount, 0);
+          expect(p2pService.storeInInboxCallCount, 0);
+        }
+
+        groupRepo = InMemoryGroupRepository();
+        msgRepo = InMemoryGroupMessageRepository();
+        const ordinaryGroupId = 'group-list-ordinary-stuck';
+        final ordinaryGroup = makeGroup(
+          id: ordinaryGroupId,
+          name: 'Ordinary List Stuck',
+        ).copyWith(myRole: GroupRole.member);
+        await groupRepo.saveGroup(ordinaryGroup);
+        final future = marker.add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            ordinaryGroupId,
+            nextEligibleAt: future,
+          );
+        }
+        var unexpectedLocalDeleteCalls = 0;
+        await tester.pumpWidget(
+          buildWidget(
+            groupListKey: const ValueKey('group-list-ordinary-control'),
+            deleteSelfRemovedGroupShell:
+                ({required String groupId, required String selfPeerId}) async {
+                  unexpectedLocalDeleteCalls++;
+                  return DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(
+          find.byKey(
+            const ValueKey('group-stuck-leave-group-list-ordinary-stuck'),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(unexpectedLocalDeleteCalls, 0);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(await groupRepo.getGroup(ordinaryGroupId), isNull);
       },
     );
 
@@ -835,7 +1057,9 @@ void main() {
         );
         await groupRepo.recordGroupRejoinFailure(
           'grp-joining',
-          nextEligibleAt: DateTime.now().toUtc().add(const Duration(seconds: 30)),
+          nextEligibleAt: DateTime.now().toUtc().add(
+            const Duration(seconds: 30),
+          ),
         );
 
         await tester.pumpWidget(buildWidget());
@@ -1012,9 +1236,7 @@ void main() {
           ValueKey('pending-group-invite-accept-${invite.groupId}'),
         );
         expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNotNull);
-        await tester.tap(
-          acceptFinder,
-        );
+        await tester.tap(acceptFinder);
         await pumpFrames(tester, count: 30);
 
         // B1: a successful accept auto-opens the group conversation.
@@ -1087,86 +1309,82 @@ void main() {
       },
     );
 
-    testWidgets(
-      'accept retries rollback until latest metadata is recovered',
-      (tester) async {
-        final invite = makePendingInvite(
-          groupId: 'grp-stale-retry',
-          groupName: 'test 2',
-        );
-        await pendingInviteRepo.savePendingInvite(invite);
-        final replayListener = GroupMessageListener(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          bridge: bridge,
-          getSelfPeerId: () async => testIdentity.peerId,
-        );
-        addTearDown(replayListener.dispose);
+    testWidgets('accept retries rollback until latest metadata is recovered', (
+      tester,
+    ) async {
+      final invite = makePendingInvite(
+        groupId: 'grp-stale-retry',
+        groupName: 'test 2',
+      );
+      await pendingInviteRepo.savePendingInvite(invite);
+      final replayListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => testIdentity.peerId,
+      );
+      addTearDown(replayListener.dispose);
 
-        final latestMetadataAt = DateTime.now()
-            .toUtc()
-            .add(const Duration(minutes: 5));
-        final latestMetadata = await makeSignedMetadataReplayInboxMessage(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: invite.groupId,
-          updatedAt: latestMetadataAt,
-          name: 'test 3',
-          description: '333',
-          messageId: 'metadata-after-rollback',
-        );
-        bridge.responseSequences['group:inboxRetrieveCursor'] = [
-          for (var i = 0; i < 4; i++)
-            {
-              'ok': false,
-              'errorCode': 'RELAY_UNAVAILABLE',
-              'errorMessage': 'relay unavailable',
-            },
+      final latestMetadataAt = DateTime.now().toUtc().add(
+        const Duration(minutes: 5),
+      );
+      final latestMetadata = await makeSignedMetadataReplayInboxMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: invite.groupId,
+        updatedAt: latestMetadataAt,
+        name: 'test 3',
+        description: '333',
+        messageId: 'metadata-after-rollback',
+      );
+      bridge.responseSequences['group:inboxRetrieveCursor'] = [
+        for (var i = 0; i < 4; i++)
           {
-            'ok': true,
-            'messages': [latestMetadata],
-            'cursor': '',
+            'ok': false,
+            'errorCode': 'RELAY_UNAVAILABLE',
+            'errorMessage': 'relay unavailable',
           },
-        ];
+        {
+          'ok': true,
+          'messages': [latestMetadata],
+          'cursor': '',
+        },
+      ];
 
-        await tester.pumpWidget(
-          buildWidget(groupMessageListener: replayListener),
-        );
-        await pumpFrames(tester);
+      await tester.pumpWidget(
+        buildWidget(groupMessageListener: replayListener),
+      );
+      await pumpFrames(tester);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
-        await pumpFrames(tester, count: 90);
+      await tester.tap(
+        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+      );
+      await pumpFrames(tester, count: 90);
 
-        expect(
-          await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNull,
-        );
-        final group = await groupRepo.getGroup(invite.groupId);
-        expect(group, isNotNull);
-        expect(group!.name, 'test 3');
-        expect(group.description, '333');
-        expect(group.lastMetadataEventAt, latestMetadataAt);
-        expect(p2pService.drainOfflineInboxCallCount, 2);
-        expect(groupInviteListener.waitForIdleCallCount, 2);
-        expect(
-          bridge.commandLog.where((cmd) => cmd == 'group:join'),
-          hasLength(2),
-        );
-        expect(
-          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
-          hasLength(5),
-        );
-        // 208: a navigating accept shows NO confirmation snackbar.
-        expect(find.byType(SnackBar), findsNothing);
-        expect(
-          find.text('Invite accepted, but recovery is still catching up'),
-          findsNothing,
-        );
-        expect(find.text('Failed to accept invite'), findsNothing);
-      },
-    );
+      expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
+      final group = await groupRepo.getGroup(invite.groupId);
+      expect(group, isNotNull);
+      expect(group!.name, 'test 3');
+      expect(group.description, '333');
+      expect(group.lastMetadataEventAt, latestMetadataAt);
+      expect(p2pService.drainOfflineInboxCallCount, 2);
+      expect(groupInviteListener.waitForIdleCallCount, 2);
+      expect(
+        bridge.commandLog.where((cmd) => cmd == 'group:join'),
+        hasLength(2),
+      );
+      expect(
+        bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+        hasLength(5),
+      );
+      // 208: a navigating accept shows NO confirmation snackbar.
+      expect(find.byType(SnackBar), findsNothing);
+      expect(
+        find.text('Invite accepted, but recovery is still catching up'),
+        findsNothing,
+      );
+      expect(find.text('Failed to accept invite'), findsNothing);
+    });
 
     testWidgets(
       'EK011 accepts a key-package-bound pending invite through wired local package id',
@@ -1296,101 +1514,95 @@ void main() {
     // `_onAcceptPendingInvite` THROUGH the `_processingInviteIds` guard. A
     // key-package-bound invite rolls back to retryable on a join failure (the
     // EK011 companion shape), keeping the live card + invite.
-    testWidgets(
-      'TC-02 bridgeError keep-pending accept shows an inline Retry that '
-      're-runs accept through the guard',
-      (tester) async {
-        const localDeviceId = 'peer-admin-device-1';
-        p2pService.emitState(
-          const NodeState(peerId: localDeviceId, isStarted: true),
-        );
-        final invite = makePendingInvite(
-          groupId: 'grp-retryable',
-          groupName: 'Retry Room',
-          recipientDeviceId: localDeviceId,
-        );
-        await pendingInviteRepo.savePendingInvite(invite);
-        // Join fails for a key-package-bound invite → rollback → retryable
-        // shape-a (group == null, invite kept).
-        bridge.responses['group:join'] = {
-          'ok': false,
-          'errorCode': 'JOIN_FAILED',
-        };
-        bridge.responses['group:inboxRetrieveCursor'] = {
-          'ok': false,
-          'errorCode': 'RELAY_UNAVAILABLE',
-          'errorMessage': 'relay unavailable',
-        };
+    testWidgets('TC-02 bridgeError keep-pending accept shows an inline Retry that '
+        're-runs accept through the guard', (tester) async {
+      const localDeviceId = 'peer-admin-device-1';
+      p2pService.emitState(
+        const NodeState(peerId: localDeviceId, isStarted: true),
+      );
+      final invite = makePendingInvite(
+        groupId: 'grp-retryable',
+        groupName: 'Retry Room',
+        recipientDeviceId: localDeviceId,
+      );
+      await pendingInviteRepo.savePendingInvite(invite);
+      // Join fails for a key-package-bound invite → rollback → retryable
+      // shape-a (group == null, invite kept).
+      bridge.responses['group:join'] = {
+        'ok': false,
+        'errorCode': 'JOIN_FAILED',
+      };
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': false,
+        'errorCode': 'RELAY_UNAVAILABLE',
+        'errorMessage': 'relay unavailable',
+      };
 
-        await tester.pumpWidget(buildWidget());
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
-        // The recovery-retry wrapper runs up to 5×500ms re-attempts; pump past
-        // the FULL loop so the outcome settles on the stable keep-pending
-        // shape-a `(bridgeError, null)` (a shorter pump catches an in-flight
-        // attempt mid-materialization where the group is transiently persisted).
-        await pumpFrames(tester, count: 220);
+      await tester.tap(
+        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+      );
+      // The recovery-retry wrapper runs up to 5×500ms re-attempts; pump past
+      // the FULL loop so the outcome settles on the stable keep-pending
+      // shape-a `(bridgeError, null)` (a shorter pump catches an in-flight
+      // attempt mid-materialization where the group is transiently persisted).
+      await pumpFrames(tester, count: 220);
 
-        // Invite KEPT (rollback returned without committing).
-        expect(
-          await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNotNull,
-        );
-        expect(await groupRepo.getGroup(invite.groupId), isNull);
-        // Live card still present.
-        expect(
-          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-          findsOneWidget,
-        );
-        // RED on HEAD: there is no inline Retry control today (generic snackbar
-        // path), so this key finds nothing.
-        final retryFinder = find.byKey(
-          ValueKey('pending-group-invite-retry-${invite.groupId}'),
-        );
-        expect(retryFinder, findsOneWidget);
-        // No generic failure snackbar on the keep-pending path.
-        expect(find.text('Failed to accept invite'), findsNothing);
+      // Invite KEPT (rollback returned without committing).
+      expect(
+        await pendingInviteRepo.getPendingInvite(invite.groupId),
+        isNotNull,
+      );
+      expect(await groupRepo.getGroup(invite.groupId), isNull);
+      // Live card still present.
+      expect(
+        find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+        findsOneWidget,
+      );
+      // RED on HEAD: there is no inline Retry control today (generic snackbar
+      // path), so this key finds nothing.
+      final retryFinder = find.byKey(
+        ValueKey('pending-group-invite-retry-${invite.groupId}'),
+      );
+      expect(retryFinder, findsOneWidget);
+      // No generic failure snackbar on the keep-pending path.
+      expect(find.text('Failed to accept invite'), findsNothing);
 
-        // INV-2 guard lock (strengthened from a single-tap greaterThan, which a
-        // guard bypass survived — M3). `loadIdentity` is called EXACTLY ONCE per
-        // `_onAcceptPendingInvite` entry (the recovery-retry wrapper re-attempts
-        // without reloading), so it is a clean per-accept-pass counter.
-        //
-        // A RAPID DOUBLE tap of Retry WITHOUT pumping to settle between the two
-        // taps: `_onAcceptPendingInvite` adds the id to `_processingInviteIds`
-        // SYNCHRONOUSLY (before its first await), so the second tap — dispatched
-        // in the same frame, before any await yields — hits the contains-check
-        // and returns. With the guard intact: double-tap == exactly ONE fresh
-        // accept pass (+1 loadIdentity). With a guard bypass: double-tap == TWO
-        // passes (+2). The EQUALITY (not greaterThan) is what re-reds M3.
-        final passesBeforeRetry = identityRepo.loadIdentityCallCount;
-        await tester.tap(retryFinder);
-        await tester.tap(retryFinder, warnIfMissed: false);
-        await tester.pump();
-        // Drain the re-entered accept's preserved 5×500ms recovery loop + the
-        // use-case's own 250ms inbox-drain timers (parity with the 220-frame
-        // first-accept above) so no raw timer is pending at teardown.
-        await pumpFrames(tester, count: 220);
-        final passesAfterRetry = identityRepo.loadIdentityCallCount;
-        expect(
-          passesAfterRetry - passesBeforeRetry,
-          1,
-          reason:
-              'inline Retry must re-run accept EXACTLY ONCE for a rapid '
-              'double-tap — the second concurrent tap hits the '
-              '_processingInviteIds guard and arms no fresh pass',
-        );
-        // The single re-run still armed a fresh accept (sanity: not zero) — a
-        // real join attempt went out on the re-entered pass.
-        expect(
-          bridge.commandLog.where((cmd) => cmd == 'group:join'),
-          isNotEmpty,
-        );
-      },
-    );
+      // INV-2 guard lock (strengthened from a single-tap greaterThan, which a
+      // guard bypass survived — M3). `loadIdentity` is called EXACTLY ONCE per
+      // `_onAcceptPendingInvite` entry (the recovery-retry wrapper re-attempts
+      // without reloading), so it is a clean per-accept-pass counter.
+      //
+      // A RAPID DOUBLE tap of Retry WITHOUT pumping to settle between the two
+      // taps: `_onAcceptPendingInvite` adds the id to `_processingInviteIds`
+      // SYNCHRONOUSLY (before its first await), so the second tap — dispatched
+      // in the same frame, before any await yields — hits the contains-check
+      // and returns. With the guard intact: double-tap == exactly ONE fresh
+      // accept pass (+1 loadIdentity). With a guard bypass: double-tap == TWO
+      // passes (+2). The EQUALITY (not greaterThan) is what re-reds M3.
+      final passesBeforeRetry = identityRepo.loadIdentityCallCount;
+      await tester.tap(retryFinder);
+      await tester.tap(retryFinder, warnIfMissed: false);
+      await tester.pump();
+      // Drain the re-entered accept's preserved 5×500ms recovery loop + the
+      // use-case's own 250ms inbox-drain timers (parity with the 220-frame
+      // first-accept above) so no raw timer is pending at teardown.
+      await pumpFrames(tester, count: 220);
+      final passesAfterRetry = identityRepo.loadIdentityCallCount;
+      expect(
+        passesAfterRetry - passesBeforeRetry,
+        1,
+        reason:
+            'inline Retry must re-run accept EXACTLY ONCE for a rapid '
+            'double-tap — the second concurrent tap hits the '
+            '_processingInviteIds guard and arms no fresh pass',
+      );
+      // The single re-run still armed a fresh accept (sanity: not zero) — a
+      // real join attempt went out on the re-entered pass.
+      expect(bridge.commandLog.where((cmd) => cmd == 'group:join'), isNotEmpty);
+    });
 
     testWidgets(
       'accept drains all inbox cursor pages before clearing spinner',
@@ -1486,60 +1698,55 @@ void main() {
 
     // TC-31 (plan 260) — row outcomes are session-durable: a lifecycle reload
     // must not erase the state produced after accept's awaited reload.
-    testWidgets(
-      'TC-31 repairPending row survives a late lifecycle reload',
-      (tester) async {
-        final invite = makePendingInvite(overrideGroupKey: '');
-        await pendingInviteRepo.savePendingInvite(invite);
+    testWidgets('TC-31 repairPending row survives a late lifecycle reload', (
+      tester,
+    ) async {
+      final invite = makePendingInvite(overrideGroupKey: '');
+      await pendingInviteRepo.savePendingInvite(invite);
 
-        await tester.pumpWidget(buildWidget());
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
-        await pumpFrames(tester, count: 30);
+      await tester.tap(
+        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+      );
+      await pumpFrames(tester, count: 30);
 
-        // Precondition: TC-04 state is present.
-        expect(
-          find.descendant(
-            of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-            matching: find.text('Waiting for key'),
-          ),
-          findsOneWidget,
-        );
+      // Precondition: TC-04 state is present.
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          matching: find.text('Waiting for key'),
+        ),
+        findsOneWidget,
+      );
 
-        // Simulate a late refresh after the outcome was installed.
-        WidgetsBinding.instance.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
-        await pumpFrames(tester, count: 20);
+      // Simulate a late refresh after the outcome was installed.
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      );
+      await pumpFrames(tester, count: 20);
 
-        // The invite is still KEPT in the repo.
-        expect(
-          await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNotNull,
-        );
-        // The live row and its exact outcome survive that reload.
-        expect(
-          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-          findsOneWidget,
-        );
-        expect(
-          find.byKey(
-            ValueKey('pending-group-invite-accept-${invite.groupId}'),
-          ),
-          findsOneWidget,
-        );
-        expect(find.text('Waiting for key'), findsOneWidget);
-        expect(
-          find.byKey(
-            ValueKey('pending-group-invite-outcome-${invite.groupId}'),
-          ),
-          findsNothing,
-        );
-      },
-    );
+      // The invite is still KEPT in the repo.
+      expect(
+        await pendingInviteRepo.getPendingInvite(invite.groupId),
+        isNotNull,
+      );
+      // The live row and its exact outcome survive that reload.
+      expect(
+        find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        findsOneWidget,
+      );
+      expect(find.text('Waiting for key'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('pending-group-invite-outcome-${invite.groupId}')),
+        findsNothing,
+      );
+    });
 
     testWidgets(
       'TC-32 live-expired Ask resolves the exact active contact and localized '
@@ -1586,26 +1793,25 @@ void main() {
       'TC-32 live-expired Ask is hidden without contact authority or launcher '
       '(table)',
       (tester) async {
-        final cases = <
-          ({String label, ContactModel? contact, bool provideLauncher})
-        >[
-          (
-            label: 'blocked',
-            contact: aliceContact.copyWith(isBlocked: true),
-            provideLauncher: true,
-          ),
-          (
-            label: 'archived',
-            contact: aliceContact.copyWith(isArchived: true),
-            provideLauncher: true,
-          ),
-          (label: 'non-contact', contact: null, provideLauncher: true),
-          (
-            label: 'missing-launcher',
-            contact: aliceContact,
-            provideLauncher: false,
-          ),
-        ];
+        final cases =
+            <({String label, ContactModel? contact, bool provideLauncher})>[
+              (
+                label: 'blocked',
+                contact: aliceContact.copyWith(isBlocked: true),
+                provideLauncher: true,
+              ),
+              (
+                label: 'archived',
+                contact: aliceContact.copyWith(isArchived: true),
+                provideLauncher: true,
+              ),
+              (label: 'non-contact', contact: null, provideLauncher: true),
+              (
+                label: 'missing-launcher',
+                contact: aliceContact,
+                provideLauncher: false,
+              ),
+            ];
 
         for (final testCase in cases) {
           await tester.pumpWidget(const SizedBox());
@@ -1633,9 +1839,7 @@ void main() {
           await pumpFrames(tester, count: 20);
 
           expect(
-            find.byKey(
-              ValueKey('pending-group-invite-ask-new-$groupId'),
-            ),
+            find.byKey(ValueKey('pending-group-invite-ask-new-$groupId')),
             findsNothing,
             reason: testCase.label,
           );
@@ -1805,35 +2009,41 @@ void main() {
         'label': 'revoked',
         'groupId': 'grp-term-revoked',
         'reason': 'Invite was revoked',
-        'arrange': (InMemoryPendingGroupInviteRepository repo,
-            PendingGroupInvite inv) async {
-          final now = DateTime.now().toUtc();
-          await repo.saveRevokedInvite(
-            GroupInviteRevocation(
-              inviteId: inv.inviteId,
-              groupId: inv.groupId,
-              revokedAt: now.subtract(const Duration(minutes: 1)),
-              expiresAt: now.add(const Duration(days: 7)),
-            ),
-          );
-        },
+        'arrange':
+            (
+              InMemoryPendingGroupInviteRepository repo,
+              PendingGroupInvite inv,
+            ) async {
+              final now = DateTime.now().toUtc();
+              await repo.saveRevokedInvite(
+                GroupInviteRevocation(
+                  inviteId: inv.inviteId,
+                  groupId: inv.groupId,
+                  revokedAt: now.subtract(const Duration(minutes: 1)),
+                  expiresAt: now.add(const Duration(days: 7)),
+                ),
+              );
+            },
       },
       {
         'label': 'alreadyUsed',
         'groupId': 'grp-term-used',
         'reason': 'Invite already used',
-        'arrange': (InMemoryPendingGroupInviteRepository repo,
-            PendingGroupInvite inv) async {
-          final now = DateTime.now().toUtc();
-          await repo.saveConsumedInvite(
-            GroupInviteConsumption(
-              inviteId: inv.inviteId,
-              groupId: inv.groupId,
-              consumedAt: now.subtract(const Duration(minutes: 1)),
-              expiresAt: now.add(const Duration(days: 7)),
-            ),
-          );
-        },
+        'arrange':
+            (
+              InMemoryPendingGroupInviteRepository repo,
+              PendingGroupInvite inv,
+            ) async {
+              final now = DateTime.now().toUtc();
+              await repo.saveConsumedInvite(
+                GroupInviteConsumption(
+                  inviteId: inv.inviteId,
+                  groupId: inv.groupId,
+                  consumedAt: now.subtract(const Duration(minutes: 1)),
+                  expiresAt: now.add(const Duration(days: 7)),
+                ),
+              );
+            },
       },
       {
         'label': 'wrongIdentity',
@@ -1846,8 +2056,11 @@ void main() {
         // (use-case :331). The card is NOT expired → accept stays enabled.
         'recipientDeviceId': 'invite-device-A',
         'localDeviceId': 'peer-admin-device-B',
-        'arrange': (InMemoryPendingGroupInviteRepository repo,
-            PendingGroupInvite inv) async {},
+        'arrange':
+            (
+              InMemoryPendingGroupInviteRepository repo,
+              PendingGroupInvite inv,
+            ) async {},
       },
       {
         'label': 'expiredFreshness',
@@ -1857,8 +2070,11 @@ void main() {
         // The A2 seam: receivedAt ~6d21h ago leaves the card valid (accept
         // enabled) while the freshness proof has aged out → expiredFreshness.
         'receivedAtDaysHours': const Duration(days: 6, hours: 21),
-        'arrange': (InMemoryPendingGroupInviteRepository repo,
-            PendingGroupInvite inv) async {},
+        'arrange':
+            (
+              InMemoryPendingGroupInviteRepository repo,
+              PendingGroupInvite inv,
+            ) async {},
       },
     ];
 
@@ -1870,9 +2086,9 @@ void main() {
         (tester) async {
           final groupId = tc['groupId'] as String;
           final receivedAt = tc.containsKey('receivedAtDaysHours')
-              ? DateTime.now()
-                  .toUtc()
-                  .subtract(tc['receivedAtDaysHours'] as Duration)
+              ? DateTime.now().toUtc().subtract(
+                  tc['receivedAtDaysHours'] as Duration,
+                )
               : null;
           final invite = makePendingInvite(
             groupId: groupId,
@@ -1885,24 +2101,20 @@ void main() {
             // Bring up a local node whose device id deliberately mismatches the
             // invite's bound recipient device (drives wrongIdentity).
             p2pService.emitState(
-              NodeState(
-                peerId: tc['localDeviceId'] as String,
-                isStarted: true,
-              ),
+              NodeState(peerId: tc['localDeviceId'] as String, isStarted: true),
             );
           }
-          await (tc['arrange'] as Future<void> Function(
-            InMemoryPendingGroupInviteRepository,
-            PendingGroupInvite,
-          ))(pendingInviteRepo, invite);
+          await (tc['arrange']
+              as Future<void> Function(
+                InMemoryPendingGroupInviteRepository,
+                PendingGroupInvite,
+              ))(pendingInviteRepo, invite);
 
           await tester.pumpWidget(buildWidget());
           await pumpFrames(tester);
 
           await tester.tap(
-            find.byKey(
-              ValueKey('pending-group-invite-accept-$groupId'),
-            ),
+            find.byKey(ValueKey('pending-group-invite-accept-$groupId')),
           );
           await pumpFrames(tester, count: 30);
 
@@ -1987,9 +2199,7 @@ void main() {
         pendingInviteStreamController.add(repair);
         await pumpFrames(tester, count: 20);
         await tester.tap(
-          find.byKey(
-            ValueKey('pending-group-invite-accept-${repair.groupId}'),
-          ),
+          find.byKey(ValueKey('pending-group-invite-accept-${repair.groupId}')),
         );
         await pumpFrames(tester, count: 30);
         expect(find.byType(SnackBar), findsNothing);
@@ -2202,7 +2412,10 @@ void main() {
             ValueKey('pending-group-invite-decline-${invite.groupId}'),
           ),
         );
-        await pumpFrames(tester, count: 20); // 1000ms, well inside the 4s window
+        await pumpFrames(
+          tester,
+          count: 20,
+        ); // 1000ms, well inside the 4s window
 
         // Optimistic: the row hides instantly and an Undo affordance shows,
         // but the local invite is NOT yet deleted (the commit is deferred).
@@ -2324,9 +2537,7 @@ void main() {
           isTrue,
         );
         expect(
-          flowEvents.any(
-            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
-          ),
+          flowEvents.any((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED'),
           isFalse,
         );
       },
@@ -2428,9 +2639,7 @@ void main() {
           isNotNull,
         );
         expect(
-          flowEvents.any(
-            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
-          ),
+          flowEvents.any((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED'),
           isFalse,
         );
       },
@@ -2489,82 +2698,77 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a stale Undo tapped after the screen is gone is a safe no-op '
-      '(no setState-after-dispose crash, no commit) [review P1]',
-      (tester) async {
-        final invite = makePendingInvite(groupId: 'grp-stale-undo');
-        await pendingInviteRepo.savePendingInvite(invite);
+    testWidgets('a stale Undo tapped after the screen is gone is a safe no-op '
+        '(no setState-after-dispose crash, no commit) [review P1]', (
+      tester,
+    ) async {
+      final invite = makePendingInvite(groupId: 'grp-stale-undo');
+      await pendingInviteRepo.savePendingInvite(invite);
 
-        // Host GroupListWired under a toggle so it can be removed SYNCHRONOUSLY
-        // (no route transition) while the app-level ScaffoldMessenger — and the
-        // decline snackbar's Undo action — survives.
-        final showScreen = ValueNotifier<bool>(true);
-        addTearDown(showScreen.dispose);
-        await tester.pumpWidget(
-          MaterialApp(
-            locale: const Locale('en'),
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            home: ValueListenableBuilder<bool>(
-              valueListenable: showScreen,
-              builder: (_, show, _) => show
-                  ? GroupListWired(
-                      groupRepo: groupRepo,
-                      msgRepo: msgRepo,
-                      groupMessageListener: FakeGroupMessageListener(
-                        messageStreamController.stream,
-                      ),
-                      bridge: bridge,
-                      identityRepo: identityRepo,
-                      contactRepo: contactRepo,
-                      p2pService: p2pService,
-                      groupInviteListener: groupInviteListener,
-                    )
-                  : const Scaffold(body: SizedBox()),
-            ),
+      // Host GroupListWired under a toggle so it can be removed SYNCHRONOUSLY
+      // (no route transition) while the app-level ScaffoldMessenger — and the
+      // decline snackbar's Undo action — survives.
+      final showScreen = ValueNotifier<bool>(true);
+      addTearDown(showScreen.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ValueListenableBuilder<bool>(
+            valueListenable: showScreen,
+            builder: (_, show, _) => show
+                ? GroupListWired(
+                    groupRepo: groupRepo,
+                    msgRepo: msgRepo,
+                    groupMessageListener: FakeGroupMessageListener(
+                      messageStreamController.stream,
+                    ),
+                    bridge: bridge,
+                    identityRepo: identityRepo,
+                    contactRepo: contactRepo,
+                    p2pService: p2pService,
+                    groupInviteListener: groupInviteListener,
+                  )
+                : const Scaffold(body: SizedBox()),
           ),
-        );
-        await pumpFrames(tester);
+        ),
+      );
+      await pumpFrames(tester);
 
-        await tester.tap(
-          find.byKey(
-            ValueKey('pending-group-invite-decline-${invite.groupId}'),
-          ),
-        );
-        await pumpFrames(tester, count: 10);
-        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsWidgets);
+      await tester.tap(
+        find.byKey(ValueKey('pending-group-invite-decline-${invite.groupId}')),
+      );
+      await pumpFrames(tester, count: 10);
+      expect(find.widgetWithText(SnackBarAction, 'Undo'), findsWidgets);
 
-        // Tear GroupListWired down mid-window (synchronous dispose → its commit
-        // timer is cancelled) while the snackbar's Undo lingers.
-        showScreen.value = false;
-        await pumpFrames(tester, count: 3);
+      // Tear GroupListWired down mid-window (synchronous dispose → its commit
+      // timer is cancelled) while the snackbar's Undo lingers.
+      showScreen.value = false;
+      await pumpFrames(tester, count: 3);
 
-        // Tapping the now-stale Undo must NOT crash (no setState after dispose)
-        // and must NOT commit/undo.
-        final undo = find.widgetWithText(SnackBarAction, 'Undo');
-        if (undo.evaluate().isNotEmpty) {
-          await tester.tap(undo.first, warnIfMissed: false);
-          await pumpFrames(tester, count: 5);
-        }
-        await tester.pump(const Duration(seconds: 5));
+      // Tapping the now-stale Undo must NOT crash (no setState after dispose)
+      // and must NOT commit/undo.
+      final undo = find.widgetWithText(SnackBarAction, 'Undo');
+      if (undo.evaluate().isNotEmpty) {
+        await tester.tap(undo.first, warnIfMissed: false);
         await pumpFrames(tester, count: 5);
+      }
+      await tester.pump(const Duration(seconds: 5));
+      await pumpFrames(tester, count: 5);
 
-        expect(tester.takeException(), isNull);
-        // The deferred commit was cancelled by dispose → invite kept; nothing
-        // committed.
-        expect(
-          await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNotNull,
-        );
-        expect(
-          flowEvents.any(
-            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
-          ),
-          isFalse,
-        );
-      },
-    );
+      expect(tester.takeException(), isNull);
+      // The deferred commit was cancelled by dispose → invite kept; nothing
+      // committed.
+      expect(
+        await pendingInviteRepo.getPendingInvite(invite.groupId),
+        isNotNull,
+      );
+      expect(
+        flowEvents.any((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED'),
+        isFalse,
+      );
+    });
 
     testWidgets(
       'the Undo affordance disappears the moment the deferred commit starts '
@@ -2757,5 +2961,17 @@ class _ThrowingGroupRepository extends InMemoryGroupRepository {
       }
     }
     throw Exception('Simulated group loading error');
+  }
+}
+
+class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
+  bool failMembers = false;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) {
+    if (failMembers) {
+      throw StateError('member read failed');
+    }
+    return super.getMembers(groupId);
   }
 }

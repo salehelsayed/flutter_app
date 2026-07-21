@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart'
     show decodeInboxMessage;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Default page size for the cursor-independent dissolve probe.
@@ -95,7 +96,7 @@ Future<ReconcileMissedGroupDissolvesResult> reconcileMissedGroupDissolves({
   var truncated = false;
 
   for (final group in groups) {
-    if (group.isDissolved) {
+    if (group.isDissolved || group.selfRemovedAt != null) {
       continue;
     }
     groupsProbed++;
@@ -177,23 +178,32 @@ Future<bool> _probeGroupForDissolve({
     }
     pageCount++;
 
-    final page = await callGroupInboxRetrieveWithCursor(
-      bridge,
-      groupId,
-      cursor,
-      pageSize,
+    final guardedPage = await runSelfRemovedGroupLifecycleLeaf<GroupInboxPage>(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      action: (_) =>
+          callGroupInboxRetrieveWithCursor(bridge, groupId, cursor, pageSize),
     );
+    if (!guardedPage.didRun) return false;
+    final page = guardedPage.value!;
 
     for (final msg in page.messages) {
       Map<String, dynamic> payload;
       try {
-        payload = await decodeInboxMessage(
-          bridge,
-          groupRepo,
-          msg,
-          groupId,
-          expectedRecipientPeerId: selfPeerId,
-        );
+        final guardedPayload =
+            await runSelfRemovedGroupLifecycleLeaf<Map<String, dynamic>>(
+              groupRepo: groupRepo,
+              groupId: groupId,
+              action: (_) => decodeInboxMessage(
+                bridge,
+                groupRepo,
+                msg,
+                groupId,
+                expectedRecipientPeerId: selfPeerId,
+              ),
+            );
+        if (!guardedPayload.didRun) return false;
+        payload = guardedPayload.value!;
       } catch (_) {
         // Keyless (S2), unsigned, recipient-not-entitled, etc. — not a dissolve
         // we can re-derive here. Skip; never persist anything.
@@ -214,6 +224,18 @@ Future<bool> _probeGroupForDissolve({
           : (msg['from'] as String? ?? '');
       final senderDeviceId = payload['senderDeviceId'] as String?;
 
+      // Retrieval/decrypt may span a removal transition. Make a fresh routing
+      // decision after decrypt, then release the phase before the listener
+      // callback because that callback can acquire the same group phase.
+      final routeAuthority = await runSelfRemovedGroupLifecycleLeaf<bool>(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        action: (_) async => true,
+      );
+      if (!routeAuthority.didRun || routeAuthority.value != true) {
+        return false;
+      }
+
       // Route through the public listener entrypoint — it owns authorization,
       // signed-audit verification, the 122 terminal-dissolve relaxation, and
       // all idempotency. We do NOT rethrow: a rejected/garbled dissolve must
@@ -225,8 +247,7 @@ Future<bool> _probeGroupForDissolve({
           'senderUsername': payload['senderUsername'] as String? ?? '',
           'keyEpoch': payload['keyEpoch'] as int? ?? 0,
           'text': text,
-          if (payload['timestamp'] is String)
-            'timestamp': payload['timestamp'],
+          if (payload['timestamp'] is String) 'timestamp': payload['timestamp'],
           if (effectiveTransportPeerId.isNotEmpty)
             'transportPeerId': effectiveTransportPeerId,
           if (senderDeviceId != null && senderDeviceId.isNotEmpty)

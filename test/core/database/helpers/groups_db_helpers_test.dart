@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 
 void main() {
   late Database db;
@@ -13,7 +13,7 @@ void main() {
 
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
-    await runGroupsTablesMigration(db);
+    await runProductionOnCreate(db, 102);
   });
 
   tearDown(() async {
@@ -59,16 +59,22 @@ void main() {
 
   group('dbLoadAllGroups', () {
     test('returns all groups ordered by created_at DESC', () async {
-      await dbInsertGroup(db, makeGroupRow(
-        id: 'g1',
-        topicName: '/t/1',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertGroup(db, makeGroupRow(
-        id: 'g2',
-        topicName: '/t/2',
-        createdAt: '2026-01-02T00:00:00.000Z',
-      ));
+      await dbInsertGroup(
+        db,
+        makeGroupRow(
+          id: 'g1',
+          topicName: '/t/1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertGroup(
+        db,
+        makeGroupRow(
+          id: 'g2',
+          topicName: '/t/2',
+          createdAt: '2026-01-02T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadAllGroups(db);
       expect(results.length, 2);
@@ -139,10 +145,10 @@ void main() {
 
   group('dbUnarchiveGroup', () {
     test('sets is_archived to 0 and clears archived_at', () async {
-      await dbInsertGroup(db, makeGroupRow(
-        isArchived: 1,
-        archivedAt: '2026-01-15T12:00:00.000Z',
-      ));
+      await dbInsertGroup(
+        db,
+        makeGroupRow(isArchived: 1, archivedAt: '2026-01-15T12:00:00.000Z'),
+      );
 
       await dbUnarchiveGroup(db, 'group-1');
 
@@ -154,21 +160,92 @@ void main() {
 
   group('dbLoadActiveGroups', () {
     test('returns only non-archived groups', () async {
-      await dbInsertGroup(db, makeGroupRow(
-        id: 'active',
-        topicName: '/t/active',
-        isArchived: 0,
-      ));
-      await dbInsertGroup(db, makeGroupRow(
-        id: 'archived',
-        topicName: '/t/archived',
-        isArchived: 1,
-        archivedAt: '2026-01-15T12:00:00.000Z',
-      ));
+      await dbInsertGroup(
+        db,
+        makeGroupRow(id: 'active', topicName: '/t/active', isArchived: 0),
+      );
+      await dbInsertGroup(
+        db,
+        makeGroupRow(
+          id: 'archived',
+          topicName: '/t/archived',
+          isArchived: 1,
+          archivedAt: '2026-01-15T12:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadActiveGroups(db);
       expect(results.length, 1);
       expect(results[0]['id'], 'active');
     });
   });
+
+  test(
+    'ordinary full-row update preserves removal authority and membership watermark while accepted replacement clears and advances',
+    () async {
+      const marker = '2026-07-20T12:00:00.000Z';
+      const watermark = '2026-07-20T12:00:00.000Z';
+      await dbInsertGroup(db, {
+        ...makeGroupRow(id: 'protected', topicName: '/t/protected'),
+        'self_removed_at': marker,
+        'last_membership_event_at': watermark,
+        'last_membership_event_id': 'removal-event',
+      });
+
+      await dbUpdateGroup(db, {
+        ...makeGroupRow(
+          id: 'protected',
+          topicName: '/t/protected',
+          name: 'ordinary metadata update',
+        ),
+        'self_removed_at': null,
+        'last_membership_event_at': '2026-07-19T12:00:00.000Z',
+        'last_membership_event_id': 'stale-event',
+      });
+
+      var stored = await dbLoadGroup(db, 'protected');
+      expect(stored!['name'], 'ordinary metadata update');
+      expect(stored['self_removed_at'], marker);
+      expect(stored['last_membership_event_at'], watermark);
+      expect(stored['last_membership_event_id'], 'removal-event');
+
+      final accepted = await dbReplaceAcceptedGroupAuthority(
+        db,
+        row: {
+          ...makeGroupRow(
+            id: 'protected',
+            topicName: '/t/protected',
+            name: 'accepted membership',
+          ),
+        },
+        expectedSelfRemovedAt: marker,
+        acceptedMembershipEventAt: '2026-07-21T12:00:00.000Z',
+        acceptedMembershipEventId: null,
+      );
+
+      expect(accepted, isTrue);
+      stored = await dbLoadGroup(db, 'protected');
+      expect(stored!['name'], 'accepted membership');
+      expect(stored['self_removed_at'], isNull);
+      expect(stored['last_membership_event_at'], '2026-07-21T12:00:00.000Z');
+      expect(stored['last_membership_event_id'], isNull);
+
+      await dbUpdateGroup(db, {
+        ...makeGroupRow(
+          id: 'protected',
+          topicName: '/t/protected',
+          name: 'ordinary post-accept metadata',
+        ),
+        'is_muted': 1,
+        'last_membership_event_at': '2026-07-18T12:00:00.000Z',
+        'last_membership_event_id': 'stale-after-accept',
+      });
+      stored = await dbLoadGroup(db, 'protected');
+      expect(stored!['name'], 'ordinary post-accept metadata');
+      expect(stored['is_muted'], 1);
+      expect(stored['self_removed_at'], isNull);
+      expect(stored['last_membership_event_at'], '2026-07-21T12:00:00.000Z');
+      expect(stored['last_membership_event_id'], isNull);
+    },
+  );
 }

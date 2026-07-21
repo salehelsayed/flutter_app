@@ -23,6 +23,9 @@ void main() {
       String? dissolvedBy = 'peer-admin',
       int isArchived = 0,
       String? archivedAt,
+      String? lastMembershipEventAt,
+      String? lastMembershipEventId,
+      String? selfRemovedAt,
       String? lastMetadataEventAt = '2026-01-15T13:00:00.000Z',
       String? lastBacklogExpiredAt = '2026-01-11T12:00:00.000Z',
       String? lastBacklogRetainedAt = '2026-01-14T18:30:00.000Z',
@@ -45,6 +48,9 @@ void main() {
         'dissolved_by': dissolvedBy,
         'is_archived': isArchived,
         'archived_at': archivedAt,
+        'last_membership_event_at': lastMembershipEventAt,
+        'last_membership_event_id': lastMembershipEventId,
+        'self_removed_at': selfRemovedAt,
         'last_metadata_event_at': lastMetadataEventAt,
         'last_backlog_expired_at': lastBacklogExpiredAt,
         'last_backlog_retained_at': lastBacklogRetainedAt,
@@ -143,6 +149,33 @@ void main() {
       expect(updated.id, 'group-1');
       expect(updated.type, GroupType.chat);
       expect(updated.topicName, '/topic/1');
+    });
+
+    test('self_removed_at round-trips a non-null authority marker', () {
+      final marker = DateTime.utc(2026, 7, 20, 18, 30);
+      final model = GroupModel.fromMap(
+        makeMap(selfRemovedAt: marker.toIso8601String()),
+      );
+
+      expect(model.selfRemovedAt, marker);
+      expect(model.toMap()['self_removed_at'], marker.toIso8601String());
+    });
+
+    test('copyWith can explicitly clear self_removed_at', () {
+      final marker = DateTime.utc(2026, 7, 20, 18, 30);
+      final model = GroupModel(
+        id: 'group-removed',
+        name: 'Removed shell',
+        type: GroupType.chat,
+        topicName: '/topic/removed',
+        createdAt: now,
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+        selfRemovedAt: marker,
+      );
+
+      expect(model.copyWith().selfRemovedAt, marker);
+      expect(model.copyWith(selfRemovedAt: null).selfRemovedAt, isNull);
     });
   });
 }

@@ -2,6 +2,23 @@ const groupPendingKeyDistributionStatusPending = 'pending';
 const groupPendingKeyDistributionStatusDistributed = 'distributed';
 const groupPendingKeyDistributionStatusUnreachable = 'unreachable';
 
+bool sameExactGroupPendingKeyDistribution(
+  GroupPendingKeyDistribution current,
+  GroupPendingKeyDistribution expected,
+) =>
+    current.id == expected.id &&
+    current.groupId == expected.groupId &&
+    current.peerId == expected.peerId &&
+    current.transportPeerId == expected.transportPeerId &&
+    current.deviceId == expected.deviceId &&
+    current.keyEpoch == expected.keyEpoch &&
+    current.status == expected.status &&
+    current.attempts == expected.attempts &&
+    current.lastError == expected.lastError &&
+    current.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    current.updatedAt.toUtc() == expected.updatedAt.toUtc() &&
+    current.finalizedAt?.toUtc() == expected.finalizedAt?.toUtc();
+
 /// Deterministic row id for a `(group, peer)` deferred-distribution entry, so a
 /// re-enqueue from a later rotation merges via `UNIQUE(group_id, peer_id)`
 /// instead of duplicating (INV-D4).

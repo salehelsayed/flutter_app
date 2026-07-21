@@ -8,6 +8,29 @@ bool isPendingGroupMemberRoleBroadcastKind(String kind) =>
     kind == groupPendingBroadcastKindMemberRoleUpdated ||
     kind == groupPendingBroadcastKindMemberRolePrepared;
 
+bool sameExactGroupPendingBroadcast(
+  GroupPendingBroadcast current,
+  GroupPendingBroadcast expected,
+) {
+  if (current.id != expected.id ||
+      current.groupId != expected.groupId ||
+      current.kind != expected.kind ||
+      current.sysText != expected.sysText ||
+      current.sourceMessageId != expected.sourceMessageId ||
+      current.eventAt.toUtc() != expected.eventAt.toUtc() ||
+      current.createdAt.toUtc() != expected.createdAt.toUtc() ||
+      current.updatedAt.toUtc() != expected.updatedAt.toUtc() ||
+      current.recipientPeerIds.length != expected.recipientPeerIds.length) {
+    return false;
+  }
+  for (var index = 0; index < current.recipientPeerIds.length; index++) {
+    if (current.recipientPeerIds[index] != expected.recipientPeerIds[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// A group system broadcast (e.g. a `group_metadata_updated` edit) that was
 /// persisted locally but failed to leave the device. Retained durably so it can
 /// be re-pushed on the next rejoin/foreground instead of being lost or silently

@@ -18,6 +18,19 @@ typedef AppendGroupEventLogEntry =
       DateTime? createdAt,
     });
 
+/// Result of an append attempted inside an existing SQL transaction.
+///
+/// [inserted] is false only for an exact replay of the same source event. A
+/// conflicting replay still throws [GroupEventLogTamperException]. Callers
+/// that require a phase-unique fact (for example an accepted-membership
+/// binding) can therefore reject replay without opening a nested transaction.
+class GroupEventLogAppendResult {
+  const GroupEventLogAppendResult({required this.row, required this.inserted});
+
+  final Map<String, Object?> row;
+  final bool inserted;
+}
+
 class GroupEventLogTamperException implements Exception {
   GroupEventLogTamperException(this.message);
 
@@ -58,8 +71,8 @@ Future<Map<String, Object?>> dbAppendGroupEventLogEntry(
   required Map<String, Object?> payload,
   DateTime? createdAt,
 }) {
-  return dbWriteTransaction(db, (txn) {
-    return _appendGroupEventLogEntry(
+  return dbWriteTransaction(db, (txn) async {
+    final result = await dbAppendGroupEventLogEntryInTransaction(
       txn,
       groupId: groupId,
       eventType: eventType,
@@ -69,7 +82,36 @@ Future<Map<String, Object?>> dbAppendGroupEventLogEntry(
       payload: payload,
       createdAt: createdAt,
     );
+    return result.row;
   });
+}
+
+/// Appends an event-log entry using the caller's transaction.
+///
+/// This is the transaction-scoped counterpart to [dbAppendGroupEventLogEntry].
+/// It deliberately accepts [DatabaseExecutor] so migration callbacks and
+/// already-open write transactions can share the same primitive without
+/// nesting [dbWriteTransaction].
+Future<GroupEventLogAppendResult> dbAppendGroupEventLogEntryInTransaction(
+  DatabaseExecutor txn, {
+  required String groupId,
+  required String eventType,
+  required String sourcePeerId,
+  required String sourceEventId,
+  required String sourceTimestamp,
+  required Map<String, Object?> payload,
+  DateTime? createdAt,
+}) {
+  return _appendGroupEventLogEntry(
+    txn,
+    groupId: groupId,
+    eventType: eventType,
+    sourcePeerId: sourcePeerId,
+    sourceEventId: sourceEventId,
+    sourceTimestamp: sourceTimestamp,
+    payload: payload,
+    createdAt: createdAt,
+  );
 }
 
 Future<List<Map<String, Object?>>> dbLoadGroupEventLogEntries(
@@ -155,8 +197,8 @@ Future<List<GroupEventLogChainViolation>> dbVerifyGroupEventLogChain(
   return violations;
 }
 
-Future<Map<String, Object?>> _appendGroupEventLogEntry(
-  Transaction txn, {
+Future<GroupEventLogAppendResult> _appendGroupEventLogEntry(
+  DatabaseExecutor txn, {
   required String groupId,
   required String eventType,
   required String sourcePeerId,
@@ -188,7 +230,7 @@ Future<Map<String, Object?>> _appendGroupEventLogEntry(
         'conflicting_replay source_event=${_safeDiagnosticId(sourceEventId)}',
       );
     }
-    return row;
+    return GroupEventLogAppendResult(row: row, inserted: false);
   }
 
   final latest = await txn.query(
@@ -246,7 +288,7 @@ Future<Map<String, Object?>> _appendGroupEventLogEntry(
     details: {'eventType': eventType, 'sequence': sequence},
   );
 
-  return row;
+  return GroupEventLogAppendResult(row: row, inserted: true);
 }
 
 String _stableEntryId(String groupId, String sourceEventId) {

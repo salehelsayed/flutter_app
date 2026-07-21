@@ -434,6 +434,7 @@ _retryFailedGroupMessageCandidate({
       expectedPrivateParentBeforeDispatch: msg.privateMediaPolicy.isPrivate
           ? msg
           : null,
+      expectedRetryParentBeforeDispatch: msg,
       mediaAttachments: retryAttachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,

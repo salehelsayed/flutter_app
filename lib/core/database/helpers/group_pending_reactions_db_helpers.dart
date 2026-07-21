@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_parent_write_guard.dart';
 
 /// Inserts a buffered reaction, or refreshes it in place when a row with the
 /// same deterministic id already exists (dedup by reaction id / INV-R5).
@@ -23,7 +24,11 @@ Future<Map<String, Object?>> dbUpsertGroupPendingReaction(
       event: 'GROUP_PENDING_REACTION_DB_INSERT_START',
       details: {'id': _safeId(id), 'groupId': _safeId(groupId)},
     );
-    await db.insert('group_pending_reactions', row);
+    await dbInsertOrdinaryGroupOwnedRow(
+      db,
+      table: 'group_pending_reactions',
+      row: row,
+    );
     emitFlowEvent(
       layer: 'DB',
       event: 'GROUP_PENDING_REACTION_DB_INSERT_SUCCESS',
@@ -32,9 +37,11 @@ Future<Map<String, Object?>> dbUpsertGroupPendingReaction(
     return row;
   }
 
-  await db.update(
-    'group_pending_reactions',
-    {
+  await dbUpdateOrdinaryGroupOwnedRows(
+    db,
+    table: 'group_pending_reactions',
+    groupId: groupId,
+    values: {
       'group_id': row['group_id'],
       'message_id': row['message_id'],
       'sender_peer_id': row['sender_peer_id'],
@@ -54,7 +61,7 @@ Future<Map<String, Object?>> dbUpsertGroupPendingReaction(
     whereArgs: [id],
     limit: 1,
   );
-  return loaded.single;
+  return loaded.isEmpty ? row : loaded.single;
 }
 
 /// Loads buffered reactions targeting a specific message, oldest-first.
@@ -62,12 +69,16 @@ Future<List<Map<String, Object?>>> dbLoadGroupPendingReactionsForMessage(
   Database db, {
   required String groupId,
   required String messageId,
-}) {
-  return db.query(
-    'group_pending_reactions',
-    where: 'group_id = ? AND message_id = ?',
-    whereArgs: [groupId, messageId],
-    orderBy: 'received_at ASC, id ASC',
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_reactions.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_reactions '
+    'WHERE group_id = ? AND message_id = ? AND $parent '
+    'ORDER BY received_at ASC, id ASC',
+    [groupId, messageId],
   );
 }
 
@@ -75,22 +86,22 @@ Future<List<Map<String, Object?>>> dbLoadGroupPendingReactionsForMessage(
 Future<List<Map<String, Object?>>> dbLoadGroupPendingReactions(
   Database db, {
   int limit = 200,
-}) {
-  return db.query(
-    'group_pending_reactions',
-    orderBy: 'received_at ASC, id ASC',
-    limit: limit,
+}) async {
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_pending_reactions.group_id',
+  );
+  return db.rawQuery(
+    'SELECT * FROM group_pending_reactions '
+    'WHERE $parent ORDER BY received_at ASC, id ASC LIMIT ?',
+    [limit],
   );
 }
 
 /// Deletes a buffered reaction by id. Returns the number of rows removed so a
 /// flusher can atomically "claim" a row and never double-emit (INV-R5).
 Future<int> dbDeleteGroupPendingReaction(Database db, String id) {
-  return db.delete(
-    'group_pending_reactions',
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  return db.delete('group_pending_reactions', where: 'id = ?', whereArgs: [id]);
 }
 
 /// Evicts oldest rows beyond [maxRows] for a group (per-group cap / INV-R5).

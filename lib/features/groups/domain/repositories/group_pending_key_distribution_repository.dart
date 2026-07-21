@@ -43,3 +43,68 @@ abstract class GroupPendingKeyDistributionRepository {
 
   Future<void> finalizeUnreachable(String id, {required String lastError});
 }
+
+abstract interface class GroupPendingKeyDistributionExactRepository {
+  Future<GroupPendingKeyDistribution?> recordAttemptIfExact(
+    GroupPendingKeyDistribution expected, {
+    required String? lastError,
+  });
+
+  Future<bool> finalizeDistributedIfExact(GroupPendingKeyDistribution expected);
+
+  Future<bool> finalizeUnreachableIfExact(
+    GroupPendingKeyDistribution expected, {
+    required String lastError,
+  });
+}
+
+Future<GroupPendingKeyDistribution?>
+recordGroupPendingKeyDistributionAttemptIfExact(
+  GroupPendingKeyDistributionRepository repository,
+  GroupPendingKeyDistribution expected, {
+  required String? lastError,
+}) async {
+  if (repository case final GroupPendingKeyDistributionExactRepository exact) {
+    return exact.recordAttemptIfExact(expected, lastError: lastError);
+  }
+  final current = await repository.getDistribution(expected.id);
+  if (current == null ||
+      !sameExactGroupPendingKeyDistribution(current, expected)) {
+    return null;
+  }
+  await repository.recordAttempt(expected.id, lastError: lastError);
+  return repository.getDistribution(expected.id);
+}
+
+Future<bool> finalizeGroupPendingKeyDistributionIfExact(
+  GroupPendingKeyDistributionRepository repository,
+  GroupPendingKeyDistribution expected,
+) async {
+  if (repository case final GroupPendingKeyDistributionExactRepository exact) {
+    return exact.finalizeDistributedIfExact(expected);
+  }
+  final current = await repository.getDistribution(expected.id);
+  if (current == null ||
+      !sameExactGroupPendingKeyDistribution(current, expected)) {
+    return false;
+  }
+  await repository.finalizeDistributed(expected.id);
+  return true;
+}
+
+Future<bool> finalizeGroupPendingKeyDistributionUnreachableIfExact(
+  GroupPendingKeyDistributionRepository repository,
+  GroupPendingKeyDistribution expected, {
+  required String lastError,
+}) async {
+  if (repository case final GroupPendingKeyDistributionExactRepository exact) {
+    return exact.finalizeUnreachableIfExact(expected, lastError: lastError);
+  }
+  final current = await repository.getDistribution(expected.id);
+  if (current == null ||
+      !sameExactGroupPendingKeyDistribution(current, expected)) {
+    return false;
+  }
+  await repository.finalizeUnreachable(expected.id, lastError: lastError);
+  return true;
+}

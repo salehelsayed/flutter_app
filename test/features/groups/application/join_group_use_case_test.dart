@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/join_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -247,6 +248,53 @@ void main() {
       expect(await groupRepo.getGroup('group-join-1'), isNull);
       expect(await groupRepo.getMember('group-join-1', 'peer-self'), isNull);
       expect(await groupRepo.getLatestKey('group-join-1'), isNull);
+    },
+  );
+
+  test(
+    'fresh-only direct join refuses existing or retained-floor authority before native',
+    () async {
+      Future<void> attempt() => joinGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        group: testGroup,
+        groupKey: 'shared-group-key',
+        keyEpoch: 1,
+        groupConfig: fullGroupConfig,
+        selfPeerId: 'peer-self',
+        selfPublicKey: 'pk-self',
+        selfRole: MemberRole.writer,
+      );
+
+      await groupRepo.saveGroup(testGroup);
+      await expectLater(attempt(), throwsA(isA<BridgeCommandException>()));
+      expect(bridge.sendCallCount, 0);
+
+      groupRepo = InMemoryGroupRepository();
+      final marker = DateTime.utc(2026, 5, 11);
+      await groupRepo.saveGroup(testGroup.copyWith(selfRemovedAt: marker));
+      final authority = await groupRepo.loadSelfRemovedShellAuthority(
+        groupId: testGroup.id,
+        selfPeerId: 'peer-self',
+      );
+      final floor = await groupRepo.appendSelfRemovedShellFreshnessFloor(
+        expected: authority,
+      );
+      expect(
+        await groupRepo.purgeSelfRemovedShell(
+          expected: authority,
+          floor: floor,
+          deletedAt: marker.add(const Duration(seconds: 1)),
+        ),
+        SelfRemovedShellMutationOutcome.committed,
+      );
+      await expectLater(attempt(), throwsA(isA<BridgeCommandException>()));
+      expect(bridge.sendCallCount, 0);
+
+      groupRepo = InMemoryGroupRepository();
+      await attempt();
+      expect(bridge.commandLog, ['group:join']);
+      expect(await groupRepo.getGroup(testGroup.id), isNotNull);
     },
   );
 }

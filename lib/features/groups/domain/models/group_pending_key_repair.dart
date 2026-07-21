@@ -5,6 +5,26 @@ const groupPendingKeyRepairStatusUndecryptable = 'undecryptable';
 const groupPendingKeyRepairPlaceholderText =
     'Waiting for a newer group key to decrypt this message.';
 
+bool sameExactGroupPendingKeyRepair(
+  GroupPendingKeyRepair current,
+  GroupPendingKeyRepair expected,
+) =>
+    current.id == expected.id &&
+    current.groupId == expected.groupId &&
+    current.messageId == expected.messageId &&
+    current.senderPeerId == expected.senderPeerId &&
+    current.transportPeerId == expected.transportPeerId &&
+    current.payloadType == expected.payloadType &&
+    current.keyEpoch == expected.keyEpoch &&
+    current.replayEnvelopeJson == expected.replayEnvelopeJson &&
+    current.status == expected.status &&
+    current.triggerCount == expected.triggerCount &&
+    current.attempts == expected.attempts &&
+    current.lastError == expected.lastError &&
+    current.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    current.updatedAt.toUtc() == expected.updatedAt.toUtc() &&
+    current.finalizedAt?.toUtc() == expected.finalizedAt?.toUtc();
+
 class GroupPendingKeyRepair {
   final String id;
   final String groupId;

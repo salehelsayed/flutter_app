@@ -50,7 +50,10 @@ Future<int> hydrateGroupsFromPeers({
   final groups = await groupRepo.getAllGroups();
   var hydrated = 0;
   for (final group in groups) {
-    if (group.isDissolved) {
+    final currentGroup = await groupRepo.getGroup(group.id);
+    if (currentGroup == null ||
+        currentGroup.isDissolved ||
+        currentGroup.selfRemovedAt != null) {
       continue;
     }
     try {
@@ -63,7 +66,12 @@ Future<int> hydrateGroupsFromPeers({
         selfPeerId: selfPeerId,
         drainAllPages: true,
       );
-      hydrated++;
+      final refreshedGroup = await groupRepo.getGroup(group.id);
+      if (refreshedGroup != null &&
+          !refreshedGroup.isDissolved &&
+          refreshedGroup.selfRemovedAt == null) {
+        hydrated++;
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

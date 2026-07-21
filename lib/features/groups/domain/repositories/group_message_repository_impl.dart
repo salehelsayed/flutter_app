@@ -4,6 +4,7 @@ import 'package:flutter_app/core/notifications/group_reaction_notification_proje
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 import '../models/group_message.dart';
 import '../models/group_message_receipt.dart';
@@ -25,6 +26,12 @@ typedef RunGroupInboxPageTransaction =
       required List<String> markReadMessageIds,
     });
 
+typedef InsertExactSelfRemovalTimelineMessage =
+    Future<bool> Function(
+      Map<String, Object?> row, {
+      required String expectedSelfRemovedAt,
+    });
+
 /// Implementation of GroupMessageRepository using constructor-injected DB helper functions.
 class GroupMessageRepositoryImpl
     implements
@@ -33,14 +40,18 @@ class GroupMessageRepositoryImpl
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
         GroupUploadRetryProjectionRepository,
+        GroupUploadRetryCompletionRepository,
         GroupManualUploadRetryRearmRepository,
+        GroupInboxStoreRetryCompletionRepository,
         GroupMembershipRepairDeletionRepository,
         GroupMessageLocalDeletionAuthority,
         GroupPrivateMediaLifecycleRepository,
         GroupConversationReadEventSource,
         GroupOutgoingLocalMessageChangeSource,
         GroupMessageAuthorizationChangeSource {
-  final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
+  final Future<bool> Function(Map<String, Object?> row) dbInsertGroupMessage;
+  final InsertExactSelfRemovalTimelineMessage?
+  dbInsertExactSelfRemovalTimelineMessageFn;
   final Future<List<Map<String, Object?>>> Function(
     String groupId, {
     int limit,
@@ -102,6 +113,18 @@ class GroupMessageRepositoryImpl
     required UploadMediaDisposition disposition,
   })?
   dbProjectGroupUploadFailureFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expectedParent,
+    required Map<String, Object?> expectedAttachment,
+    required Map<String, Object?> completedAttachment,
+  })?
+  dbCompleteGroupUploadRetryFn;
+  final Future<bool> Function({
+    required GroupMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
+  })?
+  completeGroupUploadRetrySecurelyFn;
   final Future<List<Map<String, dynamic>>> Function({int limit})?
   dbLoadGroupMessagesWithFailedInboxStore;
   final Future<void> Function(String id, {required bool stored})?
@@ -110,6 +133,8 @@ class GroupMessageRepositoryImpl
   dbUpdateGroupMessageInboxRetryPayloadFn;
   final Future<void> Function(String id, String? envelope)?
   dbUpdateGroupMessageWireEnvelopeFn;
+  final Future<bool> Function(Map<String, Object?> expected)?
+  dbCompleteGroupInboxStoreRetryFn;
   final Future<void> Function(
     String id, {
     required int nextEligibleAtMs,
@@ -167,6 +192,7 @@ class GroupMessageRepositoryImpl
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
+    this.dbInsertExactSelfRemovalTimelineMessageFn,
     required this.dbLoadGroupMessagesPage,
     this.dbLoadGroupMessagesAroundFn,
     required this.dbLoadGroupMessage,
@@ -188,10 +214,13 @@ class GroupMessageRepositoryImpl
     this.dbLoadRetryableOutgoingGroupMessagesFn,
     this.dbRecoverStuckSendingGroupMessagesFn,
     this.dbProjectGroupUploadFailureFn,
+    this.dbCompleteGroupUploadRetryFn,
+    this.completeGroupUploadRetrySecurelyFn,
     this.dbLoadGroupMessagesWithFailedInboxStore,
     this.dbUpdateGroupMessageInboxStoredFn,
     this.dbUpdateGroupMessageInboxRetryPayloadFn,
     this.dbUpdateGroupMessageWireEnvelopeFn,
+    this.dbCompleteGroupInboxStoreRetryFn,
     this.dbRecordGroupMessageRetryFailureFn,
     this.dbClearGroupMessageRetryBackoffFn,
     this.dbResetGroupMessageRetryStateFn,
@@ -545,6 +574,40 @@ class GroupMessageRepositoryImpl
   }
 
   @override
+  Future<bool> completeUploadRetry({
+    required GroupMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
+  }) async {
+    final secureComplete = completeGroupUploadRetrySecurelyFn;
+    if (secureComplete != null) {
+      final applied = await secureComplete(
+        expectedParent: expectedParent,
+        expectedAttachment: expectedAttachment,
+        completedAttachment: completedAttachment,
+      );
+      _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+      return applied;
+    }
+    final complete = dbCompleteGroupUploadRetryFn;
+    if (complete == null) return false;
+    final expectedParentRow = <String, Object?>{
+      ...expectedParent.toMap(),
+      'retry_attempt_count': expectedParent.retryAttemptCount,
+      'next_eligible_at': expectedParent.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await complete(
+      expectedParent: expectedParentRow,
+      expectedAttachment: expectedAttachment.toMap(),
+      completedAttachment: completedAttachment.toMap(),
+    );
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
+  }
+
+  @override
   Future<bool> rearmUploadRetryForManualRetry({
     required String messageId,
     required List<ManualUploadRetryAttachmentExpectation> attachments,
@@ -580,19 +643,39 @@ class GroupMessageRepositoryImpl
       final previous = previousRow == null
           ? null
           : GroupMessage.fromMap(previousRow);
-      await dbInsertGroupMessage(message.toMap());
-      final projection = groupReactionProjection;
-      if (projection != null) {
-        final committedRow = await dbLoadGroupMessage(message.id);
-        if (committedRow == null) {
-          await projection.removeAuthoredTarget(message.id);
-        } else {
-          await projection.upsertAuthoredTarget(
-            GroupMessage.fromMap(committedRow),
+      final row = message.toMap();
+      var accepted = await dbInsertGroupMessage(row);
+      if (!accepted && _isSelfRemovalTimelineMessage(message)) {
+        final insertExact = dbInsertExactSelfRemovalTimelineMessageFn;
+        if (insertExact != null) {
+          accepted = await insertExact(
+            row,
+            expectedSelfRemovedAt: message.timestamp.toUtc().toIso8601String(),
           );
         }
       }
-      _emitOutgoingStatusChangeIfNeeded(previous: previous, saved: message);
+
+      final committedRow = await dbLoadGroupMessage(message.id);
+      final committedMatchesRequest =
+          committedRow != null &&
+          _hasSameMessageIdentity(committedRow, message);
+      final committedMessage = accepted && committedMatchesRequest
+          ? GroupMessage.fromMap(committedRow)
+          : null;
+      final projection = groupReactionProjection;
+      if (projection != null) {
+        if (committedMessage != null) {
+          await projection.upsertAuthoredTarget(committedMessage);
+        } else if (committedRow == null || committedMatchesRequest) {
+          await projection.removeAuthoredTarget(message.id);
+        }
+      }
+      if (committedMessage != null) {
+        _emitOutgoingStatusChangeIfNeeded(
+          previous: previous,
+          saved: committedMessage,
+        );
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -610,6 +693,19 @@ class GroupMessageRepositoryImpl
       rethrow;
     }
   }
+
+  bool _isSelfRemovalTimelineMessage(GroupMessage message) {
+    final groupId = message.groupId.trim();
+    return groupId.isNotEmpty &&
+        message.id.startsWith('sys-member_removed:$groupId:');
+  }
+
+  bool _hasSameMessageIdentity(
+    Map<String, Object?> row,
+    GroupMessage message,
+  ) =>
+      row['group_id'] == message.groupId &&
+      row['sender_peer_id'] == message.senderPeerId;
 
   @override
   Future<List<GroupMessage>> getMessagesPage(
@@ -859,13 +955,13 @@ class GroupMessageRepositoryImpl
     final loadRows = dbLoadAuthoredGroupMessagesForProjectionFn;
     if (projection == null || loadRows == null) return;
     try {
-      final accountPeerId = await projection.readLocalAccountPeerId();
-      if (accountPeerId == null) return;
-      final rows = await loadRows(
-        accountPeerId,
-        limit: projection.maxAuthoredTargets,
-      );
-      await projection.replaceAuthoredTargets(rows.map(GroupMessage.fromMap));
+      await projection.replaceAuthoredTargetsFromAuthoritativeLoader((
+        accountPeerId, {
+        required limit,
+      }) async {
+        final rows = await loadRows(accountPeerId, limit: limit);
+        return rows.map(GroupMessage.fromMap).toList(growable: false);
+      });
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -1055,5 +1151,21 @@ class GroupMessageRepositoryImpl
     final fn = dbUpdateGroupMessageWireEnvelopeFn;
     if (fn == null) return;
     await fn(id, envelope);
+  }
+
+  @override
+  Future<bool> completeInboxStoreRetry(GroupMessage expected) async {
+    final complete = dbCompleteGroupInboxStoreRetryFn;
+    if (complete == null) return false;
+    final expectedRow = <String, Object?>{
+      ...expected.toMap(),
+      'retry_attempt_count': expected.retryAttemptCount,
+      'next_eligible_at': expected.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await complete(expectedRow);
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
   }
 }

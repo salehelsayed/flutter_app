@@ -101,6 +101,7 @@ import 'migrations/098_group_media_deletion_journal.dart';
 import 'migrations/099_group_messages_is_forwarded.dart';
 import 'migrations/100_direct_private_media_lifecycle.dart';
 import 'migrations/101_group_private_media_lifecycle.dart';
+import 'migrations/102_groups_self_removed_at.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -583,6 +584,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '101_group_private_media_lifecycle',
     runGroupPrivateMediaLifecycleMigration,
   ),
+  ProductionMigrationEntry(
+    102,
+    '102_groups_self_removed_at',
+    runGroupsSelfRemovedAtMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1054,6 +1060,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     101,
     '101_group_private_media_lifecycle',
     runGroupPrivateMediaLifecycleMigration,
+  ),
+  ProductionMigrationEntry(
+    102,
+    '102_groups_self_removed_at',
+    runGroupsSelfRemovedAtMigration,
   ),
 ]);
 

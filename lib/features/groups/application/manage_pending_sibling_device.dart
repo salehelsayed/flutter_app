@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
@@ -44,44 +46,50 @@ Future<void> holdPendingSiblingDevice({
     return;
   }
   try {
-    final member = await groupRepo.getMember(groupId, memberPeerId);
-    if (member != null) {
-      final existing =
-          member.findDeviceById(
-            announcedDeviceId,
-            activeOnly: false,
-            allowLegacyFallback: true,
-          ) ??
-          member.findDeviceByTransportPeerId(
-            announcedTransportPeerId,
-            activeOnly: false,
-            allowLegacyFallback: true,
-          );
-      if (existing != null) {
-        // Already on the roster (trusted) — nothing to hold.
-        return;
-      }
-    }
-    await pendingRepo.savePendingSiblingDevice(
-      PendingSiblingDevice(
-        groupId: groupId,
-        memberPeerId: memberPeerId,
-        deviceId: announcedDeviceId,
-        transportPeerId: announcedTransportPeerId,
-        deviceSigningPublicKey: announcedDeviceSigningPublicKey,
-        mlKemPublicKey: announcedMlKemPublicKey,
-        keyPackageId: announcedKeyPackageId,
-        verifiedAccountSigningPublicKey: verifiedAccountSigningPublicKey,
-        announcedAt: (nowUtc ?? () => DateTime.now().toUtc())(),
-      ),
-    );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_SIBLING_DEVICE_HELD_PENDING',
-      details: {
-        'groupId': _safe(groupId),
-        'memberPeerId': _safe(memberPeerId),
-        'deviceId': _safe(announcedDeviceId),
+    await runSelfRemovedGroupLifecycleLeaf<void>(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      action: (_) async {
+        final member = await groupRepo.getMember(groupId, memberPeerId);
+        if (member != null) {
+          final existing =
+              member.findDeviceById(
+                announcedDeviceId,
+                activeOnly: false,
+                allowLegacyFallback: true,
+              ) ??
+              member.findDeviceByTransportPeerId(
+                announcedTransportPeerId,
+                activeOnly: false,
+                allowLegacyFallback: true,
+              );
+          if (existing != null) {
+            // Already on the roster (trusted) — nothing to hold.
+            return;
+          }
+        }
+        await pendingRepo.savePendingSiblingDevice(
+          PendingSiblingDevice(
+            groupId: groupId,
+            memberPeerId: memberPeerId,
+            deviceId: announcedDeviceId,
+            transportPeerId: announcedTransportPeerId,
+            deviceSigningPublicKey: announcedDeviceSigningPublicKey,
+            mlKemPublicKey: announcedMlKemPublicKey,
+            keyPackageId: announcedKeyPackageId,
+            verifiedAccountSigningPublicKey: verifiedAccountSigningPublicKey,
+            announcedAt: (nowUtc ?? () => DateTime.now().toUtc())(),
+          ),
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_SIBLING_DEVICE_HELD_PENDING',
+          details: {
+            'groupId': _safe(groupId),
+            'memberPeerId': _safe(memberPeerId),
+            'deviceId': _safe(announcedDeviceId),
+          },
+        );
       },
     );
   } catch (e) {
@@ -100,26 +108,54 @@ Future<SiblingDeviceAdmissionOutcome> verifyAndAdmitPendingSiblingDevice({
   required GroupRepository groupRepo,
   required PendingSiblingDevice pending,
   bool multiDeviceSyncEnabled = kMultiDeviceSyncEnabled,
+  TriggerDeferredDistributionDrainForPeerFn triggerDrain =
+      triggerDeferredDistributionDrainForPeer,
 }) async {
-  final outcome = await admitSiblingDeviceIfTrusted(
-    groupRepo: groupRepo,
-    groupId: pending.groupId,
-    memberPeerId: pending.memberPeerId,
-    announcedDeviceId: pending.deviceId,
-    announcedTransportPeerId: pending.transportPeerId,
-    announcedDeviceSigningPublicKey: pending.deviceSigningPublicKey,
-    verifiedAccountSigningPublicKey: pending.verifiedAccountSigningPublicKey,
-    announcedMlKemPublicKey: pending.mlKemPublicKey,
-    announcedKeyPackageId: pending.keyPackageId,
-    multiDeviceSyncEnabled: multiDeviceSyncEnabled,
-  );
+  final guarded =
+      await runSelfRemovedGroupLifecycleLeaf<SiblingDeviceAdmissionOutcome>(
+        groupRepo: groupRepo,
+        groupId: pending.groupId,
+        action: (_) async {
+          final current = await pendingRepo.getPendingSiblingDevice(
+            pending.groupId,
+            pending.memberPeerId,
+            pending.deviceId,
+          );
+          if (current == null || !_samePendingSiblingDevice(current, pending)) {
+            return SiblingDeviceAdmissionOutcome.memberNotFound;
+          }
+          final outcome = await admitSiblingDeviceIfTrusted(
+            groupRepo: groupRepo,
+            groupId: current.groupId,
+            memberPeerId: current.memberPeerId,
+            announcedDeviceId: current.deviceId,
+            announcedTransportPeerId: current.transportPeerId,
+            announcedDeviceSigningPublicKey: current.deviceSigningPublicKey,
+            verifiedAccountSigningPublicKey:
+                current.verifiedAccountSigningPublicKey,
+            announcedMlKemPublicKey: current.mlKemPublicKey,
+            announcedKeyPackageId: current.keyPackageId,
+            multiDeviceSyncEnabled: multiDeviceSyncEnabled,
+            // The separately guarded distribution runner must acquire its own
+            // phase after admission, never nest beneath this roster mutation.
+            triggerDrain: ({required groupId, required peerId}) async {},
+          );
+          if (outcome == SiblingDeviceAdmissionOutcome.admitted ||
+              outcome == SiblingDeviceAdmissionOutcome.alreadyPresent) {
+            await pendingRepo.deletePendingSiblingDevice(
+              current.groupId,
+              current.memberPeerId,
+              current.deviceId,
+            );
+          }
+          return outcome;
+        },
+      );
+  if (!guarded.didRun) return SiblingDeviceAdmissionOutcome.memberNotFound;
+  final outcome = guarded.value!;
   if (outcome == SiblingDeviceAdmissionOutcome.admitted ||
       outcome == SiblingDeviceAdmissionOutcome.alreadyPresent) {
-    await pendingRepo.deletePendingSiblingDevice(
-      pending.groupId,
-      pending.memberPeerId,
-      pending.deviceId,
-    );
+    await triggerDrain(groupId: pending.groupId, peerId: pending.memberPeerId);
   }
   return outcome;
 }
@@ -128,21 +164,51 @@ Future<SiblingDeviceAdmissionOutcome> verifyAndAdmitPendingSiblingDevice({
 /// (it is never admitted).
 Future<void> rejectPendingSiblingDevice({
   required PendingSiblingDeviceRepository pendingRepo,
+  required GroupRepository groupRepo,
   required PendingSiblingDevice pending,
 }) async {
-  await pendingRepo.deletePendingSiblingDevice(
-    pending.groupId,
-    pending.memberPeerId,
-    pending.deviceId,
-  );
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_SIBLING_DEVICE_REJECTED',
-    details: {
-      'groupId': _safe(pending.groupId),
-      'deviceId': _safe(pending.deviceId),
+  await runSelfRemovedGroupLifecycleLeaf<void>(
+    groupRepo: groupRepo,
+    groupId: pending.groupId,
+    action: (_) async {
+      final current = await pendingRepo.getPendingSiblingDevice(
+        pending.groupId,
+        pending.memberPeerId,
+        pending.deviceId,
+      );
+      if (current == null || !_samePendingSiblingDevice(current, pending)) {
+        return;
+      }
+      await pendingRepo.deletePendingSiblingDevice(
+        pending.groupId,
+        pending.memberPeerId,
+        pending.deviceId,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SIBLING_DEVICE_REJECTED',
+        details: {
+          'groupId': _safe(pending.groupId),
+          'deviceId': _safe(pending.deviceId),
+        },
+      );
     },
   );
 }
+
+bool _samePendingSiblingDevice(
+  PendingSiblingDevice current,
+  PendingSiblingDevice loaded,
+) =>
+    current.groupId == loaded.groupId &&
+    current.memberPeerId == loaded.memberPeerId &&
+    current.deviceId == loaded.deviceId &&
+    current.transportPeerId == loaded.transportPeerId &&
+    current.deviceSigningPublicKey == loaded.deviceSigningPublicKey &&
+    current.mlKemPublicKey == loaded.mlKemPublicKey &&
+    current.keyPackageId == loaded.keyPackageId &&
+    current.verifiedAccountSigningPublicKey ==
+        loaded.verifiedAccountSigningPublicKey &&
+    current.announcedAt.toUtc().isAtSameMomentAs(loaded.announcedAt.toUtc());
 
 String _safe(String value) => value.length > 8 ? value.substring(0, 8) : value;

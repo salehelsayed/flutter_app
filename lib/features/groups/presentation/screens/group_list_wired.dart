@@ -18,8 +18,11 @@ import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -64,6 +67,7 @@ class GroupListWired extends StatefulWidget {
   final ReactionRepository? reactionRepo;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
+  final DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell;
   final BackgroundPreference backgroundPreference;
 
   /// Narrow host-provided seam used only by the expired-invite recovery
@@ -91,6 +95,7 @@ class GroupListWired extends StatefulWidget {
     this.groupConversationTracker,
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
+    this.deleteSelfRemovedGroupShell,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.openInviteConversation,
   });
@@ -121,6 +126,7 @@ class _GroupListWiredState extends State<GroupListWired>
   StreamSubscription<PendingGroupInvite>? _pendingInviteSubscription;
   final Set<String> _changedGroupIds = <String>{};
   final Set<String> _processingInviteIds = <String>{};
+  bool _isDeletingSelfRemovedShell = false;
 
   /// 153: invites optimistically hidden while their deferred decline commit is
   /// pending. Filtered inside [_loadGroups] so every reactive reload respects
@@ -855,6 +861,54 @@ class _GroupListWiredState extends State<GroupListWired>
   /// Tears the group down via the normal leave path (never a silent auto-delete)
   /// and refreshes the list.
   Future<void> _onLeaveStuckGroup(GroupModel group) async {
+    final identity = await widget.identityRepo.loadIdentity();
+    GroupExitSnapshot? snapshot;
+    if (identity != null) {
+      try {
+        snapshot = await resolveGroupExitSnapshot(
+          groupRepo: widget.groupRepo,
+          groupId: group.id,
+          selfPeerId: identity.peerId,
+          messageRepo: widget.msgRepo,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          loadPendingBroadcasts: loadGroupPendingBroadcasts,
+        );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_LIST_FL_STUCK_EXIT_CLASSIFY_ERROR',
+          details: {'groupId': group.id, 'error': error.toString()},
+        );
+      }
+    }
+    if (!mounted) return;
+    if (snapshot == null) {
+      final l10n = AppLocalizations.of(context)!;
+      _showSnackBar(
+        group.selfRemovedAt != null
+            ? l10n.group_removed_delete_failed
+            : l10n.group_info_leave_failed,
+      );
+      return;
+    }
+    if (snapshot.group == null) {
+      _changedGroupIds.add(group.id);
+      await _loadGroups();
+      return;
+    }
+    if (snapshot.disposition == GroupExitDisposition.selfRemovedDeleteLocally) {
+      await _confirmDeleteSelfRemovedGroupShell(
+        groupId: group.id,
+        selfPeerId: identity!.peerId,
+      );
+      return;
+    }
+    if (snapshot.disposition == GroupExitDisposition.noOp) {
+      _changedGroupIds.add(group.id);
+      await _loadGroups();
+      return;
+    }
+
     try {
       await leaveGroup(
         bridge: widget.bridge,
@@ -872,6 +926,79 @@ class _GroupListWiredState extends State<GroupListWired>
       }
     } finally {
       await _loadGroups();
+    }
+  }
+
+  Future<void> _confirmDeleteSelfRemovedGroupShell({
+    required String groupId,
+    required String selfPeerId,
+  }) async {
+    if (!mounted || _isDeletingSelfRemovedShell) return;
+    _isDeletingSelfRemovedShell = true;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final shouldDelete = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          final dialogL10n = AppLocalizations.of(context)!;
+          return AlertDialog(
+            title: Text(dialogL10n.group_removed_delete_title),
+            content: Text(dialogL10n.group_removed_delete_body),
+            actions: [
+              TextButton(
+                key: const ValueKey('group-list-self-removed-delete-cancel'),
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(dialogL10n.btn_cancel),
+              ),
+              FilledButton(
+                key: const ValueKey('group-list-self-removed-delete-confirm'),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(dialogL10n.group_removed_delete_action),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldDelete != true || !mounted) return;
+
+      final deleteShell =
+          widget.deleteSelfRemovedGroupShell ??
+          defaultDeleteSelfRemovedGroupShell;
+      if (deleteShell == null) {
+        await _loadGroups();
+        if (mounted) _showSnackBar(l10n.group_removed_delete_failed);
+        return;
+      }
+
+      DeleteSelfRemovedGroupShellResult result;
+      try {
+        result = await deleteShell(groupId: groupId, selfPeerId: selfPeerId);
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_LIST_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+          details: {'groupId': groupId, 'error': error.toString()},
+        );
+        result = DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+      }
+      if (!mounted) return;
+
+      _changedGroupIds.add(groupId);
+      switch (result) {
+        case DeleteSelfRemovedGroupShellResult.deleted:
+        case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
+          await _loadGroups();
+          return;
+        case DeleteSelfRemovedGroupShellResult.refusedStateChanged:
+          await _loadGroups();
+          return;
+        case DeleteSelfRemovedGroupShellResult.cleanupIncomplete:
+          await _loadGroups();
+          if (mounted) _showSnackBar(l10n.group_removed_delete_failed);
+          return;
+      }
+    } finally {
+      _isDeletingSelfRemovedShell = false;
     }
   }
 

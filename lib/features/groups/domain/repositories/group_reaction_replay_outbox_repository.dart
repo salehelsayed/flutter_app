@@ -24,5 +24,14 @@ abstract class GroupReactionReplayOutboxRepository {
     String? lastError,
   });
 
+  /// Applies a loaded replay action's completion only if the complete durable
+  /// row is still identical. Implementations without the atomic capability
+  /// fail closed so an old network result cannot settle replacement work.
+  Future<bool> updateEntryStatusIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required String deliveryStatus,
+    String? lastError,
+  }) async => false;
+
   Future<void> deleteEntry(String reactionId);
 }

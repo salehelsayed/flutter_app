@@ -24,6 +24,13 @@ class GroupReactionReplayOutboxRepositoryImpl
     required String updatedAt,
   })
   dbUpdateGroupReactionReplayOutboxEntryStatus;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required String deliveryStatus,
+    String? lastError,
+    required String updatedAt,
+  })
+  dbUpdateGroupReactionReplayOutboxEntryStatusIfExact;
   final Future<void> Function(String reactionId)
   dbDeleteGroupReactionReplayOutboxEntry;
 
@@ -33,6 +40,7 @@ class GroupReactionReplayOutboxRepositoryImpl
     required this.dbLoadLatestGroupReactionReplayOutboxEntryForTarget,
     required this.dbLoadRetryableGroupReactionReplayOutboxEntries,
     required this.dbUpdateGroupReactionReplayOutboxEntryStatus,
+    required this.dbUpdateGroupReactionReplayOutboxEntryStatusIfExact,
     required this.dbDeleteGroupReactionReplayOutboxEntry,
   });
 
@@ -98,6 +106,20 @@ class GroupReactionReplayOutboxRepositoryImpl
   }) async {
     await dbUpdateGroupReactionReplayOutboxEntryStatus(
       reactionId,
+      deliveryStatus: deliveryStatus,
+      lastError: lastError,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<bool> updateEntryStatusIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required String deliveryStatus,
+    String? lastError,
+  }) {
+    return dbUpdateGroupReactionReplayOutboxEntryStatusIfExact(
+      expected: expected.toMap(),
       deliveryStatus: deliveryStatus,
       lastError: lastError,
       updatedAt: DateTime.now().toUtc().toIso8601String(),

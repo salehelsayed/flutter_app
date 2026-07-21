@@ -664,7 +664,7 @@ ContactModel _contact({String peerId = _senderPeerId}) => ContactModel(
 GroupMessageRepositoryImpl _realMessageRepository({
   Future<Map<String, Object?>?> Function(String messageId)? deletionLoader,
 }) => GroupMessageRepositoryImpl(
-  dbInsertGroupMessage: (_) async {},
+  dbInsertGroupMessage: (_) async => true,
   dbLoadGroupMessagesPage: (_, {int limit = 50, int offset = 0}) async =>
       <Map<String, Object?>>[],
   dbLoadGroupMessage: (_) async => null,

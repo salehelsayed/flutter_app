@@ -415,6 +415,24 @@ readonly GROUP_TESTS=(
   # 'queued_offline' re-drive anchor). Auto-globs into feature-host-all, pinned
   # here so the curated groups gate also exercises the recovery change.
   "test/features/groups/domain/repositories/group_message_repository_impl_test.dart"
+  # 263: durable removed-member shell authority, atomic accepted re-entry,
+  # bounded local cleanup, lifecycle exclusion, and projection teardown.
+  "test/core/database/migrations/102_groups_self_removed_at_test.dart"
+  "test/core/database/helpers/groups_db_helpers_test.dart"
+  "test/core/database/helpers/self_removed_group_shell_db_helpers_test.dart"
+  "test/features/groups/domain/models/group_model_test.dart"
+  "test/features/groups/domain/repositories/group_repository_impl_test.dart"
+  "test/features/groups/application/handle_incoming_group_invite_use_case_test.dart"
+  "test/features/groups/application/accept_pending_group_invite_use_case_test.dart"
+  "test/features/groups/application/join_group_use_case_test.dart"
+  "test/features/groups/application/delete_self_removed_group_shell_use_case_test.dart"
+  "test/features/groups/integration/group_notification_projection_lifecycle_test.dart"
+  "test/features/groups/application/self_removed_group_lifecycle_guard_test.dart"
+  "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart"
+  "test/features/groups/application/group_pending_broadcast_runner_test.dart"
+  "test/features/groups/application/group_pending_key_distribution_service_test.dart"
+  "test/features/groups/application/group_pending_key_repair_service_test.dart"
+  "test/features/groups/application/manage_pending_sibling_device_test.dart"
   # 210b: the repush lane is the LIVE-app self-heal for 'queued_offline' rows
   # (clock→tick on reconnect). Auto-globs into feature-host-all, pinned here so
   # the curated groups gate exercises the queued_offline promote.

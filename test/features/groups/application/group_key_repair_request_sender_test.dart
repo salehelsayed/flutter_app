@@ -89,54 +89,95 @@ void main() {
     );
   }
 
-  test('sends one signed group_key_repair_request to the admin transport peer',
-      () async {
-    final sent = <(String, String)>[];
+  test(
+    'sends one signed group_key_repair_request to the admin transport peer',
+    () async {
+      final sent = <(String, String)>[];
+      final sender = buildSender(
+        send: (peer, msg) async {
+          sent.add((peer, msg));
+          return true;
+        },
+      );
+
+      await sender.call(
+        const GroupKeyRepairRequest(
+          groupId: groupId,
+          keyEpoch: 3,
+          reason: 'received_message_epoch_missing_local_key',
+          messageId: 'msg-1',
+        ),
+      );
+
+      expect(sent, hasLength(1));
+      expect(sent.single.$1, adminTransport);
+
+      final envelope = jsonDecode(sent.single.$2) as Map<String, dynamic>;
+      expect(envelope['type'], 'group_key_repair_request');
+      expect(envelope['version'], '1');
+      final payload = envelope['payload'] as Map<String, dynamic>;
+      expect(payload['groupId'], groupId);
+      expect(payload['keyEpoch'], 3);
+      expect(payload['requesterPeerId'], requesterPeerId);
+      expect(payload['requesterDeviceId'], requesterDeviceId);
+      expect((payload['signature'] as String).isNotEmpty, isTrue);
+      expect(payload['signedPayload'], isNotNull);
+
+      // The signature MUST be produced via the real bridge sign command.
+      expect(bridge.commandLog, contains('payload.sign'));
+    },
+  );
+
+  test(
+    'falls back to the relay inbox with the same envelope on send failure',
+    () async {
+      final sent = <(String, String)>[];
+      final inboxed = <(String, String)>[];
+      final sender = buildSender(
+        send: (peer, msg) async {
+          sent.add((peer, msg));
+          return false; // direct send fails
+        },
+        inbox: (peer, msg) async {
+          inboxed.add((peer, msg));
+          return true;
+        },
+      );
+
+      await sender.call(
+        const GroupKeyRepairRequest(
+          groupId: groupId,
+          keyEpoch: 3,
+          reason: 'live_decryption_failed',
+        ),
+      );
+
+      expect(sent, hasLength(1));
+      expect(inboxed, hasLength(1));
+      expect(inboxed.single.$1, adminTransport);
+      // Same envelope bytes go to the inbox.
+      expect(inboxed.single.$2, sent.single.$2);
+
+      final envelope = jsonDecode(inboxed.single.$2) as Map<String, dynamic>;
+      expect(envelope['type'], 'group_key_repair_request');
+    },
+  );
+
+  test('marked shell emits no signed key-repair network request', () async {
+    await groupRepo.updateGroup(
+      (await groupRepo.getGroup(
+        groupId,
+      ))!.copyWith(selfRemovedAt: DateTime.utc(2026, 7, 20)),
+    );
+    var directCalls = 0;
+    var inboxCalls = 0;
     final sender = buildSender(
-      send: (peer, msg) async {
-        sent.add((peer, msg));
+      send: (_, _) async {
+        directCalls++;
         return true;
       },
-    );
-
-    await sender.call(
-      const GroupKeyRepairRequest(
-        groupId: groupId,
-        keyEpoch: 3,
-        reason: 'received_message_epoch_missing_local_key',
-        messageId: 'msg-1',
-      ),
-    );
-
-    expect(sent, hasLength(1));
-    expect(sent.single.$1, adminTransport);
-
-    final envelope = jsonDecode(sent.single.$2) as Map<String, dynamic>;
-    expect(envelope['type'], 'group_key_repair_request');
-    expect(envelope['version'], '1');
-    final payload = envelope['payload'] as Map<String, dynamic>;
-    expect(payload['groupId'], groupId);
-    expect(payload['keyEpoch'], 3);
-    expect(payload['requesterPeerId'], requesterPeerId);
-    expect(payload['requesterDeviceId'], requesterDeviceId);
-    expect((payload['signature'] as String).isNotEmpty, isTrue);
-    expect(payload['signedPayload'], isNotNull);
-
-    // The signature MUST be produced via the real bridge sign command.
-    expect(bridge.commandLog, contains('payload.sign'));
-  });
-
-  test('falls back to the relay inbox with the same envelope on send failure',
-      () async {
-    final sent = <(String, String)>[];
-    final inboxed = <(String, String)>[];
-    final sender = buildSender(
-      send: (peer, msg) async {
-        sent.add((peer, msg));
-        return false; // direct send fails
-      },
-      inbox: (peer, msg) async {
-        inboxed.add((peer, msg));
+      inbox: (_, _) async {
+        inboxCalls++;
         return true;
       },
     );
@@ -149,13 +190,8 @@ void main() {
       ),
     );
 
-    expect(sent, hasLength(1));
-    expect(inboxed, hasLength(1));
-    expect(inboxed.single.$1, adminTransport);
-    // Same envelope bytes go to the inbox.
-    expect(inboxed.single.$2, sent.single.$2);
-
-    final envelope = jsonDecode(inboxed.single.$2) as Map<String, dynamic>;
-    expect(envelope['type'], 'group_key_repair_request');
+    expect(directCalls, 0);
+    expect(inboxCalls, 0);
+    expect(bridge.commandLog, isNot(contains('payload.sign')));
   });
 }

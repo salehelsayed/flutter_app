@@ -8,9 +8,11 @@ import '../../media/media_owner_lane.dart';
 import '../../media/outgoing_direct_private_mutation_coordinator.dart';
 import '../../media/upload_media_outcome.dart';
 import '../../media/upload_retry_projection.dart';
+import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'group_messages_db_helpers.dart';
+import 'group_parent_write_guard.dart';
 import 'messages_db_helpers.dart';
 
 enum _OutgoingPrivateParentMutationAuthority {
@@ -146,6 +148,157 @@ Future<UploadRetryProjectionResult> dbProjectGroupUploadFailure(
   );
 }
 
+const _groupUploadParentAuthorityFields = <String>[
+  'id',
+  'group_id',
+  'sender_peer_id',
+  'transport_peer_id',
+  'sender_username',
+  'text',
+  'timestamp',
+  'last_send_attempt_at',
+  'quoted_message_id',
+  'logical_delivery_id',
+  'key_generation',
+  'status',
+  'is_incoming',
+  'is_forwarded',
+  'media_policy_version',
+  'media_lifecycle',
+  'media_duration_seconds',
+  'media_protected',
+  'media_received_at',
+  'media_expires_at',
+  'media_last_checked_at',
+  'media_consumed_at',
+  'media_expired_at',
+  'media_cleanup_pending',
+  'created_at',
+  'wire_envelope',
+  'inbox_stored',
+  'inbox_retry_payload',
+  'retry_attempt_count',
+  'next_eligible_at',
+];
+
+const _groupUploadAttachmentAuthorityFields = <String>[
+  'id',
+  'message_id',
+  'owner_lane',
+  'mime',
+  'size',
+  'media_type',
+  'width',
+  'height',
+  'duration_ms',
+  'local_path',
+  'download_status',
+  'created_at',
+  'waveform',
+  'upload_retry_count',
+  'download_retry_count',
+  'content_hash',
+  'thumbnail_hash',
+  'encryption_key_base64',
+  'encryption_nonce',
+  'encryption_scheme',
+];
+
+bool _sameExactDatabaseFields(
+  Map<String, Object?> current,
+  Map<String, Object?> expected,
+  Iterable<String> fields,
+) {
+  for (final field in fields) {
+    final left = current[field];
+    final right = expected[field];
+    if (left is num && right is num) {
+      if (left.toInt() != right.toInt()) return false;
+      continue;
+    }
+    if (left != right) return false;
+  }
+  return true;
+}
+
+/// Commits one uploaded group attachment only while both its exact outgoing
+/// parent and exact pending attachment still belong to the same live
+/// membership window.
+Future<bool> dbCompleteGroupUploadRetry(
+  Database db, {
+  required Map<String, Object?> expectedParent,
+  required Map<String, Object?> expectedAttachment,
+  required Map<String, Object?> completedAttachment,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final messageId = expectedParent['id'] as String? ?? '';
+    final groupId = expectedParent['group_id'] as String? ?? '';
+    final attachmentId = expectedAttachment['id'] as String? ?? '';
+    final completedEncryptionKey =
+        completedAttachment['encryption_key_base64'] as String?;
+    if (messageId.isEmpty ||
+        groupId.isEmpty ||
+        attachmentId.isEmpty ||
+        expectedAttachment['message_id'] != messageId ||
+        expectedAttachment['owner_lane'] != MediaOwnerLane.group.dbValue ||
+        expectedAttachment['download_status'] != 'upload_pending' ||
+        completedAttachment['id'] != attachmentId ||
+        completedAttachment['message_id'] != messageId ||
+        completedAttachment['owner_lane'] != MediaOwnerLane.group.dbValue ||
+        completedAttachment['download_status'] != 'done' ||
+        (completedEncryptionKey != null &&
+            completedEncryptionKey.isNotEmpty &&
+            !isSecureStoreReference(completedEncryptionKey)) ||
+        !await dbAllowsOrdinaryGroupWrite(txn, groupId)) {
+      return false;
+    }
+
+    final parentRows = await txn.query(
+      'group_messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (parentRows.isEmpty ||
+        !_sameExactDatabaseFields(
+          parentRows.single,
+          expectedParent,
+          _groupUploadParentAuthorityFields,
+        )) {
+      return false;
+    }
+
+    final attachmentRows = await txn.query(
+      'media_attachments',
+      where: 'id = ? AND message_id = ? AND owner_lane = ?',
+      whereArgs: [attachmentId, messageId, MediaOwnerLane.group.dbValue],
+      limit: 1,
+    );
+    if (attachmentRows.isEmpty ||
+        !_sameExactDatabaseFields(
+          attachmentRows.single,
+          expectedAttachment,
+          _groupUploadAttachmentAuthorityFields,
+        )) {
+      return false;
+    }
+
+    final completedValues = <String, Object?>{
+      for (final field in _groupUploadAttachmentAuthorityFields)
+        if (field != 'id' && field != 'message_id' && field != 'owner_lane')
+          field: completedAttachment[field],
+    };
+    final count = await txn.update(
+      'media_attachments',
+      completedValues,
+      where:
+          "id = ? AND message_id = ? AND owner_lane = ? AND download_status = 'upload_pending'",
+      whereArgs: [attachmentId, messageId, MediaOwnerLane.group.dbValue],
+    );
+    return count == 1;
+  });
+}
+
 Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
   Database db, {
   required String parentTable,
@@ -165,6 +318,13 @@ Future<UploadRetryProjectionResult> _dbProjectUploadFailure(
       return const UploadRetryProjectionResult.notApplied();
     }
     final parent = parentRows.single;
+    if (ownerLane == MediaOwnerLane.group &&
+        !await dbAllowsOrdinaryGroupWrite(
+          txn,
+          parent['group_id'] as String? ?? '',
+        )) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
     final parentStatus = parent['status'] as String?;
     final isIncoming = ((parent['is_incoming'] as num?)?.toInt() ?? 0) != 0;
     if (isIncoming || !parentAllowedStatuses.contains(parentStatus)) {
@@ -368,6 +528,13 @@ Future<bool> _dbRearmUploadRetryForManualRetry(
         ? _classifyOutgoingPrivateParentMutationAuthority(parentRows.single)
         : _OutgoingPrivateParentMutationAuthority.ordinaryOrIncoming;
     final parent = parentRows.single;
+    if (ownerLane == MediaOwnerLane.group &&
+        !await dbAllowsOrdinaryGroupWrite(
+          txn,
+          parent['group_id'] as String? ?? '',
+        )) {
+      return false;
+    }
     final rawEnvelope = parent['wire_envelope'];
     final envelopeMissing =
         rawEnvelope == null ||
@@ -2036,8 +2203,13 @@ Future<bool> dbSaveGroupMediaAttachmentGuarded(
 
   try {
     final saved = await dbWriteTransaction(db, (txn) async {
+      final ordinaryParent = await dbOrdinaryGroupParentPredicate(
+        txn,
+        groupIdExpression: 'group_messages.group_id',
+      );
       final parentRows = await txn.rawQuery(
-        'SELECT 1 FROM group_messages WHERE id = ? AND group_id = ? AND ('
+        'SELECT 1 FROM group_messages WHERE id = ? AND group_id = ? '
+        'AND $ordinaryParent AND ('
         '(media_policy_version = 0 AND media_lifecycle = ? '
         'AND media_duration_seconds IS NULL AND media_protected = 0 '
         'AND media_received_at IS NULL AND media_expires_at IS NULL '
@@ -3028,13 +3200,15 @@ Future<List<Map<String, Object?>>> dbLoadUploadPendingAttachments(
   );
 
   try {
-    final results = await db.query(
-      'media_attachments',
-      where: "download_status = 'upload_pending' AND owner_lane = ?",
-      whereArgs: [ownerLane],
-      orderBy: 'created_at ASC',
-      limit: limit,
-    );
+    final results = ownerLane != MediaOwnerLane.group.dbValue
+        ? await db.query(
+            'media_attachments',
+            where: "download_status = 'upload_pending' AND owner_lane = ?",
+            whereArgs: [ownerLane],
+            orderBy: 'created_at ASC',
+            limit: limit,
+          )
+        : await _loadAuthorizedGroupUploadPendingAttachments(db, limit: limit);
 
     emitFlowEvent(
       layer: 'DB',
@@ -3051,6 +3225,39 @@ Future<List<Map<String, Object?>>> dbLoadUploadPendingAttachments(
     );
     rethrow;
   }
+}
+
+Future<List<Map<String, Object?>>> _loadAuthorizedGroupUploadPendingAttachments(
+  Database db, {
+  required int limit,
+}) async {
+  if (!await dbHasSelfRemovedGroupWriteGuard(db)) {
+    return db.query(
+      'media_attachments',
+      where: "download_status = 'upload_pending' AND owner_lane = ?",
+      whereArgs: [MediaOwnerLane.group.dbValue],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+  }
+  final parent = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_parent.group_id',
+  );
+  return db.rawQuery(
+    '''
+SELECT attachment.*
+FROM media_attachments attachment
+JOIN group_messages group_parent ON group_parent.id = attachment.message_id
+WHERE attachment.download_status = 'upload_pending'
+  AND attachment.owner_lane = ?
+  AND group_parent.status != 'send_failed'
+  AND $parent
+ORDER BY attachment.created_at ASC
+LIMIT ?
+''',
+    [MediaOwnerLane.group.dbValue, limit],
+  );
 }
 
 /// Loads all media attachments with download_status = 'pending'.

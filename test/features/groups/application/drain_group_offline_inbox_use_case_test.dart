@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -206,6 +207,36 @@ class _CursorInboxBridge extends FakeBridge {
     } catch (_) {
       return false;
     }
+  }
+}
+
+class _MarkAfterDecryptInboxBridge extends _CursorInboxBridge {
+  void Function()? afterDecrypt;
+
+  @override
+  Future<String> send(String message) async {
+    final response = await super.send(message);
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group.decrypt') afterDecrypt?.call();
+    return response;
+  }
+}
+
+class _MarkOnNextGroupReadRepository extends InMemoryGroupRepository {
+  bool markOnNextRead = false;
+  final DateTime removedAt = DateTime.utc(2026, 7, 20, 18);
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    final current = await super.getGroup(id);
+    if (!markOnNextRead || current == null) return current;
+    markOnNextRead = false;
+    final marked = current.copyWith(
+      selfRemovedAt: removedAt,
+      lastMembershipEventAt: removedAt,
+    );
+    await super.updateGroup(marked);
+    return marked;
   }
 }
 
@@ -973,6 +1004,62 @@ void main() {
       ),
     };
   }
+
+  test(
+    'fresh route authority stops a decoded page when B3 lands before routing',
+    () async {
+      final routingRepo = _MarkOnNextGroupReadRepository();
+      final routingBridge = _MarkAfterDecryptInboxBridge();
+      groupRepo = routingRepo;
+      bridge = routingBridge;
+      msgRepo = InMemoryGroupMessageRepository();
+      await routingRepo.saveGroup(testGroup);
+      for (final peerId in const ['peer-sender', 'peer-local']) {
+        await routingRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: peerId,
+            role: MemberRole.writer,
+            publicKey: peerId == 'peer-sender' ? 'pk-sender' : 'pk-local',
+            joinedAt: DateTime.utc(2026, 5, 1),
+          ),
+        );
+      }
+      await saveDefaultReplayKey(repository: routingRepo);
+      routingBridge.addPage('group-1', '', [
+        await signedRelayMessage(
+          id: 'decoded-before-b3',
+          text: 'must not route after marker',
+        ),
+      ], 'cursor-2');
+      routingBridge.addPage('group-1', 'cursor-2', [
+        await signedRelayMessage(
+          id: 'later-page-after-b3',
+          text: 'must not retrieve',
+        ),
+      ], '');
+      routingBridge.afterDecrypt = () => routingRepo.markOnNextRead = true;
+
+      await drainGroupOfflineInboxForGroup(
+        bridge: routingBridge,
+        groupRepo: routingRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        selfPeerId: 'peer-local',
+      );
+
+      expect(await msgRepo.getMessage('decoded-before-b3'), isNull);
+      expect(await msgRepo.getMessage('later-page-after-b3'), isNull);
+      expect((await routingRepo.getGroup('group-1'))!.selfRemovedAt, isNotNull);
+      expect(
+        routingBridge.commandLog.where(
+          (command) => command == 'group:inboxRetrieveCursor',
+        ),
+        hasLength(1),
+      );
+    },
+  );
 
   test(
     'logical delivery identity survives signed offline replay drain',
@@ -3250,6 +3337,125 @@ void main() {
   );
 
   test(
+    'loaded history repair source request is skipped after B3 or completes before B3 without routing stale history',
+    () async {
+      await saveDefaultReplayKey();
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-good',
+          username: 'Good Source',
+          role: MemberRole.reader,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final repairedMessages = [
+        await signedRelayMessage(
+          id: 'history-guarded',
+          text: 'Guarded history',
+          timestamp: DateTime.utc(2026, 5, 1, 12, 30),
+        ),
+      ];
+      final rangeHash = computeGroupHistoryRangeHash(repairedMessages);
+      bridge.addPage(
+        'group-1',
+        '',
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [historyGap(expectedRangeHash: rangeHash)],
+      );
+      final markedAt = DateTime.utc(2026, 7, 20, 15);
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup(
+          'group-1',
+        ))!.copyWith(selfRemovedAt: markedAt),
+      );
+      var requestCalls = 0;
+      Future<GroupHistoryRepairRangeResult> request({
+        required GroupInboxHistoryGap gap,
+        required String sourcePeerId,
+        int limit = 50,
+      }) async {
+        requestCalls++;
+        return GroupHistoryRepairRangeResult(
+          groupId: gap.groupId,
+          gapId: gap.gapId,
+          sourcePeerId: sourcePeerId,
+          rangeHash: rangeHash,
+          headMessageId: gap.expectedHeadMessageId,
+          messages: repairedMessages,
+        );
+      }
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        requestHistoryRepairRange: request,
+      );
+      expect(requestCalls, 0);
+
+      await groupRepo.updateGroup(
+        (await groupRepo.getGroup('group-1'))!.copyWith(selfRemovedAt: null),
+      );
+      final requestEntered = Completer<void>();
+      final releaseRequest = Completer<void>();
+      final activeDrain = drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        requestHistoryRepairRange:
+            ({required gap, required sourcePeerId, int limit = 50}) async {
+              requestCalls++;
+              requestEntered.complete();
+              await releaseRequest.future;
+              return GroupHistoryRepairRangeResult(
+                groupId: gap.groupId,
+                gapId: gap.gapId,
+                sourcePeerId: sourcePeerId,
+                rangeHash: rangeHash,
+                headMessageId: gap.expectedHeadMessageId,
+                messages: repairedMessages,
+              );
+            },
+      );
+      await requestEntered.future;
+
+      var markerCommitted = false;
+      final queuedMarker = runGroupMembershipMutationLocked(
+        groupId: 'group-1',
+        action: () async {
+          await groupRepo.updateGroup(
+            (await groupRepo.getGroup(
+              'group-1',
+            ))!.copyWith(selfRemovedAt: markedAt),
+          );
+          markerCommitted = true;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(markerCommitted, isFalse);
+
+      releaseRequest.complete();
+      await activeDrain;
+      await queuedMarker;
+      expect(requestCalls, 1);
+      expect(markerCommitted, isTrue);
+      expect(await msgRepo.getMessage('history-guarded'), isNull);
+      expect(
+        (await historyRepo.getRepair(
+          groupId: 'group-1',
+          gapId: 'gap-1',
+        ))?.status,
+        isNot(groupHistoryGapRepairStatusRepaired),
+      );
+    },
+  );
+
+  test(
     'GI-026 history gap metadata is preserved to app repair layer',
     () async {
       await saveDefaultReplayKey();
@@ -5295,9 +5501,11 @@ void main() {
             'senderId': 'peer-admin',
             'senderUsername': 'Admin',
             'keyEpoch': 0,
+            'messageId': 'replayed-member-removed-group-1',
             'text': jsonEncode({
               '__sys': 'member_removed',
               'member': {'peerId': 'peer-self', 'username': 'Self'},
+              'removedAt': ts,
               'groupConfig': {
                 'name': 'Test Group',
                 'groupType': 'chat',
@@ -5396,6 +5604,7 @@ void main() {
             'text': jsonEncode({
               '__sys': 'member_removed',
               'member': {'peerId': 'peer-self', 'username': 'Self'},
+              'removedAt': removedAt,
               'groupConfig': {
                 'name': 'Test Group',
                 'groupType': 'chat',

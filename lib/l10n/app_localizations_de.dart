@@ -639,6 +639,21 @@ class AppLocalizationsDe extends AppLocalizations {
       'Du hast die Gruppe verlassen, aber ihr lokaler Verlauf konnte nicht vollständig entfernt werden.';
 
   @override
+  String get group_removed_delete_title =>
+      'Diese Gruppe von diesem Gerät löschen?';
+
+  @override
+  String get group_removed_delete_body =>
+      'Dadurch werden die gespeicherten Nachrichten nur von diesem Gerät gelöscht. Du verlässt die Gruppe nicht und niemand darin wird benachrichtigt.';
+
+  @override
+  String get group_removed_delete_action => 'Vom Gerät löschen';
+
+  @override
+  String get group_removed_delete_failed =>
+      'Die Gruppe konnte nicht von diesem Gerät gelöscht werden. Versuche es erneut.';
+
+  @override
   String get conversation_hint => 'Schreib etwas...';
 
   @override

@@ -2,7 +2,9 @@ import '../models/group_pending_key_repair.dart';
 import 'group_pending_key_repair_repository.dart';
 
 class GroupPendingKeyRepairRepositoryImpl
-    implements GroupPendingKeyRepairRepository {
+    implements
+        GroupPendingKeyRepairRepository,
+        GroupPendingKeyRepairExactRepository {
   final Future<bool> Function(Map<String, Object?> row)
   dbUpsertGroupPendingKeyRepair;
   final Future<Map<String, Object?>?> Function(String id)
@@ -21,12 +23,20 @@ class GroupPendingKeyRepairRepositoryImpl
   })
   dbLoadPendingGroupKeyRepairsForGroup;
   final Future<void> Function(String id) dbDeleteGroupPendingKeyRepair;
+  final Future<bool> Function(Map<String, Object?> expected)?
+  dbDeleteGroupPendingKeyRepairIfExact;
   final Future<void> Function(
     String id, {
     required String? lastError,
     required String updatedAt,
   })
   dbRecordGroupPendingKeyRepairAttempt;
+  final Future<bool> Function(
+    Map<String, Object?> expected, {
+    required String? lastError,
+    required String updatedAt,
+  })?
+  dbRecordGroupPendingKeyRepairAttemptIfExact;
   final Future<void> Function(
     String id, {
     required String status,
@@ -34,6 +44,13 @@ class GroupPendingKeyRepairRepositoryImpl
     required String finalizedAt,
   })
   dbFinalizeGroupPendingKeyRepair;
+  final Future<bool> Function(
+    Map<String, Object?> expected, {
+    required String status,
+    required String lastError,
+    required String finalizedAt,
+  })?
+  dbFinalizeGroupPendingKeyRepairIfExact;
 
   GroupPendingKeyRepairRepositoryImpl({
     required this.dbUpsertGroupPendingKeyRepair,
@@ -42,8 +59,11 @@ class GroupPendingKeyRepairRepositoryImpl
     required this.dbLoadAllPendingGroupKeyRepairs,
     required this.dbLoadPendingGroupKeyRepairsForGroup,
     required this.dbDeleteGroupPendingKeyRepair,
+    this.dbDeleteGroupPendingKeyRepairIfExact,
     required this.dbRecordGroupPendingKeyRepairAttempt,
+    this.dbRecordGroupPendingKeyRepairAttemptIfExact,
     required this.dbFinalizeGroupPendingKeyRepair,
+    this.dbFinalizeGroupPendingKeyRepairIfExact,
   });
 
   @override
@@ -130,6 +150,93 @@ class GroupPendingKeyRepairRepositoryImpl
     await dbFinalizeGroupPendingKeyRepair(
       id,
       status: groupPendingKeyRepairStatusUndecryptable,
+      lastError: lastError,
+      finalizedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<GroupPendingKeyRepair?> recordAttemptIfExact(
+    GroupPendingKeyRepair expected, {
+    required String? lastError,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final exact = dbRecordGroupPendingKeyRepairAttemptIfExact;
+    if (exact == null) {
+      final current = await getRepair(expected.id);
+      if (current == null ||
+          !sameExactGroupPendingKeyRepair(current, expected)) {
+        return null;
+      }
+      await recordAttempt(expected.id, lastError: lastError);
+      return getRepair(expected.id);
+    }
+    final applied = await exact(
+      expected.toMap(),
+      lastError: lastError,
+      updatedAt: now.toIso8601String(),
+    );
+    return applied
+        ? expected.copyWith(
+            attempts: expected.attempts + 1,
+            lastError: lastError,
+            updatedAt: now,
+          )
+        : null;
+  }
+
+  @override
+  Future<bool> deleteRepairIfExact(GroupPendingKeyRepair expected) async {
+    final exact = dbDeleteGroupPendingKeyRepairIfExact;
+    if (exact != null) return exact(expected.toMap());
+    final current = await getRepair(expected.id);
+    if (current == null || !sameExactGroupPendingKeyRepair(current, expected)) {
+      return false;
+    }
+    await deleteRepair(expected.id);
+    return true;
+  }
+
+  @override
+  Future<bool> finalizeRepairedIfExact(GroupPendingKeyRepair expected) =>
+      _finalizeIfExact(
+        expected,
+        status: groupPendingKeyRepairStatusRepaired,
+        lastError: '',
+      );
+
+  @override
+  Future<bool> finalizeUndecryptableIfExact(
+    GroupPendingKeyRepair expected, {
+    required String lastError,
+  }) => _finalizeIfExact(
+    expected,
+    status: groupPendingKeyRepairStatusUndecryptable,
+    lastError: lastError,
+  );
+
+  Future<bool> _finalizeIfExact(
+    GroupPendingKeyRepair expected, {
+    required String status,
+    required String lastError,
+  }) async {
+    final exact = dbFinalizeGroupPendingKeyRepairIfExact;
+    if (exact == null) {
+      final current = await getRepair(expected.id);
+      if (current == null ||
+          !sameExactGroupPendingKeyRepair(current, expected)) {
+        return false;
+      }
+      if (status == groupPendingKeyRepairStatusRepaired) {
+        await finalizeRepaired(expected.id);
+      } else {
+        await finalizeUndecryptable(expected.id, lastError: lastError);
+      }
+      return true;
+    }
+    return exact(
+      expected.toMap(),
+      status: status,
       lastError: lastError,
       finalizedAt: DateTime.now().toUtc().toIso8601String(),
     );

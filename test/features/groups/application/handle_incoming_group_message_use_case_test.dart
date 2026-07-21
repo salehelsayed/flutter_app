@@ -3,6 +3,7 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
@@ -3555,17 +3556,17 @@ void main() {
       );
       liveGroupRepo = InMemoryGroupRepository();
       for (final groupId in ['group-a', 'group-b']) {
-        await liveGroupRepo.saveGroup(
-          GroupModel(
-            id: groupId,
-            name: 'Group $groupId',
-            type: GroupType.chat,
-            topicName: 'topic-$groupId',
-            createdAt: DateTime.now().toUtc(),
-            createdBy: 'peer-admin',
-            myRole: GroupRole.admin,
-          ),
+        final group = GroupModel(
+          id: groupId,
+          name: 'Group $groupId',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
         );
+        await liveGroupRepo.saveGroup(group);
+        await dbInsertGroup(db, group.toMap());
         await liveGroupRepo.saveMember(
           GroupMember(
             groupId: groupId,

@@ -36,6 +36,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -507,9 +508,17 @@ class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
   _DelayedNotFoundGroupRepository(this.delay);
 
   final Duration delay;
+  bool _notFoundArmed = false;
+
+  void armNotFound() {
+    _notFoundArmed = true;
+  }
 
   @override
   Future<GroupModel?> getGroup(String id) async {
+    if (!_notFoundArmed) {
+      return super.getGroup(id);
+    }
     await Future<void>.delayed(delay);
     return null;
   }
@@ -1225,6 +1234,33 @@ Future<void> pumpUntilAsyncWorkSettles(
     });
     await tester.pump(const Duration(milliseconds: 50));
     pumps++;
+  }
+}
+
+Future<void> pumpUntilFuturesComplete(
+  WidgetTester tester,
+  Iterable<Future<void>> futures, {
+  int maxPumps = 200,
+}) async {
+  var completed = false;
+  Object? completionError;
+  StackTrace? completionStack;
+  unawaited(
+    Future.wait<void>(futures).then(
+      (_) => completed = true,
+      onError: (Object error, StackTrace stack) {
+        completionError = error;
+        completionStack = stack;
+        completed = true;
+      },
+    ),
+  );
+  await pumpUntilAsyncWorkSettles(tester, () => completed, maxPumps: maxPumps);
+  if (!completed) {
+    throw TimeoutException('async test work did not complete');
+  }
+  if (completionError != null) {
+    Error.throwWithStackTrace(completionError!, completionStack!);
   }
 }
 
@@ -3298,10 +3334,11 @@ void main() {
     );
 
     testWidgets(
-      'media uploads pre-persist upload_pending rows and start in parallel from durable copies',
+      'media uploads pre-persist upload_pending rows before each serialized durable upload',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync('group-media-');
         addTearDown(() {
@@ -3319,13 +3356,18 @@ void main() {
         ];
 
         final testMediaFileManager = FakeMediaFileManager();
-        final uploadStarts = <DateTime>[];
+        final uploadStarts = <String>[];
         final seenBlobIds = <String>[];
         final pendingSeenBeforeUpload = <bool>[];
-        final uploadRelease = Completer<void>();
+        final uploadReleases = List<Completer<void>>.generate(
+          files.length,
+          (_) => Completer<void>(),
+        );
         addTearDown(() {
-          if (!uploadRelease.isCompleted) {
-            uploadRelease.complete();
+          for (final release in uploadReleases) {
+            if (!release.isCompleted) {
+              release.complete();
+            }
           }
           mediaAttachmentRepo.onSaveAttachment = null;
         });
@@ -3352,8 +3394,9 @@ void main() {
                   deleteSourceWhenDone = false,
                   preparedArtifact,
                 }) async {
-                  uploadStarts.add(DateTime.now().toUtc());
-                  seenBlobIds.add(blobId!);
+                  final uploadIndex = uploadStarts.length;
+                  uploadStarts.add(blobId!);
+                  seenBlobIds.add(blobId);
                   final pending = await mediaAttachmentRepo
                       .getUploadPendingAttachments(owner: MediaOwnerLane.group);
                   pendingSeenBeforeUpload.add(pending.isNotEmpty);
@@ -3367,7 +3410,7 @@ void main() {
                     ),
                     isTrue,
                   );
-                  await uploadRelease.future;
+                  await uploadReleases[uploadIndex].future;
                   return MediaAttachment(
                     id: 'server-assigned-${seenBlobIds.length}',
                     messageId: '',
@@ -3393,17 +3436,18 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         final sendFuture = await startScreenSend(tester, 'Durable media');
+        await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 1);
+        expect(uploadStarts, hasLength(1));
+        uploadReleases[0].complete();
+        await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 2);
+        expect(uploadStarts, hasLength(2));
+        uploadReleases[1].complete();
         await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 3);
-
         expect(uploadStarts, hasLength(3));
-        expect(
-          uploadStarts.last.difference(uploadStarts.first).inMilliseconds,
-          lessThan(80),
-        );
         expect(pendingSeenBeforeUpload.every((seen) => seen), isTrue);
         expect(seenBlobIds.toSet(), hasLength(3));
 
-        uploadRelease.complete();
+        uploadReleases[2].complete();
         await tester.runAsync(() async {
           await sendFuture.future;
         });
@@ -4241,6 +4285,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group-media-fail-',
@@ -4352,6 +4397,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         await msgRepo.saveMessage(
           makeMessage(
             id: 'msg-parent-media-upload',
@@ -4656,9 +4702,16 @@ void main() {
       recorder.fakeOutputPath = voiceFile.path;
       final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
 
-      // Empty-membership chat group → use case returns groupDissolved on send.
+      // Start active so the voice upload leaf can complete, then empty the
+      // roster in the queued membership phase before final send.
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+      final uploadStarted = Completer<void>();
+      final uploadRelease = Completer<void>();
+      addTearDown(() {
+        if (!uploadRelease.isCompleted) uploadRelease.complete();
+      });
 
       await tester.pumpWidget(
         buildWidget(
@@ -4666,6 +4719,46 @@ void main() {
           mediaRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           audioRecorderService: recorder,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                String? blobId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                if (!uploadStarted.isCompleted) uploadStarted.complete();
+                await uploadRelease.future;
+                return MediaAttachment(
+                  id: blobId!,
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: mediaFileManager?.relativePathForAttachment(
+                    contactPeerId: group.id,
+                    blobId: blobId,
+                    mime: mime,
+                  ),
+                  downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  durationMs: durationMs,
+                  waveform: waveform,
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
         ),
       );
       await pumpFrames(tester, count: 20);
@@ -4691,9 +4784,24 @@ void main() {
       );
       final stopRecording =
           recordingScreen.onRecordStop! as Future<void> Function();
+      late Future<void> stopFuture;
       await tester.runAsync(() async {
-        await stopRecording();
+        stopFuture = stopRecording();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
       });
+      await tester.runAsync(() async {
+        await uploadStarted.future.timeout(const Duration(seconds: 10));
+      });
+      final emptyRoster = runGroupMembershipMutationLocked<void>(
+        groupId: group.id,
+        action: () async {
+          for (final member in await groupRepo.getMembers(group.id)) {
+            await groupRepo.removeMember(group.id, member.peerId);
+          }
+        },
+      );
+      uploadRelease.complete();
+      await pumpUntilFuturesComplete(tester, [emptyRoster, stopFuture]);
       await pumpFrames(tester, count: 20);
 
       final after = tester.widget<GroupConversationScreen>(
@@ -4952,73 +5060,67 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final source = File('${tempDir.path}/photo.jpg')
-          ..writeAsBytesSync(validJpegFixtureBytes);
         final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        const messageId = 'msg-terminal-durable-photo';
+        const attachmentId = 'att-terminal-durable-photo';
+        const mime = 'image/jpeg';
+        final durableAbsolute = await mediaFileManager.localPathForAttachment(
+          contactPeerId: missingGroup.id,
+          blobId: attachmentId,
+          mime: mime,
+        );
+        File(durableAbsolute).writeAsBytesSync(validJpegFixtureBytes);
+        final durableRelative = mediaFileManager.relativePathForAttachment(
+          contactPeerId: missingGroup.id,
+          blobId: attachmentId,
+          mime: mime,
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: messageId,
+            text: 'Durable photo',
+            groupId: missingGroup.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: mime,
+            size: validJpegFixtureBytes.length,
+            mediaType: 'image',
+            localPath: durableRelative,
+            downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+          owner: MediaOwnerLane.group,
+        );
 
         await tester.pumpWidget(
           buildWidget(
             group: missingGroup,
             mediaRepo: mediaAttachmentRepo,
             mediaFileManager: mediaFileManager,
-            initialAttachments: [source],
-            uploadMediaFn:
-                ({
-                  required bridge,
-                  required localFilePath,
-                  required mime,
-                  required recipientPeerId,
-                  String? blobId,
-                  mediaFileManager,
-                  width,
-                  height,
-                  durationMs,
-                  waveform,
-                  allowedPeers,
-                  deleteSourceWhenDone = false,
-                  preparedArtifact,
-                }) async {
-                  // Physically relocate the upload to the durable owned location
-                  // (media/<groupId>/<blob>), as the real upload path does.
-                  final absolute = await mediaFileManager!
-                      .localPathForAttachment(
-                        contactPeerId: missingGroup.id,
-                        blobId: blobId!,
-                        mime: mime,
-                      );
-                  await File(absolute).writeAsString('durable');
-                  return MediaAttachment(
-                    id: blobId,
-                    messageId: '',
-                    mime: mime,
-                    size: 1,
-                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                    localPath: mediaFileManager.relativePathForAttachment(
-                      contactPeerId: missingGroup.id,
-                      blobId: blobId,
-                      mime: mime,
-                    ),
-                    downloadStatus: 'done',
-                    contentHash: _validContentHash,
-                    encryptionKeyBase64: 'key-fixture',
-                    encryptionNonce: 'nonce-fixture',
-                    encryptionScheme:
-                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-                    createdAt: DateTime.now().toUtc().toIso8601String(),
-                  );
-                },
           ),
         );
         await pumpFrames(tester, count: 20);
-
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .messages
+              .any((message) => message.id == messageId),
         );
-        final sendMessage = screen.onSend as Future<void> Function(String);
-        await tester.runAsync(() async {
-          await sendMessage('Durable photo');
-        });
-        await pumpFrames(tester, count: 20);
 
         final after = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -5036,8 +5138,9 @@ void main() {
         expect(attachments, isNotEmpty);
         final localPath = attachments.first.localPath;
         expect(localPath, isNotNull);
-        final durableAbsolute = await mediaFileManager.resolveStoredPath(
-          localPath!,
+        expect(
+          await mediaFileManager.resolveStoredPath(localPath!),
+          durableAbsolute,
         );
         expect(
           File(durableAbsolute).existsSync(),
@@ -5046,13 +5149,14 @@ void main() {
         );
 
         // Tap the terminal Delete affordance (reachable while read-only).
-        await tester.runAsync(() async {
-          await tester.tap(
-            find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
-          );
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await pumpFrames(tester, count: 10);
+        await tester.tap(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+        );
+        await pumpUntil(
+          tester,
+          () => !File(durableAbsolute).existsSync(),
+          maxPumps: 120,
+        );
 
         // RED on HEAD: terminal Delete only drops the rows + pending-upload dir,
         // orphaning the durable media/<groupId>/ file on disk.
@@ -5064,6 +5168,8 @@ void main() {
       'ordinary media group-not-found rejection retains the failed media bubble',
       (tester) async {
         final missingGroup = makeChatGroup();
+        await groupRepo.saveGroup(missingGroup);
+        await saveActiveGroupMembers(groupRepo, missingGroup);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-media-missing-group-',
         );
@@ -5077,6 +5183,11 @@ void main() {
         final mediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
         mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        final uploadStarted = Completer<void>();
+        final uploadRelease = Completer<void>();
+        addTearDown(() {
+          if (!uploadRelease.isCompleted) uploadRelease.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -5099,36 +5210,48 @@ void main() {
                   allowedPeers,
                   deleteSourceWhenDone = false,
                   preparedArtifact,
-                }) async => MediaAttachment(
-                  id: 'server-missing-group-media',
-                  messageId: '',
-                  mime: mime,
-                  size: 1,
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  localPath: mediaFileManager?.relativePathForAttachment(
-                    contactPeerId: missingGroup.id,
-                    blobId: blobId!,
+                }) async {
+                  if (!uploadStarted.isCompleted) uploadStarted.complete();
+                  await uploadRelease.future;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
                     mime: mime,
-                  ),
-                  downloadStatus: 'done',
-                  contentHash: _validContentHash,
-                  encryptionKeyBase64: 'key-fixture',
-                  encryptionNonce: 'nonce-fixture',
-                  encryptionScheme:
-                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
-                ),
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: missingGroup.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
           ),
         );
         await pumpFrames(tester, count: 20);
 
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
+        final sendFuture = await startScreenSend(tester, 'Missing group media');
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
         );
-        final sendMessage = screen.onSend as Future<void> Function(String);
-        await tester.runAsync(() async {
-          await sendMessage('Missing group media');
-        });
+        expect(uploadStarted.isCompleted, isTrue);
+        final deleteGroup = runGroupMembershipMutationLocked<void>(
+          groupId: missingGroup.id,
+          action: () => groupRepo.deleteGroup(missingGroup.id),
+        );
+        uploadRelease.complete();
+        await pumpUntilFuturesComplete(tester, [
+          deleteGroup,
+          sendFuture.future,
+        ]);
         await pumpFrames(tester, count: 20);
 
         final after = tester.widget<GroupConversationScreen>(
@@ -5155,9 +5278,8 @@ void main() {
       'ordinary media unauthorized rejection retains the failed media bubble',
       (tester) async {
         final widgetGroup = makeAnnouncementGroup(role: GroupRole.admin);
-        await groupRepo.saveGroup(
-          widgetGroup.copyWith(myRole: GroupRole.member),
-        );
+        await groupRepo.saveGroup(widgetGroup);
+        await saveActiveGroupMembers(groupRepo, widgetGroup);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group-media-unauthorized-',
@@ -5172,6 +5294,11 @@ void main() {
         final mediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
         mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        final uploadStarted = Completer<void>();
+        final uploadRelease = Completer<void>();
+        addTearDown(() {
+          if (!uploadRelease.isCompleted) uploadRelease.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -5194,36 +5321,50 @@ void main() {
                   allowedPeers,
                   deleteSourceWhenDone = false,
                   preparedArtifact,
-                }) async => MediaAttachment(
-                  id: 'server-unauthorized-media',
-                  messageId: '',
-                  mime: mime,
-                  size: 1,
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  localPath: mediaFileManager?.relativePathForAttachment(
-                    contactPeerId: widgetGroup.id,
-                    blobId: blobId!,
+                }) async {
+                  if (!uploadStarted.isCompleted) uploadStarted.complete();
+                  await uploadRelease.future;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
                     mime: mime,
-                  ),
-                  downloadStatus: 'done',
-                  contentHash: _validContentHash,
-                  encryptionKeyBase64: 'key-fixture',
-                  encryptionNonce: 'nonce-fixture',
-                  encryptionScheme:
-                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
-                ),
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: widgetGroup.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
           ),
         );
         await pumpFrames(tester, count: 20);
 
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
+        final sendFuture = await startScreenSend(tester, 'Unauthorized media');
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
         );
-        final sendMessage = screen.onSend as Future<void> Function(String);
-        await tester.runAsync(() async {
-          await sendMessage('Unauthorized media');
-        });
+        expect(uploadStarted.isCompleted, isTrue);
+        final demoteLocalRole = runGroupMembershipMutationLocked<void>(
+          groupId: widgetGroup.id,
+          action: () => groupRepo.updateGroup(
+            widgetGroup.copyWith(myRole: GroupRole.member),
+          ),
+        );
+        uploadRelease.complete();
+        await pumpUntilFuturesComplete(tester, [
+          demoteLocalRole,
+          sendFuture.future,
+        ]);
         await pumpFrames(tester, count: 20);
 
         final after = tester.widget<GroupConversationScreen>(
@@ -10865,10 +11006,11 @@ void main() {
     });
 
     testWidgets(
-      'cancel on the active upload banner restores composer state and terminalizes durable pending rows',
+      'cancel between serialized upload leaves restores composer and preserves the completed leaf',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group_cancel_upload_',
@@ -10938,13 +11080,13 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         final sendFuture = await startScreenSend(tester, 'Cancel upload');
-        await pumpUntil(tester, () => uploadStarted.length == 2, maxPumps: 120);
+        await pumpUntil(tester, () => uploadStarted.length == 1, maxPumps: 120);
         await pumpFrames(tester, count: 5);
 
         final cancellingScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        expect(uploadStarted, hasLength(2));
+        expect(uploadStarted, hasLength(1));
         expect(cancellingScreen.uploadProgress, isNotNull);
         expect(cancellingScreen.onCancelUpload, isNotNull);
         expect(wakeLockDriver.enableCalls, 1);
@@ -10980,14 +11122,20 @@ void main() {
               owner: MediaOwnerLane.group,
             );
 
-        expect(uploadCompleted, hasLength(2));
+        expect(uploadCompleted, hasLength(1));
         expect(failedMessage.status, 'failed');
-        expect(storedAttachments, hasLength(2));
+        expect(storedAttachments, hasLength(1));
         expect(
           storedAttachments.every(
-            (attachment) => attachment.downloadStatus == 'upload_failed',
+            (attachment) => attachment.downloadStatus == 'done',
           ),
           isTrue,
+        );
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
+          isEmpty,
         );
         expect(find.text('Upload cancelled.'), findsOneWidget);
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
@@ -11006,14 +11154,14 @@ void main() {
     );
 
     testWidgets(
-      'group terminalization preserves same id direct pending media',
+      'serialized group cancellation preserves same id direct pending media',
       (tester) async {
         // 228 TC-228-05B: a DIRECT message can legally share the group
-        // message's id. The cancel-driven group terminalization marks ONLY
-        // group-lane upload_pending rows upload_failed — the same-ID direct
-        // sibling row must STILL be upload_pending afterwards.
+        // message's id. Completing the in-flight group leaf must update ONLY
+        // the group lane; the same-ID direct sibling remains upload_pending.
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group_cancel_collide_',
@@ -11125,14 +11273,24 @@ void main() {
               wakeLockDriver.disableCalls == 1,
         );
 
-        // The group lane was terminalized...
+        // The in-flight group leaf completed before cancellation was observed.
         final groupAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(
               collidingMessageId,
               owner: MediaOwnerLane.group,
             );
         expect(groupAttachments, hasLength(1));
-        expect(groupAttachments.single.downloadStatus, 'upload_failed');
+        expect(groupAttachments.single.downloadStatus, 'done');
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
 
         // ...while the same-ID direct sibling is STILL upload_pending.
         final directSiblings = await mediaAttachmentRepo
@@ -12955,6 +13113,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-durable-',
         );
@@ -13102,6 +13261,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         await msgRepo.saveMessage(
           makeMessage(
             id: 'msg-parent-voice-upload',
@@ -13721,7 +13881,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 10));
+          await uploadStarted.future.timeout(const Duration(seconds: 30));
         });
         await pumpFrames(tester, count: 5);
 
@@ -14016,6 +14176,8 @@ void main() {
       'voice group-not-found rejection retains a durable failed voice row',
       (tester) async {
         final missingGroup = makeChatGroup();
+        await groupRepo.saveGroup(missingGroup);
+        await saveActiveGroupMembers(groupRepo, missingGroup);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-missing-group-',
         );
@@ -14031,6 +14193,11 @@ void main() {
           ..fakeDurationMs = 3000
           ..fakeSizeBytes = 48000
           ..fakeOutputPath = tempVoice.path;
+        final uploadStarted = Completer<void>();
+        final uploadRelease = Completer<void>();
+        addTearDown(() {
+          if (!uploadRelease.isCompleted) uploadRelease.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -14053,23 +14220,31 @@ void main() {
                   allowedPeers,
                   deleteSourceWhenDone = false,
                   preparedArtifact,
-                }) async => MediaAttachment(
-                  id: 'uploaded-voice-missing-group',
-                  messageId: '',
-                  mime: mime,
-                  size: 1,
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  localPath: localFilePath,
-                  downloadStatus: 'done',
-                  contentHash: _validContentHash,
-                  encryptionKeyBase64: 'key-fixture',
-                  encryptionNonce: 'nonce-fixture',
-                  encryptionScheme:
-                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-                  durationMs: durationMs,
-                  waveform: waveform,
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
-                ),
+                }) async {
+                  if (!uploadStarted.isCompleted) uploadStarted.complete();
+                  await uploadRelease.future;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: missingGroup.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
           ),
         );
         await pumpFrames(tester, count: 20);
@@ -14095,8 +14270,14 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await stopFuture;
+          await uploadStarted.future.timeout(const Duration(seconds: 10));
         });
+        final deleteGroup = runGroupMembershipMutationLocked<void>(
+          groupId: missingGroup.id,
+          action: () => groupRepo.deleteGroup(missingGroup.id),
+        );
+        uploadRelease.complete();
+        await pumpUntilFuturesComplete(tester, [deleteGroup, stopFuture]);
         await pumpFrames(tester, count: 10);
 
         // 144: a terminal voice send keeps the recorded row + audio as a
@@ -14162,6 +14343,10 @@ void main() {
           ..fakeSizeBytes = 48000
           ..fakeOutputPath = tempVoice.path;
         final uploadStarted = Completer<void>();
+        final uploadRelease = Completer<void>();
+        addTearDown(() {
+          if (!uploadRelease.isCompleted) uploadRelease.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -14188,6 +14373,7 @@ void main() {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
                   }
+                  await uploadRelease.future;
                   return MediaAttachment(
                     id: blobId!,
                     messageId: '',
@@ -14231,7 +14417,7 @@ void main() {
         late Future<void> stopFuture;
         await tester.runAsync(() async {
           stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
           await uploadStarted.future.timeout(const Duration(seconds: 6));
@@ -14242,12 +14428,16 @@ void main() {
         expect(inFlightMessage, isNotNull);
         final messageId = inFlightMessage!.id;
 
+        final armNotFound = runGroupMembershipMutationLocked<void>(
+          groupId: group.id,
+          action: () async => delayedGroupRepo.armNotFound(),
+        );
+
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
 
-        await tester.runAsync(() async {
-          await stopFuture;
-        });
+        uploadRelease.complete();
+        await pumpUntilFuturesComplete(tester, [armNotFound, stopFuture]);
         await pumpFrames(tester, count: 10);
 
         // 144: even when the screen is gone, a terminal result keeps the row as
@@ -14275,6 +14465,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
       await msgRepo.saveMessage(
         makeMessage(
           id: 'msg-parent-voice-upload',
