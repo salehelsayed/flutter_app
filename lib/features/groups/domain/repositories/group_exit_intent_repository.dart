@@ -14,6 +14,7 @@ enum GroupExitIntentMutationDisposition {
   refusedSelfRemoved,
   refusedSelfMissing,
   refusedMembershipChanged,
+  refusedLastAdmin,
   refusedRoleBroadcastPresent,
   refusedNoticeMissing,
   refusedTimelineConflict,
@@ -46,9 +47,9 @@ abstract interface class GroupExitIntentRepository {
     required DateTime updatedAt,
   });
 
-  /// Atomically rechecks exact membership and role-row absence, then persists
-  /// the deterministic timeline row, exact leave-notice outbox row, and the
-  /// `queued -> leave_notice_pending` intent transition.
+  /// Atomically rechecks exact membership, last-admin authority, and role-row
+  /// absence, then persists the deterministic timeline row, exact leave-notice
+  /// outbox row, and the `queued -> leave_notice_pending` intent transition.
   Future<GroupExitIntentMutationResult> prepareLeaveNotice({
     required GroupExitIntent expected,
     required GroupMessage timelineMessage,

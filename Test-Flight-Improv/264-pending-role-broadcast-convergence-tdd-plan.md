@@ -37,7 +37,15 @@ The prior terminal-policy blocker is resolved in favor of a durable queued exit:
    syncing and is never rolled back, discarded, age-capped, or attempt-capped.
 6. After signed leave work starts, cancellation truthfully reports “too late” and
    refreshes current state. There is no force-local or divergence action.
-7. **Dissolve for everyone** remains a separate, explicitly confirmed sole-admin
+7. Last-admin recovery is final only while the intent is still `queued`. Once the
+   signed leave notice is durably claimed, the exact departure is irreversible even
+   if a later local roster projection makes the leaver appear to be the sole admin:
+   some peers may already have removed that actor and cannot safely authorize a new
+   role event from it. The notice claim repeats the exact self-role/admin-count check
+   in its SQLite write transaction, so a concurrent roster projection and the claim
+   have one durable winner. New role preparation/activation remains refused in every
+   post-notice phase.
+8. **Dissolve for everyone** remains a separate, explicitly confirmed sole-admin
    operation. It is not shown in the pending/queued stage and is not the terminal
    escape for this bug.
 
@@ -55,7 +63,7 @@ and no spinner that asks the user to keep a screen open.
 | 2026-07-20 | Product/UX decision | recovery sheet and durable status surfaces | Selected immediate Retry → **Leave when sync completes**; keep Dissolve separate; never offer force-local divergence. | Replan as post-v102 durable work. |
 | 2026-07-20 | State/restart grounding | v102 registry, Plan-263 authority, voluntary-leave prework, pending outbox, native `LeaveGroupTopic`, startup/resume/rejoin | A process-memory leave marker is insufficient. Native leave is idempotent, but signed notice, rotation, cleanup, membership generation, and rejoin ordering need durable phases. | Execute only after immutable Plan 263 handoff. |
 | 2026-07-21 | Prerequisite handoff | Plan 263 accepted tree, shared DB/authority/lock/UI surfaces | Accepted `refs/plan-handoffs/263` at `1bb3c1c95792686cba69bed39ca9a583a311ea2a` (parent `19dc1ca3a79277baa7079772352d77190d7c870b`, tree `a0fd598729216ab2936702a7c40058f2fe225826`, 141 paths); v103 remained free. | Execute Plan 264 on the immutable authority base. |
-| 2026-07-21 | Implementation and counterexample closure | v103 storage/CAS, keyed runner, durable phases, startup/rejoin/resume/manual recovery, four UI surfaces, projection ordering, l10n, gates | Delivered all 19 contract rows. Late audits found and closed queued-loader/removal ordering plus old-account terminal-fence leakage; both have exact lifecycle regressions. Plan 265 was classified as residual because aggregate-only recipient semantics and combined degradation reporting are not fully covered. | Run final gates and freeze the scoped handoff. |
+| 2026-07-21 | Implementation and counterexample closure | v103 storage/CAS, keyed runner, durable phases, startup/rejoin/resume/manual recovery, four UI surfaces, projection ordering, l10n, gates | Delivered all 19 contract rows. Late audits closed queued-loader/removal ordering, old-account terminal-fence leakage, the post-notice last-admin phase contradiction, and the application-guard-to-SQL-claim membership race. Plan 265 remained a separate residual. | Fast-forward the initial scoped freeze through the final corrective commit after rerunning affected closure gates. |
 
 ## Pre-Implementation Problem And Source Evidence
 
@@ -99,17 +107,18 @@ Execution used the accepted Plan 263 handoff ref and its exact tree recorded abo
 - Planning fingerprint was `6e239a985c1da4d8` with stale `lib/main.dart`.
   Closure ran the required affected query, one incremental refresh, and a final
   `review` query with `confidence=anchored`, `freshness=current`, fingerprint
-  `7b7d2c6210119196`.
+  `3621afca05d0b1d3`.
 - Planning query / profile:
   `python3 graphify-arch/tdd_context.py query "Plan 264 durable queued group leave after pending member_role_updated: LeaveGroupAndDeleteLocalHistoryUseCase nativeLeaveUncertain leftCleanupIncomplete GroupPendingBroadcastRunner retryPendingGroupRoleTransition GroupExitRecoverySheet GroupExitPolicy group_info_wired group_list_wired orbit_wired database migrations currentIdentityDatabaseVersion GROUP_TESTS core-host-all real SQLCipher; find storage authority, restart lifecycle, cancellation race, tests, gates, and Plan 263 overlap" --profile tdd --budget 700`.
 - Anchors: `retryPendingGroupRoleTransition`, `GroupPendingBroadcastRunner`, and
   `GroupExitRecoverySheet`. Targeted source verification added v102 migration and
   helpers, voluntary-leave/key-rotation phases, Go native leave, rejoin/resume,
   all wired surfaces, l10n, and gates.
-- Closure impact query covered v103 migration/helpers, coordinator, runner, keyed
-  drain, resume, recovery sheet, and notification projection. The single
-  `./graphify-arch/refresh_arch_graph.sh --incremental` run refreshed 22 changed code
-  files into 59,554 nodes / 90,831 edges and a 1,435-file TDD overlay.
+- Closure impact queries covered v103 migration/helpers, coordinator, runner, keyed
+  drain, resume, recovery sheet, notification projection, the final typed
+  preparation adapter, and the transactional last-admin claim. The final
+  `./graphify-arch/refresh_arch_graph.sh --incremental` correction refresh processed
+  7 changed code files into 59,563 nodes / 90,838 edges and a 1,435-file TDD overlay.
 
 ## Durable Authority And State Machine
 
@@ -158,15 +167,26 @@ queued (cancelable)
 
 - `queued`: the user choice is durable. The runner may drain role rows outside the
   membership lock, then reacquires authority and requires every fresh role-kind row
-  to be absent. Last-admin state pauses here with a typed error; no notice is minted,
-  and the user must safely cancel the intent before using the separate choose-admin
-  recovery flow.
+  to be absent. Its application-level last-admin guard is repeated inside the exact
+  SQLite notice-claim transaction because inbound membership projection uses a
+  different in-process queue. If preparation's intervening roster reload observes the
+  change first, `VoluntaryLeaveLastAdminPreparationRefused` maps directly to
+  `blockedLastAdmin`; if the change lands later, SQL returns typed
+  `refusedLastAdmin` with the same status. Both leave the intent queued and write no
+  notice artifacts; notice-first wins the final reversible boundary. The user must
+  safely cancel a blocked intent before using the separate choose-admin recovery flow.
 - `leave_notice_pending`: under the membership phase, one stable signed
   `member_removed` event is minted strictly after the freshly converged membership
   watermark. Its source/time, signed payload, deterministic timeline row, exact
   pending broadcast row, and intent transition are persisted atomically before
-  network work. New role preparation is refused while an intent exists; activation
-  of the already-existing exact prepared row is still allowed only while `queued`.
+  network work, after the transaction rechecks exact membership, self role, admin
+  count, and role-row absence. New role preparation is refused while an intent
+  exists; activation of the already-existing exact prepared row is still allowed
+  only while `queued`. This claim is also the final reversible last-admin boundary.
+  From this state onward delivery is ambiguous and the signed departure must finish:
+  pausing to create a later successor promotion would diverge when leave-first peers
+  reject the removed actor while promotion-first peers can be overwritten by the
+  immutable leave snapshot.
 - `leave_notice_attempted`: one exact transaction completes the leave-notice row
   and advances the intent. Signed payload/timeline creation is mandatory. Plan 264
   preserves live publish as best-effort and permits a bounded explicitly classified
@@ -265,7 +285,10 @@ Must preserve:
   and correct membership state before publish.
 - Dissolved and Plan-263 self-removed authority outrank queued/pending work.
 - Existing signed transition/audit, receiver stale/dedup, key-rotation authorization,
-  last-admin, and active-leave native-boundary guards.
+  queued last-admin, and irreversible post-notice phase guards. The old active-leave
+  native-boundary admin recount is intentionally superseded only after durable signed
+  notice authority exists; exact membership-instance authority still gates every
+  phase.
 - Normal no-pending Leave and separately confirmed sole-admin Dissolve remain
   reachable through their authoritative paths.
 
@@ -277,6 +300,9 @@ Hard `Do not`:
   pending/queued stage.
 - Do not cancel after `leave_notice_pending`; a peer may already have observed the
   signed departure.
+- Do not pause or reinterpret a post-notice departure as a new successor-role
+  workflow. A role event from an actor already removed on some peers cannot establish
+  convergence, regardless of local outbox success.
 - Do not issue native leave or cleanup for an absent/ambiguous/different membership.
 - Do not hold the membership lock across a group drain, drain-all sweep, or nested
   re-push.
@@ -325,7 +351,7 @@ Explicitly deferred:
 | TC-264-07 | `::PB264-07 role absence claim is atomic with role prepare/activation` | Misleading drain counts; multiple role rows; metadata control; new role prepare racing claim; activation of pre-existing prepared row | Historical RED: the read/check could race. GREEN: either role row wins and intent stays queued, or exit claim wins and new prepare is refused; never native leave with a role row. Split transaction or inspect first row/count -> red. | Helper + role action focused files. |
 | TC-264-08 | `group_exit_intent_coordinator_test.dart::PB264-08 unavailable storage or queue authority cannot authorize leave` | Required concrete repositories whose load/write throws typed unavailable; optional global sinks deliberately unwired | Historical RED: optional sink APIs fabricated `0`/`[]`. GREEN persists nothing, returns typed failure, and issues zero notice/rotation/native/cleanup. Reintroduce a null/no-op default -> red. | Add coordinator test once to `GROUP_TESTS`; `feature-host-all`. |
 | TC-264-09 | `group_exit_intent_runner_test.dart::PB264-09 signed leave notice is watermark-newer, stable, and atomically handed off` | Converged role watermark, fixed clock/id, transaction fault points, restart, delivered and explicitly degraded live/inbox outcomes, generic role-row failure control | GREEN mints once strictly after the role watermark, never remints time/signature, atomically saves source/time + timeline + exact outbox + phase, and atomically completes only that notice. Missing row is not success; role rows retain success-only policy. Mint at queue time, rerun old prework, or delete generic failure -> red. | Add runner test once; groups + `feature-host-all`. |
-| TC-264-10 | `::PB264-10 process recreation at every durable phase never repeats an earlier side effect` | Recreate repository/runner after `queued`, notice pending/attempted, rotation claimed, native pending, cleanup pending; call counters | GREEN: stable notice may dedup-retry; rotation is at most once; native-only and cleanup-only phases never publish/sign/rotate. Remove phase persistence -> red. | Same runner file. |
+| TC-264-10 | `::PB264-10 process recreation at every durable phase never repeats an earlier side effect`; `::PB264-10 every signed post-notice phase stays irreversible after a later sole-admin projection`; preparation-time race + production-wiring sentinel; atomic sole-admin claim, real-overlap, two-order, typed-repository mapping, and post-notice role-refusal proofs | Recreate after every phase; two admins at runner guard then sole admin at preparation reload; exact main adapter; two SQLite handles/barriers race other-admin removal against notice claim; make exact self sole admin after notice authority; prepared→active, new prepared, and direct new active attempts in every irreversible state | Historical REDs: the SQL claim returned `committed`; the earlier preparation race returned generic `failed`. GREEN: preparation-time and SQL-time removal both map to `blockedLastAdmin` and write no artifacts; the latter is typed `refusedLastAdmin`; notice-first is irreversible. Every post-notice phase continues only its remaining work, refuses every role mutation shape, and never remints earlier work. Collapse the preparation type, move the admin read outside SQL, reapply the guard after claim, or allow a post-notice role row -> named red. | Runner + DB helper; groups, `core-host-all`, and `feature-host-all`. |
 | TC-264-11 | `go-mknoon/node/pubsub_test.go::TestPB264LeaveGroupTopicRepeatedIsIdempotent`; `rejoin_group_topics_use_case_test.dart::PB264-11 rejoin eligibility follows exit phase` | Join then native leave twice; topic/config/key absence; queued/notice/rotation/native phase matrix | The existing Go behavior was a GREEN preservation contract; the Flutter phase gating began RED and is now GREEN. Rejoin after native-pending or make second native leave fail -> red. | Exact Go test from `go-mknoon/`; focused rejoin; no device pair. |
 | TC-264-12 | `group_exit_intent_runner_test.dart::PB264-12 confirmed cleanup is atomic and membership-generation safe` | Cleanup transaction failure/reopen; group absent; group present/self missing; later same-id joinedAt; exact old membership | GREEN leaves no partial SQL state, pauses ambiguity, deletes intent last, and preserves every row of a later membership. Restore sequential read/delete or group-id-only cleanup -> red. | Runner + real SQLite helper; groups/core family. |
 | TC-264-13 | `self_removed_group_shell_db_helpers_test.dart::PB264-13 Plan-263 terminalization retires exact exit work`; listener sentinel for authenticated self-ban; dissolved loaded-repush sentinel | B3/self-ban/absent/dissolved/same-id re-entry; already-loaded outbox held behind barrier; network counters | GREEN atomically removes/refuses old intent + leave notice and performs zero later network. Omit table from manifest or check dissolved only before load -> red. | Exact Plan-263 helper/listener/repush files; hard prerequisite sentinel. |
@@ -344,7 +370,9 @@ Explicitly deferred:
   `rePush` exceptions are caught internally and cannot prove tail release.
 - TC-264-03 fixtures must contain the active parent, exact self, usable identity,
   and key so Plan 263's parent/identity guards cannot explain the result.
-- TC-264-07 and TC-264-12 use real SQLite transactions, not only in-memory repos.
+- TC-264-07, TC-264-10, and TC-264-12 use real SQLite transactions, not only
+  in-memory repos. TC-264-10 starts the notice claim on an isolated second SQLite
+  handle while a membership writer owns the lock, then proves both committed orders.
 - TC-264-09's degraded completion applies only to this intent's signed voluntary
   leave notice and must be cause-coded. It cannot leak into role/metadata queues.
 - TC-264-16 uses `group:leave` command absence plus persisted row/state identity as
@@ -475,6 +503,14 @@ adb devices
 # First causal RED: exact keyed-drain race.
 flutter test test/features/groups/application/group_pending_broadcast_runner_test.dart --plain-name 'PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller'
 
+# Late causal RED/GREEN: final reversible last-admin SQL boundary.
+flutter test test/core/database/helpers/group_exit_intents_db_helpers_test.dart --plain-name 'PB264-10 the atomic notice claim refuses an exact sole-admin membership'
+flutter test test/core/database/helpers/group_exit_intents_db_helpers_test.dart --plain-name 'PB264-10 real SQLite overlap observes admin removal before the notice claim'
+flutter test test/core/database/helpers/group_exit_intents_db_helpers_test.dart --plain-name 'PB264-10 two-handle last-admin removal and notice claim have one durable winner'
+flutter test test/features/groups/application/group_exit_intent_runner_test.dart --plain-name 'PB264-10 an atomic last-admin claim refusal maps to recoverable UI state'
+flutter test test/features/groups/application/group_exit_intent_runner_test.dart --plain-name 'PB264-10 preparation-time admin removal stays a recoverable last-admin block'
+flutter test test/features/groups/application/group_exit_intent_runner_test.dart --plain-name 'PB264-10 production wiring preserves the typed preparation refusal'
+
 # Storage/CAS RED block, then GREEN after v103 implementation.
 flutter test test/core/database/migrations/103_group_exit_intents_test.dart test/core/database/helpers/group_exit_intents_db_helpers_test.dart test/features/groups/domain/repositories/group_exit_intent_repository_impl_test.dart
 flutter test test/core/database/integration/full_migration_chain_test.dart
@@ -543,6 +579,12 @@ a per-plan command.
 - [x] The v103 intent survives restart, binds exact membership, and advances only by
       revision/state CAS through notice, rotation, native, and cleanup phases.
 - [x] Cancellation wins only while queued and deletes no role/group/history state.
+- [x] Last-admin recovery is enforced before notice claim only. A preparation-time
+      roster change preserves a typed recoverable refusal, and exact self role/admin
+      count are rechecked again in the notice-claim transaction; removal-first yields
+      `blockedLastAdmin` with no artifacts, while claim-first and every later phase
+      remain irreversible. DB ordering refuses all post-notice role preparation and
+      activation.
 - [x] Role absence is atomically rechecked; count, optional sink, classification error,
       and post-snapshot insertion cannot authorize leave.
 - [x] Startup, rejoin, resume, enqueue, and manual retry continue durable work without
@@ -557,20 +599,51 @@ a per-plan command.
       not falsely claimed by closure.
 - [x] Focused tests, Plan-261/263 sentinels, SQLCipher, Go contract, registrations,
       groups, justified core/feature host families, l10n, analyzer, and diff hygiene pass.
-- [x] The architecture graph is refreshed once after coherent implementation, and full
-      `host-all` remains at wave/release cadence.
+- [x] The architecture graph is refreshed after the coherent implementation and final
+      correction, and full `host-all` remains at wave/release cadence.
 
 ## Handoff
 
-- Immutable snapshot: `refs/plan-handoffs/264`, based on
-  `refs/plan-handoffs/263`; the exact commit is recorded in the closure metadata after
-  the ref is frozen without moving `HEAD` or the main index.
+- Immutable handoff: `refs/plan-handoffs/264` retains the initial scoped freeze
+  `f0a5d2777dfd104407d239e111a4a0b8d95651ac` (tree
+  `62c67adea0c6de5a1b12785aff337f96f957b7fe`) as the direct parent of one final
+  corrective tip. The initial freeze is parented to Plan 263 commit
+  `1bb3c1c95792686cba69bed39ca9a583a311ea2a`; the corrected ref still has 102 scoped
+  changed paths versus Plan 263. The exact self-referential final tip/tree are recorded
+  in the post-commit working closure metadata. Both commits use an alternate index and
+  exclude user-owned Plan 266/267, syslog, graph, and unrelated conversation-test
+  changes without moving `HEAD` or changing the main index.
 - First causal RED:
   `flutter test test/features/groups/application/group_pending_broadcast_runner_test.dart --plain-name 'PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller'`.
 - Representative mutation re-red: replacing the post-loader generation-aware
   `_ownedAccountPeerId(current)` check with account-only comparison made
   `identity switch during post-loader read cannot seed a stale terminal fence` fail
   (`Actual: {}`); restoring the ownership check returned GREEN.
+- Late counterexample correction: an initial native-boundary audit proposed pausing a
+  recreated `native_leave_pending` intent after its roster became sole-admin. A second
+  independent delivery-order audit disproved that recovery: leave-first peers have
+  already removed the actor and reject its later role event, while promotion-first
+  peers can be overwritten by the immutable leave snapshot. The causal RED was a
+  delivered notice with completion fault whose later sole-admin projection returned
+  `blockedLastAdmin` instead of completing; GREEN now keeps last-admin recovery at
+  `queued`, finishes every exact post-notice phase without reminting, and refuses new
+  prepared rows, direct new active rows, and prepared-row activation in all
+  irreversible states.
+- Final atomicity correction: inbound membership projection does not share the
+  runner's membership lock, so the application last-admin check alone admitted an
+  other-admin-removal race before SQL notice claim. The named RED observed
+  `committed` instead of `refusedLastAdmin`. GREEN repeats exact self role/admin count
+  inside `dbPrepareGroupExitLeaveNotice`, maps that typed refusal to
+  `blockedLastAdmin`, and uses an isolated second SQLite handle plus barriers to prove
+  removal-first overlap refusal and the notice-first ordered linearization into
+  irreversible continuation. The irreversible role matrix also rejects direct new
+  active rows, not only prepare/activation pairs.
+- Production-adapter correction: the same projection can land early enough for
+  `prepareVoluntaryLeaveNotice` to observe sole-admin before SQL. Production had
+  collapsed that typed skip into `StateError`, producing `failed`; the causal
+  two-roster-load RED captured it. `requirePreparedVoluntaryLeaveNotice` now preserves
+  `VoluntaryLeaveLastAdminPreparationRefused`, the runner maps it to
+  `blockedLastAdmin`, and a source-wiring sentinel locks the real `main.dart` closure.
 - Test Contract: 19 rows spanning keyed drains, v103/SQLCipher, exact CAS, signed
   notice phases, native/rejoin, cleanup/re-entry, Plan-263 terminalization, UX, all
   wired surfaces, lifecycle, and narrow Dissolve interaction.
@@ -581,9 +654,11 @@ a per-plan command.
   exact Go repeated-native-leave sentinel passed. No two-peer/relay/iOS leg.
 - Gate cadence: focused + sentinels + groups + justified `core-host-all` and
   `feature-host-all`; full `host-all` only at dependency-wave and release closure.
-- Final families: `groups` 2,751 plus Go/relay contracts; `core-host-all` 2,719 across
-  343 paths plus renderer manifest; `feature-host-all` 8,437 across 815 paths with one
-  expected skip; completeness 1,334/1,334; analyzer clean.
+- Final families: focused closure 145/145; `groups` 2,759 plus Go/relay contracts;
+  `core-host-all` 2,723 across 343 paths plus renderer manifest; `feature-host-all`
+  8,441 across 815 paths with one expected skip; completeness 1,334/1,334; analyzer
+  clean. One unrelated LAN-media timing failure in the first final core attempt passed
+  on exact rerun, and the required whole core family then passed cleanly.
 - Confirmed review findings incorporated: keyed tail/error/late-caller race, vacuous
   empty/prepared fixtures, raw stuck-row bypass, optional-sink fail-open, post-snapshot
   role race, self-ban/terminal manifest dependency, l10n/schema/gate preflight.
@@ -598,3 +673,6 @@ a per-plan command.
 | 2026-07-21 | causal implementation | v103 storage/repository, keyed drain, coordinator/runner phases, lifecycle/rejoin, four exit surfaces, l10n/tests | Focused DB/application/UI/Plan-263/Go suites GREEN after causal RED | All 19 PB264 rows delivered; Plan 265 classified as a separate residual rather than silently absorbed. | Run affected family and device closure. |
 | 2026-07-21 | boundary and family closure | production/tests/gates | SQLCipher 1/1 on `21071FDF600CSC`; groups 2,751; core 2,719/343; feature 8,437/815 with one expected skip | Feature lane exposed and closed explicit `removedAt` fixture authority plus dissolved exit-processing expectation. | Counterexample audit, analyzer, graph, scoped ref. |
 | 2026-07-21 | counterexample closure | notification projection + lifecycle regression | generation-check mutation RED, restored GREEN; `flutter analyze --no-pub` no issues | Queued authoritative loads cannot restore removed groups or leak an old account's terminal fence into same-id new-account state. | Freeze `refs/plan-handoffs/264` and record exact metadata. |
+| 2026-07-21 | initial scoped freeze | 102 scoped paths | `refs/plan-handoffs/264` -> `f0a5d2777dfd104407d239e111a4a0b8d95651ac`; tree `62c67adea0c6de5a1b12785aff337f96f957b7fe` | Initial ref is parented to immutable Plan 263 and excludes all audited unrelated worktree changes. Later counterexamples require one corrective child, so this is retained history rather than the final tip. | Close counterexamples, rerun affected gates, then fast-forward the same ref. |
+| 2026-07-21 | post-freeze counterexample correction | runner + DB refusal regressions | initial all-phase guard exposed as delivery-order unsafe; delivered-attempt/sole-admin RED (`blockedLastAdmin`), then GREEN (`completed`); atomic-claim RED expected `refusedLastAdmin` but got `committed`; preparation-race RED expected `blockedLastAdmin` but got `failed`; runner 19/19 and DB helper 15/15 GREEN with production wiring plus real two-handle overlap/order proofs | Last-admin remains reversible only before notice claim. Preparation-time and SQL-time roster changes now preserve one recoverable UI outcome, and SQL establishes the final order with inbound projection. Every post-notice state is irreversible. | Rerun groups/core/feature/analyzer, refresh Graphify, then fast-forward the immutable handoff ref with the original freeze retained as parent. |
+| 2026-07-21 | final corrective closure | 10 corrected files within the same 102-path scope | focused 145/145; groups 2,759; core 2,723/343 plus renderer; feature 8,441/815 with one expected skip; completeness 1,334/1,334; analyzer clean; Graphify current/anchored at `3621afca05d0b1d3` | Independent code and DB audits found no remaining reachable timing window. The first final core attempt had one unrelated LAN-media timing failure; its exact rerun and the required full-family rerun passed. | Fast-forward `refs/plan-handoffs/264` through one corrective child and record exact working metadata; full `host-all` remains wave/release-only. |

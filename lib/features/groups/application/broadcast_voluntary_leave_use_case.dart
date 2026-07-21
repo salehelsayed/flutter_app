@@ -52,6 +52,28 @@ class VoluntaryLeaveNoticePreparationResult {
   bool get didPrepare => prepared != null;
 }
 
+/// Typed handoff from the reusable preparation policy to the durable exit
+/// runner. A roster projection can make self the sole admin after the runner's
+/// first guard but before notice preparation reloads members; callers must not
+/// collapse that recoverable outcome into a generic failure.
+class VoluntaryLeaveLastAdminPreparationRefused implements Exception {
+  const VoluntaryLeaveLastAdminPreparationRefused();
+}
+
+PreparedVoluntaryLeaveNotice requirePreparedVoluntaryLeaveNotice(
+  VoluntaryLeaveNoticePreparationResult result,
+) {
+  final prepared = result.prepared;
+  if (prepared != null) return prepared;
+  if (result.skipReason == VoluntaryLeaveBroadcastSkipReason.lastAdmin) {
+    throw const VoluntaryLeaveLastAdminPreparationRefused();
+  }
+  throw StateError(
+    'Group exit notice preparation refused: '
+    '${result.skipReason?.name ?? 'unknown'}',
+  );
+}
+
 enum VoluntaryLeaveNoticeAttemptClassification {
   delivered,
   degraded,

@@ -922,6 +922,83 @@ void main() {
   );
 
   test(
+    'PB264-10 every irreversible exit phase refuses role preparation and activation',
+    () async {
+      for (final phase in const <(String, int)>[
+        ('leave_notice_pending', 1),
+        ('leave_notice_attempted', 2),
+        ('rotation_claimed', 3),
+        ('native_leave_pending', 4),
+        ('cleanup_pending', 5),
+      ]) {
+        final groupId = 'irreversible-role-${phase.$1}';
+        final preparedSource = 'prepared-source-$groupId';
+        await _seedGroup(db, groupId);
+        await dbInsertPendingGroupBroadcast(
+          db,
+          _pending(
+            groupId,
+            id: 'prepared-$groupId',
+            kind: 'member_role_updated_prepared',
+            source: preparedSource,
+          ),
+        );
+        await db.insert(
+          'group_exit_intents',
+          _intent(
+            groupId,
+            state: phase.$1,
+            revision: phase.$2,
+            sourceEventId: 'leave-source-$groupId',
+            eventAt: _eventAt,
+          ),
+        );
+
+        await dbInsertPendingGroupBroadcast(
+          db,
+          _pending(
+            groupId,
+            id: 'activated-$groupId',
+            kind: 'member_role_updated',
+            source: preparedSource,
+          ),
+        );
+        await dbInsertPendingGroupBroadcast(
+          db,
+          _pending(
+            groupId,
+            id: 'new-prepared-$groupId',
+            kind: 'member_role_updated_prepared',
+            source: 'new-source-$groupId',
+          ),
+        );
+        await dbInsertPendingGroupBroadcast(
+          db,
+          _pending(
+            groupId,
+            id: 'new-active-$groupId',
+            kind: 'member_role_updated',
+            source: 'new-active-source-$groupId',
+          ),
+        );
+
+        final rows = await db.query(
+          'pending_group_broadcasts',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        );
+        expect(rows, hasLength(1), reason: phase.$1);
+        expect(rows.single['id'], 'prepared-$groupId', reason: phase.$1);
+        expect(
+          rows.single['kind'],
+          'member_role_updated_prepared',
+          reason: phase.$1,
+        );
+      }
+    },
+  );
+
+  test(
     'prepared activation is allowed only while the exit remains queued',
     () async {
       await _seedGroup(db, 'group-1');
@@ -1106,6 +1183,282 @@ void main() {
             'moving the role-absence read before the write transaction admits '
             'a prepared exit and a disqualifying role row together',
       );
+    },
+  );
+
+  test(
+    'PB264-10 the atomic notice claim refuses an exact sole-admin membership',
+    () async {
+      const groupId = 'atomic-sole-admin';
+      await _seedGroup(db, groupId);
+      await db.update(
+        'group_members',
+        <String, Object?>{'role': 'admin'},
+        where: 'group_id = ? AND peer_id = ?',
+        whereArgs: <Object?>[groupId, 'peer-self'],
+      );
+      final queued = _intent(groupId);
+      expect((await dbEnqueueGroupExitIntent(db, queued)).committed, isTrue);
+
+      final result = await dbPrepareGroupExitLeaveNotice(
+        db,
+        expected: queued,
+        timelineRow: _timeline(groupId),
+        pendingBroadcastRow: _pending(groupId),
+        updatedAt: '2026-07-21T08:03:50.000Z',
+      );
+
+      expect(result.disposition.name, 'refusedLastAdmin');
+      expect(result.current!['state'], 'queued');
+      expect(result.current!['revision'], 0);
+      expect(
+        await db.query(
+          'group_messages',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'pending_group_broadcasts',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'PB264-10 real SQLite overlap observes admin removal before the notice claim',
+    () async {
+      final pair = await _openSharedDatabasePair(
+        'pb264_last_admin_claim_overlap_',
+      );
+      addTearDown(() => _closeSharedDatabasePair(pair));
+      const groupId = 'overlapping-admin-removal-wins';
+      await _seedGroup(pair.first, groupId);
+      await pair.first.update(
+        'group_members',
+        <String, Object?>{'role': 'admin'},
+        where: 'group_id = ? AND peer_id = ?',
+        whereArgs: <Object?>[groupId, 'peer-self'],
+      );
+      await pair.first.insert('group_members', <String, Object?>{
+        'group_id': groupId,
+        'peer_id': 'peer-other',
+        'username': 'Other admin',
+        'role': 'admin',
+        'joined_at': _joinedAt,
+      });
+      final queued = _intent(groupId);
+      expect(
+        (await dbEnqueueGroupExitIntent(pair.first, queued)).committed,
+        isTrue,
+      );
+
+      final exitWorkerReady = ReceivePort();
+      addTearDown(exitWorkerReady.close);
+      final exitWorkerEvents = StreamIterator<Object?>(exitWorkerReady);
+      final workerReadyPort = exitWorkerReady.sendPort;
+      var exitSettled = false;
+      final exitClaim = Isolate.run(
+        () => _prepareExitOnIsolatedFfiWorker(
+          path: '${pair.directory.path}/identity.db',
+          expected: Map<String, Object?>.from(queued),
+          timelineRow: _timeline(groupId),
+          pendingBroadcastRow: _pending(groupId),
+          updatedAt: '2026-07-21T08:03:50.000Z',
+          ready: workerReadyPort,
+        ),
+      ).whenComplete(() => exitSettled = true);
+      expect(
+        await exitWorkerEvents.moveNext().timeout(const Duration(seconds: 5)),
+        isTrue,
+      );
+      expect(exitWorkerEvents.current, 'worker-entered');
+      expect(
+        await exitWorkerEvents.moveNext().timeout(const Duration(seconds: 5)),
+        isTrue,
+      );
+      final startExitClaim = exitWorkerEvents.current as SendPort;
+
+      final removalWriterHasLock = Completer<void>();
+      final allowRemoval = Completer<void>();
+      final removal = dbWriteTransaction(pair.first, (transaction) async {
+        removalWriterHasLock.complete();
+        await allowRemoval.future;
+        await transaction.delete(
+          'group_members',
+          where: 'group_id = ? AND peer_id = ?',
+          whereArgs: <Object?>[groupId, 'peer-other'],
+        );
+      });
+      await removalWriterHasLock.future;
+      startExitClaim.send(null);
+
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(
+        exitSettled,
+        isFalse,
+        reason:
+            'the notice claim must wait for the in-flight membership projection',
+      );
+      allowRemoval.complete();
+
+      await removal;
+      final result = await exitClaim;
+      final stored = await dbLoadGroupExitIntentForGroup(pair.first, groupId);
+      expect(
+        result['disposition'],
+        DbGroupExitIntentMutationDisposition.refusedLastAdmin.name,
+      );
+      expect(stored!['state'], 'queued');
+      expect(stored['revision'], 0);
+      expect(
+        await pair.first.query(
+          'group_messages',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        ),
+        isEmpty,
+      );
+      expect(
+        await pair.first.query(
+          'pending_group_broadcasts',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'PB264-10 two-handle last-admin removal and notice claim have one durable winner',
+    () async {
+      final pair = await _openSharedDatabasePair('pb264_last_admin_race_');
+      addTearDown(() => _closeSharedDatabasePair(pair));
+
+      Future<void> proveOrder({required bool removalFirst}) async {
+        final groupId = removalFirst
+            ? 'last-admin-removal-wins'
+            : 'last-admin-notice-wins';
+        await _seedGroup(pair.first, groupId);
+        await pair.first.update(
+          'group_members',
+          <String, Object?>{'role': 'admin'},
+          where: 'group_id = ? AND peer_id = ?',
+          whereArgs: <Object?>[groupId, 'peer-self'],
+        );
+        await pair.first.insert('group_members', <String, Object?>{
+          'group_id': groupId,
+          'peer_id': 'peer-other',
+          'username': 'Other admin',
+          'role': 'admin',
+          'joined_at': _joinedAt,
+        });
+        final queued = _intent(groupId);
+        expect(
+          (await dbEnqueueGroupExitIntent(pair.first, queued)).committed,
+          isTrue,
+        );
+
+        final removalReady = Completer<void>();
+        final noticeReady = Completer<void>();
+        final releaseRemoval = Completer<void>();
+        final releaseNotice = Completer<void>();
+        final removal = (() async {
+          removalReady.complete();
+          await releaseRemoval.future;
+          await dbWriteTransaction(pair.first, (transaction) {
+            return transaction.delete(
+              'group_members',
+              where: 'group_id = ? AND peer_id = ?',
+              whereArgs: <Object?>[groupId, 'peer-other'],
+            );
+          });
+        })();
+        final notice = (() async {
+          noticeReady.complete();
+          await releaseNotice.future;
+          return dbPrepareGroupExitLeaveNotice(
+            pair.second,
+            expected: queued,
+            timelineRow: _timeline(groupId),
+            pendingBroadcastRow: _pending(groupId),
+            updatedAt: '2026-07-21T08:03:50.000Z',
+          );
+        })();
+        await Future.wait(<Future<void>>[
+          removalReady.future,
+          noticeReady.future,
+        ]);
+
+        late final DbGroupExitIntentMutationResult claim;
+        if (removalFirst) {
+          releaseRemoval.complete();
+          await removal;
+          releaseNotice.complete();
+          claim = await notice;
+        } else {
+          releaseNotice.complete();
+          claim = await notice;
+          releaseRemoval.complete();
+          await removal;
+        }
+
+        final stored = await dbLoadGroupExitIntentForGroup(pair.first, groupId);
+        final messages = await pair.first.query(
+          'group_messages',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        );
+        final pending = await pair.first.query(
+          'pending_group_broadcasts',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[groupId],
+        );
+        if (removalFirst) {
+          expect(
+            claim.disposition,
+            DbGroupExitIntentMutationDisposition.refusedLastAdmin,
+          );
+          expect(stored!['state'], 'queued');
+          expect(stored['revision'], 0);
+          expect(messages, isEmpty);
+          expect(pending, isEmpty);
+        } else {
+          expect(claim.committed, isTrue);
+          expect(stored!['state'], 'leave_notice_pending');
+          expect(messages, hasLength(1));
+          expect(pending, hasLength(1));
+
+          final completed = await dbCompleteGroupExitLeaveNotice(
+            pair.second,
+            expected: stored,
+            pendingBroadcastRow: _pending(groupId),
+            completionCode: 'delivered',
+            updatedAt: '2026-07-21T08:04:00.000Z',
+          );
+          expect(completed.committed, isTrue);
+          expect(completed.current!['state'], 'leave_notice_attempted');
+          expect(
+            await pair.first.query(
+              'pending_group_broadcasts',
+              where: 'group_id = ?',
+              whereArgs: <Object?>[groupId],
+            ),
+            isEmpty,
+            reason:
+                'the notice-first winner stays irreversible after the roster becomes sole-admin',
+          );
+        }
+      }
+
+      await proveOrder(removalFirst: true);
+      await proveOrder(removalFirst: false);
     },
   );
 

@@ -7,6 +7,7 @@ import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_he
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
@@ -21,6 +22,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_br
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 class _PendingRepo implements GroupPendingBroadcastRepository {
@@ -131,6 +134,19 @@ class _SqliteExitCleanupGroupRepository extends InMemoryGroupRepository {
   }
 }
 
+class _PreparationRaceGroupRepository extends InMemoryGroupRepository {
+  int memberLoads = 0;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    memberLoads++;
+    if (memberLoads == 2) {
+      await removeMember(groupId, 'peer-other');
+    }
+    return super.getMembers(groupId);
+  }
+}
+
 class _IntentRepo implements GroupExitIntentRepository {
   _IntentRepo(this.pendingRepo);
 
@@ -138,6 +154,7 @@ class _IntentRepo implements GroupExitIntentRepository {
   final Map<String, GroupExitIntent> rows = <String, GroupExitIntent>{};
   final List<GroupPendingBroadcast> preparedNotices = <GroupPendingBroadcast>[];
   final List<String> completionCodes = <String>[];
+  GroupExitIntentMutationDisposition? refuseNextPrepare;
 
   void seed(GroupExitIntent intent) => rows[intent.groupId] = intent;
 
@@ -192,6 +209,14 @@ class _IntentRepo implements GroupExitIntentRepository {
     final current = rows[expected.groupId];
     if (current == null || !sameExactGroupExitIntent(current, expected)) {
       return _conflict(current);
+    }
+    final refusal = refuseNextPrepare;
+    if (refusal != null) {
+      refuseNextPrepare = null;
+      return GroupExitIntentMutationResult(
+        disposition: refusal,
+        current: current,
+      );
     }
     await pendingRepo.enqueue(pendingBroadcast);
     preparedNotices.add(pendingBroadcast);
@@ -835,6 +860,194 @@ void main() {
   );
 
   test(
+    'PB264-10 an atomic last-admin claim refusal maps to recoverable UI state',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final queued = _intent(GroupExitIntentState.queued);
+      final intentRepo = _IntentRepo(pendingRepo)
+        ..seed(queued)
+        ..refuseNextPrepare =
+            GroupExitIntentMutationDisposition.refusedLastAdmin;
+      final groupRepo = await _activeGroupRepo();
+      var attempts = 0;
+      var rotations = 0;
+      var nativeLeaves = 0;
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async => queued.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async {
+              final preparedIntent = intent.copyWith(
+                sourceEventId: sourceEventId,
+                eventAt: eventAt,
+              );
+              return GroupExitPreparedNotice(
+                timelineMessage: buildMemberRemovedTimelineMessage(
+                  groupId: intent.groupId,
+                  removedPeerId: intent.selfPeerId,
+                  removedUsername: 'Self',
+                  senderId: intent.selfPeerId,
+                  senderUsername: 'Self',
+                  eventAt: eventAt,
+                ),
+                pendingBroadcast: _noticeFor(preparedIntent),
+              );
+            },
+        attemptNotice: ({required intent, required pendingBroadcast}) async {
+          attempts++;
+          return GroupExitNoticeAttemptDisposition.delivered;
+        },
+        rotateKeys: (_) async => rotations++,
+        nativeLeave: (_) async => nativeLeaves++,
+      );
+
+      final result = await runner.processGroup(queued.groupId);
+
+      expect(result.status, GroupExitIntentProcessStatus.blockedLastAdmin);
+      expect(result.intent?.state, GroupExitIntentState.queued);
+      expect(attempts, 0);
+      expect(rotations, 0);
+      expect(nativeLeaves, 0);
+      expect(await pendingRepo.forGroup(queued.groupId), isEmpty);
+      expect(
+        (await intentRepo.forGroup(queued.groupId))?.state,
+        GroupExitIntentState.queued,
+      );
+    },
+  );
+
+  test(
+    'PB264-10 preparation-time admin removal stays a recoverable last-admin block',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final queued = _intent(GroupExitIntentState.queued);
+      final intentRepo = _IntentRepo(pendingRepo)..seed(queued);
+      final groupRepo = _PreparationRaceGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: queued.groupId,
+          name: 'Preparation race',
+          type: GroupType.chat,
+          topicName: 'topic-${queued.groupId}',
+          createdAt: queued.createdAt,
+          createdBy: queued.selfPeerId,
+          myRole: GroupRole.admin,
+        ),
+      );
+      for (final peerId in <String>[queued.selfPeerId, 'peer-other']) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: queued.groupId,
+            peerId: peerId,
+            username: peerId,
+            role: MemberRole.admin,
+            publicKey: 'pk-$peerId',
+            joinedAt: queued.selfJoinedAt,
+          ),
+        );
+      }
+      final identities = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: queued.selfPeerId,
+            publicKey: 'pk-${queued.selfPeerId}',
+            privateKey: 'sk-${queued.selfPeerId}',
+          ),
+        );
+      final bridge = FakeBridge();
+      var attempts = 0;
+      var rotations = 0;
+      var nativeLeaves = 0;
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async => queued.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async {
+              final group = await groupRepo.getGroup(intent.groupId);
+              final preparation = await prepareVoluntaryLeaveNotice(
+                bridge: bridge,
+                groupRepo: groupRepo,
+                group: group!,
+                identityRepo: identities,
+                expectedSelfPeerId: intent.selfPeerId,
+                sourceEventId: sourceEventId,
+                eventAt: eventAt,
+              );
+              final prepared = requirePreparedVoluntaryLeaveNotice(preparation);
+              return GroupExitPreparedNotice(
+                timelineMessage: prepared.timelineMessage,
+                pendingBroadcast: prepared.pendingBroadcast,
+              );
+            },
+        attemptNotice: ({required intent, required pendingBroadcast}) async {
+          attempts++;
+          return GroupExitNoticeAttemptDisposition.delivered;
+        },
+        rotateKeys: (_) async => rotations++,
+        nativeLeave: (_) async => nativeLeaves++,
+      );
+
+      final result = await runner.processGroup(queued.groupId);
+
+      expect(result.status, GroupExitIntentProcessStatus.blockedLastAdmin);
+      expect(result.cause, isNull);
+      expect(groupRepo.memberLoads, 2);
+      expect(bridge.commandLog, isEmpty);
+      expect(attempts, 0);
+      expect(rotations, 0);
+      expect(nativeLeaves, 0);
+      expect(await pendingRepo.forGroup(queued.groupId), isEmpty);
+      expect(
+        (await intentRepo.forGroup(queued.groupId))?.state,
+        GroupExitIntentState.queued,
+      );
+    },
+  );
+
+  test(
+    'PB264-10 production wiring preserves the typed preparation refusal',
+    () async {
+      final source = await File('lib/main.dart').readAsString();
+      final runnerStart = source.indexOf(
+        'final groupExitIntentRunner = GroupExitIntentRunner(',
+      );
+      final attemptStart = source.indexOf('attemptNotice:', runnerStart);
+      expect(runnerStart, greaterThanOrEqualTo(0));
+      expect(attemptStart, greaterThan(runnerStart));
+
+      final prepareWiring = source.substring(runnerStart, attemptStart);
+      expect(
+        prepareWiring,
+        contains('requirePreparedVoluntaryLeaveNotice(result)'),
+      );
+      expect(
+        prepareWiring,
+        isNot(contains("result.skipReason?.name ?? 'unknown'")),
+      );
+    },
+  );
+
+  test(
     'PB264-09 prepared leave actor and subject must match the exact intent identity',
     () async {
       final pendingRepo = _PendingRepo();
@@ -1237,6 +1450,21 @@ void main() {
         (await intentRepo.forGroup(pendingIntent.groupId))?.state,
         GroupExitIntentState.leaveNoticePending,
       );
+
+      // The delivered attempt is now irreversible even though its completion
+      // transaction failed. A later roster projection cannot safely turn this
+      // into a new role-change workflow: some peers may already have removed
+      // the actor and would reject that later role event.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: pendingIntent.groupId,
+          peerId: pendingIntent.selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          joinedAt: pendingIntent.selfJoinedAt,
+        ),
+      );
+      await groupRepo.removeMember(pendingIntent.groupId, 'peer-other');
 
       final completed = await recreate().processGroup(pendingIntent.groupId);
       expect(completed.status, GroupExitIntentProcessStatus.completed);
@@ -1692,6 +1920,74 @@ void main() {
       expect(rotations, 0);
       expect(nativeCalls, 2);
       expect(await intentRepo.forGroup(nativePending.groupId), isNull);
+    },
+  );
+
+  test(
+    'PB264-10 every signed post-notice phase stays irreversible after a later sole-admin projection',
+    () async {
+      for (final phase in const <(GroupExitIntentState, int, int, int)>[
+        (GroupExitIntentState.leaveNoticePending, 1, 1, 1),
+        (GroupExitIntentState.leaveNoticeAttempted, 0, 1, 1),
+        (GroupExitIntentState.rotationClaimed, 0, 0, 1),
+        (GroupExitIntentState.nativeLeavePending, 0, 0, 1),
+        (GroupExitIntentState.cleanupPending, 0, 0, 0),
+      ]) {
+        final pendingRepo = _PendingRepo();
+        final intent = _intent(phase.$1);
+        final intentRepo = _IntentRepo(pendingRepo)..seed(intent);
+        if (phase.$1 == GroupExitIntentState.leaveNoticePending) {
+          await pendingRepo.enqueue(_noticeFor(intent));
+        }
+        final groupRepo = await _activeGroupRepo();
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: intent.groupId,
+            peerId: intent.selfPeerId,
+            username: 'Self',
+            role: MemberRole.admin,
+            joinedAt: intent.selfJoinedAt,
+          ),
+        );
+        await groupRepo.removeMember(intent.groupId, 'peer-other');
+        var attempts = 0;
+        var rotations = 0;
+        var nativeLeaves = 0;
+        final runner = GroupExitIntentRunner(
+          intentRepository: intentRepo,
+          pendingRepository: pendingRepo,
+          pendingBroadcastRunner: GroupPendingBroadcastRunner(
+            repository: pendingRepo,
+            rePush: (_) async => true,
+          ),
+          groupRepository: groupRepo,
+          loadCurrentSelfPeerId: () async => intent.selfPeerId,
+          prepareNotice:
+              ({
+                required intent,
+                required sourceEventId,
+                required eventAt,
+              }) async => throw StateError('must not prepare'),
+          attemptNotice: ({required intent, required pendingBroadcast}) async {
+            attempts++;
+            return GroupExitNoticeAttemptDisposition.delivered;
+          },
+          rotateKeys: (_) async => rotations++,
+          nativeLeave: (_) async => nativeLeaves++,
+        );
+
+        final completed = await runner.processGroup(intent.groupId);
+
+        expect(
+          completed.status,
+          GroupExitIntentProcessStatus.completed,
+          reason: phase.$1.name,
+        );
+        expect(attempts, phase.$2, reason: phase.$1.name);
+        expect(rotations, phase.$3, reason: phase.$1.name);
+        expect(nativeLeaves, phase.$4, reason: phase.$1.name);
+        expect(await intentRepo.forGroup(intent.groupId), isNull);
+      }
     },
   );
 

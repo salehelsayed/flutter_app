@@ -3822,13 +3822,7 @@ void main() async {
             sourceEventId: sourceEventId,
             eventAt: eventAt,
           );
-          final prepared = result.prepared;
-          if (prepared == null) {
-            throw StateError(
-              'Group exit notice preparation refused: '
-              '${result.skipReason?.name ?? 'unknown'}',
-            );
-          }
+          final prepared = requirePreparedVoluntaryLeaveNotice(result);
           if (prepared.identity.peerId != intent.selfPeerId) {
             throw StateError(
               'Group exit notice identity does not own the intent.',

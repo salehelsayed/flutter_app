@@ -242,6 +242,8 @@ class GroupExitIntentRunner implements GroupExitIntentProcessor {
   Future<_IntentStep> _processStateLocked(GroupExitIntent intent) async {
     final authorityStep = await _authorityAndOwnershipStepLocked(intent);
     if (authorityStep != null) return authorityStep;
+    final lastAdminStep = await _lastAdminGuardStepLocked(intent);
+    if (lastAdminStep != null) return lastAdminStep;
 
     switch (intent.state) {
       case GroupExitIntentState.queued:
@@ -346,28 +348,6 @@ class GroupExitIntentRunner implements GroupExitIntentProcessor {
     }
 
     final group = await groupRepository.getGroup(intent.groupId);
-    final members = await groupRepository.getMembers(intent.groupId);
-    GroupMember? exactSelf;
-    for (final member in members) {
-      if (member.peerId == intent.selfPeerId &&
-          member.joinedAt.toUtc().isAtSameMomentAs(
-            intent.selfJoinedAt.toUtc(),
-          )) {
-        exactSelf = member;
-        break;
-      }
-    }
-    final adminCount = members
-        .where((member) => member.role == MemberRole.admin)
-        .length;
-    if (exactSelf?.role == MemberRole.admin && adminCount <= 1) {
-      return _IntentStep.result(
-        GroupExitIntentProcessResult(
-          status: GroupExitIntentProcessStatus.blockedLastAdmin,
-          intent: intent,
-        ),
-      );
-    }
 
     var eventAt = intent.createdAt.toUtc();
     final watermark = group?.lastMembershipEventAt?.toUtc();
@@ -383,6 +363,13 @@ class GroupExitIntentRunner implements GroupExitIntentProcessor {
         intent: intent,
         sourceEventId: sourceEventId,
         eventAt: eventAt,
+      );
+    } on VoluntaryLeaveLastAdminPreparationRefused {
+      return _IntentStep.result(
+        GroupExitIntentProcessResult(
+          status: GroupExitIntentProcessStatus.blockedLastAdmin,
+          intent: intent,
+        ),
       );
     } catch (error) {
       return _IntentStep.result(
@@ -428,6 +415,15 @@ class GroupExitIntentRunner implements GroupExitIntentProcessor {
       updatedAt: _nowUtc(),
     );
     if (mutation.committed) return const _IntentStep.reload();
+    if (mutation.disposition ==
+        GroupExitIntentMutationDisposition.refusedLastAdmin) {
+      return _IntentStep.result(
+        GroupExitIntentProcessResult(
+          status: GroupExitIntentProcessStatus.blockedLastAdmin,
+          intent: mutation.current ?? intent,
+        ),
+      );
+    }
     if (mutation.disposition ==
         GroupExitIntentMutationDisposition.refusedRoleBroadcastPresent) {
       return _IntentStep.result(
@@ -629,6 +625,62 @@ class GroupExitIntentRunner implements GroupExitIntentProcessor {
       );
     }
     return const _IntentAuthority(_IntentAuthorityDisposition.active);
+  }
+
+  /// Enforces the last-admin invariant at the final reversible boundary.
+  ///
+  /// Once the signed leave notice is durably claimed, delivery is ambiguous: a
+  /// peer may already have removed this actor. Pausing a later phase to create a
+  /// successor role update cannot converge because leave-first peers reject the
+  /// now-absent actor, while promotion-first peers can be overwritten by the
+  /// immutable leave snapshot. Post-notice phases therefore remain irreversible;
+  /// only [GroupExitIntentState.queued] may stop for last-admin recovery.
+  Future<_IntentStep?> _lastAdminGuardStepLocked(GroupExitIntent intent) async {
+    if (intent.state != GroupExitIntentState.queued) return null;
+
+    final List<GroupMember> members;
+    try {
+      members = await groupRepository.getMembers(intent.groupId);
+    } catch (error) {
+      return _IntentStep.result(
+        GroupExitIntentProcessResult(
+          status: GroupExitIntentProcessStatus.failed,
+          intent: intent,
+          cause: error,
+        ),
+      );
+    }
+    GroupMember? exactSelf;
+    for (final member in members) {
+      if (member.peerId == intent.selfPeerId &&
+          member.joinedAt.toUtc().isAtSameMomentAs(
+            intent.selfJoinedAt.toUtc(),
+          )) {
+        exactSelf = member;
+        break;
+      }
+    }
+    if (exactSelf == null) {
+      return _IntentStep.result(
+        GroupExitIntentProcessResult(
+          status: GroupExitIntentProcessStatus.failed,
+          intent: intent,
+          cause: StateError(
+            'Exact self membership is unavailable for last-admin validation.',
+          ),
+        ),
+      );
+    }
+    final adminCount = members
+        .where((member) => member.role == MemberRole.admin)
+        .length;
+    if (exactSelf.role != MemberRole.admin || adminCount > 1) return null;
+    return _IntentStep.result(
+      GroupExitIntentProcessResult(
+        status: GroupExitIntentProcessStatus.blockedLastAdmin,
+        intent: intent,
+      ),
+    );
   }
 
   _IntentStep _mutationStep(

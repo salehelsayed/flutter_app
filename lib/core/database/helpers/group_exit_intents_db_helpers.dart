@@ -29,6 +29,7 @@ enum DbGroupExitIntentMutationDisposition {
   refusedSelfRemoved,
   refusedSelfMissing,
   refusedMembershipChanged,
+  refusedLastAdmin,
   refusedRoleBroadcastPresent,
   refusedNoticeMissing,
   refusedTimelineConflict,
@@ -324,6 +325,13 @@ Future<DbGroupExitIntentMutationResult> dbPrepareGroupExitLeaveNotice(
       if (refused != null) {
         return DbGroupExitIntentMutationResult(
           disposition: refused,
+          current: current,
+        );
+      }
+
+      if (await _isExactSelfSoleAdmin(transaction, current)) {
+        return DbGroupExitIntentMutationResult(
+          disposition: DbGroupExitIntentMutationDisposition.refusedLastAdmin,
           current: current,
         );
       }
@@ -656,6 +664,34 @@ Future<Map<String, Object?>?> _load(DatabaseExecutor db, String groupId) async {
     limit: 1,
   );
   return rows.isEmpty ? null : Map<String, Object?>.from(rows.single);
+}
+
+/// Repeats the final reversible last-admin check inside the same write
+/// transaction that claims the signed leave notice. Inbound membership
+/// projection does not share the runner's in-process lock, so only this SQL
+/// boundary can make "other admin removed" and "notice claimed" choose one
+/// durable order.
+Future<bool> _isExactSelfSoleAdmin(
+  DatabaseExecutor db,
+  Map<String, Object?> intent,
+) async {
+  final rows = await db.rawQuery(
+    '''
+    SELECT self.role AS self_role,
+           (
+             SELECT COUNT(*)
+             FROM group_members AS admins
+             WHERE admins.group_id = self.group_id
+               AND admins.role = 'admin'
+           ) AS admin_count
+    FROM group_members AS self
+    WHERE self.group_id = ? AND self.peer_id = ?
+    LIMIT 1
+    ''',
+    <Object?>[intent['group_id'], intent['self_peer_id']],
+  );
+  if (rows.isEmpty || rows.single['self_role'] != 'admin') return false;
+  return (rows.single['admin_count'] as int) <= 1;
 }
 
 enum _AuthorityShape {

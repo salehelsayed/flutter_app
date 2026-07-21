@@ -88,7 +88,7 @@ relay, simulator, device, or migration claim
 
 - Historical planning fingerprint was `5e1d16f2b028fce7` against pre-264 HEAD
   `19dc1ca3a79277baa7079772352d77190d7c870b`.
-- Post-264 residual audit used the refreshed architecture graph with
+- The pre-correction post-264 residual audit used the then-current architecture graph with
   `confidence=anchored`, `freshness=current`, fingerprint `7b7d2c6210119196` and the
   exact anchors `attemptPreparedVoluntaryLeaveNotice`, `lastErrorCode`, and the wired
   `groupExitIntentRunner`.
@@ -172,10 +172,12 @@ Deferred / accepted difference:
 
 Dependencies:
 
-- Hard prerequisite: accepted `refs/plan-handoffs/264`, including DB v103, the
-  exit-runner API, PB264-09/PB264-10/PB264-12 names, bounded outcome vocabulary,
-  observation seam, and gate registration. Its exact commit is recorded in closure
-  metadata after the ref is frozen.
+- Hard prerequisite: the corrected tip of accepted `refs/plan-handoffs/264`, whose
+  retained initial-freeze parent is
+  `f0a5d2777dfd104407d239e111a4a0b8d95651ac`, including DB v103, the exit-runner API,
+  PB264-09/PB264-10/PB264-12 names, bounded outcome vocabulary, observation seam, and
+  gate registration. Exact final tip metadata is recorded in Plan 264's post-commit
+  working closure to avoid an immutable-tree self-reference.
 - Plan 263 authority/terminalization remains inherited through Plan 264 and is not
   reopened here. Plan 266 consumes bounded outcomes after 265.
 
