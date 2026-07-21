@@ -62,7 +62,9 @@ fi
 # 2026-07-19). The linked Go library is ~tens of MB; a bridge-less Runner is
 # under 1 MB and has no Bridge symbols.
 if [ -n "$APP" ]; then
-  GO_SYMS=$(strings "$APP/Runner" 2>/dev/null | grep -ci "BridgeGenerateIdentity" || true)
+  # Raw grep, not `strings`: macOS llvm-strings misses this literal in the
+  # linked Runner (0 hits on a healthy 33MB binary, 2026-07-21 false-negative).
+  GO_SYMS=$(grep -c "BridgeGenerateIdentity" "$APP/Runner" 2>/dev/null || true)
   if [ "${GO_SYMS:-0}" -lt 1 ]; then
     note "IOS FAILED(binary-gate: Go bridge not linked into Runner — run 'cd ios && pod install' [restores GoMknoon pod] and rebuild)"; APP=""; FAILED=1
   fi

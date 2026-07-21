@@ -1,0 +1,8 @@
+PROVENANCE tree=current-working-tree sha=8204bae9b branch=new-orbit dirty_files=3 build_name=1.0.0-8204bae9b.d3.t260721200327 ios_bundle_version=260721200327 date=2026-07-21 20:03:27
+IOS FAILED(binary-gate: Go bridge not linked into Runner — run 'cd ios && pod install' and rebuild)
+21071FDF600CSC OK 1.0.0-8204bae9b.d3.t260721200327 (verified)
+IOS FAILED(stale-artifact: build/ios/iphoneos/Runner.app/Runner predates this rebuild)
+00008030-001A6D2801BB802E OK 1.0.0-8204bae9b.d3.t260721200327 bundleVersion=260721200327 (verified, bridge-linked)
+00008101-000E2C263EA1001E FAILED(install)
+00008101-000E2C263EA1001E FAILED(install)
+00008110-00184D622289801E OK 1.0.0-8204bae9b.d3.t260721200327 bundleVersion=260721200327 (verified, bridge-linked)

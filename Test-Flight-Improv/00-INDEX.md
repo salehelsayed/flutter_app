@@ -434,6 +434,12 @@ authority. Neither composite may be restated as a fresh unbroken pass.
 |---|---|---|
 | [267-group-invite-send-lag-tdd-plan.md](267-group-invite-send-lag-tdd-plan.md) | Evidence-gated v3; `$tdd-plan` + `$tdd-review` complete; verdict `NOT-READY` for production, Wave 0 harness/instrumentation only may proceed | BUG: create/add invite UI waits on the full already-parallel batch, while each recipient uses an unbounded live-first call before inbox fallback. Wave 0 now requires strict scenario parsing, correlated five-sample create/add × warm/cold/offline artifacts, host-mediated USB-Android/emulator rendezvous, and exact reliability registration. Production remains blocked on a late native inbox-custody outcome that cannot safely authorize new-ID resend, an absolute caller threshold, authenticated canonical duplicate handling, delayed-overlap proof, and receiver-first mixed-version activation. Ten contract rows; no production, schema, wire, Go/global-timeout, UI fire-and-forget, or per-plan full `host-all` authorization. |
 
+## 3O. Group media Keep-in-chat-only composer (2026-07-21)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [268-group-media-keep-in-chat-only-tdd-plan.md](268-group-media-keep-in-chat-only-tdd-plan.md) | `$tdd-review` 2026-07-21 (8-agent): **ready-with-tightening** — core bet verified sound, every cited line exact; apply [268-review-fixlist.md](268-review-fixlist.md) §A–§D before executing (shared pump-helper edits missing from step 4, TC-268-09 fake projection must persist `'failed'`, TC-268-02 mutation cell mis-attributed, no pre-edit sentinel baseline) | BUG: HEAD deliberately exposes Protected/View-once/expiry in group and announcement composers. The confirmed stall is select-private on one item -> add a second item -> selector hides while the private policy survives -> Send silently returns before upload. Nine host contract rows remove fresh group-private authoring, force ordinary Keep in chat through initial send and failure re-entry, prove voice/share/forward destinations stay ordinary, preserve announcement roles plus named legacy private receive/view/cleanup/retry compatibility, and keep the full picker 1:1-only. No DB, wire, Go, relay, native, or device change; document attachments remain separate existing unsupported scope; no per-plan full `host-all`. |
+
 ---
 
 ## 4. Dead Code
