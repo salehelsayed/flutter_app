@@ -17,6 +17,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -109,6 +110,7 @@ class ContactPickerWired extends StatefulWidget {
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final UploadGroupAvatarFn uploadGroupAvatarFn;
   final BackgroundPreference backgroundPreference;
+  final String? inviteLatencyOperationId;
 
   const ContactPickerWired({
     super.key,
@@ -122,6 +124,7 @@ class ContactPickerWired extends StatefulWidget {
     this.inviteDeliveryAttemptRepo,
     this.uploadGroupAvatarFn = uploadGroupAvatar,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.inviteLatencyOperationId,
   });
 
   @override
@@ -282,6 +285,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
   }
 
   Future<void> _inviteSelected() async {
+    final inviteLatencyTrace = maybeStartGroupInviteLatencyTrace(
+      path: GroupInviteLatencyPath.add,
+      operationId: widget.inviteLatencyOperationId,
+    );
     setState(() => _isInviting = true);
 
     try {
@@ -660,18 +667,41 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           keyEpoch: keyInfo.keyGeneration,
           groupConfig: groupConfig,
           recipients: recipients,
+          latencyTrace: inviteLatencyTrace,
+        );
+        inviteLatencyTrace?.begin(
+          GroupInviteLatencyPhase.persistence,
+          groupId: widget.groupId,
         );
         await recordGroupInviteDeliveryBatch(
           inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
           groupId: widget.groupId,
           attempts: inviteBatchResult.attempts,
         );
+        inviteLatencyTrace?.end(
+          GroupInviteLatencyPhase.persistence,
+          groupId: widget.groupId,
+          outcome: widget.inviteDeliveryAttemptRepo == null
+              ? 'skipped'
+              : 'persisted',
+        );
       } else {
         inviteDeliverySkippedMissingKey = true;
+        inviteLatencyTrace?.begin(
+          GroupInviteLatencyPhase.persistence,
+          groupId: widget.groupId,
+        );
         await recordMissingGroupKeyInviteDeliveryAttempts(
           inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
           groupId: widget.groupId,
           members: addedMembers,
+        );
+        inviteLatencyTrace?.end(
+          GroupInviteLatencyPhase.persistence,
+          groupId: widget.groupId,
+          outcome: widget.inviteDeliveryAttemptRepo == null
+              ? 'skipped'
+              : 'missing_group_key',
         );
         emitFlowEvent(
           layer: 'FL',
@@ -684,7 +714,18 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         );
       }
 
-      if (!mounted) return;
+      if (!mounted) {
+        if (inviteLatencyTrace != null) {
+          inviteLatencyTrace.endNavigationSettlement(
+            groupId: widget.groupId,
+            outcome: 'skipped',
+          );
+        }
+        return;
+      }
+      if (inviteLatencyTrace != null) {
+        inviteLatencyTrace.beginNavigationSettlement(groupId: widget.groupId);
+      }
       Navigator.of(context).pop(
         ContactPickerInviteResult(
           membersAdded: addedMembers.length,
@@ -693,6 +734,14 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           membersAddedPublishFailed: membersAddedPublishFailed,
         ),
       );
+      if (inviteLatencyTrace != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          inviteLatencyTrace.endNavigationSettlement(
+            groupId: widget.groupId,
+            outcome: 'settled',
+          );
+        });
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

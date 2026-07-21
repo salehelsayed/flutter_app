@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -187,6 +188,25 @@ class _SlowFakeP2PService extends FakeP2PService {
   }
 }
 
+class _ConnectionObservationP2PService extends FakeP2PService {
+  _ConnectionObservationP2PService({
+    required this.throwOnObservation,
+    super.initialState,
+  });
+
+  final bool throwOnObservation;
+  int connectionObservationCallCount = 0;
+
+  @override
+  bool isConnectedToPeer(String peerId) {
+    connectionObservationCallCount++;
+    if (throwOnObservation) {
+      throw StateError('diagnostic connection observation failed');
+    }
+    return false;
+  }
+}
+
 /// A bridge that throws on encrypt for a specific ML-KEM public key.
 class _ThrowOnKeyBridge extends PassthroughCryptoBridge {
   final String throwForKey;
@@ -247,6 +267,210 @@ void main() {
   });
 
   group('sendGroupInvite', () {
+    test(
+      'INV-267 absent or throwing diagnostics cannot alter real delivery',
+      () async {
+        final untracedService = _ConnectionObservationP2PService(
+          throwOnObservation: true,
+          initialState: const NodeState(isStarted: true),
+        );
+        p2pService = untracedService;
+        final untracedResult = await sendGroupInvite(
+          p2pService: untracedService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
+        expect(untracedResult, SendGroupInviteResult.success);
+        expect(untracedService.connectionObservationCallCount, 0);
+        expect(untracedService.sendMessageCallCount, 1);
+        expect(untracedService.storeInInboxCallCount, 0);
+
+        untracedService.dispose();
+        final tracedService = _ConnectionObservationP2PService(
+          throwOnObservation: true,
+          initialState: const NodeState(isStarted: true),
+        );
+        p2pService = tracedService;
+        var throwingSinkCalls = 0;
+        final lease = installGroupInviteLatencySink((_) {
+          throwingSinkCalls++;
+          throw StateError('diagnostic sink failed');
+        });
+        try {
+          final trace = maybeStartGroupInviteLatencyTrace(
+            path: GroupInviteLatencyPath.create,
+            operationId: 'inv-267-diagnostic-failure',
+          );
+          expect(trace, isNotNull);
+          final tracedResult = await sendGroupInvite(
+            p2pService: tracedService,
+            bridge: bridge,
+            groupRepo: await _repoFromConfig(_testGroupConfig),
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: _testGroupConfig,
+            latencyTrace: trace,
+          );
+          expect(tracedResult, SendGroupInviteResult.success);
+          expect(tracedService.connectionObservationCallCount, 1);
+          expect(tracedService.sendMessageCallCount, 1);
+          expect(tracedService.storeInInboxCallCount, 0);
+          expect(throwingSinkCalls, greaterThan(0));
+        } finally {
+          lease.release();
+        }
+
+        final clockEvents = <GroupInviteLatencyEvent>[];
+        final clockLease = installGroupInviteLatencySink(clockEvents.add);
+        var clockCalls = 0;
+        try {
+          final trace = maybeStartGroupInviteLatencyTrace(
+            path: GroupInviteLatencyPath.create,
+            operationId: 'inv-267-throwing-clock',
+            now: () {
+              clockCalls++;
+              throw StateError('diagnostic clock failed');
+            },
+          );
+          expect(trace, isNotNull);
+          final clockFailureResult = await sendGroupInvite(
+            p2pService: tracedService,
+            bridge: bridge,
+            groupRepo: await _repoFromConfig(_testGroupConfig),
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: _testGroupConfig,
+            latencyTrace: trace,
+          );
+          expect(clockFailureResult, SendGroupInviteResult.success);
+          expect(clockCalls, greaterThan(0));
+          expect(clockEvents, isEmpty);
+          expect(tracedService.connectionObservationCallCount, 2);
+          expect(tracedService.sendMessageCallCount, 2);
+          expect(tracedService.storeInInboxCallCount, 0);
+        } finally {
+          clockLease.release();
+        }
+      },
+    );
+
+    test('INV-267 nested sink leases release safely out of order', () {
+      final firstEvents = <GroupInviteLatencyEvent>[];
+      final secondEvents = <GroupInviteLatencyEvent>[];
+      final firstLease = installGroupInviteLatencySink(firstEvents.add);
+      final secondLease = installGroupInviteLatencySink(secondEvents.add);
+      try {
+        firstLease.release();
+        expect(
+          maybeStartGroupInviteLatencyTrace(
+            path: GroupInviteLatencyPath.add,
+            operationId: 'inv-267-current-lease',
+          ),
+          isNotNull,
+        );
+        expect(firstEvents, isEmpty);
+        expect(secondEvents, hasLength(1));
+
+        secondLease.release();
+        expect(
+          maybeStartGroupInviteLatencyTrace(
+            path: GroupInviteLatencyPath.add,
+            operationId: 'inv-267-released-lease',
+          ),
+          isNull,
+        );
+      } finally {
+        firstLease.release();
+        secondLease.release();
+      }
+    });
+
+    test(
+      'INV-267 direct ACK records ordered phases and a skipped inbox pair',
+      () async {
+        final events = <GroupInviteLatencyEvent>[];
+        final lease = installGroupInviteLatencySink(events.add);
+        try {
+          final trace = maybeStartGroupInviteLatencyTrace(
+            path: GroupInviteLatencyPath.create,
+            operationId: 'inv-267-direct-ack',
+          );
+          final result = await sendGroupInvite(
+            p2pService: p2pService,
+            bridge: bridge,
+            groupRepo: await _repoFromConfig(_testGroupConfig),
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: _testGroupConfig,
+            latencyTrace: trace,
+          );
+
+          expect(result, SendGroupInviteResult.success);
+          expect(
+            events.map((event) => event.phase).toList(growable: false),
+            <GroupInviteLatencyPhase>[
+              GroupInviteLatencyPhase.preFanout,
+              GroupInviteLatencyPhase.preFanout,
+              GroupInviteLatencyPhase.sign,
+              GroupInviteLatencyPhase.sign,
+              GroupInviteLatencyPhase.encrypt,
+              GroupInviteLatencyPhase.encrypt,
+              GroupInviteLatencyPhase.live,
+              GroupInviteLatencyPhase.live,
+              GroupInviteLatencyPhase.inbox,
+              GroupInviteLatencyPhase.inbox,
+            ],
+          );
+          for (var index = 1; index < events.length; index++) {
+            expect(events[index].at.isBefore(events[index - 1].at), isFalse);
+          }
+          final inboxEvents = events
+              .where((event) => event.phase == GroupInviteLatencyPhase.inbox)
+              .toList(growable: false);
+          expect(inboxEvents, hasLength(2));
+          expect(inboxEvents.first.boundary, GroupInviteLatencyBoundary.begin);
+          expect(inboxEvents.last.boundary, GroupInviteLatencyBoundary.end);
+          expect(inboxEvents.last.at, inboxEvents.first.at);
+          expect(inboxEvents.last.details['outcome'], 'skipped');
+          expect(inboxEvents.last.details['inboxStoreCount'], 0);
+          expect(p2pService.storeInInboxCallCount, 0);
+        } finally {
+          lease.release();
+        }
+      },
+    );
+
     // --- Cycle 5.1 ---
     test(
       'encrypts invite payload and sends to recipient via p2pService',

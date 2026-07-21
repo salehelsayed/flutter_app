@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -39,6 +40,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -67,11 +69,15 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
+import '_support/invite_reliability_runner_contract.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -99,6 +105,10 @@ const configuredDbName = String.fromEnvironment(
 const configuredScenario = String.fromEnvironment(
   'MD004_SCENARIO',
   defaultValue: 'same_user',
+);
+const configuredMode = String.fromEnvironment(
+  'MD004_MODE',
+  defaultValue: 'baseline',
 );
 const configuredKeyRotationGracePeriodMs = int.fromEnvironment(
   'MKNOON_KEY_ROTATION_GRACE_PERIOD_MS',
@@ -1734,6 +1744,984 @@ Future<void> _runInviteReliabilitySibling() async {
   }
 }
 
+// ── TC-267 Wave 0: invite_send_latency baseline ──
+//
+// The two Android targets never share a filesystem. Every file below is
+// written under each app's target-local cache directory. The host runner
+// copies complete files between those directories with `adb run-as` and pulls
+// both final artifacts for strict validation.
+
+typedef _InviteLatencyCell = ({String path, String condition, int repetition});
+typedef _InviteLatencyRecipientTransition = ({
+  bool stopCompleted,
+  bool restartCompleted,
+});
+
+const _inviteLatencyArtifactSchemaVersion = 2;
+const _inviteLatencyObservationWindowVersion = 1;
+const _inviteLatencyObservationWindow = Duration(seconds: 30);
+const _inviteLatencyDiagnosticOperationTimeout = Duration(seconds: 30);
+
+const _inviteLatencyPhaseOrder = <GroupInviteLatencyPhase>[
+  GroupInviteLatencyPhase.preFanout,
+  GroupInviteLatencyPhase.sign,
+  GroupInviteLatencyPhase.encrypt,
+  GroupInviteLatencyPhase.live,
+  GroupInviteLatencyPhase.inbox,
+  GroupInviteLatencyPhase.persistence,
+  GroupInviteLatencyPhase.navigationSettlement,
+];
+
+List<_InviteLatencyCell> _inviteLatencyCells() => <_InviteLatencyCell>[
+  for (final path in const <String>['create', 'add'])
+    for (final condition in const <String>[
+      'online-warm',
+      'online-cold',
+      'offline',
+    ])
+      for (var repetition = 1; repetition <= 5; repetition++)
+        (path: path, condition: condition, repetition: repetition),
+];
+
+String _latencyOperationId(_InviteLatencyCell cell) =>
+    '${configuredRunId}_${cell.path}_${cell.condition}_${cell.repetition}';
+
+String _latencySignalName(String operationId, String suffix) {
+  final safeOperationId = operationId.replaceAll(
+    RegExp(r'[^A-Za-z0-9_.-]'),
+    '_',
+  );
+  return _signalName('latency_${safeOperationId}_$suffix');
+}
+
+String _latencyArtifactName(String role) =>
+    _signalName('invite_send_latency_$role.json');
+
+String _latencyArtifactSha256(String role) => sha256
+    .convert(File(sharedPath(_latencyArtifactName(role))).readAsBytesSync())
+    .toString();
+
+Future<void> _waitForLatencyHostCaptureReceipt({
+  required String role,
+  required String ownArtifactSha256,
+}) async {
+  final receipt = await waitForSharedJson(
+    inviteSendLatencyHostCaptureReceiptFileName(configuredRunId),
+    timeout: const Duration(minutes: 5),
+  );
+  final validation = validateInviteSendLatencyHostCaptureReceiptForRole(
+    receipt: receipt,
+    expectedRunId: configuredRunId,
+    expectedMode: configuredMode,
+    role: role,
+    expectedOwnArtifactSha256: ownArtifactSha256,
+  );
+  if (!validation.ok) {
+    throw StateError(
+      'invite_send_latency host capture receipt rejected by $role: '
+      '${validation.detail}',
+    );
+  }
+}
+
+void _requireTargetLocalLatencyDirectory() {
+  if (!Platform.isAndroid) return;
+  final path = groupMultiDeviceRuntimeSharedDir();
+  final appCachePath = RegExp(r'^/data/(?:user/0|data)/[^/]+/cache(?:/|$)');
+  if (!appCachePath.hasMatch(path)) {
+    throw StateError(
+      'invite_send_latency requires an Android target-local app cache path; '
+      'got $path',
+    );
+  }
+}
+
+Future<Map<String, dynamic>> _runLatencySelfCustodyCanary(
+  GroupMultiDeviceTestStack stack, {
+  required String role,
+}) async {
+  final startedAt = DateTime.now().toUtc();
+  // startNode returns before its background relay/inbox proofs necessarily
+  // converge on slower targets. Admission waits for that one bounded state
+  // transition, then performs exactly one custody store/drain attempt below.
+  await waitForCondition(() async {
+    final state = stack.p2pService.currentState;
+    return state.isStarted && state.usabilityReady && state.relayReady;
+  }, timeout: const Duration(seconds: 90));
+  final initialState = stack.p2pService.currentState;
+  final transportPeerId = initialState.peerId;
+  expect(transportPeerId, isNotNull);
+  expect(initialState.isStarted, isTrue);
+  expect(initialState.usabilityReady, isTrue);
+  expect(initialState.relayReady, isTrue);
+
+  // One admission probe per role and run. It is deliberately not retried and
+  // never participates in any later per-cell delivery verdict.
+  final storeAccepted = await stack.p2pService
+      .storeInInbox(
+        transportPeerId!,
+        jsonEncode(<String, dynamic>{
+          'type': 'tc267_self_custody_canary',
+          'version': '1',
+          'runId': configuredRunId,
+          'role': role,
+        }),
+      )
+      .timeout(_inviteLatencyDiagnosticOperationTimeout);
+  final storeCompletedAt = DateTime.now().toUtc();
+  expect(storeAccepted, isTrue, reason: 'self-custody canary must be accepted');
+  await stack.p2pService.drainOfflineInbox().timeout(
+    _inviteLatencyDiagnosticOperationTimeout,
+  );
+  final drainCompletedAt = DateTime.now().toUtc();
+  await stack.groupInviteListener.waitForIdle().timeout(
+    _inviteLatencyDiagnosticOperationTimeout,
+  );
+  final freshState = stack.p2pService.currentState;
+  final stateObservedAt = DateTime.now().toUtc();
+  expect(freshState.peerId, transportPeerId);
+  expect(freshState.isStarted, isTrue);
+  expect(freshState.usabilityReady, isTrue);
+  expect(freshState.relayReady, isTrue);
+  final completedAt = DateTime.now().toUtc();
+  return <String, dynamic>{
+    'kind': 'self_inbox_custody',
+    'attemptCount': 1,
+    'startedAt': startedAt.toIso8601String(),
+    'stateObservedAt': stateObservedAt.toIso8601String(),
+    'storeCompletedAt': storeCompletedAt.toIso8601String(),
+    'drainCompletedAt': drainCompletedAt.toIso8601String(),
+    'completedAt': completedAt.toIso8601String(),
+    'storeAccepted': storeAccepted,
+    'drainCompleted': true,
+    'nodeStarted': freshState.isStarted,
+    'usabilityReady': freshState.usabilityReady,
+    'relayReady': freshState.relayReady,
+    'transportPeerId': freshState.peerId,
+    'status': 'accepted',
+  };
+}
+
+Future<void> _startLatencyNode(
+  GroupMultiDeviceTestStack stack, {
+  required String expectedTransportPeerId,
+}) async {
+  if (!stack.p2pService.currentState.isStarted) {
+    final started = await stack.p2pService.startNode(
+      stack.identity.privateKey,
+      stack.identity.peerId,
+    );
+    expect(started, isTrue, reason: 'latency recipient node must restart');
+  }
+  await waitForCondition(
+    () async =>
+        stack.p2pService.currentState.usabilityReady &&
+        stack.p2pService.currentState.relayReady,
+    timeout: const Duration(seconds: 90),
+  );
+  expect(
+    stack.p2pService.currentState.peerId,
+    expectedTransportPeerId,
+    reason: 'latency node restart must preserve its transport identity',
+  );
+}
+
+Future<void> _stopLatencyNode(GroupMultiDeviceTestStack stack) async {
+  if (!stack.p2pService.currentState.isStarted) return;
+  final stopped = await stack.p2pService.stopNode();
+  expect(stopped, isTrue, reason: 'latency recipient node must stop');
+  expect(stack.p2pService.currentState.isStarted, isFalse);
+}
+
+Future<_InviteLatencyRecipientTransition> _prepareLatencyRecipient(
+  GroupMultiDeviceTestStack stack,
+  String condition, {
+  required String expectedTransportPeerId,
+}) async {
+  switch (condition) {
+    case 'online-warm':
+      expect(
+        stack.p2pService.currentState.isStarted,
+        isTrue,
+        reason: 'warm condition must not restart a stopped node',
+      );
+      await _startLatencyNode(
+        stack,
+        expectedTransportPeerId: expectedTransportPeerId,
+      );
+      return (stopCompleted: false, restartCompleted: false);
+    case 'online-cold':
+      expect(
+        stack.p2pService.currentState.isStarted,
+        isTrue,
+        reason: 'cold condition requires a live-to-stopped transition',
+      );
+      await _stopLatencyNode(stack);
+      await _startLatencyNode(
+        stack,
+        expectedTransportPeerId: expectedTransportPeerId,
+      );
+      return (stopCompleted: true, restartCompleted: true);
+    case 'offline':
+      expect(
+        stack.p2pService.currentState.isStarted,
+        isTrue,
+        reason: 'offline condition requires an observed node stop',
+      );
+      await _stopLatencyNode(stack);
+      return (stopCompleted: true, restartCompleted: false);
+    default:
+      throw StateError('Unsupported invite latency condition: $condition');
+  }
+}
+
+Future<void> _pumpLatencyUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  Duration timeout = const Duration(minutes: 5),
+  String reason = 'widget condition',
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (condition()) return;
+    await tester.pump(const Duration(milliseconds: 100));
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+  }
+  throw TimeoutException('Timed out waiting for $reason');
+}
+
+bool _hasLatencyPhaseEnd(
+  List<GroupInviteLatencyEvent> events,
+  String operationId,
+  GroupInviteLatencyPhase phase,
+) => events.any(
+  (event) =>
+      event.operationId == operationId &&
+      event.phase == phase &&
+      event.boundary == GroupInviteLatencyBoundary.end,
+);
+
+Widget _latencyMaterialApp({required Widget home}) => MaterialApp(
+  locale: const Locale('en'),
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: home,
+);
+
+Future<String> _driveLatencyCreateCaller({
+  required WidgetTester tester,
+  required GroupMultiDeviceTestStack stack,
+  required String operationId,
+  required String groupName,
+  required List<GroupInviteLatencyEvent> events,
+}) async {
+  await tester.pumpWidget(
+    _latencyMaterialApp(
+      home: CreateGroupPickerWired(
+        groupType: GroupType.chat,
+        groupRepo: stack.groupRepo,
+        msgRepo: stack.groupMsgRepo,
+        groupMessageListener: stack.groupListener,
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+        contactRepo: stack.contactRepo,
+        bridge: stack.bridge,
+        identityRepo: stack.identityRepo,
+        p2pService: stack.p2pService,
+        mediaAttachmentRepo: stack.mediaAttachmentRepo,
+        reactionRepo: stack.reactionRepo,
+        groupReactionReplayOutboxRepository: stack.reactionReplayOutboxRepo,
+        inviteLatencyOperationId: operationId,
+      ),
+    ),
+  );
+  await _pumpLatencyUntil(
+    tester,
+    () => find.text('Bob').evaluate().isNotEmpty,
+    reason: 'create caller contact load',
+  );
+  await tester.tap(find.text('Bob').first);
+  await tester.pump();
+  final nameField = find.byType(TextField).last;
+  await tester.enterText(nameField, groupName);
+  final startButton = find.text('Start group chat');
+  await tester.ensureVisible(startButton);
+  await tester.tap(startButton);
+  await _pumpLatencyUntil(
+    tester,
+    () => _hasLatencyPhaseEnd(
+      events,
+      operationId,
+      GroupInviteLatencyPhase.navigationSettlement,
+    ),
+    timeout: const Duration(minutes: 8),
+    reason: 'create caller navigation settlement',
+  );
+
+  final groupIds = events
+      .where((event) => event.operationId == operationId)
+      .map((event) => event.groupId)
+      .whereType<String>()
+      .toSet();
+  expect(groupIds, hasLength(1));
+  return groupIds.single;
+}
+
+Future<String> _driveLatencyAddCaller({
+  required WidgetTester tester,
+  required GroupMultiDeviceTestStack stack,
+  required String operationId,
+  required String groupName,
+  required List<GroupInviteLatencyEvent> events,
+}) async {
+  final baseGroup = await createGroupWithMembers(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    p2pService: stack.p2pService,
+    identity: stack.identity,
+    selectedContacts: const <ContactModel>[],
+    type: GroupType.chat,
+    name: groupName,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+  );
+  ContactPickerInviteResult? popResult;
+  await tester.pumpWidget(
+    _latencyMaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                popResult = await Navigator.of(context)
+                    .push<ContactPickerInviteResult>(
+                      MaterialPageRoute(
+                        builder: (_) => ContactPickerWired(
+                          groupId: baseGroup.group.id,
+                          groupRepo: stack.groupRepo,
+                          contactRepo: stack.contactRepo,
+                          bridge: stack.bridge,
+                          identityRepo: stack.identityRepo,
+                          p2pService: stack.p2pService,
+                          msgRepo: stack.groupMsgRepo,
+                          inviteDeliveryAttemptRepo:
+                              stack.groupInviteDeliveryAttemptRepo,
+                          inviteLatencyOperationId: operationId,
+                        ),
+                      ),
+                    );
+              },
+              child: const Text('Open latency add caller'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('Open latency add caller'));
+  await _pumpLatencyUntil(
+    tester,
+    () => find.text('Bob').evaluate().isNotEmpty,
+    reason: 'add caller contact load',
+  );
+  await tester.tap(find.text('Bob').first);
+  await tester.pump();
+  final sendButton = find.text('Send Invites');
+  await tester.ensureVisible(sendButton);
+  await tester.tap(sendButton);
+  await _pumpLatencyUntil(
+    tester,
+    () =>
+        popResult != null &&
+        _hasLatencyPhaseEnd(
+          events,
+          operationId,
+          GroupInviteLatencyPhase.navigationSettlement,
+        ),
+    timeout: const Duration(minutes: 8),
+    reason: 'add caller navigation settlement',
+  );
+  expect(popResult!.membersAdded, 1);
+  return baseGroup.group.id;
+}
+
+({GroupInviteLatencyEvent begin, GroupInviteLatencyEvent end})
+_latencyPhasePair(
+  List<GroupInviteLatencyEvent> operationEvents,
+  GroupInviteLatencyPhase phase,
+) {
+  final phaseEvents = operationEvents
+      .where((event) => event.phase == phase)
+      .toList(growable: false);
+  expect(
+    phaseEvents,
+    hasLength(2),
+    reason: '${phase.wireName} must have exactly one begin/end pair',
+  );
+  expect(phaseEvents.first.boundary, GroupInviteLatencyBoundary.begin);
+  expect(phaseEvents.last.boundary, GroupInviteLatencyBoundary.end);
+  expect(
+    phaseEvents.last.at.isBefore(phaseEvents.first.at),
+    isFalse,
+    reason: '${phase.wireName} end must not precede begin',
+  );
+  return (begin: phaseEvents.first, end: phaseEvents.last);
+}
+
+String _latencyDetailString(GroupInviteLatencyEvent event, String key) {
+  final value = event.details[key];
+  expect(value, isA<String>(), reason: '$key must be recorded');
+  return value! as String;
+}
+
+Map<String, dynamic> _buildLatencyPrimarySample({
+  required _InviteLatencyCell cell,
+  required String operationId,
+  required String groupId,
+  required String recipientPeerId,
+  required GroupInviteDeliveryAttempt attempt,
+  required List<GroupInviteLatencyEvent> allEvents,
+}) {
+  final operationEvents = allEvents
+      .where((event) => event.operationId == operationId)
+      .toList(growable: false);
+  final pairs =
+      <
+        GroupInviteLatencyPhase,
+        ({GroupInviteLatencyEvent begin, GroupInviteLatencyEvent end})
+      >{
+        for (final phase in _inviteLatencyPhaseOrder)
+          phase: _latencyPhasePair(operationEvents, phase),
+      };
+  for (var index = 1; index < _inviteLatencyPhaseOrder.length; index++) {
+    final previous = pairs[_inviteLatencyPhaseOrder[index - 1]]!;
+    final current = pairs[_inviteLatencyPhaseOrder[index]]!;
+    expect(
+      current.begin.at.isBefore(previous.end.at),
+      isFalse,
+      reason: 'latency phases must remain ordered',
+    );
+  }
+
+  final inviteIds = operationEvents
+      .map((event) => event.inviteId)
+      .whereType<String>()
+      .toSet();
+  expect(inviteIds, hasLength(1));
+  final inviteId = inviteIds.single;
+  expect(attempt.inviteId, inviteId);
+  expect(
+    attempt.groupId,
+    groupId,
+    reason: 'persisted delivery attempt must bind the sampled group',
+  );
+  expect(
+    attempt.peerId,
+    recipientPeerId,
+    reason: 'persisted delivery attempt must bind the sampled recipient',
+  );
+
+  final live = pairs[GroupInviteLatencyPhase.live]!;
+  final inbox = pairs[GroupInviteLatencyPhase.inbox]!;
+  final persistence = pairs[GroupInviteLatencyPhase.persistence]!;
+  final navigation = pairs[GroupInviteLatencyPhase.navigationSettlement]!;
+  final preFanout = pairs[GroupInviteLatencyPhase.preFanout]!;
+  final liveAcknowledged = live.end.details['acknowledged'];
+  expect(liveAcknowledged, isA<bool>());
+  final liveOutcome = _latencyDetailString(live.end, 'outcome');
+  final inboxOutcome = _latencyDetailString(inbox.end, 'outcome');
+  final inboxAttemptCount = inboxOutcome == 'skipped' ? 0 : 1;
+  final confirmedInboxStoreCount = inboxOutcome == 'stored' ? 1 : 0;
+  final transport = liveAcknowledged == true
+      ? 'direct'
+      : confirmedInboxStoreCount == 1
+      ? 'inbox'
+      : 'none';
+  final applicationResult = switch ((attempt.status, attempt.lastError)) {
+    (GroupInviteDeliveryStatus.sent, null) => 'success',
+    (GroupInviteDeliveryStatus.queued, null) => 'queued',
+    (GroupInviteDeliveryStatus.needsResend, 'send_failed') => 'send_failed',
+    _ => throw StateError(
+      'TC-267 latency sample reached unsupported attempt status/error '
+      '${attempt.status.toValue()}/${attempt.lastError}',
+    ),
+  };
+  final deliveryKnowledge = switch (transport) {
+    'direct' => 'wire_ack_confirmed',
+    'inbox' => 'relay_custody_confirmed',
+    _ => 'outcome_unknown',
+  };
+  final envelopeSha256 = _latencyDetailString(live.begin, 'envelopeSha256');
+  expect(envelopeSha256, matches(RegExp(r'^[0-9a-f]{64}$')));
+
+  return <String, dynamic>{
+    'operationId': operationId,
+    'path': cell.path,
+    'condition': cell.condition,
+    'repetition': cell.repetition,
+    'groupId': groupId,
+    'inviteId': inviteId,
+    'recipientPeerId': recipientPeerId,
+    'connectionState': _latencyDetailString(live.begin, 'connectionState'),
+    'envelopeSha256': envelopeSha256,
+    'transport': transport,
+    'applicationResult': applicationResult,
+    'attemptStatus': attempt.status.toValue(),
+    'attemptLastError': attempt.lastError,
+    'deliveryKnowledge': deliveryKnowledge,
+    'liveAcknowledged': liveAcknowledged,
+    'liveOutcome': liveOutcome,
+    'inboxAttemptCount': inboxAttemptCount,
+    'confirmedInboxStoreCount': confirmedInboxStoreCount,
+    'inboxOutcome': inboxOutcome,
+    'attemptId': '${attempt.groupId}:${attempt.peerId}',
+    'caller': <String, dynamic>{
+      'beginAt': preFanout.begin.at.toUtc().toIso8601String(),
+      'endAt': persistence.end.at.toUtc().toIso8601String(),
+      'settledAt': navigation.end.at.toUtc().toIso8601String(),
+    },
+    'phases': <Map<String, dynamic>>[
+      for (final phase in _inviteLatencyPhaseOrder)
+        <String, dynamic>{
+          'name': phase.wireName,
+          'beginAt': pairs[phase]!.begin.at.toUtc().toIso8601String(),
+          'endAt': pairs[phase]!.end.at.toUtc().toIso8601String(),
+          'outcome': _latencyDetailString(pairs[phase]!.end, 'outcome'),
+        },
+    ],
+  };
+}
+
+Map<String, dynamic> _latencyRoleArtifact({
+  required String role,
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, dynamic> admissionCanary,
+  required List<Map<String, dynamic>> samples,
+}) => <String, dynamic>{
+  'schema': 'mknoon.tc267.invite-send-latency',
+  'schemaVersion': _inviteLatencyArtifactSchemaVersion,
+  'scenario': 'invite_send_latency',
+  'mode': configuredMode,
+  'runId': configuredRunId,
+  'role': role,
+  'roleVerdict': 'pass',
+  'identity': <String, dynamic>{
+    'peerId': stack.identity.peerId,
+    'transportPeerId': stack.p2pService.currentState.peerId,
+  },
+  'admissionCanary': admissionCanary,
+  'samples': samples,
+};
+
+String _latencyRecipientObservationStatus({
+  required String inviteId,
+  required String? pendingInviteId,
+  required int eventCount,
+}) {
+  if (pendingInviteId != null && pendingInviteId != inviteId) {
+    throw StateError(
+      'TC-267 recipient pending invite $pendingInviteId does not match '
+      'correlated invite $inviteId',
+    );
+  }
+  if (eventCount >= 1) {
+    return pendingInviteId == inviteId
+        ? 'exact_event_observed'
+        : 'event_without_pending';
+  }
+  return pendingInviteId == inviteId
+      ? 'pending_without_event'
+      : 'not_observed_within_window';
+}
+
+Future<void> _runInviteSendLatencyPrimary(WidgetTester tester) async {
+  _requireTargetLocalLatencyDirectory();
+  if (configuredMode != 'baseline') {
+    throw StateError(
+      'invite_send_latency closure is reserved for the reviewed production '
+      'replan; Wave 0 supports baseline only',
+    );
+  }
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Alice',
+    cliPeerFixture: null,
+  );
+  final traceEvents = <GroupInviteLatencyEvent>[];
+  final traceLease = installGroupInviteLatencySink(traceEvents.add);
+  try {
+    writeSharedJson(
+      _signalName('latency_alice_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+    final bobFixture = await waitForSharedJson(
+      _signalName('latency_bob_identity.json'),
+      timeout: const Duration(minutes: 12),
+    );
+    final bobContact = _contactFromFixture(bobFixture, 'Bob');
+    await stack.contactRepo.addContact(bobContact);
+    final admissionCanary = await _runLatencySelfCustodyCanary(
+      stack,
+      role: 'primary',
+    );
+
+    final samples = <Map<String, dynamic>>[];
+    for (final cell in _inviteLatencyCells()) {
+      final operationId = _latencyOperationId(cell);
+      writeSharedJson(
+        _latencySignalName(operationId, 'prepare.json'),
+        <String, dynamic>{
+          'operationId': operationId,
+          'path': cell.path,
+          'condition': cell.condition,
+          'repetition': cell.repetition,
+        },
+      );
+      final ready = await waitForSharedJson(
+        _latencySignalName(operationId, 'ready.json'),
+        timeout: const Duration(minutes: 4),
+      );
+      expect(ready['operationId'], operationId);
+      expect(ready['transportPeerId'], bobContact.peerId);
+      if (cell.condition == 'offline') {
+        expect(ready['nodeStarted'], isFalse);
+        expect(ready['relayReady'], isFalse);
+        expect(ready['stopCompleted'], isTrue);
+        expect(ready['restartCompleted'], isFalse);
+      } else if (cell.condition == 'online-cold') {
+        expect(ready['nodeStarted'], isTrue);
+        expect(ready['relayReady'], isTrue);
+        expect(ready['stopCompleted'], isTrue);
+        expect(ready['restartCompleted'], isTrue);
+      } else {
+        expect(ready['nodeStarted'], isTrue);
+        expect(ready['relayReady'], isTrue);
+        expect(ready['stopCompleted'], isFalse);
+        expect(ready['restartCompleted'], isFalse);
+      }
+
+      if (cell.condition == 'online-warm') {
+        await stack.p2pService.warmPeer(bobContact.peerId);
+        try {
+          await waitForCondition(
+            () async => stack.p2pService.isConnectedToPeer(bobContact.peerId),
+            timeout: const Duration(seconds: 8),
+          );
+        } on TimeoutException {
+          // Warm is an attempted condition, not a fabricated connection fact;
+          // the trace records the actual structural state at the live await.
+        }
+      }
+
+      final groupName =
+          'TC267 ${cell.path} ${cell.condition} ${cell.repetition}';
+      final groupId = cell.path == 'create'
+          ? await _driveLatencyCreateCaller(
+              tester: tester,
+              stack: stack,
+              operationId: operationId,
+              groupName: groupName,
+              events: traceEvents,
+            )
+          : await _driveLatencyAddCaller(
+              tester: tester,
+              stack: stack,
+              operationId: operationId,
+              groupName: groupName,
+              events: traceEvents,
+            );
+      final attempt = await stack.groupInviteDeliveryAttemptRepo.getAttempt(
+        groupId: groupId,
+        peerId: bobContact.peerId,
+      );
+      expect(attempt, isNotNull);
+      expect(attempt!.inviteId, isNotNull);
+      final sample = _buildLatencyPrimarySample(
+        cell: cell,
+        operationId: operationId,
+        groupId: groupId,
+        recipientPeerId: bobContact.peerId,
+        attempt: attempt,
+        allEvents: traceEvents,
+      );
+      samples.add(sample);
+      writeSharedJson(
+        _latencySignalName(operationId, 'sent.json'),
+        <String, dynamic>{
+          'operationId': operationId,
+          'path': cell.path,
+          'condition': cell.condition,
+          'repetition': cell.repetition,
+          'groupId': groupId,
+          'inviteId': sample['inviteId'],
+          'recipientPeerId': bobContact.peerId,
+        },
+      );
+      final observed = await waitForSharedJson(
+        _latencySignalName(operationId, 'observed.json'),
+        timeout: const Duration(minutes: 4),
+      );
+      expect(observed['operationId'], operationId);
+      expect(observed['inviteId'], sample['inviteId']);
+      expect(observed['eventCount'], isA<int>());
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+    expect(samples, hasLength(30));
+    writeSharedJson(
+      _latencyArtifactName('primary'),
+      _latencyRoleArtifact(
+        role: 'primary',
+        stack: stack,
+        admissionCanary: admissionCanary,
+        samples: samples,
+      ),
+    );
+    final ownArtifactSha256 = _latencyArtifactSha256('primary');
+    // Release the sibling only after every sender operation has settled. The
+    // sibling keeps its pending-invite observation live until this signal, so
+    // its final artifact can freeze counts after the complete sender window.
+    writeSharedText(_signalName('latency_primary_sampling_complete'), 'ok');
+    // Stay installed until the host has stably captured both immutable role
+    // artifacts. A flutter-test teardown may uninstall the package and purge
+    // target-local cache files immediately after this function returns.
+    await _waitForLatencyHostCaptureReceipt(
+      role: 'primary',
+      ownArtifactSha256: ownArtifactSha256,
+    );
+  } finally {
+    traceLease.release();
+    await stack.teardown();
+  }
+}
+
+Future<void> _runInviteSendLatencySibling() async {
+  _requireTargetLocalLatencyDirectory();
+  if (configuredMode != 'baseline') {
+    throw StateError(
+      'invite_send_latency closure is reserved for the reviewed production '
+      'replan; Wave 0 supports baseline only',
+    );
+  }
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Bob',
+    cliPeerFixture: null,
+  );
+  final eventCounts = <String, int>{};
+  final firstObservedAt = <String, DateTime>{};
+  final pendingSubscription = stack.groupInviteListener.pendingInviteStream
+      .listen((invite) {
+        firstObservedAt.putIfAbsent(invite.inviteId, DateTime.now().toUtc);
+        eventCounts.update(
+          invite.inviteId,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      });
+  var observationFrozen = false;
+  try {
+    final stableTransportPeerId = stack.p2pService.currentState.peerId;
+    expect(stableTransportPeerId, isNotNull);
+    writeSharedJson(
+      _signalName('latency_bob_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+    final aliceFixture = await waitForSharedJson(
+      _signalName('latency_alice_identity.json'),
+      timeout: const Duration(minutes: 12),
+    );
+    await stack.contactRepo.addContact(
+      _contactFromFixture(aliceFixture, 'Alice'),
+    );
+    final admissionCanary = await _runLatencySelfCustodyCanary(
+      stack,
+      role: 'sibling',
+    );
+
+    final samples = <Map<String, dynamic>>[];
+    for (final cell in _inviteLatencyCells()) {
+      final operationId = _latencyOperationId(cell);
+      final prepare = await waitForSharedJson(
+        _latencySignalName(operationId, 'prepare.json'),
+        timeout: const Duration(minutes: 8),
+      );
+      expect(prepare['operationId'], operationId);
+      expect(prepare['path'], cell.path);
+      expect(prepare['condition'], cell.condition);
+      expect(prepare['repetition'], cell.repetition);
+      final transition = await _prepareLatencyRecipient(
+        stack,
+        cell.condition,
+        expectedTransportPeerId: stableTransportPeerId!,
+      );
+      final preparedNodeStarted = stack.p2pService.currentState.isStarted;
+      final preparedRelayReady = stack.p2pService.currentState.relayReady;
+      if (cell.condition == 'offline') {
+        expect(preparedNodeStarted, isFalse);
+        expect(preparedRelayReady, isFalse);
+      } else {
+        expect(preparedNodeStarted, isTrue);
+        expect(preparedRelayReady, isTrue);
+      }
+      writeSharedJson(
+        _latencySignalName(operationId, 'ready.json'),
+        <String, dynamic>{
+          'operationId': operationId,
+          'nodeStarted': preparedNodeStarted,
+          'relayReady': preparedRelayReady,
+          'transportPeerId': stableTransportPeerId,
+          'stopCompleted': transition.stopCompleted,
+          'restartCompleted': transition.restartCompleted,
+        },
+      );
+
+      final sent = await waitForSharedJson(
+        _latencySignalName(operationId, 'sent.json'),
+        timeout: const Duration(minutes: 10),
+      );
+      if (cell.condition == 'offline') {
+        await _startLatencyNode(
+          stack,
+          expectedTransportPeerId: stableTransportPeerId,
+        );
+      }
+      final groupId = sent['groupId'] as String;
+      final inviteId = sent['inviteId'] as String;
+      final observationStartedAt = DateTime.now().toUtc();
+      final observationDeadlineAt = observationStartedAt.add(
+        _inviteLatencyObservationWindow,
+      );
+      var drainAttemptCount = 0;
+      var drainErrorCount = 0;
+      String? pendingInviteId;
+      while (DateTime.now().toUtc().isBefore(observationDeadlineAt)) {
+        drainAttemptCount += 1;
+        try {
+          await stack.p2pService.drainOfflineInbox();
+        } catch (_) {
+          drainErrorCount += 1;
+        }
+        final pending = await stack.pendingInviteRepo.getPendingInvite(groupId);
+        pendingInviteId = pending?.inviteId;
+        if (pendingInviteId == inviteId && (eventCounts[inviteId] ?? 0) >= 1) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      final observationCompletedAt = DateTime.now().toUtc();
+      final initialEventCount = eventCounts[inviteId] ?? 0;
+      final initialObservedAt = firstObservedAt[inviteId];
+      final sample = <String, dynamic>{
+        'operationId': operationId,
+        'path': cell.path,
+        'condition': cell.condition,
+        'repetition': cell.repetition,
+        'groupId': groupId,
+        'inviteId': inviteId,
+        'recipientPeerId': stack.identity.peerId,
+        'pendingInviteId': pendingInviteId,
+        'eventCount': initialEventCount,
+        'observationStatus': _latencyRecipientObservationStatus(
+          inviteId: inviteId,
+          pendingInviteId: pendingInviteId,
+          eventCount: initialEventCount,
+        ),
+        'observedLate':
+            initialObservedAt != null &&
+            initialObservedAt.isAfter(observationDeadlineAt),
+        'observationWindowVersion': _inviteLatencyObservationWindowVersion,
+        'observationWindowMs': _inviteLatencyObservationWindow.inMilliseconds,
+        'observationStartedAt': observationStartedAt.toIso8601String(),
+        'observationDeadlineAt': observationDeadlineAt.toIso8601String(),
+        'observationCompletedAt': observationCompletedAt.toIso8601String(),
+        'finalReconciledAt': observationCompletedAt.toIso8601String(),
+        'drainAttemptCount': drainAttemptCount,
+        'drainErrorCount': drainErrorCount,
+        'preparedNodeStarted': preparedNodeStarted,
+        'preparedRelayReady': preparedRelayReady,
+        'preparedTransportPeerId': stableTransportPeerId,
+        'preparedStopCompleted': transition.stopCompleted,
+        'preparedRestartCompleted': transition.restartCompleted,
+        'observedAt': initialObservedAt?.toIso8601String(),
+      };
+      samples.add(sample);
+      writeSharedJson(_latencySignalName(operationId, 'observed.json'), sample);
+    }
+    // The final per-cell observation only proves that the thirtieth invite was
+    // visible. Wait until the primary confirms that every sender caller has
+    // settled before starting the final duplicate-observation window.
+    await waitForSharedSignal(
+      _signalName('latency_primary_sampling_complete'),
+      timeout: const Duration(minutes: 5),
+    );
+    // Drain once more and hold a bounded quiet window before freezing counts
+    // so a delayed second visible event from any earlier cell is not silently
+    // reported as one. Cancel the stream before projecting the final counts;
+    // the artifact is written exactly once after observation is immutable.
+    try {
+      await stack.p2pService.drainOfflineInbox();
+    } catch (_) {
+      // Baseline reconciliation records non-observation rather than selecting
+      // away a delivery tail because a final diagnostic drain failed.
+    }
+    await stack.groupInviteListener.waitForIdle().timeout(
+      _inviteLatencyDiagnosticOperationTimeout,
+    );
+    await Future<void>.delayed(const Duration(seconds: 1));
+    try {
+      await stack.p2pService.drainOfflineInbox();
+    } catch (_) {
+      // See above. The fixed per-sample drain counts remain the raw evidence.
+    }
+    await stack.groupInviteListener.waitForIdle().timeout(
+      _inviteLatencyDiagnosticOperationTimeout,
+    );
+    await pendingSubscription.cancel();
+    observationFrozen = true;
+    for (final sample in samples) {
+      final groupId = sample['groupId'] as String;
+      final inviteId = sample['inviteId'] as String;
+      final pending = await stack.pendingInviteRepo.getPendingInvite(groupId);
+      final pendingInviteId = pending?.inviteId;
+      final finalCount = eventCounts[inviteId] ?? 0;
+      final observedAt = firstObservedAt[inviteId];
+      final observationDeadlineAt = DateTime.parse(
+        sample['observationDeadlineAt'] as String,
+      );
+      sample['pendingInviteId'] = pendingInviteId;
+      sample['eventCount'] = finalCount;
+      sample['observedAt'] = observedAt?.toIso8601String();
+      sample['observedLate'] =
+          observedAt != null && observedAt.isAfter(observationDeadlineAt);
+      sample['observationStatus'] = _latencyRecipientObservationStatus(
+        inviteId: inviteId,
+        pendingInviteId: pendingInviteId,
+        eventCount: finalCount,
+      );
+      sample['finalReconciledAt'] = DateTime.now().toUtc().toIso8601String();
+    }
+    expect(samples, hasLength(30));
+    writeSharedJson(
+      _latencyArtifactName('sibling'),
+      _latencyRoleArtifact(
+        role: 'sibling',
+        stack: stack,
+        admissionCanary: admissionCanary,
+        samples: samples,
+      ),
+    );
+    final ownArtifactSha256 = _latencyArtifactSha256('sibling');
+    await _waitForLatencyHostCaptureReceipt(
+      role: 'sibling',
+      ownArtifactSha256: ownArtifactSha256,
+    );
+  } finally {
+    if (!observationFrozen) {
+      await pendingSubscription.cancel();
+    }
+    await stack.teardown();
+  }
+}
+
 // ── R6: b1b_sibling_device_convergence (per-device ML-KEM key separation) ──
 // primary = admin/creator; sibling = primary's restored second device (fresh
 // transport + fresh ML-KEM). The sibling joins the topic (for the announce +
@@ -2183,6 +3171,15 @@ void main() {
           await _runInviteReliabilityPrimary();
         } else {
           await _runInviteReliabilitySibling();
+        }
+        return;
+      }
+
+      if (configuredScenario == 'invite_send_latency') {
+        if (_isPrimaryRole) {
+          await _runInviteSendLatencyPrimary(tester);
+        } else {
+          await _runInviteSendLatencySibling();
         }
         return;
       }

@@ -352,6 +352,8 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/group_resume_recovery_test.dart"
   "test/features/groups/integration/group_edge_cases_smoke_test.dart"
   "test/features/groups/integration/invite_round_trip_test.dart"
+  # 267 Wave 0: strict invite-latency runner arguments and artifact contract.
+  "test/integration/invite_reliability_runner_contract_test.dart"
   "test/features/groups/integration/group_membership_smoke_test.dart"
   "test/features/groups/integration/group_startup_rejoin_smoke_test.dart"
   "test/features/groups/integration/group_key_repair_pull_roundtrip_test.dart"

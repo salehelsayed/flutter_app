@@ -1,9 +1,13 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -126,6 +130,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
   // same id on the delivery-attempt row (HOLE-4). Otherwise a fresh id is
   // minted internally as before.
   String? inviteIdOverride,
+  GroupInviteLatencyTrace? latencyTrace,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -145,6 +150,11 @@ Future<SendGroupInviteResult> sendGroupInvite({
       event: 'GROUP_INVITE_SEND_NODE_NOT_RUNNING',
       details: {},
     );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'node_not_running',
+    );
     return SendGroupInviteResult.nodeNotRunning;
   }
 
@@ -162,6 +172,11 @@ Future<SendGroupInviteResult> sendGroupInvite({
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
       details: {'reason': 'sender_not_currently_authorized'},
     );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
+    );
     return SendGroupInviteResult.invalidPayload;
   }
   final effectiveGroupConfig = currentFreshnessState.groupConfig;
@@ -175,6 +190,11 @@ Future<SendGroupInviteResult> sendGroupInvite({
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
       details: {'reason': 'stale_group_key_material'},
+    );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
     );
     return SendGroupInviteResult.invalidPayload;
   }
@@ -192,6 +212,11 @@ Future<SendGroupInviteResult> sendGroupInvite({
       event: 'GROUP_INVITE_SEND_ENCRYPTION_REQUIRED',
       details: {},
     );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'encryption_required',
+    );
     return SendGroupInviteResult.encryptionRequired;
   }
   if (recipientDevice == null &&
@@ -204,6 +229,11 @@ Future<SendGroupInviteResult> sendGroupInvite({
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
       details: {'reason': 'recipient_device_not_registered'},
+    );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
     );
     return SendGroupInviteResult.invalidPayload;
   }
@@ -247,6 +277,12 @@ Future<SendGroupInviteResult> sendGroupInvite({
             : recipientPeerId,
         'keyEpoch': keyEpoch,
       },
+    );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
     );
     return SendGroupInviteResult.invalidPayload;
   }
@@ -297,6 +333,12 @@ Future<SendGroupInviteResult> sendGroupInvite({
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
       details: {'reason': 'policy_validation_failed'},
     );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
+    );
     return SendGroupInviteResult.invalidPayload;
   }
   if (!isInviterAuthorizedBySignedSnapshot(
@@ -308,11 +350,29 @@ Future<SendGroupInviteResult> sendGroupInvite({
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
       details: {'reason': 'sender_not_authorized'},
     );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
+    );
     return SendGroupInviteResult.invalidPayload;
   }
 
   final canonicalInvitePayload = payload.canonicalInviteSignedPayload();
   late final GroupInvitePayload signedPayload;
+  latencyTrace?.endPreFanout(
+    groupId: groupId,
+    inviteId: inviteId,
+    recipientPeerId: recipientPeerId,
+    outcome: 'ready',
+  );
+  latencyTrace?.begin(
+    GroupInviteLatencyPhase.sign,
+    groupId: groupId,
+    inviteId: inviteId,
+    recipientPeerId: recipientPeerId,
+  );
   try {
     final signResponse = await callSignPayload(
       bridge: bridge,
@@ -328,13 +388,34 @@ Future<SendGroupInviteResult> sendGroupInvite({
         event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
         details: {'reason': 'sign_failed'},
       );
+      latencyTrace?.end(
+        GroupInviteLatencyPhase.sign,
+        groupId: groupId,
+        inviteId: inviteId,
+        recipientPeerId: recipientPeerId,
+        outcome: 'failed',
+      );
       return SendGroupInviteResult.invalidPayload;
     }
     signedPayload = payload.withInviteSignature(
       signature: signature,
       signedPayload: canonicalInvitePayload,
     );
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.sign,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'signed',
+    );
   } catch (e) {
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.sign,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'error',
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
@@ -345,6 +426,12 @@ Future<SendGroupInviteResult> sendGroupInvite({
 
   // 4. Encrypt inner JSON
   String envelopeJson;
+  latencyTrace?.begin(
+    GroupInviteLatencyPhase.encrypt,
+    groupId: groupId,
+    inviteId: inviteId,
+    recipientPeerId: recipientPeerId,
+  );
   try {
     final innerJson = signedPayload.toInnerJson();
     final encryptResult = await callEncryptMessage(
@@ -358,6 +445,13 @@ Future<SendGroupInviteResult> sendGroupInvite({
         layer: 'FL',
         event: 'GROUP_INVITE_SEND_ENCRYPT_FAILED',
         details: {'errorCode': encryptResult['errorCode']},
+      );
+      latencyTrace?.end(
+        GroupInviteLatencyPhase.encrypt,
+        groupId: groupId,
+        inviteId: inviteId,
+        recipientPeerId: recipientPeerId,
+        outcome: 'failed',
       );
       return SendGroupInviteResult.sendFailed;
     }
@@ -373,7 +467,21 @@ Future<SendGroupInviteResult> sendGroupInvite({
       ciphertext: encryptResult['ciphertext'] as String,
       nonce: encryptResult['nonce'] as String,
     );
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.encrypt,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'encrypted',
+    );
   } catch (e) {
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.encrypt,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'error',
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_ENCRYPT_ERROR',
@@ -383,6 +491,23 @@ Future<SendGroupInviteResult> sendGroupInvite({
   }
 
   // 6. Send via P2P, with inbox fallback
+  final deliveryPeerId = recipientDevice?.transportPeerId ?? recipientPeerId;
+  final envelopeSha256 = latencyTrace == null
+      ? null
+      : sha256.convert(utf8.encode(envelopeJson)).toString();
+  final connectionState = latencyTrace == null
+      ? null
+      : _observeInviteLatencyConnectionState(p2pService, deliveryPeerId);
+  latencyTrace?.begin(
+    GroupInviteLatencyPhase.live,
+    groupId: groupId,
+    inviteId: inviteId,
+    recipientPeerId: recipientPeerId,
+    details: <String, Object?>{
+      'connectionState': connectionState,
+      'envelopeSha256': envelopeSha256,
+    },
+  );
   try {
     emitFlowEvent(
       layer: 'FL',
@@ -394,14 +519,33 @@ Future<SendGroupInviteResult> sendGroupInvite({
         'envelopeLength': envelopeJson.length,
       },
     );
-    final deliveryPeerId = recipientDevice?.transportPeerId ?? recipientPeerId;
     final sent = await p2pService.sendMessage(deliveryPeerId, envelopeJson);
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.live,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: sent ? 'acknowledged' : 'unacknowledged',
+      details: <String, Object?>{
+        'acknowledged': sent,
+        'connectionState': connectionState,
+        'envelopeSha256': envelopeSha256,
+        'transport': sent ? 'direct' : 'none',
+      },
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_DIRECT_RESULT',
       details: {'sent': sent},
     );
     if (sent) {
+      latencyTrace?.skip(
+        GroupInviteLatencyPhase.inbox,
+        groupId: groupId,
+        inviteId: inviteId,
+        recipientPeerId: recipientPeerId,
+        details: const <String, Object?>{'inboxStoreCount': 0},
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INVITE_SEND_SUCCESS',
@@ -410,6 +554,19 @@ Future<SendGroupInviteResult> sendGroupInvite({
       return SendGroupInviteResult.success;
     }
   } catch (e) {
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.live,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'error',
+      details: <String, Object?>{
+        'acknowledged': false,
+        'connectionState': connectionState,
+        'envelopeSha256': envelopeSha256,
+        'transport': 'none',
+      },
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_DIRECT_FAILED',
@@ -418,6 +575,16 @@ Future<SendGroupInviteResult> sendGroupInvite({
   }
 
   // Inbox fallback
+  latencyTrace?.begin(
+    GroupInviteLatencyPhase.inbox,
+    groupId: groupId,
+    inviteId: inviteId,
+    recipientPeerId: recipientPeerId,
+    details: <String, Object?>{
+      'envelopeSha256': envelopeSha256,
+      'inboxStoreCount': 1,
+    },
+  );
   try {
     emitFlowEvent(
       layer: 'FL',
@@ -428,8 +595,19 @@ Future<SendGroupInviteResult> sendGroupInvite({
             : recipientPeerId,
       },
     );
-    final deliveryPeerId = recipientDevice?.transportPeerId ?? recipientPeerId;
     final stored = await p2pService.storeInInbox(deliveryPeerId, envelopeJson);
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.inbox,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: stored ? 'stored' : 'not_stored',
+      details: <String, Object?>{
+        'envelopeSha256': envelopeSha256,
+        'inboxStoreCount': 1,
+        'transport': stored ? 'inbox' : 'none',
+      },
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INBOX_RESULT',
@@ -444,6 +622,18 @@ Future<SendGroupInviteResult> sendGroupInvite({
       return SendGroupInviteResult.queued;
     }
   } catch (e) {
+    latencyTrace?.end(
+      GroupInviteLatencyPhase.inbox,
+      groupId: groupId,
+      inviteId: inviteId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'error',
+      details: <String, Object?>{
+        'envelopeSha256': envelopeSha256,
+        'inboxStoreCount': 1,
+        'transport': 'none',
+      },
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INBOX_FAILED',
@@ -453,6 +643,19 @@ Future<SendGroupInviteResult> sendGroupInvite({
 
   emitFlowEvent(layer: 'FL', event: 'GROUP_INVITE_SEND_FAILED', details: {});
   return SendGroupInviteResult.sendFailed;
+}
+
+String _observeInviteLatencyConnectionState(
+  P2PService p2pService,
+  String deliveryPeerId,
+) {
+  try {
+    return p2pService.isConnectedToPeer(deliveryPeerId)
+        ? 'connected'
+        : 'not_connected';
+  } catch (_) {
+    return 'unknown';
+  }
 }
 
 bool _matchesLatestGroupKey({
@@ -502,6 +705,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
   required List<({String peerId, String? username, String? mlKemPublicKey})>
   recipients,
   GroupInviteReusePolicy reusePolicy = GroupInviteReusePolicy.singleUse,
+  GroupInviteLatencyTrace? latencyTrace,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -548,6 +752,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
           recipientDeviceId: r.recipientDeviceId,
           reusePolicy: reusePolicy,
           inviteIdOverride: inviteId,
+          latencyTrace: latencyTrace,
         );
         return GroupInviteAttempt(
           peerId: r.peerId,

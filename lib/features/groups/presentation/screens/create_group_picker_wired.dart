@@ -15,6 +15,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -56,6 +57,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final BackgroundPreference backgroundPreference;
+  final String? inviteLatencyOperationId;
 
   const CreateGroupPickerWired({
     super.key,
@@ -79,6 +81,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.inviteLatencyOperationId,
   });
 
   @override
@@ -174,6 +177,10 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
   }
 
   Future<void> _onStartGroup(String? name) async {
+    final inviteLatencyTrace = maybeStartGroupInviteLatencyTrace(
+      path: GroupInviteLatencyPath.create,
+      operationId: widget.inviteLatencyOperationId,
+    );
     setState(() => _isCreating = true);
 
     try {
@@ -195,12 +202,24 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
         inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
         appendGroupEventLogEntry:
             widget.groupMessageListener.appendGroupEventLogEntry,
+        inviteLatencyTrace: inviteLatencyTrace,
       );
 
-      if (!mounted) return;
+      if (!mounted) {
+        if (inviteLatencyTrace != null) {
+          inviteLatencyTrace.endNavigationSettlement(
+            groupId: result.group.id,
+            outcome: 'skipped',
+          );
+        }
+        return;
+      }
       final messenger = ScaffoldMessenger.maybeOf(context);
 
       // Navigate to conversation, replacing this screen
+      if (inviteLatencyTrace != null) {
+        inviteLatencyTrace.beginNavigationSettlement(groupId: result.group.id);
+      }
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) => GroupConversationWired(
@@ -230,6 +249,14 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
         ),
         result: FeedRouteChanges(changedGroupIds: {result.group.id}),
       );
+      if (inviteLatencyTrace != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          inviteLatencyTrace.endNavigationSettlement(
+            groupId: result.group.id,
+            outcome: 'settled',
+          );
+        });
+      }
       final warningMessage = result.buildCreateWarningMessage();
       if (warningMessage != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {

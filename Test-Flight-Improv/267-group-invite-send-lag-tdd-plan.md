@@ -1,7 +1,7 @@
 # 267 - Group Invitation Send Lag
 
-Status: evidence-gated (v3 reviewed 2026-07-21; Wave 0 harness work is ready,
-production execution is `not-ready` pending the blockers below)
+Status: Wave 0 complete (v3 reviewed and executed 2026-07-21; H2 selected;
+production execution remains `not-ready` pending the owner split below)
 Type: Bug
 Spec: free-text report from 2026-07-20: "I notice lagging in sending group
 invitations, I don't know why."
@@ -17,6 +17,7 @@ closure)
 | 2026-07-21 | Evidence Collector | Invite create/add/resend callers, P2P/bridge/Go timeout paths, invite receiver/dedup, tests, gates, Android device matrix | Confirmed an unbounded live-first tail and UI wait; refuted serial fanout; dominant real-device leg and duplicate-observability remain unresolved | Run the automated Wave 0 baseline before selecting H1/H2/H3/H4 |
 | 2026-07-21 | Planner | Graph snapshot `ba9346d8563d5ec7`, current HEAD `19dc1ca3a792`, targeted host/Go sentinels | Plan is sufficient for evidence collection only; conditional fix contract is frozen below | Independent `$tdd-review` |
 | 2026-07-21 | Reviewer | Review-profile graph query plus sender, receiver, native, runner, discovery, and device-boundary counterexamples | Verdict `not-ready`: Wave 0 contract tightened; production is blocked by late inbox-custody ambiguity, an unfrozen user-visible threshold, and mixed-version activation | Build and run Wave 0 only, record the evidence, then replan the selected production branch |
+| 2026-07-21 | Executor | TC-267-R1, diagnostic trace, Android broker/harness, registration, host/device gates, run `1784655771513` | Wave 0 complete; H2/pre-fanout selected; production explicitly unauthorized | Continue only through the H2 owner split |
 
 ## Problem And Evidence
 
@@ -424,11 +425,12 @@ git diff --check
 - Green sentinel: acknowledged direct-only delivery, max-not-sum batch
   concurrency, bridge timeout propagation, Go timeout profile, and rotated
   offline replay.
-- Pre-existing dirty tree / known failure: the 2026-07-21 tree already contains
-  unrelated Plans 263-266, DB v102/v103, group reliability, integration harness,
-  gate, and generated Graphify edits. A planning-time concurrent Flutter probe
-  initially hit the shared startup/native-assets lock; the exact batch test
-  passed when rerun alone. Neither is an expected RED.
+- Execution start state / known failure: implementation started from a clean
+  tree at `55b2b984c025bc284e4f04b7cfd1b2b355e79407`. The later dirty app,
+  harness, gate, test, and Graphify files are this Wave 0 implementation. A
+  planning-time concurrent Flutter probe initially hit the shared
+  startup/native-assets lock; the exact batch test passed when rerun alone.
+  That lock contention is not an expected RED.
 - Environment blocker: none for the live matrix; both required Android targets
   exist. The current runner's filesystem/flag behavior is a code blocker owned
   by TC-267-01, not an unavailable-device waiver.
@@ -436,15 +438,17 @@ git diff --check
   this v3 Wave 0 slice, or any Go/global timeout, schema/wire, or UI
   fire-and-forget change, blocks completion and requires replanning.
 
-- [ ] Strict runner/artifact RED, GREEN, and representative mutation re-red are
-      recorded.
-- [ ] Both exact scenarios remain registered and the lag row is independently
+- [ ] Exact pre-edit TC-267-R1 causal RED is recorded. It was not captured
+      before implementation and is intentionally not reconstructed or claimed.
+- [x] TC-267-R1 is GREEN and representative parser, phase, correlation,
+      receipt, artifact, summary, and timestamp mutations re-red the contract.
+- [x] Both exact scenarios remain registered and the lag row is independently
       selectable.
-- [ ] All 30 Wave 0 samples, artifact digest, summaries, and H1/H2/H3/H4
+- [x] All 30 Wave 0 samples, artifact digests, summaries, and H1/H2/H3/H4
       disposition are recorded.
-- [ ] Existing sentinels plus curated/family/device Wave 0 gates pass.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] No production delivery behavior changed in the Wave 0 slice.
+- [x] Existing sentinels plus curated/family/device Wave 0 gates pass.
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] No production delivery behavior changed in the Wave 0 slice.
 - [ ] Bug closure remains unchecked until TC-267-09/10 are resolved by a
       reviewed production replan or evidence closes the report as stale.
 
@@ -452,21 +456,23 @@ git diff --check
 
 - First causal RED command:
   `flutter test test/integration/invite_reliability_runner_contract_test.dart --plain-name 'INV-267-R1 rejects unknown flags and validates the latency artifact'`.
-- First production RED: `N/A` in v3. If Wave 0 selects H1, the reviewed replan
-  must name it after resolving TC-267-09/10 and freezing the caller threshold.
+- First production RED: `N/A` in v3. Wave 0 selected H2, so
+  `267-group-invite-pre-fanout-h2-owner-plan.md` must be reviewed and supplied
+  with a product-approved caller threshold before it may name one.
 - Preservation command:
   `flutter test test/features/groups/integration/invite_round_trip_test.dart --plain-name 'offline removed member reconnects later from inbox-fallback re-invite on the rotated epoch'`.
-- Manual registration: add the runner contract test to `GROUP_TESTS`; expand
-  the reliability planner into preserved `invite_reliability` and new
-  `invite_send_latency` rows. Host feature tests otherwise auto-glob.
+- Manual registration: complete. The runner contract is in `GROUP_TESTS`, and
+  the reliability planner exposes separate preserved `invite_reliability` and
+  new `invite_send_latency` rows. Host feature tests otherwise auto-glob.
 - Migration: none for Wave 0. The production replan must decide whether the
   TC-267-09 outcome requires persistence/schema work; this plan does not grant
   that scope.
-- Boundary evidence: paired Android real bridge/crypto/relay baseline on
-  `21071FDF600CSC` + `emulator-5554`, fully automated through host-mediated
-  target-cache signals.
-- Unresolved evidence: dominant device leg, absolute caller threshold,
-  late-inbox reconciliation, delayed-overlap device method, and mixed-version
+- Boundary evidence: captured by valid paired-Android real bridge/crypto/relay
+  run `1784655771513` on `21071FDF600CSC` + `emulator-5554`, fully automated
+  through host-mediated target-cache signals and a host-capture receipt.
+- Unresolved evidence: pre-fanout subphase attribution, absolute caller
+  threshold, crash-safe H2 durability/result semantics, late-inbox
+  reconciliation, delayed-overlap device method, and mixed-version
   activation/rollback.
 
 ## Reviewer Findings
@@ -516,3 +522,124 @@ mixed-version/rollback. Destructive-action side effects are N/A.
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-21 | planning/review | plan only | Existing invite concurrency, bridge timeout, and Go timeout-profile sentinels passed; reliability `--list` exposed only the generic runner | Source/host/device grounding complete; no device baseline run | Wave 0 code is planned; production is blocked by TC-267-09/10 and the unfrozen caller threshold | Implement TC-267-R1/instrumentation/runner registration, then capture Wave 0 |
+| 2026-07-21 | Wave 0 implementation | latency trace, create/add callers, paired-device harness/runner, strict contract, registration/gates | TC-267-R1 13/13 GREEN; `groups` 2,821 GREEN; `feature-host-all` 8,481 GREEN; full analyze and discovery GREEN | Diagnostic-only seven-phase evidence, owner-specific Android artifact custody, stable provenance, and strict summary generation are implemented | No production delivery semantic is authorized or changed | Run and validate the pinned baseline |
+| 2026-07-21 | Wave 0 baseline | run `1784655771513` | pinned Pixel 6 + `emulator-5554`; 30/30; role exits 0/0; host validator GREEN | H2 selected: `create|online-cold`, `pre_fanout`, 5/5 dominant, median 1443.289 ms | `productionAuthorized=false`; TC-267-09/10 and an absolute caller threshold remain unresolved | Stop this slice and hand pre-fanout evidence to the H2 owner split |
+
+## Wave 0 Execution Evidence (2026-07-21)
+
+### Provenance and admissibility
+
+- Initial repository state: clean at
+  `55b2b984c025bc284e4f04b7cfd1b2b355e79407`.
+- Exact command:
+  `dart run integration_test/scripts/run_invite_reliability_multi_device.dart --scenario invite_send_latency --mode baseline -d 21071FDF600CSC,emulator-5554`.
+- Live topology: physical Pixel 6 `21071FDF600CSC`, Android 16 / API 36,
+  plus Android emulator `emulator-5554`, Android 15 / API 35.
+- Valid run: `1784655771513`; primary exit `0`, sibling exit `0`; both
+  role verdicts `pass`; host validator exit `0`.
+- Artifact schema: `mknoon.tc267.invite-send-latency` v2; host summary schema:
+  `mknoon.tc267.invite-send-latency-host-summary` v2; host capture receipt:
+  `mknoon.tc267.invite-send-latency-host-capture-receipt` v1.
+- Both one-attempt self-custody canaries were accepted with node, usability,
+  and relay readiness true. No canary retry or sample filtering occurred.
+- App revision:
+  `55b2b984c025bc284e4f04b7cfd1b2b355e79407`; native revision:
+  `55b2b984c025bc284e4f04b7cfd1b2b355e79407`; app dirty `true` because the
+  Wave 0 implementation was intentionally uncommitted. The pre/post source
+  fingerprint remained stable at
+  `f6cd93e50bbfa9ce151f5eefba7e68f323c3f613d60ae2114d8d1d32f85787b3`.
+- After the validator captured postflight provenance, only this execution
+  record and the H2 owner-plan document were changed; no app, harness, runner,
+  gate, or test source changed after the valid run.
+- Relay count `2`; normalized relay-address SHA-256
+  `5579561a02742fddb8f0d371f4164b04d8010a454961f7f2d2ebb4bae99613a4`.
+
+Artifacts under
+`/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/invite_reliability_multi_device_WN6LXd`:
+
+| Evidence | SHA-256 |
+|---|---|
+| `md004_1784655771513_invite_send_latency_primary.json` | `4627bf157b056e9543752736390e40bfdc56570e0434db24dbe68b7f00b90624` |
+| `md004_1784655771513_invite_send_latency_sibling.json` | `8ea9af1ebdae7477655dc59a69b29c04921b68bf3e8451cfc17c29e02700d6cb` |
+| `md004_1784655771513_invite_send_latency_host_capture_receipt.json` | `980c23fcbe064acb406105754395f75f68a9c53243a6334c23ef6527c473ac63` |
+| `md004_1784655771513_invite_send_latency_host_summary.json` | `3f51d419178e3ce438ead7379df346c27a80123d571f49e45298cc8d075b1e5b` |
+
+The two role-artifact digests are the raw-sample artifact digests recorded by
+the host summary. The receipt repeats both hashes and was generated only after
+stable, owner-specific host capture; both roles validated it before teardown.
+
+### Invalid attempts excluded from evidence
+
+| Run | Result | Exclusion |
+|---|---|---|
+| `1784651230709` | Partial sampling only | The original baseline validator rejected a truthful `transport:none` sample and the old runner did not fail-fast its peer. No valid role pair or summary exists. This is harness-hardening evidence, not TC-267-R1 RED. |
+| `1784653522650` | No samples | The sibling canary checked readiness before the background node converged. The run failed admission and produced no artifacts. |
+| `1784653693596` | No samples | Reproduced the same admission race; fail-fast supervision worked. The canary was then changed to await readiness once before its single custody attempt. |
+| `1784653935787` | 30 handshakes, primary `0`, sibling `1` | The primary target-local completion marker disappeared during Flutter teardown. Although both role artifacts existed, no host summary was written. This exposed the teardown race and led to the deterministic host-capture receipt; the run is inadmissible. |
+
+No invalid run was retried at the sample level, filtered into the cohort, or
+reported as a causal RED.
+
+### Thirty-sample result
+
+Every `create`/`add` x `online-warm`/`online-cold`/`offline` cell contains five
+raw samples. Values below are `median / max` milliseconds; dominant counts are
+exclusive per-sample phase dominance.
+
+| Cell | Caller | Pre-fanout | Sign | Encrypt | Live | Inbox | Persistence | Navigation settlement | Dominant | Direct / custody / unknown | Recipient observed / not / late |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| create / online-warm | 1616.018 / 2471.439 | 1090.262 / 2001.653 | 9.516 / 27.421 | 8.289 / 30.638 | 180.847 / 253.709 | 0 / 79.853 | 14.453 / 45.196 | 221.553 / 248.248 | pre-fanout 5/5 | 4 / 1 / 0 | 5 / 0 / 0 |
+| create / online-cold | 1796.962 / 2050.032 | 1443.289 / 1659.114 | 4.776 / 9.731 | 10.749 / 40.254 | 122.058 / 158.465 | 0 / 0 | 13.193 / 19.399 | 197.273 / 234.143 | pre-fanout 5/5 | 5 / 0 / 0 | 5 / 0 / 0 |
+| create / offline | 990.706 / 1036.177 | 623.493 / 688.939 | 5.605 / 11.300 | 10.359 / 34.210 | 8.908 / 29.775 | 134.232 / 141.565 | 11.387 / 23.909 | 171.249 / 188.528 | pre-fanout 5/5 | 0 / 5 / 0 | 5 / 0 / 0 |
+| add / online-warm | 1279.080 / 1469.479 | 1047.180 / 1098.721 | 4.782 / 15.917 | 9.208 / 10.599 | 127.453 / 146.106 | 0 / 73.384 | 9.959 / 15.280 | 92.321 / 143.870 | pre-fanout 5/5 | 4 / 1 / 0 | 5 / 0 / 0 |
+| add / online-cold | 1688.276 / 1716.649 | 1374.059 / 1453.125 | 5.816 / 35.489 | 10.767 / 16.405 | 135.456 / 168.528 | 0 / 0 | 13.446 / 26.825 | 121.852 / 149.386 | pre-fanout 5/5 | 5 / 0 / 0 | 5 / 0 / 0 |
+| add / offline | 805.885 / 1076.534 | 542.515 / 698.984 | 5.427 / 12.333 | 14.711 / 70.871 | 9.437 / 20.383 | 119.621 / 235.661 | 20.103 / 69.287 | 113.308 / 178.845 | pre-fanout 5/5 | 0 / 5 / 0 | 5 / 0 / 0 |
+
+Aggregate truth: 18 wire-ACK-confirmed direct samples, 12
+relay-custody-confirmed samples, zero outcome-unknown samples, 30 exact-ID
+recipient observations, zero non-observations, zero late observations, and an
+event-count median/max of `1 / 1` in every cell.
+
+### Disposition and scope stop
+
+The validated summary disposition is reproduced verbatim:
+
+```json
+{
+  "hypothesis": "H2",
+  "decision": "candidate_selected",
+  "cell": "create|online-cold",
+  "dominantPhase": "pre_fanout",
+  "dominantRepetitions": 5,
+  "phaseMedianMs": 1443.289,
+  "basis": "pre_fanout had the largest measured cell median; production remains gated by plan review; selected cell recorded 0 outcome-unknown sample(s), which are no-confirmation evidence only; TC-267-09 remains required",
+  "productionAuthorized": false
+}
+```
+
+H1 is not selected: live was not the exclusive-largest phase in any sample and
+its cell medians were far below the greater-than-3000-ms H1 rule. Per the
+Evidence Decision Gate, this plan stops at H2 and hands the measured pre-fanout
+cause to `267-group-invite-pre-fanout-h2-owner-plan.md`. No absolute
+user-visible threshold was product-approved, so the report is not reclassified
+`stale-already-covered`. TC-267-09/10, closure mode, receiver dedup, delayed
+overlap, and any production scheduling/result change remain blocked.
+
+### Gate record
+
+- TC-267-R1 full contract: 13/13 passed, including host-receipt custody,
+  parser, artifact, phase/correlation, timing-order, and summary mutations.
+  The exact historical pre-edit RED was not captured.
+- Final `./scripts/run_test_gates.sh groups`: 2,821 Flutter tests plus Go
+  bridge/node/relay legs passed.
+- `feature-host-all --batch-flutter --concurrency 4 --reporter failures-only`:
+  8,481 tests across 820 paths passed with one pre-existing skip.
+- Exact bridge timeout, Go timeout-profile, invite concurrency, and rotated
+  offline round-trip sentinels passed.
+- Reliability discovery contract passed; `--list` contains separate preserved
+  `invite_reliability` and independently selectable `invite_send_latency`
+  baseline rows.
+- Final full `flutter analyze --no-pub`: no issues. Final
+  `git diff --check`: clean.
+- Final incremental Graphify refresh: 60,561 nodes, 92,128 edges, 14,043
+  named tests, and 1,078 production targets.

@@ -9,6 +9,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
@@ -126,6 +127,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   String? description,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
+  GroupInviteLatencyTrace? inviteLatencyTrace,
 }) async {
   final uniqueContacts = _dedupeContactsByPeerId(selectedContacts);
   emitFlowEvent(
@@ -345,6 +347,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   // 6. Send individual P2P invites in parallel
   GroupInviteBatchResult? inviteBatchResult;
   var inviteDeliverySkippedMissingKey = false;
+  String? inviteLatencyPersistenceOutcome;
   final keyInfo = await groupRepo.getLatestKey(group.id);
   if (keyInfo != null) {
     final recipients = uniqueContacts
@@ -372,18 +375,43 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       keyEpoch: keyInfo.keyGeneration,
       groupConfig: groupConfig,
       recipients: recipients,
+      latencyTrace: inviteLatencyTrace,
+    );
+    inviteLatencyTrace?.begin(
+      GroupInviteLatencyPhase.persistence,
+      groupId: group.id,
     );
     await recordGroupInviteDeliveryBatch(
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       groupId: group.id,
       attempts: inviteBatchResult.attempts,
     );
+    inviteLatencyPersistenceOutcome = inviteDeliveryAttemptRepo == null
+        ? 'skipped'
+        : 'persisted';
+    inviteLatencyTrace?.end(
+      GroupInviteLatencyPhase.persistence,
+      groupId: group.id,
+      outcome: inviteLatencyPersistenceOutcome,
+    );
   } else if (addedMembers.isNotEmpty) {
     inviteDeliverySkippedMissingKey = true;
+    inviteLatencyTrace?.begin(
+      GroupInviteLatencyPhase.persistence,
+      groupId: group.id,
+    );
     await recordMissingGroupKeyInviteDeliveryAttempts(
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       groupId: group.id,
       members: addedMembers,
+    );
+    inviteLatencyPersistenceOutcome = inviteDeliveryAttemptRepo == null
+        ? 'skipped'
+        : 'missing_group_key';
+    inviteLatencyTrace?.end(
+      GroupInviteLatencyPhase.persistence,
+      groupId: group.id,
+      outcome: inviteLatencyPersistenceOutcome,
     );
     emitFlowEvent(
       layer: 'FL',
@@ -402,6 +430,9 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     },
   );
 
+  if (inviteLatencyTrace != null && inviteLatencyPersistenceOutcome != null) {
+    inviteLatencyTrace.beginNavigationSettlement(groupId: group.id);
+  }
   final updatedGroup = await groupRepo.getGroup(group.id) ?? groupForConfig;
 
   return CreateGroupWithMembersResult(

@@ -169,6 +169,73 @@ for catalog in \
     fail "$catalog normal mode exited $catalog_status instead of BLOCKED (78)"
 done
 
+# Plan 267 owns two explicit rows on one runner. Each row must remain directly
+# selectable; a generic path-only discovery row cannot satisfy this contract.
+invite_runner=integration_test/scripts/run_invite_reliability_multi_device.dart
+assert_invite_scenario_selectable() {
+  local scenario="$1"
+  local mode="${2:-}"
+  local devices="${3:-}"
+  local output="$tmp_dir/invite-$scenario.list"
+  local command_count
+  local expected_command="dart run $invite_runner --scenario '$scenario'"
+
+  if [ -n "$devices" ]; then
+    RELIABILITY_MULTI_DEVICE_IDS="$devices" \
+      ./scripts/run_test_gates.sh reliability-sim group --list \
+        --only "$invite_runner:$scenario" >"$output" ||
+      fail "$invite_runner:$scenario was not independently selectable"
+  else
+    ./scripts/run_test_gates.sh reliability-sim group --list \
+      --only "$invite_runner:$scenario" >"$output" ||
+      fail "$invite_runner:$scenario was not independently selectable"
+  fi
+
+  if [ -n "$mode" ]; then
+    expected_command="$expected_command --mode '$mode'"
+  fi
+  if [ -n "$devices" ]; then
+    expected_command="$expected_command -d '$devices'"
+  fi
+  grep -Fq "$expected_command" "$output" ||
+    fail "$invite_runner:$scenario did not preserve its explicit scenario/mode/device arguments"
+  command_count="$(grep -Ec '^[[:space:]]+[0-9]+\. ' "$output" || true)"
+  [ "$command_count" -eq 1 ] ||
+    fail "$invite_runner:$scenario selected $command_count commands instead of exactly one"
+}
+
+assert_invite_scenario_selectable invite_reliability
+assert_invite_scenario_selectable \
+  invite_send_latency \
+  baseline \
+  android-physical,android-emulator
+
+unset RELIABILITY_MULTI_DEVICE_IDS FLUTTER_MULTI_DEVICE_IDS FLUTTER_DEVICE_ID
+missing_invite_devices_list="$tmp_dir/invite-send-latency-missing-devices.list"
+./scripts/run_test_gates.sh reliability-sim group --list \
+  --only "$invite_runner:invite_send_latency" \
+  >"$missing_invite_devices_list" ||
+  fail "$invite_runner:invite_send_latency list must remain available without device env"
+grep -Fq -- \
+  "--mode 'baseline' -d '<required:RELIABILITY_MULTI_DEVICE_IDS>'" \
+  "$missing_invite_devices_list" ||
+  fail 'invite_send_latency list did not expose its required explicit device pair'
+
+missing_invite_devices_run="$tmp_dir/invite-send-latency-missing-devices.run"
+set +e
+./scripts/run_test_gates.sh reliability-sim group \
+  --only "$invite_runner:invite_send_latency" \
+  >"$missing_invite_devices_run" 2>&1
+missing_invite_devices_status=$?
+set -e
+[ "$missing_invite_devices_status" -eq 64 ] ||
+  fail "invite_send_latency without device env exited $missing_invite_devices_status instead of 64"
+grep -Fq 'Missing explicit two-device IDs' "$missing_invite_devices_run" ||
+  fail 'invite_send_latency without device env did not fail with the explicit-pair diagnostic'
+if grep -Fq '==>' "$missing_invite_devices_run"; then
+  fail 'invite_send_latency without device env reached Dart/device execution'
+fi
+
 # The recorder proof remains executable, but is honest about its one native
 # boundary and has no compile-time skip escape hatch.
 voice_path=integration_test/voice_message_e2e_test.dart

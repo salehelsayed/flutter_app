@@ -348,6 +348,14 @@ while IFS=$'\t' read -r kind path scenario; do
     printf '%s\t%s\t%s\n' "$kind" "$path" "$expanded_scenario"
     continue
   fi
+  if [ "$path" = "integration_test/scripts/run_invite_reliability_multi_device.dart" ]; then
+    # Plan 267 keeps the existing invite-reliability proof independently
+    # runnable while registering the latency evidence campaign as a distinct
+    # selector. A generic path-only row would make --only path:scenario fail.
+    printf '%s\t%s\tinvite_reliability\n' "$kind" "$path"
+    printf '%s\t%s\tinvite_send_latency\n' "$kind" "$path"
+    continue
+  fi
   printf '%s\t%s\t%s\n' "$kind" "$path" "$scenario"
 done <"$raw_plan_file" >"$plan_file"
 
@@ -540,11 +548,67 @@ platform_arg_for_path() {
   esac
 }
 
+mode_arg_for_path() {
+  local path="$1"
+  local scenario="${2:-}"
+
+  case "$path:$scenario" in
+    integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency)
+      printf 'baseline\n'
+      ;;
+  esac
+}
+
+requires_explicit_multi_device_ids() {
+  local path="$1"
+  local scenario="${2:-}"
+
+  [ "$path:$scenario" = \
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency" ]
+}
+
+print_device_arg_for_path() {
+  local path="$1"
+  local scenario="${2:-}"
+  local device_id
+
+  device_id="$(device_arg_for_path "$path")"
+  if [ -n "$device_id" ]; then
+    printf ' -d %s' "$(quote_for_display "$device_id")"
+    return
+  fi
+
+  if requires_explicit_multi_device_ids "$path" "$scenario"; then
+    printf ' -d %s' \
+      "$(quote_for_display '<required:RELIABILITY_MULTI_DEVICE_IDS>')"
+  fi
+}
+
+validate_required_device_args() {
+  local index
+  local kind
+  local path
+  local scenario
+
+  while IFS=$'\t' read -r index kind path scenario; do
+    [ -n "$path" ] || continue
+    if requires_explicit_multi_device_ids "$path" "$scenario" &&
+       [ -z "$(device_arg_for_path "$path")" ]; then
+      printf 'Missing explicit two-device IDs for %s:%s.\n' \
+        "$path" "$scenario" >&2
+      printf 'Set RELIABILITY_MULTI_DEVICE_IDS=<physical-android-id>,<android-emulator-id> ' >&2
+      printf '(fallbacks: FLUTTER_MULTI_DEVICE_IDS or comma-separated FLUTTER_DEVICE_ID).\n' >&2
+      return 64
+    fi
+  done <"$active_plan_file"
+}
+
 print_command_for_path() {
   local kind="$1"
   local path="$2"
   local scenario="${3:-}"
   local device_id
+  local mode
   local platform
 
   print_relay_env_prefix
@@ -573,10 +637,7 @@ print_command_for_path() {
       ;;
     integration_test/scripts/run_notification_sound_smoke.dart)
       printf 'dart run %s' "$path"
-      device_id="$(device_arg_for_path "$path")"
-      if [ -n "$device_id" ]; then
-        printf ' -d %s' "$(quote_for_display "$device_id")"
-      fi
+      print_device_arg_for_path "$path" "$scenario"
       if [ "${RELIABILITY_NOTIFICATION_SOUND_INTERACTIVE:-0}" != "1" ]; then
         printf ' --non-interactive'
       fi
@@ -586,10 +647,11 @@ print_command_for_path() {
       if [ -n "$scenario" ]; then
         printf ' --scenario %s' "$(quote_for_display "$scenario")"
       fi
-      device_id="$(device_arg_for_path "$path")"
-      if [ -n "$device_id" ]; then
-        printf ' -d %s' "$(quote_for_display "$device_id")"
+      mode="$(mode_arg_for_path "$path" "$scenario")"
+      if [ -n "$mode" ]; then
+        printf ' --mode %s' "$(quote_for_display "$mode")"
       fi
+      print_device_arg_for_path "$path" "$scenario"
       platform="$(platform_arg_for_path "$path")"
       if [ -n "$platform" ]; then
         printf ' -p %s' "$(quote_for_display "$platform")"
@@ -619,6 +681,7 @@ run_path() {
   local scenario="${3:-}"
   local -a cmd=()
   local device_id
+  local mode
   local platform
 
   case "$path" in
@@ -661,6 +724,10 @@ run_path() {
       cmd=(dart run "$path")
       if [ -n "$scenario" ]; then
         cmd+=(--scenario "$scenario")
+      fi
+      mode="$(mode_arg_for_path "$path" "$scenario")"
+      if [ -n "$mode" ]; then
+        cmd+=(--mode "$mode")
       fi
       device_id="$(device_arg_for_path "$path")"
       if [ -n "$device_id" ]; then
@@ -745,6 +812,8 @@ if [ "$dry_run" -eq 1 ]; then
   printf '\nDry run only. Discovery passed and no commands were executed.\n'
   exit 0
 fi
+
+validate_required_device_args
 
 preflight_transport_census_processes() {
   local matches
