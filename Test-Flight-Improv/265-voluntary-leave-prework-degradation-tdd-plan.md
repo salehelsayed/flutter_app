@@ -172,12 +172,13 @@ Deferred / accepted difference:
 
 Dependencies:
 
-- Hard prerequisite: the corrected tip of accepted `refs/plan-handoffs/264`, whose
-  retained initial-freeze parent is
+- Hard prerequisite: accepted `refs/plan-handoffs/264` at corrected tip
+  `a03300cdbc4d9aae900b89684649dca60880211a` (tree
+  `93d9ab4eabc815034964f1c4ab236159b1372833`), whose retained initial-freeze parent is
   `f0a5d2777dfd104407d239e111a4a0b8d95651ac`, including DB v103, the exit-runner API,
   PB264-09/PB264-10/PB264-12 names, bounded outcome vocabulary, observation seam, and
-  gate registration. Exact final tip metadata is recorded in Plan 264's post-commit
-  working closure to avoid an immutable-tree self-reference.
+  gate registration. The exact final identifiers live in Plan 264's post-commit
+  working closure because the immutable corrective tree uses self-reference-safe wording.
 - Plan 263 authority/terminalization remains inherited through Plan 264 and is not
   reopened here. Plan 266 consumes bounded outcomes after 265.
 

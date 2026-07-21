@@ -604,13 +604,14 @@ a per-plan command.
 
 ## Handoff
 
-- Immutable handoff: `refs/plan-handoffs/264` retains the initial scoped freeze
-  `f0a5d2777dfd104407d239e111a4a0b8d95651ac` (tree
-  `62c67adea0c6de5a1b12785aff337f96f957b7fe`) as the direct parent of one final
-  corrective tip. The initial freeze is parented to Plan 263 commit
+- Immutable handoff: `refs/plan-handoffs/264` now points to the final corrective tip
+  `a03300cdbc4d9aae900b89684649dca60880211a` (tree
+  `93d9ab4eabc815034964f1c4ab236159b1372833`), whose direct parent is the initial
+  scoped freeze `f0a5d2777dfd104407d239e111a4a0b8d95651ac` (tree
+  `62c67adea0c6de5a1b12785aff337f96f957b7fe`). The initial freeze is parented to Plan 263 commit
   `1bb3c1c95792686cba69bed39ca9a583a311ea2a`; the corrected ref still has 102 scoped
-  changed paths versus Plan 263. The exact self-referential final tip/tree are recorded
-  in the post-commit working closure metadata. Both commits use an alternate index and
+  changed paths versus Plan 263. The immutable corrective tree uses self-reference-safe
+  wording; this post-commit working closure records its exact tip/tree. Both commits use an alternate index and
   exclude user-owned Plan 266/267, syslog, graph, and unrelated conversation-test
   changes without moving `HEAD` or changing the main index.
 - First causal RED:
@@ -675,4 +676,4 @@ a per-plan command.
 | 2026-07-21 | counterexample closure | notification projection + lifecycle regression | generation-check mutation RED, restored GREEN; `flutter analyze --no-pub` no issues | Queued authoritative loads cannot restore removed groups or leak an old account's terminal fence into same-id new-account state. | Freeze `refs/plan-handoffs/264` and record exact metadata. |
 | 2026-07-21 | initial scoped freeze | 102 scoped paths | `refs/plan-handoffs/264` -> `f0a5d2777dfd104407d239e111a4a0b8d95651ac`; tree `62c67adea0c6de5a1b12785aff337f96f957b7fe` | Initial ref is parented to immutable Plan 263 and excludes all audited unrelated worktree changes. Later counterexamples require one corrective child, so this is retained history rather than the final tip. | Close counterexamples, rerun affected gates, then fast-forward the same ref. |
 | 2026-07-21 | post-freeze counterexample correction | runner + DB refusal regressions | initial all-phase guard exposed as delivery-order unsafe; delivered-attempt/sole-admin RED (`blockedLastAdmin`), then GREEN (`completed`); atomic-claim RED expected `refusedLastAdmin` but got `committed`; preparation-race RED expected `blockedLastAdmin` but got `failed`; runner 19/19 and DB helper 15/15 GREEN with production wiring plus real two-handle overlap/order proofs | Last-admin remains reversible only before notice claim. Preparation-time and SQL-time roster changes now preserve one recoverable UI outcome, and SQL establishes the final order with inbound projection. Every post-notice state is irreversible. | Rerun groups/core/feature/analyzer, refresh Graphify, then fast-forward the immutable handoff ref with the original freeze retained as parent. |
-| 2026-07-21 | final corrective closure | 10 corrected files within the same 102-path scope | focused 145/145; groups 2,759; core 2,723/343 plus renderer; feature 8,441/815 with one expected skip; completeness 1,334/1,334; analyzer clean; Graphify current/anchored at `3621afca05d0b1d3` | Independent code and DB audits found no remaining reachable timing window. The first final core attempt had one unrelated LAN-media timing failure; its exact rerun and the required full-family rerun passed. | Fast-forward `refs/plan-handoffs/264` through one corrective child and record exact working metadata; full `host-all` remains wave/release-only. |
+| 2026-07-21 | final corrective closure | 10 corrected files within the same 102-path scope | focused 145/145; groups 2,759; core 2,723/343 plus renderer; feature 8,441/815 with one expected skip; completeness 1,334/1,334; analyzer clean; Graphify current/anchored at `3621afca05d0b1d3` | Independent code and DB audits found no remaining reachable timing window. The first final core attempt had one unrelated LAN-media timing failure; its exact rerun and the required full-family rerun passed. | Complete at `a03300cdbc4d9aae900b89684649dca60880211a`, tree `93d9ab4eabc815034964f1c4ab236159b1372833`; full `host-all` remains wave/release-only. |
