@@ -5161,6 +5161,67 @@ func TestLeaveGroupTopic_RemovesPubSubStateAndBlocksFuturePublish(t *testing.T) 
 	}
 }
 
+func TestPB264LeaveGroupTopicRepeatedIsIdempotent(t *testing.T) {
+	n := NewNode()
+	if _, err := n.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = n.Stop() })
+
+	const groupID = "pb264-repeated-leave"
+	config := testGroupConfig(GroupTypeChat)
+	keyInfo := &GroupKeyInfo{Key: "pb264-test-key", KeyEpoch: 1}
+	if err := n.JoinGroupTopic(groupID, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	joinedTopic := n.groupTopics[groupID]
+	joinedConfig := n.groupConfigs[groupID]
+	joinedKey := n.groupKeys[groupID]
+	n.mu.RUnlock()
+	if joinedTopic == nil || joinedConfig == nil || joinedKey == nil {
+		t.Fatalf(
+			"joined state incomplete: topic=%t config=%t key=%t",
+			joinedTopic != nil,
+			joinedConfig != nil,
+			joinedKey != nil,
+		)
+	}
+
+	assertGroupStateAbsent := func(label string) {
+		t.Helper()
+		n.mu.RLock()
+		_, hasTopic := n.groupTopics[groupID]
+		_, hasConfig := n.groupConfigs[groupID]
+		_, hasKey := n.groupKeys[groupID]
+		n.mu.RUnlock()
+		if hasTopic || hasConfig || hasKey {
+			t.Fatalf(
+				"%s retained group state: topic=%t config=%t key=%t",
+				label,
+				hasTopic,
+				hasConfig,
+				hasKey,
+			)
+		}
+	}
+
+	if err := n.LeaveGroupTopic(groupID); err != nil {
+		t.Fatalf("first LeaveGroupTopic: %v", err)
+	}
+	assertGroupStateAbsent("after first leave")
+
+	if err := n.LeaveGroupTopic(groupID); err != nil {
+		t.Fatalf("second LeaveGroupTopic: %v", err)
+	}
+	assertGroupStateAbsent("after second leave")
+}
+
 func TestGL010LeaveUnknownGroupIsNoOpForJoinedGroupState(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()

@@ -336,15 +336,17 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 102);
+      expect(currentIdentityDatabaseVersion, 103);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         final index101 = registry.indexWhere((entry) => entry.version == 101);
         final index102 = registry.indexWhere((entry) => entry.version == 102);
+        final index103 = registry.indexWhere((entry) => entry.version == 103);
         expect(index102, index101 + 1);
-        expect(index102, registry.length - 1);
+        expect(index103, index102 + 1);
+        expect(index103, registry.length - 1);
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
       }

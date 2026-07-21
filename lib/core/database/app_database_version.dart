@@ -16,4 +16,6 @@
 // pre-v96 build may be installed over a profile already opened at v96.
 // 263: DB v102 adds durable `groups.self_removed_at` authority for retained
 // self-removed shells and terminalizes legacy membership-instance work.
-const int currentIdentityDatabaseVersion = 102;
+// 264: DB v103 adds the exact-membership, revisioned `group_exit_intents`
+// state machine. Its legacy backfill is deliberately empty.
+const int currentIdentityDatabaseVersion = 103;

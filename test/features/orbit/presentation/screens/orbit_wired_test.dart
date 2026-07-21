@@ -8,6 +8,7 @@ import 'package:flutter_app/l10n/app_localizations_ar.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
@@ -28,11 +29,15 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_b
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -69,6 +74,7 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
@@ -77,6 +83,8 @@ import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '../../../../shared/helpers/durable_group_exit_surface_harness.dart';
+import '../../../../shared/helpers/legacy_group_exit_coordinator_fixture.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -196,6 +204,18 @@ void main() {
       compressVideo: ({required path, required compress, onProgress}) async =>
           null,
     );
+    setGroupExitIntentActionSinks();
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+    setGroupExitIntentRuntimeSinks(
+      canRejoin: (_) async => true,
+      processExisting: (_) async {},
+    );
+    setGroupDissolvePreflightAuthority(
+      fakeClearGroupDissolvePreflightAuthority(),
+    );
 
     // Mock path_provider for getApplicationDocumentsDirectory()
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -215,6 +235,10 @@ void main() {
     groupMessageStreamController.close();
     joinedGroupInviteController.close();
     pendingInviteController.close();
+    setGroupExitIntentActionSinks();
+    setGroupExitIntentAccessSinks();
+    setGroupExitIntentRuntimeSinks();
+    setGroupDissolvePreflightAuthority(null);
     postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -401,8 +425,10 @@ void main() {
     required String groupId,
     required String adminPeerId,
     required DateTime joinedAt,
+    InMemoryGroupRepository? repository,
   }) async {
-    await groupRepo.saveMember(
+    final targetRepository = repository ?? groupRepo;
+    await targetRepository.saveMember(
       GroupMember(
         groupId: groupId,
         peerId: testIdentity.peerId,
@@ -413,7 +439,7 @@ void main() {
         joinedAt: joinedAt,
       ),
     );
-    await groupRepo.saveMember(
+    await targetRepository.saveMember(
       GroupMember(
         groupId: groupId,
         peerId: adminPeerId,
@@ -424,7 +450,7 @@ void main() {
         joinedAt: joinedAt,
       ),
     );
-    await groupRepo.saveKey(
+    await targetRepository.saveKey(
       GroupKeyInfo(
         groupId: groupId,
         keyGeneration: 1,
@@ -813,6 +839,351 @@ void main() {
     });
 
     testWidgets(
+      'PB264-16 Orbit active Leave routes through the durable coordinator and fails closed',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final joinedAt = DateTime.utc(2026, 7, 21, 9);
+        const groupId = 'pb264-orbit-active';
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Orbit Pending Exit',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: joinedAt,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await seedOrdinaryGroupExitState(
+          groupId: groupId,
+          adminPeerId: 'peer-admin',
+          joinedAt: joinedAt,
+        );
+        final roleRow = GroupPendingBroadcast(
+          id: 'pb264-orbit-role-row',
+          groupId: groupId,
+          kind: groupPendingBroadcastKindMemberRoleUpdated,
+          sysText: '{"kind":"member_role_updated"}',
+          recipientPeerIds: const ['peer-admin'],
+          eventAt: joinedAt,
+          sourceMessageId: 'pb264-orbit-role-source',
+          createdAt: joinedAt,
+          updatedAt: joinedAt,
+        );
+        var activeCase = '';
+        var postSnapshotLoads = 0;
+        var roleInsertedAfterSnapshot = false;
+        final calls = <String>[];
+        setGroupExitIntentActionSinks(
+          requestLeave: (requestedGroupId) async {
+            calls.add('$activeCase:$requestedGroupId');
+            if (activeCase == 'post-snapshot-role') {
+              expect(roleInsertedAfterSnapshot, isTrue);
+              expect(
+                postSnapshotLoads,
+                2,
+                reason: 'confirmation must reclassify after role insertion',
+              );
+            }
+            return GroupExitIntentRequestResult(
+              status: activeCase == 'ordinary'
+                  ? GroupExitIntentRequestStatus.started
+                  : GroupExitIntentRequestStatus.pendingRoleSync,
+            );
+          },
+        );
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (requestedGroupId) async {
+            switch (activeCase) {
+              case 'pending-snapshot':
+                return [roleRow];
+              case 'classification-load-error':
+                throw StateError('pending classifier unavailable');
+              case 'post-snapshot-role':
+                postSnapshotLoads++;
+                if (postSnapshotLoads == 1) {
+                  roleInsertedAfterSnapshot = true;
+                  return const <GroupPendingBroadcast>[];
+                }
+                return [roleRow];
+              default:
+                return const <GroupPendingBroadcast>[];
+            }
+          },
+        );
+        addTearDown(() => setGroupPendingBroadcastAccessSinks());
+
+        Future<void> runCase(
+          String name, {
+          required bool identityAvailable,
+          required bool expectsCoordinator,
+          required bool expectsConfirmation,
+          required bool expectsPendingSheet,
+        }) async {
+          activeCase = name;
+          postSnapshotLoads = 0;
+          roleInsertedAfterSnapshot = false;
+          identityRepo.seed(testIdentity);
+          await tester.pumpWidget(buildOrbitWired());
+          await pumpOrbitFrames(tester, count: 6);
+          await switchToAllChats(tester);
+          if (!identityAvailable) identityRepo.seed(null);
+          final callsBefore = calls.length;
+
+          final center = tester.getCenter(find.text('Orbit Pending Exit'));
+          await tester.flingFrom(center, const Offset(-350, 0), 1000);
+          await pumpOrbitFrames(tester, count: 6);
+          await tester.tap(find.text(l10n.orbit_leave_action));
+          await pumpOrbitFrames(tester, count: 6);
+          expect(
+            find.text(l10n.orbit_leave_group_action),
+            expectsConfirmation ? findsOneWidget : findsNothing,
+            reason: name,
+          );
+          if (expectsConfirmation) {
+            await tester.tap(find.text(l10n.orbit_leave_group_action));
+            await pumpOrbitFrames(tester, count: 6);
+          }
+
+          expect(
+            calls.length - callsBefore,
+            expectsCoordinator ? 1 : 0,
+            reason: name,
+          );
+          expect(
+            find.byKey(const ValueKey('group-exit-leave-when-synced')),
+            expectsPendingSheet ? findsOneWidget : findsNothing,
+            reason: name,
+          );
+          expect(
+            bridge.commandLog.where((command) => command == 'group:leave'),
+            isEmpty,
+            reason: '$name must not bypass the durable coordinator',
+          );
+          expect(p2pService.sendMessageCallCount, 0, reason: name);
+          expect(p2pService.storeInInboxCallCount, 0, reason: name);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        await runCase(
+          'pending-snapshot',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsConfirmation: false,
+          expectsPendingSheet: true,
+        );
+        await runCase(
+          'identity-null',
+          identityAvailable: false,
+          expectsCoordinator: false,
+          expectsConfirmation: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'classification-load-error',
+          identityAvailable: true,
+          expectsCoordinator: false,
+          expectsConfirmation: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'post-snapshot-role',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsConfirmation: true,
+          expectsPendingSheet: true,
+        );
+        await runCase(
+          'ordinary',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsConfirmation: true,
+          expectsPendingSheet: false,
+        );
+
+        expect(calls, [
+          'pending-snapshot:$groupId',
+          'post-snapshot-role:$groupId',
+          'ordinary:$groupId',
+        ]);
+      },
+    );
+
+    testWidgets(
+      'PB264-16 Orbit post-snapshot role mutation persists exact queued exit',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final joinedAt = DateTime.utc(2026, 7, 21, 9);
+        const groupId = 'pb264-real-orbit';
+        final group = GroupModel(
+          id: groupId,
+          name: 'Durable Orbit Exit',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: joinedAt,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        );
+        await groupRepo.saveGroup(group);
+        await seedOrdinaryGroupExitState(
+          groupId: groupId,
+          adminPeerId: 'peer-admin',
+          joinedAt: joinedAt,
+        );
+        final selfMember = (await groupRepo.getMember(
+          groupId,
+          testIdentity.peerId,
+        ))!;
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        final center = tester.getCenter(find.text('Durable Orbit Exit'));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.text(l10n.orbit_leave_group_action), findsOneWidget);
+
+        final harness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.create(
+            group: group,
+            selfMember: selfMember,
+            groupRepository: groupRepo,
+            identityRepository: identityRepo,
+            recipientPeerId: 'peer-admin',
+          ),
+        ))!;
+        addTearDown(() async {
+          setGroupPendingBroadcastAccessSinks();
+          setGroupExitIntentAccessSinks();
+          setGroupExitIntentActionSinks();
+          await tester.runAsync(harness.close);
+        });
+        harness.install();
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.requestLeaveCompletions >= 1,
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(harness.uiSnapshotLoads, 1);
+        expect(harness.roleInsertedAfterSnapshot, isTrue);
+        expect(harness.requestLeaveCalls, 1);
+        expect(harness.rolePushAttempts, 1);
+        expect(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+          findsOneWidget,
+        );
+        expect(await tester.runAsync(harness.loadIntent), isNull);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+        );
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.queueLeaveCompletions >= 1,
+        );
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text(l10n.group_exit_leaving_status).evaluate().isNotEmpty,
+        );
+
+        final intent = await tester.runAsync(harness.loadIntent);
+        expect(harness.queueLeaveCalls, 1);
+        expect(intent, isNotNull);
+        expect(intent!.groupId, groupId);
+        expect(intent.intentId, 'pb264-surface-1');
+        expect(intent.selfPeerId, testIdentity.peerId);
+        expect(intent.selfJoinedAt, selfMember.joinedAt.toUtc());
+        expect(intent.state, GroupExitIntentState.queued);
+        expect(intent.pendingBroadcastId, 'group-exit-notice:pb264-surface-2');
+        expect(intent.revision, 0);
+        final pending = (await tester.runAsync(
+          () => harness.pendingRepository.forGroup(groupId),
+        ))!;
+        expect(pending, hasLength(1));
+        expect(
+          sameExactGroupPendingBroadcast(pending.single, harness.roleBroadcast),
+          isTrue,
+        );
+        expect(find.text(l10n.group_exit_leaving_status), findsOneWidget);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          isEmpty,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    testWidgets(
+      'PB264-17 Orbit queued exit row says Leaving and suppresses stuck actions',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final joinedAt = DateTime.utc(2026, 7, 21, 9);
+        const groupId = 'pb264-orbit-leaving';
+        final group = GroupModel(
+          id: groupId,
+          name: 'Orbit Leaving Group',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: joinedAt,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        );
+        await groupRepo.saveGroup(group);
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            groupId,
+            nextEligibleAt: future,
+          );
+        }
+        final at = DateTime.utc(2026, 7, 21, 10);
+        final intent = GroupExitIntent(
+          groupId: groupId,
+          intentId: 'pb264-orbit-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: joinedAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb264-orbit-pending-broadcast',
+          createdAt: at,
+          updatedAt: at,
+        );
+        setGroupExitIntentAccessSinks(
+          forGroup: (requestedGroupId) async =>
+              requestedGroupId == groupId ? intent : null,
+          all: () async => [intent],
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+
+        expect(find.text('Leaving…'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('orbit-group-stuck-retry-$groupId')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-group-stuck-leave-$groupId')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
       'G2: tapping "Retry now" on a still-stuck orbit group keeps the badge + '
       'actions after the single-group refresh',
       (tester) async {
@@ -891,7 +1262,11 @@ void main() {
         await pumpOrbitFrames(tester, count: 6);
 
         expect(
-          find.text(AppLocalizationsEn().group_info_leave_failed),
+          find.text(AppLocalizationsEn().group_exit_only_admin_title),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-exit-no-candidate')),
           findsOneWidget,
         );
         expect(await groupRepo.getGroup('g-1'), isNotNull);
@@ -1106,6 +1481,12 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await seedOrdinaryGroupExitState(
+          groupId: ordinaryGroupId,
+          adminPeerId: 'peer-admin',
+          joinedAt: marker,
+          repository: ordinaryRepo,
+        );
         final future = marker.add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
           await ordinaryRepo.recordGroupRejoinFailure(
@@ -1114,6 +1495,14 @@ void main() {
           );
         }
         var unexpectedLocalDeleteCalls = 0;
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: ordinaryRepo,
+          messageRepository: ordinaryMessages,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
         await tester.pumpWidget(
           buildOrbitWired(
             orbitKey: const ValueKey('tc14-ordinary-control'),
@@ -3181,6 +3570,21 @@ void main() {
           ),
         );
 
+        var coordinatorCalls = 0;
+        setGroupExitIntentActionSinks(
+          requestLeave: (groupId) async {
+            // Coordinator-bound completion fixture: the widget may only reach
+            // native leave through this installed durable authority.
+            coordinatorCalls++;
+            await callGroupLeave(bridge, groupId);
+            await groupMsgRepo.deleteMessagesForGroup(groupId);
+            await groupRepo.deleteGroup(groupId);
+            return const GroupExitIntentRequestResult(
+              status: GroupExitIntentRequestStatus.started,
+            );
+          },
+        );
+
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
         await switchToAllChats(tester);
@@ -3204,6 +3608,7 @@ void main() {
           bridge.commandLog.where((command) => command == 'group:leave'),
           hasLength(1),
         );
+        expect(coordinatorCalls, 1);
 
         final dissolvedCenter = tester.getCenter(
           find.text('Dissolved Exit Group'),
@@ -3285,6 +3690,14 @@ void main() {
             isIncoming: false,
             createdAt: now,
           ),
+        );
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: groupMsgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
         );
 
         await tester.pumpWidget(buildOrbitWired());
@@ -3485,10 +3898,17 @@ void main() {
             createdAt: now,
           ),
         );
-        bridge.responses['group:inboxStore'] = {
-          'ok': false,
-          'errorCode': 'INBOX_FAILED',
-        };
+        var coordinatorCalls = 0;
+        setGroupExitIntentActionSinks(
+          requestLeave: (requestedGroupId) async {
+            coordinatorCalls++;
+            expect(requestedGroupId, groupId);
+            return GroupExitIntentRequestResult(
+              status: GroupExitIntentRequestStatus.failed,
+              cause: StateError('prework failed'),
+            );
+          },
+        );
 
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
@@ -3513,11 +3933,15 @@ void main() {
         expect(
           (await groupMsgRepo.getMessagesPage(groupId)).map((row) => row.id),
           ['gm-prework-history'],
-          reason: 'tentative member_removed history must be rolled back',
+          reason: 'a failed coordinator result cannot alter local history',
         );
-        expect(bridge.commandLog, contains('group:publish'));
-        expect(bridge.commandLog, contains('group:inboxStore'));
-        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(coordinatorCalls, 1);
+        expect(
+          bridge.commandLog,
+          isNot(
+            contains(anyOf('group:publish', 'group:inboxStore', 'group:leave')),
+          ),
+        );
       },
     );
 
@@ -3607,12 +4031,9 @@ void main() {
         expect(find.text(l10n.orbit_leave_group_body), findsOneWidget);
         expect(find.text(l10n.orbit_leave_group_action), findsOneWidget);
 
-        // Both authoritative admin rows change while confirmation is open.
-        // The final re-read therefore sees the zero-admin race, not the stale
-        // two-admin snapshot that originally justified normal leave.
-        await groupRepo.saveMember(
-          selfMember.copyWith(role: MemberRole.writer),
-        );
+        // The peer-admin row changes while confirmation is open. The final
+        // coordinator read therefore sees self as the exact last admin, not
+        // the stale two-admin snapshot that originally justified normal leave.
         await groupRepo.saveMember(peerAdmin.copyWith(role: MemberRole.writer));
         await tester.tap(find.text(l10n.orbit_leave_group_action));
         await pumpOrbitFrames(tester, count: 6);
@@ -3628,10 +4049,10 @@ void main() {
           findsOneWidget,
         );
         expect(
-          (await groupRepo.getMembers(
-            groupId,
-          )).where((member) => member.role == MemberRole.admin),
-          isEmpty,
+          (await groupRepo.getMembers(groupId))
+              .where((member) => member.role == MemberRole.admin)
+              .map((member) => member.peerId),
+          [testIdentity.peerId],
         );
         expect(await groupRepo.getGroup(groupId), isNotNull);
         expect(
@@ -4134,6 +4555,14 @@ void main() {
           createdAt: now.subtract(const Duration(minutes: 1)),
         ),
       );
+      installLegacyGroupExitCoordinatorFixture(
+        bridge: bridge,
+        groupRepository: groupRepo,
+        messageRepository: groupMsgRepo,
+        identityRepository: identityRepo,
+        sendP2PMessage: p2pService.sendMessage,
+        storeP2PMessageInInbox: p2pService.storeInInbox,
+      );
 
       await tester.pumpWidget(buildOrbitWired());
       await pumpOrbitFrames(tester, count: 6);
@@ -4325,6 +4754,14 @@ void main() {
             isIncoming: true,
             createdAt: now.add(const Duration(minutes: 1)),
           ),
+        );
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: groupMsgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
         );
 
         await tester.pumpWidget(buildOrbitWired());

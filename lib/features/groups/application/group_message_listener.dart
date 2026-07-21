@@ -68,6 +68,12 @@ typedef RecoverGroupDispatcherOverflow =
 typedef RotateGroupKeyAfterRemoteRemoval =
     Future<bool> Function(String groupId);
 
+/// Retires durable voluntary-exit work after an authenticated remote dissolve
+/// has been committed locally. The concrete runtime callback deletes the
+/// group's exit intent and that intent's exact leave-notice row atomically.
+typedef TerminalizeGroupExitWorkAfterRemoteDissolve =
+    Future<void> Function(String groupId);
+
 const _maxPendingMembershipDependentMessagesPerGroup = 50;
 
 class _PendingMembershipDependentMessage {
@@ -157,6 +163,8 @@ class GroupMessageListener {
   final RequestGroupKeyRepair _requestGroupKeyRepair;
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
   final RotateGroupKeyAfterRemoteRemoval? _rotateGroupKeyAfterRemoteRemoval;
+  final TerminalizeGroupExitWorkAfterRemoteDissolve?
+  _terminalizeGroupExitWorkAfterRemoteDissolve;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final HoldPendingSiblingDeviceFn? _holdPendingSiblingDevice;
   final GroupPrivateMediaAvailability _privateMediaAvailability;
@@ -208,6 +216,8 @@ class GroupMessageListener {
     RequestGroupKeyRepair? requestGroupKeyRepair,
     RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
     RotateGroupKeyAfterRemoteRemoval? rotateGroupKeyAfterRemoteRemoval,
+    TerminalizeGroupExitWorkAfterRemoteDissolve?
+    terminalizeGroupExitWorkAfterRemoteDissolve,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
     HoldPendingSiblingDeviceFn? holdPendingSiblingDevice,
@@ -240,6 +250,8 @@ class GroupMessageListener {
            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _rotateGroupKeyAfterRemoteRemoval = rotateGroupKeyAfterRemoteRemoval,
+       _terminalizeGroupExitWorkAfterRemoteDissolve =
+           terminalizeGroupExitWorkAfterRemoteDissolve,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _holdPendingSiblingDevice = holdPendingSiblingDevice,
        _privateMediaAvailability = privateMediaAvailability;
@@ -4706,7 +4718,10 @@ class GroupMessageListener {
         // A terminal dissolve owns one phase from the fresh unmarked check
         // through native leave. B3-first skips every effect; dissolve-first
         // completes before B3 can mark the shell.
-        if (group.isDissolved) return null;
+        if (group.isDissolved) {
+          await _terminalizeExitWorkAfterRemoteDissolve(groupId);
+          return null;
+        }
 
         await appendSystemEventLog();
         final resolvedEventAt = (eventAt ?? DateTime.now().toUtc()).toUtc();
@@ -4718,6 +4733,7 @@ class GroupMessageListener {
             lastMembershipEventAt: resolvedEventAt,
           ),
         );
+        await _terminalizeExitWorkAfterRemoteDissolve(groupId);
 
         final timelineMessage = buildGroupDissolvedTimelineMessage(
           groupId: groupId,
@@ -4766,6 +4782,26 @@ class GroupMessageListener {
         'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
       },
     );
+  }
+
+  Future<void> _terminalizeExitWorkAfterRemoteDissolve(String groupId) async {
+    final terminalize = _terminalizeGroupExitWorkAfterRemoteDissolve;
+    if (terminalize == null) return;
+    try {
+      await terminalize(groupId);
+    } catch (error) {
+      // The authoritative dissolved row already prevents voluntary network
+      // work. Keep remote dissolve timeline/native handling progressing, and
+      // let an accepted replay retry this exact local terminalization.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_DISSOLVE_EXIT_WORK_TERMINALIZE_ERROR',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': error.toString(),
+        },
+      );
+    }
   }
 
   /// Handles an incoming group reaction event from the bridge.

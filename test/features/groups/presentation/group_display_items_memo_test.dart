@@ -6,7 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -110,6 +112,14 @@ GroupMessage _makeMessage({
 );
 
 void main() {
+  setUp(() {
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+  });
+  tearDown(setGroupExitIntentAccessSinks);
+
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
   late InMemoryMediaAttachmentRepository mediaRepo;
@@ -167,7 +177,9 @@ void main() {
         group: _makeChatGroup(),
         groupRepo: groupRepo,
         msgRepo: msgRepo,
-        groupMessageListener: _FakeGroupMessageListener(streamController.stream),
+        groupMessageListener: _FakeGroupMessageListener(
+          streamController.stream,
+        ),
         bridge: bridge,
         identityRepo: identityRepo,
         contactRepo: contactRepo,
@@ -228,8 +240,7 @@ void main() {
       expect(card.status, 'delivered');
 
       // A locale change recomputes day-separator labels (locale is in the key).
-      final afterFlip =
-          GroupConversationWired.debugGroupDisplayItemsBuildCount;
+      final afterFlip = GroupConversationWired.debugGroupDisplayItemsBuildCount;
       final enLabel = tester
           .widget<DateSeparator>(find.byType(DateSeparator))
           .label;

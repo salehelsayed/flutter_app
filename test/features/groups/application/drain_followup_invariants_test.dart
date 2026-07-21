@@ -401,6 +401,7 @@ void main() {
           'text': jsonEncode({
             '__sys': 'member_removed',
             'member': {'peerId': 'peer-self', 'username': 'Self'},
+            'removedAt': t2.toIso8601String(),
             'groupConfig': {
               'name': 'G1',
               'groupType': 'chat',

@@ -19,6 +19,8 @@ import 'package:flutter_app/features/groups/application/accept_pending_group_inv
 import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -35,6 +37,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_reaction_r
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_exit_recovery_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
@@ -118,6 +121,7 @@ class _GroupListWiredState extends State<GroupListWired>
   Map<String, GroupMessage?> _latestMessages = {};
   Map<String, int> _unreadCounts = {};
   Map<String, int> _rejoinAttempts = {};
+  Set<String> _exitIntentGroupIds = <String>{};
   List<PendingGroupInvite> _pendingInvites = [];
   bool _isLoading = true;
   String? _currentLoadErrorMessage;
@@ -208,6 +212,7 @@ class _GroupListWiredState extends State<GroupListWired>
         for (final entry in rejoinStates.entries)
           entry.key: entry.value.attemptCount,
       };
+      final exitIntents = await loadAllGroupExitIntents();
 
       for (final group in groups) {
         latestMessages[group.id] = await widget.msgRepo.getLatestMessage(
@@ -222,6 +227,11 @@ class _GroupListWiredState extends State<GroupListWired>
         _latestMessages = latestMessages;
         _unreadCounts = unreadCounts;
         _rejoinAttempts = rejoinAttempts;
+        if (exitIntents.isAvailable) {
+          _exitIntentGroupIds = exitIntents.intents
+              .map((intent) => intent.groupId)
+              .toSet();
+        }
         _pendingInvites = visibleInvites;
         _isLoading = false;
         _currentLoadErrorMessage = null;
@@ -845,6 +855,8 @@ class _GroupListWiredState extends State<GroupListWired>
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         reason: RejoinReason.nodeRequestedRecovery,
+        canRejoinForExitIntent: canRejoinForExitIntent,
+        processExitIntent: processExistingGroupExitIntent,
       );
     } catch (e) {
       emitFlowEvent(
@@ -861,25 +873,27 @@ class _GroupListWiredState extends State<GroupListWired>
   /// Tears the group down via the normal leave path (never a silent auto-delete)
   /// and refreshes the list.
   Future<void> _onLeaveStuckGroup(GroupModel group) async {
-    final identity = await widget.identityRepo.loadIdentity();
+    String? selfPeerId;
     GroupExitSnapshot? snapshot;
-    if (identity != null) {
-      try {
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      selfPeerId = identity?.peerId;
+      if (selfPeerId != null) {
         snapshot = await resolveGroupExitSnapshot(
           groupRepo: widget.groupRepo,
           groupId: group.id,
-          selfPeerId: identity.peerId,
+          selfPeerId: selfPeerId,
           messageRepo: widget.msgRepo,
           inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
           loadPendingBroadcasts: loadGroupPendingBroadcasts,
         );
-      } catch (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_LIST_FL_STUCK_EXIT_CLASSIFY_ERROR',
-          details: {'groupId': group.id, 'error': error.toString()},
-        );
       }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_STUCK_EXIT_CLASSIFY_ERROR',
+        details: {'groupId': group.id, 'error': error.toString()},
+      );
     }
     if (!mounted) return;
     if (snapshot == null) {
@@ -899,7 +913,7 @@ class _GroupListWiredState extends State<GroupListWired>
     if (snapshot.disposition == GroupExitDisposition.selfRemovedDeleteLocally) {
       await _confirmDeleteSelfRemovedGroupShell(
         groupId: group.id,
-        selfPeerId: identity!.peerId,
+        selfPeerId: selfPeerId!,
       );
       return;
     }
@@ -909,24 +923,119 @@ class _GroupListWiredState extends State<GroupListWired>
       return;
     }
 
-    try {
-      await leaveGroup(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: group.id,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
-        details: {'groupId': group.id, 'error': e.toString()},
-      );
-      if (mounted) {
+    final result = await requestGroupExitIntentLeave(group.id);
+    await _handleGroupExitIntentResult(group, result);
+  }
+
+  Future<void> _handleGroupExitIntentResult(
+    GroupModel group,
+    GroupExitIntentRequestResult result,
+  ) async {
+    if (!mounted) return;
+    switch (result.status) {
+      case GroupExitIntentRequestStatus.started:
+      case GroupExitIntentRequestStatus.noOp:
+        _changedGroupIds.add(group.id);
+        await _loadGroups();
+      case GroupExitIntentRequestStatus.pendingRoleSync:
+        await _showPendingGroupExit(group);
+      case GroupExitIntentRequestStatus.queued:
+        await _showQueuedGroupExit(group);
+      case GroupExitIntentRequestStatus.blockedLastAdmin:
+        if (result.intent != null) {
+          await _showQueuedGroupExit(group);
+          return;
+        }
+        _showSnackBar(lastAdminLeaveBlockedMessage);
+      case GroupExitIntentRequestStatus.unavailable:
+        if (result.intent != null) {
+          await _showQueuedGroupExit(group);
+          return;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
+          details: {'groupId': group.id, 'error': result.cause.toString()},
+        );
         _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
-      }
-    } finally {
-      await _loadGroups();
+      case GroupExitIntentRequestStatus.failed:
+        if (result.intent != null) {
+          await _showQueuedGroupExit(group);
+          return;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
+          details: {'groupId': group.id, 'error': result.cause.toString()},
+        );
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
     }
+  }
+
+  Future<bool> _closeSheetForGroupExitResult(
+    GroupExitIntentRequestResult result,
+  ) async {
+    if (!mounted) return false;
+    switch (result.status) {
+      case GroupExitIntentRequestStatus.started:
+      case GroupExitIntentRequestStatus.queued:
+      case GroupExitIntentRequestStatus.noOp:
+        return true;
+      case GroupExitIntentRequestStatus.pendingRoleSync:
+        return false;
+      case GroupExitIntentRequestStatus.blockedLastAdmin:
+        _showSnackBar(lastAdminLeaveBlockedMessage);
+        return false;
+      case GroupExitIntentRequestStatus.unavailable:
+      case GroupExitIntentRequestStatus.failed:
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+        return false;
+    }
+  }
+
+  Future<void> _showPendingGroupExit(GroupModel group) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => GroupExitRecoverySheet.pendingRoleSync(
+        groupName: group.name,
+        onLeaveWhenSyncCompletes: () async => _closeSheetForGroupExitResult(
+          await queueGroupExitIntentLeaveWhenSyncCompletes(group.id),
+        ),
+        onTryAgain: () async => _closeSheetForGroupExitResult(
+          await retryGroupExitIntentLeave(group.id),
+        ),
+      ),
+    );
+    if (mounted) await _loadGroups();
+  }
+
+  Future<void> _showQueuedGroupExit(GroupModel group) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => GroupExitRecoverySheet.queuedLeave(
+        groupName: group.name,
+        onTryAgain: () async => _closeSheetForGroupExitResult(
+          await retryGroupExitIntentLeave(group.id),
+        ),
+        onCancelQueuedLeave: () async {
+          final result = await cancelQueuedGroupExitIntent(group.id);
+          return switch (result.status) {
+            GroupExitIntentCancelStatus.cancelled ||
+            GroupExitIntentCancelStatus.notFound =>
+              GroupExitQueuedCancelUiResult.cancelled,
+            GroupExitIntentCancelStatus.tooLate =>
+              GroupExitQueuedCancelUiResult.tooLate,
+            GroupExitIntentCancelStatus.unavailable ||
+            GroupExitIntentCancelStatus.failed =>
+              GroupExitQueuedCancelUiResult.failed,
+          };
+        },
+        onRefreshQueuedState: _loadGroups,
+      ),
+    );
+    if (mounted) await _loadGroups();
   }
 
   Future<void> _confirmDeleteSelfRemovedGroupShell({
@@ -1029,6 +1138,7 @@ class _GroupListWiredState extends State<GroupListWired>
       askNewInviteIds: _askNewInviteIds,
       unavailableInviteContactIds: _unavailableInviteContactIds,
       rejoinAttempts: _rejoinAttempts,
+      exitIntentGroupIds: _exitIntentGroupIds,
       isLoading: _isLoading,
       loadErrorMessage: _currentLoadErrorMessage,
       onRetryLoad: _retryLoadGroups,

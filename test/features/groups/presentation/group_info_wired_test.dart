@@ -16,7 +16,10 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -24,6 +27,7 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -42,8 +46,11 @@ import 'package:flutter_app/l10n/app_localizations_en.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
+import '../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/helpers/durable_group_exit_surface_harness.dart';
+import '../../../shared/helpers/legacy_group_exit_coordinator_fixture.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -69,6 +76,20 @@ class FakeIdentityRepository implements IdentityRepository {
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
+  }
+}
+
+class _ToggleThrowingIdentityRepository extends FakeIdentityRepository {
+  bool throwOnLoad = false;
+
+  _ToggleThrowingIdentityRepository({super.identity});
+
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    if (throwOnLoad) {
+      throw StateError('identity load failed (test injection)');
+    }
+    return super.loadIdentity();
   }
 }
 
@@ -491,11 +512,13 @@ class _ThrowOnCommandBridge extends FakeBridge {
   _ThrowOnCommandBridge(this.command, {super.initialResponses});
 
   final String command;
+  int thrownCallCount = 0;
 
   @override
   Future<String> send(String message) async {
     final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'] as String?;
     if (cmd == command) {
+      thrownCallCount += 1;
       throw Exception('Simulated $command failure');
     }
     return super.send(message);
@@ -917,10 +940,16 @@ void main() {
   group('GroupInfoWired', () {
     setUp(() {
       groupRecoveryGate.resetForTest();
+      setGroupExitIntentActionSinks();
+      setGroupDissolvePreflightAuthority(
+        fakeClearGroupDissolvePreflightAuthority(),
+      );
     });
 
     tearDown(() {
       groupRecoveryGate.resetForTest();
+      setGroupExitIntentActionSinks();
+      setGroupDissolvePreflightAuthority(null);
     });
 
     testWidgets('loads and displays group members on init', (tester) async {
@@ -2844,6 +2873,114 @@ void main() {
       },
     );
 
+    testWidgets(
+      'dissolve preflight StateError shows localized generic failure only',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            locale: const Locale('de'),
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(GroupInfoWired)),
+        )!;
+        setGroupDissolvePreflightAuthority(null);
+
+        await scrollToDissolveGroupButton(tester);
+        await tester.tap(find.byKey(const ValueKey('group-dissolve-button')));
+        await pumpFrames(tester, count: 5);
+        await confirmDissolveGroupDialog(tester);
+
+        expect(find.text(l10n.group_info_dissolve_failed), findsOneWidget);
+        expect(
+          find.text('Group dissolve preflight authority is unavailable.'),
+          findsNothing,
+        );
+        expect((await groupRepo.getGroup(group.id))!.isDissolved, isFalse);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'PB264-16 dissolve publish failure before local commit shows failure, not recovery',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        final bridge = _ThrowOnCommandBridge('group:publish');
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            locale: const Locale('de'),
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(GroupInfoWired)),
+        )!;
+
+        await scrollToDissolveGroupButton(tester);
+        await tester.tap(find.byKey(const ValueKey('group-dissolve-button')));
+        await pumpFrames(tester, count: 5);
+        await confirmDissolveGroupDialog(tester);
+
+        expect(bridge.thrownCallCount, 1);
+        expect((await groupRepo.getGroup(group.id))!.isDissolved, isFalse);
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(find.text(l10n.group_info_dissolve_failed), findsOneWidget);
+        expect(find.text(l10n.group_info_dissolved_recovery), findsNothing);
+      },
+    );
+
     // B4 (Option A — widget caller, the genuine field bug): when the admin
     // dissolves via the GroupInfo screen, the published group_dissolved audit
     // MUST carry the actor's device/transport binding (the same binding the Go
@@ -4559,6 +4696,342 @@ void main() {
     );
 
     testWidgets(
+      'PB264-16 Group Info Leave routes through the durable coordinator and fails closed',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        final selfMember = makeMember(
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+        );
+        await groupRepo.saveMember(selfMember);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-other-admin',
+            username: 'Other Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
+        final identityRepo = _ToggleThrowingIdentityRepository(
+          identity: testIdentity,
+        );
+        final roleRow = GroupPendingBroadcast(
+          id: 'pb264-info-role-row',
+          groupId: group.id,
+          kind: groupPendingBroadcastKindMemberRoleUpdated,
+          sysText: '{"kind":"member_role_updated"}',
+          recipientPeerIds: const ['peer-other-admin'],
+          eventAt: group.createdAt,
+          sourceMessageId: 'pb264-info-role-source',
+          createdAt: group.createdAt,
+          updatedAt: group.createdAt,
+        );
+        final queuedIntent = GroupExitIntent(
+          groupId: group.id,
+          intentId: 'pb264-info-known-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: selfMember.joinedAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb264-info-leave-notice',
+          createdAt: group.createdAt,
+          updatedAt: group.createdAt,
+        );
+        var activeCase = '';
+        var roleInsertedAfterSnapshot = false;
+        final calls = <String>[];
+        setGroupExitIntentActionSinks(
+          requestLeave: (groupId) async {
+            calls.add('$activeCase:$groupId');
+            if (activeCase == 'post-snapshot-role') {
+              expect(
+                roleInsertedAfterSnapshot,
+                isTrue,
+                reason: 'fresh durable authority is reached after the UI read',
+              );
+            }
+            if (activeCase == 'unavailable-known-intent') {
+              return GroupExitIntentRequestResult(
+                status: GroupExitIntentRequestStatus.unavailable,
+                intent: queuedIntent,
+                cause: StateError('processor unavailable after persistence'),
+              );
+            }
+            return GroupExitIntentRequestResult(
+              status: activeCase == 'ordinary'
+                  ? GroupExitIntentRequestStatus.started
+                  : GroupExitIntentRequestStatus.pendingRoleSync,
+            );
+          },
+        );
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (groupId) async {
+            switch (activeCase) {
+              case 'pending-snapshot':
+                return [roleRow];
+              case 'classification-load-error':
+                throw StateError('pending classifier unavailable');
+              case 'post-snapshot-role':
+                roleInsertedAfterSnapshot = true;
+                return const <GroupPendingBroadcast>[];
+              default:
+                return const <GroupPendingBroadcast>[];
+            }
+          },
+        );
+        addTearDown(() => setGroupPendingBroadcastAccessSinks());
+
+        Future<void> runCase(
+          String name, {
+          required bool identityAvailable,
+          required bool expectsCoordinator,
+          required bool expectsPendingSheet,
+          bool expectsQueuedSheet = false,
+          bool identityThrows = false,
+        }) async {
+          activeCase = name;
+          roleInsertedAfterSnapshot = false;
+          identityRepo.throwOnLoad = false;
+          identityRepo.identity = testIdentity;
+          await tester.pumpWidget(
+            _localizedMaterialApp(
+              home: GroupInfoWired(
+                group: group,
+                groupRepo: groupRepo,
+                contactRepo: InMemoryContactRepository(),
+                bridge: bridge,
+                identityRepo: identityRepo,
+                p2pService: p2pService,
+              ),
+            ),
+          );
+          await pumpFrames(tester);
+          if (!identityAvailable) identityRepo.identity = null;
+          identityRepo.throwOnLoad = identityThrows;
+          final callsBefore = calls.length;
+
+          await tapLeaveGroupButton(tester);
+
+          expect(
+            calls.length - callsBefore,
+            expectsCoordinator ? 1 : 0,
+            reason: name,
+          );
+          expect(
+            find.byKey(const ValueKey('group-exit-leave-when-synced')),
+            expectsPendingSheet ? findsOneWidget : findsNothing,
+            reason: name,
+          );
+          expect(
+            find.byKey(const ValueKey('group-exit-cancel-queued')),
+            expectsQueuedSheet ? findsOneWidget : findsNothing,
+            reason: name,
+          );
+          expect(
+            bridge.commandLog.where((command) => command == 'group:leave'),
+            isEmpty,
+            reason: '$name must not bypass the durable coordinator',
+          );
+          expect(p2pService.sendMessageCallCount, 0, reason: name);
+          expect(p2pService.storeInInboxCallCount, 0, reason: name);
+          if (!expectsCoordinator) {
+            expect(find.text('Failed to leave group'), findsOneWidget);
+          }
+          if (expectsQueuedSheet) {
+            expect(find.text('Failed to leave group'), findsNothing);
+          }
+          identityRepo.throwOnLoad = false;
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        await runCase(
+          'pending-snapshot',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: true,
+        );
+        await runCase(
+          'identity-null',
+          identityAvailable: false,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'identity-load-error',
+          identityAvailable: true,
+          identityThrows: true,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'classification-load-error',
+          identityAvailable: true,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'post-snapshot-role',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: true,
+        );
+        await runCase(
+          'unavailable-known-intent',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: false,
+          expectsQueuedSheet: true,
+        );
+        await runCase(
+          'ordinary',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: false,
+        );
+
+        expect(calls, [
+          'pending-snapshot:${group.id}',
+          'post-snapshot-role:${group.id}',
+          'unavailable-known-intent:${group.id}',
+          'ordinary:${group.id}',
+        ]);
+      },
+    );
+
+    testWidgets(
+      'PB264-16 Group Info post-snapshot role mutation persists exact queued exit',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        final selfMember = GroupMember(
+          groupId: group.id,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          joinedAt: group.createdAt,
+        );
+        await groupRepo.saveMember(selfMember);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-other-admin',
+            username: 'Other Admin',
+            role: MemberRole.admin,
+            joinedAt: group.createdAt,
+          ),
+        );
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: identityRepo,
+              p2pService: p2pService,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        final leaveButton = find.byKey(const ValueKey('group-leave-button'));
+        await tester.scrollUntilVisible(
+          leaveButton,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        final harness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.create(
+            group: group,
+            selfMember: selfMember,
+            groupRepository: groupRepo,
+            identityRepository: identityRepo,
+            recipientPeerId: 'peer-other-admin',
+          ),
+        ))!;
+        addTearDown(() async {
+          setGroupPendingBroadcastAccessSinks();
+          setGroupExitIntentAccessSinks();
+          setGroupExitIntentActionSinks();
+          await tester.runAsync(harness.close);
+        });
+        harness.install();
+        await tester.tap(leaveButton);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
+
+        expect(harness.uiSnapshotLoads, 1);
+        expect(harness.roleInsertedAfterSnapshot, isTrue);
+        expect(harness.requestLeaveCalls, 1);
+        expect(harness.rolePushAttempts, 1);
+        expect(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+          findsOneWidget,
+        );
+        expect(await tester.runAsync(harness.loadIntent), isNull);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+        );
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.queueLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
+
+        final intent = await tester.runAsync(harness.loadIntent);
+        expect(harness.queueLeaveCalls, 1);
+        expect(intent, isNotNull);
+        expect(intent!.groupId, group.id);
+        expect(intent.intentId, 'pb264-surface-1');
+        expect(intent.selfPeerId, testIdentity.peerId);
+        expect(intent.selfJoinedAt, selfMember.joinedAt.toUtc());
+        expect(intent.state, GroupExitIntentState.queued);
+        expect(intent.pendingBroadcastId, 'group-exit-notice:pb264-surface-2');
+        expect(intent.revision, 0);
+        final pending = (await tester.runAsync(
+          () => harness.pendingRepository.forGroup(group.id),
+        ))!;
+        expect(pending, hasLength(1));
+        expect(
+          sameExactGroupPendingBroadcast(pending.single, harness.roleBroadcast),
+          isTrue,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          isEmpty,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+
+        // A fresh action resolves the SQLite row and renders the durable
+        // queued stage, rather than reusing the prior sheet's widget state.
+        await tester.tap(leaveButton);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.requestLeaveCompletions >= 2,
+        );
+        await pumpFrames(tester);
+        expect(
+          find.byKey(const ValueKey('group-exit-cancel-queued')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'GCA-009 leave group deletes local messages and pops to first route',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
@@ -4620,6 +5093,16 @@ void main() {
             },
           },
         );
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        final p2pService = FakeP2PService();
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         // Use a Navigator stack to verify popUntil(isFirst)
         await tester.pumpWidget(
@@ -4636,10 +5119,8 @@ void main() {
                           msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: testIdentity,
-                          ),
-                          p2pService: FakeP2PService(),
+                          identityRepo: identityRepo,
+                          p2pService: p2pService,
                         ),
                       ),
                     );
@@ -4909,6 +5390,16 @@ void main() {
       );
 
       final bridge = FakeBridge();
+      final identityRepo = FakeIdentityRepository(identity: testIdentity);
+      final p2pService = FakeP2PService();
+      installLegacyGroupExitCoordinatorFixture(
+        bridge: bridge,
+        groupRepository: groupRepo,
+        messageRepository: null,
+        identityRepository: identityRepo,
+        sendP2PMessage: p2pService.sendMessage,
+        storeP2PMessageInInbox: p2pService.storeInInbox,
+      );
 
       await tester.pumpWidget(
         _localizedMaterialApp(
@@ -4923,10 +5414,8 @@ void main() {
                         groupRepo: groupRepo,
                         contactRepo: InMemoryContactRepository(),
                         bridge: bridge,
-                        identityRepo: FakeIdentityRepository(
-                          identity: testIdentity,
-                        ),
-                        p2pService: FakeP2PService(),
+                        identityRepo: identityRepo,
+                        p2pService: p2pService,
                       ),
                     ),
                   );
@@ -4992,6 +5481,16 @@ void main() {
           'errorCode': 'GROUP_ERROR',
           'errorMessage': 'forced leave failure',
         };
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        final p2pService = FakeP2PService();
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: null,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5006,10 +5505,8 @@ void main() {
                           groupRepo: groupRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: testIdentity,
-                          ),
-                          p2pService: FakeP2PService(),
+                          identityRepo: identityRepo,
+                          p2pService: p2pService,
                         ),
                       ),
                     );
@@ -5095,6 +5592,15 @@ void main() {
           'keyEpoch': 9,
         };
         final p2pService = FakeP2PService();
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5110,9 +5616,7 @@ void main() {
                           msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: testIdentity,
-                          ),
+                          identityRepo: identityRepo,
                           p2pService: p2pService,
                         ),
                       ),
@@ -5239,6 +5743,16 @@ void main() {
           'messageId': 'writer-leave-sys',
         };
         bridge.responses['group:inboxStore'] = {'ok': true};
+        final identityRepo = FakeIdentityRepository(identity: writerIdentity);
+        final p2pService = FakeP2PService();
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5254,10 +5768,8 @@ void main() {
                           msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: writerIdentity,
-                          ),
-                          p2pService: FakeP2PService(),
+                          identityRepo: identityRepo,
+                          p2pService: p2pService,
                         ),
                       ),
                     );
@@ -5591,6 +6103,15 @@ void main() {
         };
         bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-1'};
         final p2pService = FakeP2PService();
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5606,9 +6127,7 @@ void main() {
                           msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: testIdentity,
-                          ),
+                          identityRepo: identityRepo,
                           p2pService: p2pService,
                         ),
                       ),
@@ -5732,6 +6251,15 @@ void main() {
           'keyEpoch': 2,
         };
         final p2pService = FakeP2PService();
+        final identityRepo = FakeIdentityRepository(identity: leavingIdentity);
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5747,9 +6275,7 @@ void main() {
                           msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: leavingIdentity,
-                          ),
+                          identityRepo: identityRepo,
                           p2pService: p2pService,
                         ),
                       ),

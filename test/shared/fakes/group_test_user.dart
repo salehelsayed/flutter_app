@@ -35,6 +35,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 
 import '../../core/bridge/fake_bridge.dart';
+import 'fake_group_dissolve_preflight.dart';
 import 'fake_group_reaction_replay_outbox_repository.dart';
 import 'fake_group_pubsub_network.dart';
 import 'in_memory_media_attachment_repository.dart';
@@ -721,6 +722,7 @@ class GroupTestUser {
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
       groupId: groupId,
       actorPeerId: peerId,
       actorUsername: username,

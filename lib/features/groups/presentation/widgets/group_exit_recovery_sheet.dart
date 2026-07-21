@@ -6,6 +6,7 @@ enum GroupExitPromotionUiResult { readyToLeave, pendingSync, failed }
 
 enum GroupExitRecoveryMode { soleAdmin, pendingRoleSync, queuedLeave }
 
+/// Result of attempting to cancel an already-persisted queued leave.
 enum GroupExitQueuedCancelUiResult { cancelled, tooLate, failed }
 
 enum _GroupExitSheetStage {
@@ -22,21 +23,25 @@ class GroupExitRecoverySheet extends StatefulWidget {
   const GroupExitRecoverySheet({
     super.key,
     required this.groupName,
-    required List<GroupMember> candidates,
+    required this.candidates,
     required bool pendingRoleSync,
     required Future<GroupExitPromotionUiResult> Function(GroupMember candidate)
     onPromote,
     required Future<bool> Function() onRetryPendingSync,
     required Future<bool> Function() onContinueLeave,
     required Future<bool> Function() onDissolve,
-  }) : candidates = candidates,
-       pendingRoleSync = pendingRoleSync,
-       mode = pendingRoleSync
+  }) : mode = pendingRoleSync
            ? GroupExitRecoveryMode.pendingRoleSync
            : GroupExitRecoveryMode.soleAdmin,
+       // These remain nullable internally because the explicit pending and
+       // queued constructors intentionally omit sole-admin-only callbacks.
+       // ignore: prefer_initializing_formals
        onPromote = onPromote,
+       // ignore: prefer_initializing_formals
        onRetryPendingSync = onRetryPendingSync,
+       // ignore: prefer_initializing_formals
        onContinueLeave = onContinueLeave,
+       // ignore: prefer_initializing_formals
        onDissolve = onDissolve,
        onLeaveWhenSyncCompletes = null,
        onTryAgain = null,
@@ -49,7 +54,6 @@ class GroupExitRecoverySheet extends StatefulWidget {
     required this.onLeaveWhenSyncCompletes,
     required this.onTryAgain,
   }) : candidates = const [],
-       pendingRoleSync = true,
        mode = GroupExitRecoveryMode.pendingRoleSync,
        onPromote = null,
        onRetryPendingSync = null,
@@ -65,7 +69,6 @@ class GroupExitRecoverySheet extends StatefulWidget {
     required this.onCancelQueuedLeave,
     required this.onRefreshQueuedState,
   }) : candidates = const [],
-       pendingRoleSync = false,
        mode = GroupExitRecoveryMode.queuedLeave,
        onPromote = null,
        onRetryPendingSync = null,
@@ -75,10 +78,9 @@ class GroupExitRecoverySheet extends StatefulWidget {
 
   final String groupName;
   final List<GroupMember> candidates;
-  final bool pendingRoleSync;
   final GroupExitRecoveryMode mode;
-  final Future<GroupExitPromotionUiResult> Function(GroupMember candidate)
-  ? onPromote;
+  final Future<GroupExitPromotionUiResult> Function(GroupMember candidate)?
+  onPromote;
   final Future<bool> Function()? onRetryPendingSync;
   final Future<bool> Function()? onContinueLeave;
   final Future<bool> Function()? onDissolve;
@@ -96,6 +98,7 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
   GroupMember? _selected;
   bool _busy = false;
   bool _cancelTooLate = false;
+  bool _cancelFailed = false;
 
   @override
   void initState() {
@@ -106,8 +109,7 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
   _GroupExitSheetStage _initialStage(GroupExitRecoveryMode mode) {
     return switch (mode) {
       GroupExitRecoveryMode.soleAdmin => _GroupExitSheetStage.choices,
-      GroupExitRecoveryMode.pendingRoleSync =>
-        _GroupExitSheetStage.pendingSync,
+      GroupExitRecoveryMode.pendingRoleSync => _GroupExitSheetStage.pendingSync,
       GroupExitRecoveryMode.queuedLeave => _GroupExitSheetStage.queuedLeave,
     };
   }
@@ -193,34 +195,35 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
     setState(() {
       _busy = true;
       _cancelTooLate = false;
+      _cancelFailed = false;
     });
     GroupExitQueuedCancelUiResult result;
     try {
       result = await widget.onCancelQueuedLeave!();
     } catch (_) {
-      if (mounted) setState(() => _busy = false);
-      return;
+      result = GroupExitQueuedCancelUiResult.failed;
     }
     if (!mounted) return;
     if (result == GroupExitQueuedCancelUiResult.cancelled) {
       Navigator.of(context).pop();
       return;
     }
-    if (result == GroupExitQueuedCancelUiResult.tooLate) {
+    if (result == GroupExitQueuedCancelUiResult.tooLate ||
+        result == GroupExitQueuedCancelUiResult.failed) {
       try {
         await widget.onRefreshQueuedState!();
       } catch (_) {
-        // The truthful cancellation result still needs to be shown even if the
+        // The cancellation result still needs to be shown even if the
         // subsequent state refresh fails.
       }
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _cancelTooLate = true;
+        _cancelTooLate = result == GroupExitQueuedCancelUiResult.tooLate;
+        _cancelFailed = result == GroupExitQueuedCancelUiResult.failed;
       });
       return;
     }
-    setState(() => _busy = false);
   }
 
   Future<void> _dissolve() async {
@@ -429,6 +432,17 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
               child: Text(
                 l10n.group_exit_cancel_too_late,
                 key: const ValueKey('group-exit-cancel-too-late'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          ],
+          if (_cancelFailed) ...[
+            const SizedBox(height: 12),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                l10n.group_info_leave_failed,
+                key: const ValueKey('group-exit-cancel-failed'),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),

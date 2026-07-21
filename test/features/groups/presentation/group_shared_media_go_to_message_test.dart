@@ -12,11 +12,13 @@ import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -40,6 +42,14 @@ import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../shared_media_test_fakes.dart';
 
 void main() {
+  setUp(() {
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+  });
+  tearDown(setGroupExitIntentAccessSinks);
+
   test(
     'GML-10 production nested route consumes bounded anchor result',
     () async {

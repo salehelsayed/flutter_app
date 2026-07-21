@@ -631,6 +631,39 @@ class AppLocalizationsDe extends AppLocalizations {
       'Warte, bis die signierte Admin-Änderung synchronisiert ist, bevor du die Gruppe verlässt.';
 
   @override
+  String get group_exit_sync_finishing_title =>
+      'Eine Rollenänderung wird abgeschlossen';
+
+  @override
+  String get group_exit_sync_finishing_body =>
+      'Du kannst diesen Bildschirm verlassen. Wir verlassen die Gruppe, sobald die Rollenänderung sicher übermittelt wurde.';
+
+  @override
+  String get group_exit_leave_when_sync_completes =>
+      'Verlassen, sobald die Synchronisierung abgeschlossen ist';
+
+  @override
+  String get group_exit_try_again => 'Erneut versuchen';
+
+  @override
+  String get group_exit_cancel_queued_leave => 'Geplantes Verlassen abbrechen';
+
+  @override
+  String get group_exit_cancel_queued_leave_body =>
+      'Dadurch wird das automatische Verlassen abgebrochen. Die Rollenänderung wird weiter synchronisiert.';
+
+  @override
+  String get group_exit_leaving_status => 'Wird verlassen…';
+
+  @override
+  String get group_exit_leaving_read_only =>
+      'Diese Gruppe ist schreibgeschützt, während das Verlassen abgeschlossen wird.';
+
+  @override
+  String get group_exit_cancel_too_late =>
+      'Das Verlassen wurde bereits gestartet und kann nicht mehr abgebrochen werden.';
+
+  @override
   String get group_exit_leave_uncertain =>
       'Die Anfrage zum Verlassen wurde möglicherweise abgeschlossen. Aktualisiere die Gruppe, bevor du es erneut versuchst.';
 

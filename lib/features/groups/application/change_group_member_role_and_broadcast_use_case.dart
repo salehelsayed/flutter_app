@@ -11,6 +11,8 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart'
+    show groupMembershipMutationDissolvedMessage;
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -145,6 +147,7 @@ changeGroupMemberRoleAndBroadcast({
     systemPayload: {
       '__sys': 'member_role_updated',
       'eventAt': eventAt.toUtc().toIso8601String(),
+      'previousRole': targetMember.role.toValue(),
       'member': proposedMember.toConfigJson(),
       'groupConfig': buildGroupConfigPayload(
         proposedGroup,
@@ -198,10 +201,23 @@ changeGroupMemberRoleAndBroadcast({
   if (usesDurableOutbox) {
     markGroupRolePreparationInFlight(pendingId);
     try {
-      await _enqueueAndVerifyPending(
-        preparedPendingRow,
-        enqueuePending: enqueuePending,
-        loadPending: loadPending,
+      await runGroupMembershipMutationLocked(
+        groupId: groupId,
+        action: () async {
+          // The prepared row is the decisive role-transition claim. Serialize
+          // it with exit enqueue and Dissolve's final preflight. A winner that
+          // already dissolved the group is also rejected before custom/fake
+          // outbox implementations can persist an orphan row.
+          final currentGroup = await groupRepo.getGroup(groupId);
+          if (currentGroup == null || currentGroup.isDissolved) {
+            throw StateError(groupMembershipMutationDissolvedMessage);
+          }
+          await _enqueueAndVerifyPending(
+            preparedPendingRow,
+            enqueuePending: enqueuePending,
+            loadPending: loadPending,
+          );
+        },
       );
     } catch (queueError) {
       // Verification failure does not prove that the row at this deterministic
@@ -252,12 +268,19 @@ changeGroupMemberRoleAndBroadcast({
   } catch (commitError) {
     Object? discardError;
     if (usesDurableOutbox) {
-      try {
-        await (removePending ?? removeGroupPendingBroadcast)(pendingId);
-      } catch (error) {
-        discardError = error;
-      } finally {
+      if (commitError is GroupMemberRoleCommitAmbiguous) {
+        // Native may already enforce the signed config. Keep the exact
+        // prepared row as the durable convergence/exit fence; only a proven
+        // pre-native failure is safe to discard.
         clearGroupRolePreparationInFlight(pendingId);
+      } else {
+        try {
+          await (removePending ?? removeGroupPendingBroadcast)(pendingId);
+        } catch (error) {
+          discardError = error;
+        } finally {
+          clearGroupRolePreparationInFlight(pendingId);
+        }
       }
     }
     if (discardError != null) {

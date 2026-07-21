@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
@@ -303,6 +304,105 @@ void main() {
           .map((command) => command['payload'] as Map<String, dynamic>)
           .toList();
     }
+
+    test(
+      'PB264-18 resume recovery drains all before processing all and isolates errors',
+      () async {
+        final trace = <String>[];
+        final drainStarted = Completer<void>();
+        final allowDrain = Completer<void>();
+        Object? capturedError;
+
+        final recovery = runGroupExitIntentRecoveryPass(
+          drainPendingBroadcasts: () async {
+            trace.add('drain:start');
+            drainStarted.complete();
+            await allowDrain.future;
+            trace.add('drain:complete');
+          },
+          processExitIntents: () async {
+            trace.add('process');
+            throw StateError('process failed');
+          },
+          onError: (error, _) {
+            capturedError = error;
+            trace.add('isolated');
+          },
+        );
+
+        await drainStarted.future;
+        expect(trace, <String>['drain:start']);
+        allowDrain.complete();
+        await recovery;
+
+        expect(trace, <String>[
+          'drain:start',
+          'drain:complete',
+          'process',
+          'isolated',
+        ]);
+        expect(capturedError, isA<StateError>());
+
+        var processedAfterDrainFailure = false;
+        await runGroupExitIntentRecoveryPass(
+          drainPendingBroadcasts: () =>
+              Future<void>.error(StateError('drain failed')),
+          processExitIntents: () async {
+            processedAfterDrainFailure = true;
+          },
+          onError: (_, _) {},
+        );
+        expect(processedAfterDrainFailure, isTrue);
+      },
+    );
+
+    test(
+      'PB264-18 production resume starts global exit recovery only after rejoin and records normal deferred rotation',
+      () async {
+        final source = await File('lib/main.dart').readAsString();
+        final resumeStart = source.indexOf('Future<void> _onResumed() async {');
+        final resumeEnd = source.indexOf(
+          '  void _setupPushListeners()',
+          resumeStart,
+        );
+        expect(resumeStart, isNonNegative);
+        expect(resumeEnd, greaterThan(resumeStart));
+        final resume = source.substring(resumeStart, resumeEnd);
+        final handle = resume.indexOf('await handleAppResumed(');
+        final finalResumeArgument = resume.indexOf(
+          'retryFailedGroupInboxStoresFn:',
+          handle,
+        );
+        final globalExitRecovery = resume.indexOf(
+          'final recoverGroupExits = widget.groupExitIntentRecovery;',
+        );
+        expect(handle, isNonNegative);
+        expect(finalResumeArgument, greaterThan(handle));
+        expect(globalExitRecovery, greaterThan(finalResumeArgument));
+        expect(
+          resume.substring(0, handle),
+          isNot(contains('recoverGroupExits')),
+          reason: 'global recovery must not race watchdog/topic rejoin',
+        );
+
+        final rotationStart = source.indexOf('rotateKeys: (intent) async {');
+        final rotationEnd = source.indexOf(
+          'nativeLeave: (intent) async {',
+          rotationStart,
+        );
+        expect(rotationStart, isNonNegative);
+        expect(rotationEnd, greaterThan(rotationStart));
+        final rotation = source.substring(rotationStart, rotationEnd);
+        expect(
+          rotation,
+          contains(
+            'final rotation = await rotateVoluntaryLeaveGroupKeyBestEffort(',
+          ),
+        );
+        expect(rotation, contains('if (rotation.rotationDeferred)'));
+        expect(rotation, contains('throw const GroupExitRotationDeferred();'));
+      },
+    );
 
     test(
       'rejoins but skips recovery ack when group message repository is unavailable',

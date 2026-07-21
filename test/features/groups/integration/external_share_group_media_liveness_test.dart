@@ -11,8 +11,10 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -259,6 +261,14 @@ Future<void> _pumpFrames(WidgetTester tester, {int count = 20}) async {
 }
 
 void main() {
+  setUp(() {
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+  });
+  tearDown(setGroupExitIntentAccessSinks);
+
   testWidgets(
     'failed media pre-persist rollback leaves no tombstone or mounted-screen ghost',
     (tester) async {

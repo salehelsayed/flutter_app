@@ -43,6 +43,7 @@ import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_h
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -163,6 +164,17 @@ import 'package:flutter_app/features/groups/application/group_pending_key_distri
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -233,6 +245,7 @@ import 'package:flutter_app/core/theme/app_shell_theme_binding.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart'
@@ -1655,6 +1668,10 @@ void main() async {
     groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
     groupReactionProjection: groupReactionNotificationProjection,
+    dbHasGroupExitCleanupPending: (groupId) async {
+      final row = await dbLoadGroupExitIntentForGroup(db, groupId);
+      return row?['state'] == 'cleanup_pending';
+    },
     selfRemovedShellAuthorityEnabled: true,
     dbLoadSelfRemovedGroupShellAuthority:
         ({required groupId, required selfPeerId}) =>
@@ -3517,6 +3534,7 @@ void main() async {
 
   // Create group message listener and wire bridge callback to stream
   late final GroupMessageListener groupMessageListener;
+  late final GroupExitIntentRepositoryImpl groupExitIntentRepository;
   groupMessageListener = GroupMessageListener(
     groupRepo: groupRepository,
     msgRepo: groupMessageRepository,
@@ -3549,6 +3567,9 @@ void main() async {
     getSelfPeerId: () async {
       final identity = await repository.loadIdentity();
       return identity?.peerId;
+    },
+    terminalizeGroupExitWorkAfterRemoteDissolve: (groupId) async {
+      await groupExitIntentRepository.terminalizeForGroup(groupId);
     },
     mediaAttachmentRepo: mediaAttachmentRepository,
     mediaFileManager: mediaFileManager,
@@ -3718,6 +3739,259 @@ void main() async {
     forGroup: groupPendingBroadcastRunner.drainForGroup,
     all: groupPendingBroadcastRunner.drainAll,
   );
+
+  groupExitIntentRepository = GroupExitIntentRepositoryImpl(
+    dbLoadForGroup: (groupId) => dbLoadGroupExitIntentForGroup(db, groupId),
+    dbLoadAll: () => dbLoadAllGroupExitIntents(db),
+    dbEnqueue: (row) => dbEnqueueGroupExitIntent(db, row),
+    dbCancelQueued: ({required expected, required updatedAt}) =>
+        dbCancelQueuedGroupExitIntent(
+          db,
+          expected: expected,
+          updatedAt: updatedAt,
+        ),
+    dbPrepareLeaveNotice:
+        ({
+          required expected,
+          required timelineRow,
+          required pendingBroadcastRow,
+          required updatedAt,
+        }) => dbPrepareGroupExitLeaveNotice(
+          db,
+          expected: expected,
+          timelineRow: timelineRow,
+          pendingBroadcastRow: pendingBroadcastRow,
+          updatedAt: updatedAt,
+        ),
+    dbCompleteLeaveNoticeAttempt:
+        ({
+          required expected,
+          required pendingBroadcastRow,
+          required completionCode,
+          required updatedAt,
+        }) => dbCompleteGroupExitLeaveNotice(
+          db,
+          expected: expected,
+          pendingBroadcastRow: pendingBroadcastRow,
+          completionCode: completionCode,
+          updatedAt: updatedAt,
+        ),
+    dbAdvance:
+        ({
+          required expected,
+          required nextState,
+          required updatedAt,
+          lastErrorCode,
+        }) => dbAdvanceGroupExitIntent(
+          db,
+          expected: expected,
+          nextState: nextState,
+          updatedAt: updatedAt,
+          lastErrorCode: lastErrorCode,
+        ),
+    dbCleanupOrRetire: ({required expected, required updatedAt}) =>
+        dbCleanupOrRetireGroupExitIntent(
+          db,
+          expected: expected,
+          updatedAt: updatedAt,
+        ),
+    dbRetireExact: (expected) => dbRetireExactGroupExitIntent(db, expected),
+    dbTerminalizeForGroup: (groupId) =>
+        dbTerminalizeGroupExitIntentForGroup(db, groupId),
+  );
+
+  final groupExitIntentRunner = GroupExitIntentRunner(
+    intentRepository: groupExitIntentRepository,
+    pendingRepository: groupPendingBroadcastRepository,
+    pendingBroadcastRunner: groupPendingBroadcastRunner,
+    groupRepository: groupRepository,
+    loadCurrentSelfPeerId: () async =>
+        (await repository.loadIdentity())?.peerId,
+    prepareNotice:
+        ({required intent, required sourceEventId, required eventAt}) async {
+          final group = await groupRepository.getGroup(intent.groupId);
+          if (group == null) {
+            throw StateError('Group exit notice parent is unavailable.');
+          }
+          final result = await prepareVoluntaryLeaveNotice(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            group: group,
+            identityRepo: repository,
+            expectedSelfPeerId: intent.selfPeerId,
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+          );
+          final prepared = result.prepared;
+          if (prepared == null) {
+            throw StateError(
+              'Group exit notice preparation refused: '
+              '${result.skipReason?.name ?? 'unknown'}',
+            );
+          }
+          if (prepared.identity.peerId != intent.selfPeerId) {
+            throw StateError(
+              'Group exit notice identity does not own the intent.',
+            );
+          }
+          final pending = prepared.pendingBroadcast;
+          return GroupExitPreparedNotice(
+            timelineMessage: prepared.timelineMessage,
+            pendingBroadcast: GroupPendingBroadcast(
+              id: intent.pendingBroadcastId,
+              groupId: pending.groupId,
+              kind: pending.kind,
+              sysText: pending.sysText,
+              recipientPeerIds: pending.recipientPeerIds,
+              eventAt: pending.eventAt,
+              sourceMessageId: pending.sourceMessageId,
+              createdAt: pending.createdAt,
+              updatedAt: pending.updatedAt,
+            ),
+          );
+        },
+    attemptNotice: ({required intent, required pendingBroadcast}) async {
+      final pending = pendingBroadcast;
+      final identity = await repository.loadIdentity();
+      if (identity == null) {
+        throw StateError('Group exit notice identity is unavailable.');
+      }
+      if (identity.peerId != intent.selfPeerId) {
+        throw StateError('Group exit notice identity changed after prepare.');
+      }
+      final members = await groupRepository.getMembers(pending.groupId);
+      final selfMembers = members
+          .where((member) => member.peerId == identity.peerId)
+          .toList(growable: false);
+      if (selfMembers.length != 1) {
+        throw StateError('Exact group exit sender membership is unavailable.');
+      }
+      final remainingByPeerId = {
+        for (final member in members)
+          if (member.peerId != identity.peerId) member.peerId: member,
+      };
+      final remainingMembers = <GroupMember>[];
+      for (final peerId in pending.recipientPeerIds) {
+        final member = remainingByPeerId[peerId];
+        if (member != null) remainingMembers.add(member);
+      }
+      final timelineIdentity = buildMemberRemovedTimelineMessage(
+        groupId: pending.groupId,
+        removedPeerId: identity.peerId,
+        removedUsername: identity.username,
+        senderId: identity.peerId,
+        senderUsername: identity.username,
+        eventAt: pending.eventAt,
+      );
+      final timelineMessage = await groupMessageRepository.getMessage(
+        timelineIdentity.id,
+      );
+      if (timelineMessage == null) {
+        throw StateError('Durable group exit timeline notice is unavailable.');
+      }
+      final result = await attemptPreparedVoluntaryLeaveNotice(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        prepared: PreparedVoluntaryLeaveNotice(
+          pendingBroadcast: pending,
+          timelineMessage: timelineMessage,
+          identity: identity,
+          senderBinding: resolveGroupSenderDeviceBindingFromMember(
+            member: selfMembers.single,
+            senderPublicKey: identity.publicKey,
+          ),
+          remainingMembers: remainingMembers,
+        ),
+        expectedSelfPeerId: intent.selfPeerId,
+      );
+      return switch (result.classification) {
+        VoluntaryLeaveNoticeAttemptClassification.delivered =>
+          GroupExitNoticeAttemptDisposition.delivered,
+        VoluntaryLeaveNoticeAttemptClassification.degraded =>
+          GroupExitNoticeAttemptDisposition.degraded,
+        VoluntaryLeaveNoticeAttemptClassification.retryable =>
+          GroupExitNoticeAttemptDisposition.retryable,
+      };
+    },
+    rotateKeys: (intent) async {
+      final rotation = await rotateVoluntaryLeaveGroupKeyBestEffort(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        groupId: intent.groupId,
+        identityRepo: repository,
+        expectedSelfPeerId: intent.selfPeerId,
+        sendP2PMessage: p2pService.sendMessage,
+        storeP2PMessageInInbox: p2pService.storeInInbox,
+      );
+      if (rotation.rotationDeferred) {
+        throw const GroupExitRotationDeferred();
+      }
+    },
+    nativeLeave: (intent) async {
+      final identity = await repository.loadIdentity();
+      if (identity == null || identity.peerId != intent.selfPeerId) {
+        throw StateError('Group exit identity changed before native leave.');
+      }
+      await callGroupLeave(bridge, intent.groupId);
+    },
+  );
+  final uuid = const Uuid();
+  final groupExitIntentCoordinator = GroupExitIntentCoordinator(
+    intentRepository: groupExitIntentRepository,
+    pendingRepository: groupPendingBroadcastRepository,
+    pendingBroadcastRunner: groupPendingBroadcastRunner,
+    processor: groupExitIntentRunner,
+    groupRepository: groupRepository,
+    identityRepository: repository,
+    newId: uuid.v4,
+    now: () => DateTime.now().toUtc(),
+  );
+  Future<bool> authorizeCurrentAccountGroupRejoin(String groupId) =>
+      authorizeGroupRejoinForExitIntent(
+        groupId: groupId,
+        loadIntent: groupExitIntentRepository.forGroup,
+        loadCurrentSelfPeerId: () async =>
+            (await repository.loadIdentity())?.peerId,
+      );
+  setGroupExitIntentActionSinks(
+    requestLeave: groupExitIntentCoordinator.requestLeave,
+    queueLeaveWhenSyncCompletes:
+        groupExitIntentCoordinator.queueLeaveWhenSyncCompletes,
+    retry: groupExitIntentCoordinator.retry,
+    cancelQueued: groupExitIntentCoordinator.cancelQueued,
+  );
+  setGroupExitIntentAccessSinks(
+    forGroup: groupExitIntentRepository.forGroup,
+    all: groupExitIntentRepository.all,
+  );
+  setGroupExitIntentRuntimeSinks(
+    canRejoin: authorizeCurrentAccountGroupRejoin,
+    processExisting: (groupId) async {
+      await groupExitIntentRunner.processGroup(groupId);
+    },
+  );
+  setGroupDissolvePreflightAuthority(
+    GroupDissolvePreflightAuthority(
+      intentRepository: groupExitIntentRepository,
+      pendingRepository: groupPendingBroadcastRepository,
+    ),
+  );
+
+  Future<void> recoverGroupExitIntents() async {
+    await runGroupExitIntentRecoveryPass(
+      drainPendingBroadcasts: groupPendingBroadcastRunner.drainAll,
+      processExitIntents: () async {
+        await groupExitIntentRunner.processAll();
+      },
+      onError: (error, _) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_EXIT_INTENT_RECOVERY_FAILED',
+          details: {'error': error.runtimeType.toString()},
+        );
+      },
+    );
+  }
 
   // Create group invite listener
   final groupIdentityCallbacks = buildGroupIdentityCallbacks(
@@ -3903,6 +4177,10 @@ void main() async {
             bridge: bridge,
             groupRepo: groupRepository,
             reason: reason,
+            canRejoinForExitIntent: authorizeCurrentAccountGroupRejoin,
+            processExitIntent: (groupId) async {
+              await groupExitIntentRunner.processGroup(groupId);
+            },
           );
           // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
           // group dissolved while we were offline converges (and is left)
@@ -4342,6 +4620,11 @@ void main() async {
       groupPendingKeyRepairRunner: groupPendingKeyRepairRunner,
       groupPendingKeyRepairBackoffTimer: groupPendingKeyRepairBackoffTimer,
       groupPendingKeyDistributionRunner: groupPendingKeyDistributionRunner,
+      groupExitIntentRecovery: recoverGroupExitIntents,
+      canRejoinForExitIntent: authorizeCurrentAccountGroupRejoin,
+      processGroupExitIntent: (groupId) async {
+        await groupExitIntentRunner.processGroup(groupId);
+      },
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
@@ -4648,6 +4931,9 @@ class MyApp extends StatefulWidget {
   final GroupPendingKeyRepairRunner groupPendingKeyRepairRunner;
   final GroupPendingKeyRepairBackoffTimer groupPendingKeyRepairBackoffTimer;
   final GroupPendingKeyDistributionRunner groupPendingKeyDistributionRunner;
+  final Future<void> Function()? groupExitIntentRecovery;
+  final Future<bool> Function(String groupId)? canRejoinForExitIntent;
+  final Future<void> Function(String groupId)? processGroupExitIntent;
   final GroupHistoryGapRepairRepositoryImpl groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepositoryImpl
   groupReactionReplayOutboxRepository;
@@ -4752,6 +5038,9 @@ class MyApp extends StatefulWidget {
     required this.groupPendingKeyRepairRunner,
     required this.groupPendingKeyRepairBackoffTimer,
     required this.groupPendingKeyDistributionRunner,
+    this.groupExitIntentRecovery,
+    this.canRejoinForExitIntent,
+    this.processGroupExitIntent,
     required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
@@ -6135,10 +6424,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     try {
       widget.p2pService.markResumeStarted();
-      // Finding 07 (S2b): re-push any group broadcasts that failed to leave the
-      // device. Fire-and-forget + idempotent — a still-offline retry is retained
-      // for the next resume.
-      unawaited(triggerGroupPendingBroadcastDrainAll());
       // 181: announce `foreground` (+ arm the 60s presence heartbeat) on resume.
       // Unawaited — best-effort hint, must add no latency to the resume path.
       unawaited(_setPresenceUseCase.onForegrounded());
@@ -6167,6 +6452,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupRepo: widget.groupRepository,
         groupMsgRepo: widget.groupMessageRepository,
         groupMessageListener: widget.groupMessageListener,
+        canRejoinForExitIntent: widget.canRejoinForExitIntent,
+        processExitIntent: widget.processGroupExitIntent,
         pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
         drainPendingKeyDistributionsFn:
             widget.groupPendingKeyDistributionRunner.drainAllPending,
@@ -6270,6 +6557,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepo: widget.repository,
         ),
       );
+      // PB264-18: only start the global role/exit pass after the awaited resume
+      // pipeline has rejoined each eligible topic and run its exact per-group
+      // drain/exit continuation. Starting this before handleAppResumed lets a
+      // native-leave phase overtake watchdog rejoin after process recreation.
+      // The wrapper is error-isolated and a still-offline retry stays durable.
+      final recoverGroupExits = widget.groupExitIntentRecovery;
+      if (recoverGroupExits != null) {
+        unawaited(recoverGroupExits());
+      } else {
+        // Compatibility for lightweight MyApp widget harnesses.
+        unawaited(triggerGroupPendingBroadcastDrainAll());
+      }
       await sweepExpiredPosts(
         postRepo: widget.postRepository,
         mediaFileManager: widget.mediaFileManager,
@@ -6630,6 +6929,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           groupReactionReplayOutboxRepository:
               widget.groupReactionReplayOutboxRepository,
           groupMessageListener: widget.groupMessageListener,
+          canRejoinForExitIntent: widget.canRejoinForExitIntent,
+          processExitIntent: widget.processGroupExitIntent,
+          groupExitIntentRecovery: widget.groupExitIntentRecovery,
           groupInviteListener: widget.groupInviteListener,
           waitForGroupMembershipUpdateIdle:
               widget.groupMembershipUpdateListener.waitForIdle,

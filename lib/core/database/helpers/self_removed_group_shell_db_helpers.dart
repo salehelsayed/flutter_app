@@ -16,6 +16,7 @@ const String kLocalSelfRemovedAcceptBindingEventType =
 const int kSelfRemovedShellMediaPrepareLimit = 100;
 
 const List<String> _membershipInstanceWorkTables = <String>[
+  'group_exit_intents',
   'group_rejoin_state',
   'pending_group_broadcasts',
   'group_pending_key_repairs',
@@ -742,6 +743,7 @@ dbTerminalizeSelfRemovedMembershipInstance(
 ) async {
   var pendingRowsDeleted = 0;
   for (final table in _membershipInstanceWorkTables) {
+    if (!await _membershipWorkTableExists(txn, table)) continue;
     pendingRowsDeleted += await txn.delete(
       table,
       where: 'group_id = ?',
@@ -2979,6 +2981,7 @@ Future<int> _clearMembershipInstancePendingWork(
 ) async {
   var deleted = 0;
   for (final table in _membershipInstanceWorkTables) {
+    if (!await _membershipWorkTableExists(txn, table)) continue;
     deleted += await txn.delete(
       table,
       where: 'group_id = ?',
@@ -2991,6 +2994,17 @@ Future<int> _clearMembershipInstancePendingWork(
     whereArgs: <Object?>[groupId],
   );
   return deleted;
+}
+
+Future<bool> _membershipWorkTableExists(
+  DatabaseExecutor db,
+  String table,
+) async {
+  final rows = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    <Object?>[table],
+  );
+  return rows.isNotEmpty;
 }
 
 Future<List<SelfRemovedGroupKeyReference>> _loadRawKeyReferences(
@@ -3458,6 +3472,7 @@ Future<_AcceptedReentryMaterial> _validateAcceptedReentryMaterial(
 
   final peerIds = <String>{};
   String? selfJoinedAtRaw;
+  DateTime? selfJoinedAt;
   final normalizedRoster = <Map<String, Object?>>[];
   for (final row in rosterRows) {
     final groupValue = row['group_id'];
@@ -3472,8 +3487,12 @@ Future<_AcceptedReentryMaterial> _validateAcceptedReentryMaterial(
         SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial,
       );
     }
+    late final DateTime parsedJoinedAt;
     try {
-      _parseRequiredUtcColumn(joinedAt, 'acceptedRoster.joined_at');
+      parsedJoinedAt = _parseRequiredUtcColumn(
+        joinedAt,
+        'acceptedRoster.joined_at',
+      );
     } on FormatException {
       throw const _AcceptedReentryRefusal(
         SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial,
@@ -3486,12 +3505,18 @@ Future<_AcceptedReentryMaterial> _validateAcceptedReentryMaterial(
         );
       }
       selfJoinedAtRaw = joinedAt;
+      selfJoinedAt = parsedJoinedAt;
     }
     normalizedRoster.add(Map<String, Object?>.from(row));
   }
   if (selfJoinedAtRaw == null) {
     throw const _AcceptedReentryRefusal(
       SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial,
+    );
+  }
+  if (!selfJoinedAt!.isAfter(greatestFloor)) {
+    throw const _AcceptedReentryRefusal(
+      SelfRemovedGroupAcceptedReentryDisposition.refusedStaleAuthority,
     );
   }
 

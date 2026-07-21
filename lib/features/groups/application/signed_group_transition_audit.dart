@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 const signedGroupTransitionAuditField = 'signedTransitionAudit';
@@ -346,6 +348,8 @@ Map<String, Object?> buildGroupSystemTransitionSubject(
     case 'member_role_updated':
       return {
         'member': _canonicalMember(systemPayload['member']),
+        if (systemPayload.containsKey('previousRole'))
+          'previousRole': systemPayload['previousRole'] as String?,
         'groupConfigHash': _groupConfigHash(systemPayload['groupConfig']),
       };
     case 'group_message_deleted':
@@ -433,8 +437,25 @@ Future<String> buildGroupTransitionStateHash(
 ) async {
   final group = await groupRepo.getGroup(groupId);
   final members = await groupRepo.getMembers(groupId);
-  members.sort((a, b) => a.peerId.compareTo(b.peerId));
   final latestKey = await groupRepo.getLatestKey(groupId);
+  return buildGroupTransitionStateHashFromSnapshot(
+    groupId: groupId,
+    group: group,
+    members: members,
+    latestKeyGeneration: latestKey?.keyGeneration,
+  );
+}
+
+/// Deterministic snapshot form used when a durable transition must prove that
+/// the live state differs from its signed pre-state by exactly one role write.
+String buildGroupTransitionStateHashFromSnapshot({
+  required String groupId,
+  required GroupModel? group,
+  required List<GroupMember> members,
+  required int? latestKeyGeneration,
+}) {
+  final sortedMembers = List<GroupMember>.of(members)
+    ..sort((a, b) => a.peerId.compareTo(b.peerId));
   return sha256
       .convert(
         utf8.encode(
@@ -455,8 +476,10 @@ Future<String> buildGroupTransitionStateHash(
                   ?.toUtc()
                   .toIso8601String(),
             },
-            'members': members.map((member) => member.toConfigJson()).toList(),
-            'latestKeyGeneration': latestKey?.keyGeneration,
+            'members': sortedMembers
+                .map((member) => member.toConfigJson())
+                .toList(),
+            'latestKeyGeneration': latestKeyGeneration,
           }),
         ),
       )

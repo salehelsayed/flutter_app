@@ -102,6 +102,23 @@ abstract class GroupRepository {
   Future<void> removeAllKeys(String groupId);
 }
 
+/// Strict external-state retirement for a confirmed voluntary group exit.
+///
+/// The SQL exit intent and its exact membership/key rows are the durable retry
+/// addresses for secure-store and notification cleanup. Implementations must
+/// retain those rows until every external deletion succeeds, then invoke
+/// [finalizeSql] while still holding their same-group mutation lock. This
+/// prevents a key or projection writer from slipping between external cleanup
+/// and the final intent-last SQL transaction.
+abstract interface class GroupExitCleanupRepository {
+  Future<T> cleanupExactVoluntaryExit<T>({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime selfJoinedAt,
+    required Future<T> Function() finalizeSql,
+  });
+}
+
 /// One coherent authorization view used immediately before a forwarded media
 /// upload starts. The group row, complete ordered roster, and latest key
 /// generation must all come from the same storage snapshot; composing this

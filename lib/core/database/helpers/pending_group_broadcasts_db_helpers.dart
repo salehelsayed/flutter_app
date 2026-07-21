@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'group_exit_intents_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 
 String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;
@@ -52,6 +53,19 @@ Future<void> dbInsertPendingGroupBroadcast(
         final incomingKind = row['kind'] as String?;
         if (existingKind == 'member_role_updated_prepared' &&
             incomingKind == 'member_role_updated') {
+          if (!await dbAllowsPendingRoleBroadcastMutation(
+            transaction,
+            groupId: groupId,
+            existingKind: existingKind,
+            incomingKind: incomingKind!,
+          )) {
+            emitFlowEvent(
+              layer: 'DB',
+              event: 'PENDING_GROUP_BROADCAST_DB_ACTIVATION_REFUSED_EXIT',
+              details: {'groupId': _safeId(groupId)},
+            );
+            return;
+          }
           // Activation replaces every authoritative field, including the row
           // id, so exact verification and later removal refer to one payload.
           await dbUpdateOrdinaryGroupOwnedRows(
@@ -76,6 +90,21 @@ Future<void> dbInsertPendingGroupBroadcast(
         );
         return;
       }
+    }
+
+    final incomingKind = row['kind'] as String?;
+    if (incomingKind != null &&
+        !await dbAllowsPendingRoleBroadcastMutation(
+          transaction,
+          groupId: groupId,
+          incomingKind: incomingKind,
+        )) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'PENDING_GROUP_BROADCAST_DB_INSERT_REFUSED_EXIT',
+        details: {'groupId': _safeId(groupId)},
+      );
+      return;
     }
 
     emitFlowEvent(

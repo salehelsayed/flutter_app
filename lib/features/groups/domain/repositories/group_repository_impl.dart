@@ -39,6 +39,7 @@ class GroupRepositoryImpl
         PendingSiblingDeviceRepository,
         GroupKeyRotationDraftRepository,
         GroupMembershipWatermarkRepository,
+        GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
@@ -122,6 +123,7 @@ class GroupRepositoryImpl
   final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
   final GroupReactionNotificationProjection? groupReactionProjection;
+  final Future<bool> Function(String groupId)? dbHasGroupExitCleanupPending;
   final bool selfRemovedShellAuthorityEnabled;
   final Future<shell_db.SelfRemovedGroupShellAuthoritySnapshot> Function({
     required String groupId,
@@ -295,6 +297,7 @@ class GroupRepositoryImpl
     this.groupKeyStore,
     this.pushSharedKeyStore,
     this.groupReactionProjection,
+    this.dbHasGroupExitCleanupPending,
     this.selfRemovedShellAuthorityEnabled = false,
     this.dbLoadSelfRemovedGroupShellAuthority,
     this.dbCommitSelfRemovalAuthorityFn,
@@ -1457,6 +1460,99 @@ class GroupRepositoryImpl
   }
 
   @override
+  Future<T> cleanupExactVoluntaryExit<T>({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime selfJoinedAt,
+    required Future<T> Function() finalizeSql,
+  }) {
+    return _runGroupMutation(groupId, () async {
+      final group = await _loadGroupModel(groupId);
+      if (group == null ||
+          group.selfRemovedAt != null ||
+          group.isDissolved ||
+          group.dissolvedAt != null) {
+        throw StateError(
+          'Exact voluntary-exit group authority is unavailable.',
+        );
+      }
+      final selfRow = await dbLoadGroupMember(groupId, selfPeerId);
+      if (selfRow == null) {
+        throw StateError(
+          'Exact voluntary-exit self membership is unavailable.',
+        );
+      }
+      final self = GroupMember.fromMap(selfRow);
+      if (self.peerId != selfPeerId ||
+          !_sameInstant(self.joinedAt, selfJoinedAt)) {
+        throw StateError(
+          'Voluntary-exit membership generation changed before cleanup.',
+        );
+      }
+
+      final loadCommitted = dbLoadAllGroupKeys;
+      final projection = groupReactionProjection;
+      final mirror = pushSharedKeyStore;
+      if (loadCommitted == null) {
+        throw StateError(
+          'Strict voluntary-exit key-reference cleanup is unavailable.',
+        );
+      }
+      final references = <GroupKeyInfo>[];
+      final seenAddresses = <String>{};
+      void addReference(Map<String, Object?> row) {
+        final key = GroupKeyInfo.fromMap(row);
+        if (key.groupId != groupId) {
+          throw StateError('Voluntary-exit key reference changed groups.');
+        }
+        final address = '${key.keyGeneration}\u0000${key.encryptedKey}';
+        if (seenAddresses.add(address)) references.add(key);
+      }
+
+      for (final row in await loadCommitted(groupId)) {
+        addReference(row);
+      }
+      final pendingRow = await dbLoadPendingGroupKeyRotation?.call(groupId);
+      if (pendingRow != null) {
+        addReference(pendingRow);
+      } else {
+        final pending = _pendingKeyRotationFallback[groupId];
+        if (pending != null) addReference(pending.toMap());
+      }
+
+      // Fail closed in authorization order. SQL remains the retry address
+      // until all external stores are clean and [finalizeSql] commits.
+      final primary = groupKeyStore;
+      if (references.isNotEmpty && primary == null) {
+        throw StateError('Primary group-key store is unavailable.');
+      }
+      // Shared notification projections exist only on platforms where their
+      // backing store is configured. Absence therefore means there is no
+      // platform address to delete, while a configured store remains strict.
+      await projection?.removeGroupStrict(groupId);
+      for (final key in references) {
+        if (isSecureStoreReference(key.encryptedKey)) {
+          await primary!.delete(secureStoreKeyFromReference(key.encryptedKey));
+        } else if (primary != null) {
+          await primary.delete(
+            groupKeyMaterialStoreName(key.groupId, key.keyGeneration),
+          );
+        }
+      }
+      if (mirror != null) {
+        for (final key in references) {
+          await mirror.delete(
+            sharedGroupPushKeyName(key.groupId, key.keyGeneration),
+          );
+        }
+        await mirror.delete(sharedGroupMutedKeyName(groupId));
+      }
+
+      return finalizeSql();
+    });
+  }
+
+  @override
   Future<void> savePendingKeyRotation(GroupKeyInfo key) async {
     await _runGroupMutation(key.groupId, () async {
       await _requireOrdinaryGroupAuthority(key.groupId);
@@ -1519,6 +1615,7 @@ class GroupRepositoryImpl
       final groupId = group['id'] as String?;
       if (groupId == null) continue;
       await _runGroupMutation(groupId, () async {
+        if (await _mustSkipExitCleanupBackfill(groupId)) return;
         final authoritative = await dbLoadGroup(groupId);
         if (authoritative == null || authoritative['self_removed_at'] != null) {
           return;
@@ -1546,6 +1643,7 @@ class GroupRepositoryImpl
       final groupId = group['id'] as String?;
       if (groupId == null) continue;
       await _runGroupMutation(groupId, () async {
+        if (await _mustSkipExitCleanupBackfill(groupId)) return;
         final authoritative = await dbLoadGroup(groupId);
         if (authoritative == null || authoritative['self_removed_at'] != null) {
           return;
@@ -1566,10 +1664,17 @@ class GroupRepositoryImpl
     try {
       await projection.replaceContextsFromAuthoritativeLoader(() async {
         final rows = await dbLoadAllGroups();
-        final groups = rows
-            .map(GroupModel.fromMap)
-            .where((group) => group.selfRemovedAt == null)
-            .toList(growable: false);
+        final groups = <GroupModel>[];
+        final terminalGroupIds = <String>{};
+        for (final row in rows) {
+          final group = GroupModel.fromMap(row);
+          if (group.selfRemovedAt != null ||
+              await _mustSkipExitCleanupBackfill(group.id)) {
+            terminalGroupIds.add(group.id);
+            continue;
+          }
+          groups.add(group);
+        }
         final membersByGroup = <String, List<GroupMember>>{};
         final latestKeysByGroup = <String, GroupKeyInfo?>{};
         for (final group in groups) {
@@ -1586,6 +1691,7 @@ class GroupRepositoryImpl
           groups: groups,
           membersByGroup: membersByGroup,
           latestKeysByGroup: latestKeysByGroup,
+          terminalGroupIds: terminalGroupIds,
         );
       });
     } catch (error) {
@@ -1594,6 +1700,23 @@ class GroupRepositoryImpl
         event: 'GROUP_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
         details: {'error': error.toString()},
       );
+    }
+  }
+
+  Future<bool> _mustSkipExitCleanupBackfill(String groupId) async {
+    final check = dbHasGroupExitCleanupPending;
+    if (check == null) return false;
+    try {
+      return await check(groupId);
+    } catch (error) {
+      // Query uncertainty is fail-closed: skipping a self-healing mirror is
+      // recoverable, but republishing native-left authority is not.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REPO_EXIT_CLEANUP_BACKFILL_GUARD_ERROR',
+        details: {'groupId': groupId, 'error': error.toString()},
+      );
+      return true;
     }
   }
 

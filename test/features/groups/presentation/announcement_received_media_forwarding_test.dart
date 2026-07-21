@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_screen.dart';
@@ -12,6 +14,14 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../share/application/announcement_forward_test_harness.dart';
 
 void main() {
+  setUp(() {
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+  });
+  tearDown(setGroupExitIntentAccessSinks);
+
   testWidgets(
     'reader opens Forward picker for verified media while announcement compose remains read-only',
     (tester) async {

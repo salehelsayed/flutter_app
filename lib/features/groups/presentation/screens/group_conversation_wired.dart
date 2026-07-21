@@ -59,6 +59,7 @@ import 'package:flutter_app/features/groups/application/announcement_media_forwa
 import 'package:flutter_app/features/groups/application/group_media_batch_forward.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
@@ -86,6 +87,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/application/group_member_device_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
@@ -496,6 +498,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _hasCurrentSendKey = true;
   bool _isLifecycleResumed = true;
   _TerminalReadOnly _terminalSendReadOnly = _TerminalReadOnly.none;
+  GroupExitIntentLookupStatus? _exitIntentLookupStatus;
+  GroupExitIntent? _groupExitIntent;
   // 144 finding: distinguishes "membership never loaded yet" (startup window —
   // do NOT infer removal) from "loaded and genuinely empty/excluding self".
   // Gates the reopen reconstruction of the terminal read-only latch.
@@ -821,6 +825,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _handleMediaUploadProgress,
     );
     _loadIdentity();
+    unawaited(_refreshExitIntent());
     _loadMessages();
     unawaited(_loadSecurityStatus());
     _startListening();
@@ -1111,6 +1116,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadMessages());
       unawaited(_refreshVisibleGroup());
+      unawaited(_refreshExitIntent());
       // B5: recompute composer write-access on resume so a membership/key
       // change that landed while backgrounded (e.g. a re-add delivering the
       // current group key via the key-update path, which carries no sys row on
@@ -1160,6 +1166,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // otherwise a _loadMessages/_loadSecurityStatus race on a same-State
     // group-id change could transiently latch a false `removed`.
     _terminalSendReadOnly = _TerminalReadOnly.none;
+    _exitIntentLookupStatus = null;
+    _groupExitIntent = null;
     _securityStatusLoaded = false;
     _initialLoadDone = false;
     _activeQuoteMessageId = null;
@@ -1174,6 +1182,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
 
     _loadMessages();
+    unawaited(_refreshExitIntent());
     unawaited(_loadSecurityStatus());
     _startListening();
     _startListeningForOutgoingLocalMessageChanges();
@@ -3263,6 +3272,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _onDraftChanged(String text) {
+    if (!_canWrite) return;
     if (_draftText == text) return;
     setState(() {
       _draftText = text;
@@ -4647,6 +4657,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _removeAttachment(int index) {
+    if (!_canWrite) return;
     if (index < 0 || index >= _pendingAttachments.length) return;
     final updated = List<PendingComposerMedia>.from(_pendingAttachments);
     updated.removeAt(index);
@@ -6980,6 +6991,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   String get _readOnlyBannerText {
     final l10n = AppLocalizations.of(context)!;
+    if (_groupExitIntent != null) {
+      return l10n.group_exit_leaving_read_only;
+    }
+    if (_exitIntentLookupStatus != GroupExitIntentLookupStatus.available) {
+      return l10n.group_read_only_unavailable;
+    }
     switch (_terminalSendReadOnly) {
       case _TerminalReadOnly.dissolved:
         return l10n.group_read_only_dissolved;
@@ -7264,12 +7281,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _forceCancelActiveRecording();
     }
     _maybeReleaseRecoveredTerminalReadOnly(members: members);
-    return _canWriteForSnapshot(
-      group: _group,
-      isCurrentUserActiveMember: isCurrentUserActiveMember,
-      hasCurrentSendKey: hasCurrentSendKey,
-      hasCompleteSenderIdentity: hasCompleteSenderIdentity,
-    );
+    return _exitIntentLookupStatus == GroupExitIntentLookupStatus.available &&
+        _groupExitIntent == null &&
+        _terminalSendReadOnly == _TerminalReadOnly.none &&
+        _canWriteForSnapshot(
+          group: _group,
+          isCurrentUserActiveMember: isCurrentUserActiveMember,
+          hasCurrentSendKey: hasCurrentSendKey,
+          hasCompleteSenderIdentity: hasCompleteSenderIdentity,
+        );
   }
 
   bool _matchesGroupSnapshot(GroupModel a, GroupModel b) {
@@ -7317,6 +7337,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   bool get _canWrite =>
+      _exitIntentLookupStatus == GroupExitIntentLookupStatus.available &&
+      _groupExitIntent == null &&
       _terminalSendReadOnly == _TerminalReadOnly.none &&
       _canWriteForGroup(_group);
 
@@ -7325,6 +7347,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       // the long-press reaction picker (mirrors _canWrite). Otherwise the banner
       // reads read-only while reactions stay tappable, and each tap re-hits the
       // terminal result and silently reverts. Rides the F1 self-heal release.
+      _exitIntentLookupStatus == GroupExitIntentLookupStatus.available &&
+      _groupExitIntent == null &&
       _terminalSendReadOnly == _TerminalReadOnly.none &&
       _isCurrentUserActiveMember &&
       !_group.isDissolved &&
@@ -7352,8 +7376,31 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _maybeReleaseRecoveredTerminalReadOnly(groupReappeared: true);
   }
 
+  Future<void> _refreshExitIntent() async {
+    final groupId = widget.group.id;
+    final result = await loadGroupExitIntent(groupId);
+    if (!mounted || widget.group.id != groupId) return;
+
+    final hadWriteAccess = _canWrite;
+    setState(() {
+      _exitIntentLookupStatus = result.status;
+      if (result.isAvailable) {
+        _groupExitIntent = result.intent;
+      }
+    });
+    if (_groupExitIntent != null) {
+      _forceCancelActiveRecording();
+      if (_activeQuoteMessageId != null) {
+        setState(() => _activeQuoteMessageId = null);
+      }
+    } else if (hadWriteAccess && !_canWrite) {
+      _forceCancelActiveRecording();
+    }
+  }
+
   Future<void> _refreshAfterInfoRoute() async {
     await _refreshVisibleGroup();
+    await _refreshExitIntent();
     await _loadMessages();
     await _loadSecurityStatus();
   }
@@ -7793,7 +7840,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             highlightAnchorKey: _highlightAnchorKey,
             mediaMap: _mediaMap,
             composerStateListenable: _composerState,
-            onRemoveAttachment: _removeAttachment,
+            onRemoveAttachment: _canWrite ? _removeAttachment : null,
             onAttach: _canWrite ? _onAttach : null,
             onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
                 ? _onRecordStart
@@ -7863,7 +7910,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 ? _onRetryFailedMedia
                 : null,
             onRetryUnavailableMedia:
-                widget.mediaAttachmentRepo != null &&
+                _exitIntentLookupStatus ==
+                        GroupExitIntentLookupStatus.available &&
+                    _groupExitIntent == null &&
+                    widget.mediaAttachmentRepo != null &&
                     widget.mediaFileManager != null
                 ? _onRetryUnavailableMedia
                 : null,

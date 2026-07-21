@@ -28,6 +28,10 @@ class GroupListScreen extends StatelessWidget {
   /// table). Drives the "Joining…" / "Couldn't join" badge.
   final Map<String, int> rejoinAttempts;
 
+  /// Durable exit-intent projection. These rows remain readable/navigable but
+  /// no longer expose competing rejoin or Leave actions.
+  final Set<String> exitIntentGroupIds;
+
   /// Per-row accept outcome state keyed by invite id (plan 150). KEPT-invite
   /// outcomes (waitingForKey / retryable) render inline on the live card;
   /// terminal outcomes (whose invite was DELETED, so the id is no longer in
@@ -71,6 +75,7 @@ class GroupListScreen extends StatelessWidget {
     this.processingInviteIds = const <String>{},
     this.inviteRowOutcomes = const <String, PendingInviteRowOutcome>{},
     this.rejoinAttempts = const <String, int>{},
+    this.exitIntentGroupIds = const <String>{},
     this.isLoading = false,
     this.loadErrorMessage,
     this.onRetryLoad,
@@ -334,6 +339,7 @@ class GroupListScreen extends StatelessWidget {
     final rejoinAttempt = rejoinAttempts[group.id];
     final isStuck =
         rejoinAttempt != null && rejoinAttempt >= _joinGiveUpThreshold;
+    final isLeaving = exitIntentGroupIds.contains(group.id);
     String? joinStatusText;
     if (rejoinAttempt != null) {
       joinStatusText = isStuck
@@ -343,7 +349,9 @@ class GroupListScreen extends StatelessWidget {
 
     final card = GroupCard(
       group: group,
-      statusText: joinStatusText ?? retentionNotice?.listSummary,
+      statusText: isLeaving
+          ? l10n.group_exit_leaving_status
+          : joinStatusText ?? retentionNotice?.listSummary,
       lastMessageSender: lastMsg != null
           ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,
@@ -361,7 +369,9 @@ class GroupListScreen extends StatelessWidget {
 
     // The give-up badge is a user-facing dead-end without an action: surface a
     // manual "Retry now" (force-eligible + rejoin) and a "Leave" exit (G2).
-    if (isStuck && (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
+    if (!isLeaving &&
+        isStuck &&
+        (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [card, _buildStuckGroupActions(context, group)],

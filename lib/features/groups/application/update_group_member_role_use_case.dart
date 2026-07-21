@@ -18,6 +18,28 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 const lastAdminRoleChangeBlockedMessage =
     "You can't remove the last admin from this group.";
 
+/// The native config command may have committed even though its response (or
+/// the following local watermark write) failed. Durable callers must retain
+/// their prepared broadcast while this outcome remains ambiguous.
+class GroupMemberRoleCommitAmbiguous implements Exception {
+  const GroupMemberRoleCommitAmbiguous({
+    required this.cause,
+    this.rollbackError,
+  });
+
+  final Object cause;
+  final Object? rollbackError;
+
+  @override
+  String toString() {
+    final rollback = rollbackError;
+    return rollback == null
+        ? 'Group member role commit outcome is ambiguous: $cause'
+        : 'Group member role commit outcome is ambiguous: $cause; '
+              'local rollback also failed: $rollback';
+  }
+}
+
 /// Updates a member role after group creation and synchronizes the new
 /// authoritative config with the bridge validator.
 ///
@@ -202,31 +224,46 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
         eventAt: normalizedEventAt,
       );
 
-      final previousMyRole = group.myRole;
       final updatedMyRole = memberPeerId == selfPeerId
           ? (role == MemberRole.admin ? GroupRole.admin : GroupRole.member)
           : group.myRole;
+      final updatedMembers = members
+          .map(
+            (member) => member.peerId == memberPeerId
+                ? member.copyWith(role: role)
+                : member,
+          )
+          .toList(growable: false);
+      // Build every fallible pre-native input before the first local role
+      // write. From that write onward, any failure is conservatively treated
+      // as unresolved and fenced by the caller's prepared durable row.
+      final preparedGroupConfig = buildGroupConfigPayload(
+        group.copyWith(lastMembershipEventAt: normalizedEventAt),
+        updatedMembers,
+        configVersionOverride: normalizedEventAt,
+      );
 
       // Extracted signed role transitions use this final in-lock check to
       // revalidate external join evidence after signing but before the first
       // role/config/watermark write.
       await beforeCommit?.call();
 
-      await groupRepo.updateMemberRole(groupId, memberPeerId, role);
-      if (updatedMyRole != group.myRole) {
-        await groupRepo.updateGroup(group.copyWith(myRole: updatedMyRole));
-      }
-
+      var localRoleWriteMayHaveOccurred = false;
+      var nativeCommitMayHaveOccurred = false;
       try {
-        final updatedMembers = await groupRepo.getMembers(groupId);
+        // GroupRepositoryImpl writes the SQL member row before awaiting its
+        // external projection. A throw from this call therefore cannot prove
+        // that the local role write did not commit. Fence every issued write
+        // as ambiguous so the caller keeps the exact prepared transition.
+        localRoleWriteMayHaveOccurred = true;
+        await groupRepo.updateMemberRole(groupId, memberPeerId, role);
+        // After the command is issued, transport/response loss and failures in
+        // the following watermark write cannot prove native rejected it.
+        nativeCommitMayHaveOccurred = true;
         await callGroupUpdateConfig(
           bridge,
           groupId: groupId,
-          groupConfig: buildGroupConfigPayload(
-            group.copyWith(lastMembershipEventAt: normalizedEventAt),
-            updatedMembers,
-            configVersionOverride: normalizedEventAt,
-          ),
+          groupConfig: preparedGroupConfig,
         );
         await recordGroupMembershipEventWatermark(
           groupRepo: groupRepo,
@@ -234,6 +271,15 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
           eventAt: normalizedEventAt,
           eventId: mintedEventId,
         );
+        if (updatedMyRole != group.myRole) {
+          final watermarkedGroup = await groupRepo.getGroup(groupId);
+          if (watermarkedGroup == null) {
+            throw StateError('Group disappeared after native role commit');
+          }
+          await groupRepo.updateGroup(
+            watermarkedGroup.copyWith(myRole: updatedMyRole),
+          );
+        }
 
         emitFlowEvent(
           layer: 'FL',
@@ -247,26 +293,42 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
           },
         );
         return (eventAt: normalizedEventAt, eventId: mintedEventId);
-      } catch (error) {
-        await groupRepo.updateMemberRole(
-          groupId,
-          memberPeerId,
-          targetMember.role,
-        );
-        if (updatedMyRole != previousMyRole) {
-          await groupRepo.updateGroup(group.copyWith(myRole: previousMyRole));
+      } catch (error, stackTrace) {
+        Object? rollbackError;
+        if (localRoleWriteMayHaveOccurred) {
+          try {
+            await groupRepo.updateMemberRole(
+              groupId,
+              memberPeerId,
+              targetMember.role,
+            );
+          } catch (rollbackFailure) {
+            rollbackError = rollbackFailure;
+          }
         }
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_REVERTED',
+          event: localRoleWriteMayHaveOccurred || nativeCommitMayHaveOccurred
+              ? 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_COMMIT_AMBIGUOUS'
+              : 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_REVERTED',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             'peerId': memberPeerId.length > 8
                 ? memberPeerId.substring(0, 8)
                 : memberPeerId,
+            'rollbackFailed': rollbackError != null,
           },
         );
-        rethrow;
+        if (localRoleWriteMayHaveOccurred || nativeCommitMayHaveOccurred) {
+          Error.throwWithStackTrace(
+            GroupMemberRoleCommitAmbiguous(
+              cause: error,
+              rollbackError: rollbackError,
+            ),
+            stackTrace,
+          );
+        }
+        Error.throwWithStackTrace(error, stackTrace);
       }
     },
   );

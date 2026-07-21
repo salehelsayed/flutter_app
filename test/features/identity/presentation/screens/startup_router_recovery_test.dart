@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
@@ -14,6 +15,10 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -33,9 +38,18 @@ import '../../../contact_request/domain/repositories/fake_contact_request_reposi
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
+import '../../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../../shared/fakes/in_memory_group_repository.dart';
 
 const _storedMnemonic =
     'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+class _ThrowingStartupRejoinRepository extends InMemoryGroupRepository {
+  @override
+  Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async {
+    throw StateError('rejoin discovery unavailable');
+  }
+}
 
 void main() {
   late bool previousDeferredStartupMode;
@@ -138,6 +152,11 @@ void main() {
     AccountMigrationReceiverStartFn? accountMigrationStartReceiver,
     AccountMigrationReceiverEvents? accountMigrationReceiverEvents,
     Future<void> Function()? onAccountMigrationReceiverActivated,
+    InMemoryGroupRepository? groupRepository,
+    InMemoryGroupMessageRepository? groupMessageRepository,
+    Future<bool> Function(String groupId)? canRejoinForExitIntent,
+    Future<void> Function(String groupId)? processExitIntent,
+    Future<void> Function()? groupExitIntentRecovery,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -158,6 +177,11 @@ void main() {
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        canRejoinForExitIntent: canRejoinForExitIntent,
+        processExitIntent: processExitIntent,
+        groupExitIntentRecovery: groupExitIntentRecovery,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -298,6 +322,202 @@ void main() {
 
       expect(find.byType(AccountMigrationBlockedScreen), findsNothing);
       expect(p2pService.startNodeCallCount, 1);
+    },
+  );
+
+  testWidgets(
+    'PB264-18 cold startup recovers exits after rejoin and inbox drain without resume',
+    (tester) async {
+      const peerId = '12D3KooWColdExitRecovery';
+      const groupId = 'pb264-cold-start-group';
+      final createdAt = DateTime.utc(2026, 7, 21, 8);
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      contactRepository.seed([
+        ContactModel(
+          peerId: 'peer-existing',
+          publicKey: 'pk-existing',
+          rendezvous: '/dns4/rendezvous.example.com/tcp/4001/p2p/peer-existing',
+          username: 'Existing',
+          signature: 'sig-existing',
+          scannedAt: '2026-07-21T08:00:00.000Z',
+        ),
+      ]);
+      await saveAuthority(
+        AccountMigrationAuthorityState.active,
+        accountPeerId: peerId,
+      );
+
+      final groupRepository = InMemoryGroupRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      await groupRepository.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Cold-start recovery',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: createdAt,
+          createdBy: peerId,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepository.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: peerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'pk-self',
+          mlKemPublicKey: 'mlkem-self',
+          joinedAt: createdAt,
+        ),
+      );
+      await groupRepository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'group-key',
+          createdAt: createdAt,
+        ),
+      );
+
+      final trace = <String>[];
+      List<String>? commandsAtRecovery;
+      Object? isolatedRecoveryError;
+      var recoveryCallCount = 0;
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: groupRepository,
+          groupMessageRepository: groupMessageRepository,
+          canRejoinForExitIntent: (candidateGroupId) async {
+            trace.add('can-rejoin:$candidateGroupId');
+            return true;
+          },
+          processExitIntent: (candidateGroupId) async {
+            trace.add('rejoin-process:$candidateGroupId');
+            throw StateError('per-group exit retry stays durable');
+          },
+          groupExitIntentRecovery: () async {
+            recoveryCallCount++;
+            commandsAtRecovery = List<String>.of(bridge.commandLog);
+            await runGroupExitIntentRecoveryPass(
+              drainPendingBroadcasts: () async {
+                trace.add('startup-role-drain');
+              },
+              processExitIntents: () async {
+                trace.add('startup-exit-process');
+                throw StateError('process-all retry stays durable');
+              },
+              onError: (error, _) {
+                isolatedRecoveryError = error;
+                trace.add('startup-error-isolated');
+              },
+            );
+          },
+        ),
+      );
+      await pumpFrames(tester, count: 40);
+
+      expect(p2pService.startNodeCallCount, 1);
+      expect(recoveryCallCount, 1);
+      expect(isolatedRecoveryError, isA<StateError>());
+      expect(trace, <String>[
+        'can-rejoin:$groupId',
+        'rejoin-process:$groupId',
+        'startup-role-drain',
+        'startup-exit-process',
+        'startup-error-isolated',
+      ]);
+
+      final startupCommands = commandsAtRecovery!;
+      final joinIndex = startupCommands.indexOf('group:join');
+      final inboxDrainIndex = startupCommands.indexOf(
+        'group:inboxRetrieveCursor',
+      );
+      expect(joinIndex, isNonNegative);
+      expect(inboxDrainIndex, greaterThan(joinIndex));
+      expect(
+        bridge.commandLog.where((command) => command == 'group:join'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where(
+          (command) => command == 'group:inboxRetrieveCursor',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets(
+    'PB264-18 cold startup recovers local exits after node-start failure',
+    (tester) async {
+      const peerId = '12D3KooWColdExitOffline';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.active,
+        accountPeerId: peerId,
+      );
+      p2pService.startNodeResult = false;
+      var recoveryCalls = 0;
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupExitIntentRecovery: () async {
+            recoveryCalls++;
+          },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(p2pService.startNodeCallCount, 1);
+      expect(recoveryCalls, 1);
+      expect(bridge.commandLog, isNot(contains('group:join')));
+      expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+    },
+  );
+
+  testWidgets(
+    'PB264-18 cold startup recovery survives rejoin discovery failure',
+    (tester) async {
+      const peerId = '12D3KooWColdExitRejoinFailure';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.active,
+        accountPeerId: peerId,
+      );
+      var recoveryCalls = 0;
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: _ThrowingStartupRejoinRepository(),
+          groupExitIntentRecovery: () async {
+            recoveryCalls++;
+          },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(p2pService.startNodeCallCount, 1);
+      expect(recoveryCalls, 1);
     },
   );
 

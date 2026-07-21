@@ -24,6 +24,7 @@ typedef GroupReactionNotificationContextSnapshot = ({
   List<GroupModel> groups,
   Map<String, List<GroupMember>> membersByGroup,
   Map<String, GroupKeyInfo?> latestKeysByGroup,
+  Set<String> terminalGroupIds,
 });
 
 typedef LoadGroupReactionNotificationContextSnapshot =
@@ -371,12 +372,34 @@ class GroupReactionNotificationProjection {
   Future<void> replaceContextsFromAuthoritativeLoader(
     LoadGroupReactionNotificationContextSnapshot load,
   ) => _enqueue(() async {
+    final initial = await _readContexts();
+    final accountPeerId = _ownedAccountPeerId(initial);
+    if (accountPeerId == null) return;
     final snapshot = await load();
+    if (_expectedAccountPeerId != accountPeerId) return;
+    final current = await _readContexts();
+    if (_ownedAccountPeerId(current) != accountPeerId) return;
+    final terminalGroupIds = snapshot.terminalGroupIds
+        .map((groupId) => groupId.trim())
+        .where((groupId) => groupId.isNotEmpty)
+        .toSet();
+    _terminalGroupIds.addAll(terminalGroupIds);
     await _replaceContextsAssumingQueued(
       groups: snapshot.groups,
       membersByGroup: snapshot.membersByGroup,
       latestKeysByGroup: snapshot.latestKeysByGroup,
     );
+    if (terminalGroupIds.isNotEmpty) {
+      final contexts = await _readContexts();
+      if (!_ownsContexts(contexts)) return;
+      final targets = await _readTargets(
+        expectedAccountPeerId: contexts.accountPeerId,
+      );
+      targets.removeWhere(
+        (target) => terminalGroupIds.contains(target.groupId),
+      );
+      await _writeTargetsAndPruneComparands(contexts.accountPeerId, targets);
+    }
   }, propagateError: true);
 
   Future<void> _replaceContextsAssumingQueued({

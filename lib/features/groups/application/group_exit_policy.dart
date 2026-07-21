@@ -2,9 +2,48 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+enum GroupDissolvePreflightDisposition {
+  allowed,
+  blockedByExitIntent,
+  blockedByPendingRole,
+}
+
+/// Required, fail-closed authority for the separate local Dissolve operation.
+///
+/// It deliberately does not cancel or mutate either durable work source.
+/// Repository and classifier failures escape unchanged, so a caller can never
+/// confuse unavailable authority with an empty queue.
+class GroupDissolvePreflightAuthority {
+  GroupDissolvePreflightAuthority({
+    required this.intentRepository,
+    required this.pendingRepository,
+    bool Function(String kind)? isRoleBroadcastKind,
+  }) : isRoleBroadcastKind =
+           isRoleBroadcastKind ?? isPendingGroupMemberRoleBroadcastKind;
+
+  final GroupExitIntentRepository intentRepository;
+  final GroupPendingBroadcastRepository pendingRepository;
+  final bool Function(String kind) isRoleBroadcastKind;
+
+  Future<GroupDissolvePreflightDisposition> evaluate(String groupId) async {
+    if (await intentRepository.forGroup(groupId) != null) {
+      return GroupDissolvePreflightDisposition.blockedByExitIntent;
+    }
+    final pending = await pendingRepository.forGroup(groupId);
+    for (final row in pending) {
+      if (row.groupId == groupId && isRoleBroadcastKind(row.kind)) {
+        return GroupDissolvePreflightDisposition.blockedByPendingRole;
+      }
+    }
+    return GroupDissolvePreflightDisposition.allowed;
+  }
+}
 
 /// The action Orbit may safely offer after re-reading the group and its
 /// membership state.
@@ -86,7 +125,12 @@ Future<GroupExitSnapshot> resolveGroupExitSnapshot({
       pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
     );
   }
-  final selfIsPresent = members.any((member) => member.peerId == selfPeerId);
+  final exactSelfMembers = members
+      .where(
+        (member) => member.groupId == groupId && member.peerId == selfPeerId,
+      )
+      .toList(growable: false);
+  final selfIsPresent = exactSelfMembers.isNotEmpty;
   final membershipAdvancedAfterRemoval =
       selfRemovedAt != null &&
       (group.lastMembershipEventAt?.toUtc().isAfter(selfRemovedAt) ?? false);
@@ -101,6 +145,20 @@ Future<GroupExitSnapshot> resolveGroupExitSnapshot({
       pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
     );
   }
+
+  // Active voluntary-exit authority comes from the exact roster instance, not
+  // the denormalized group-role projection. Missing or duplicate self rows
+  // cannot safely authorize either Leave or sole-admin recovery.
+  if (exactSelfMembers.length != 1) {
+    return GroupExitSnapshot(
+      disposition: GroupExitDisposition.noOp,
+      group: group,
+      members: members,
+      eligibleSuccessors: const <GroupMember>[],
+      pendingRoleBroadcasts: const <GroupPendingBroadcast>[],
+    );
+  }
+  final selfMember = exactSelfMembers.single;
 
   final List<GroupPendingBroadcast> pending;
   try {
@@ -139,9 +197,12 @@ Future<GroupExitSnapshot> resolveGroupExitSnapshot({
   }
 
   final hasAuthoritativePeerAdmin = members.any(
-    (member) => member.peerId != selfPeerId && member.role == MemberRole.admin,
+    (member) =>
+        member.groupId == groupId &&
+        member.peerId != selfPeerId &&
+        member.role == MemberRole.admin,
   );
-  if (group.myRole != GroupRole.admin || hasAuthoritativePeerAdmin) {
+  if (selfMember.role != MemberRole.admin || hasAuthoritativePeerAdmin) {
     return GroupExitSnapshot(
       disposition: GroupExitDisposition.leave,
       group: group,

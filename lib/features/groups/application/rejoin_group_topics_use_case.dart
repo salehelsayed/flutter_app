@@ -31,6 +31,7 @@ enum RejoinOutcome {
   error,
   skippedDissolved,
   skippedSelfRemoved,
+  skippedExitInProgress,
   deferred,
 }
 
@@ -105,6 +106,8 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   required Bridge bridge,
   required GroupRepository groupRepo,
   RejoinReason reason = RejoinReason.startup,
+  Future<bool> Function(String groupId)? canRejoinForExitIntent,
+  Future<void> Function(String groupId)? processExitIntent,
 }) async {
   final rejoinStopwatch = Stopwatch()..start();
   emitFlowEvent(
@@ -125,6 +128,26 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   final rejoinStates = await groupRepo.loadGroupRejoinStates();
   final nowUtc = DateTime.now().toUtc();
 
+  Future<void> processExitBestEffort(String groupId) async {
+    final processExit = processExitIntent;
+    if (processExit == null) return;
+    try {
+      // Rejoin is only a lifecycle trigger for skipped branches. The exit
+      // runner owns terminal authority and decides whether network work is
+      // legal; dissolved/self-removed/native-leave cleanup remains local-only.
+      await processExit(groupId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REJOIN_EXIT_INTENT_PROCESS_ERROR',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': error.toString(),
+        },
+      );
+    }
+  }
+
   for (final group in groups) {
     final groupStopwatch = Stopwatch()..start();
     final rejoinState = rejoinStates[group.id];
@@ -141,6 +164,15 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
             groupRepo: groupRepo,
             groupId: group.id,
             action: (currentGroup) async {
+              final canRejoin = canRejoinForExitIntent;
+              if (canRejoin != null && !await canRejoin(group.id)) {
+                return (
+                  outcome: RejoinOutcome.skippedExitInProgress,
+                  keyEpoch: null,
+                  memberCount: 0,
+                  dissolvedAt: null,
+                );
+              }
               if (currentGroup.isDissolved) {
                 return (
                   outcome: RejoinOutcome.skippedDissolved,
@@ -211,10 +243,25 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
             'disposition': guarded.disposition.name,
           },
         );
+        await processExitBestEffort(group.id);
         continue;
       }
 
       final leaf = guarded.value!;
+      if (leaf.outcome == RejoinOutcome.skippedExitInProgress) {
+        perGroupOutcomes[group.id] = RejoinOutcome.skippedExitInProgress;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_SKIP_EXIT_IN_PROGRESS',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+          },
+        );
+        await processExitBestEffort(group.id);
+        continue;
+      }
       if (leaf.outcome == RejoinOutcome.skippedDissolved) {
         perGroupOutcomes[group.id] = RejoinOutcome.skippedDissolved;
         emitFlowEvent(
@@ -240,6 +287,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
                 : group.id,
           },
         );
+        await processExitBestEffort(group.id);
         continue;
       }
 
@@ -267,6 +315,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
                 : group.id,
           },
         );
+        await processExitBestEffort(group.id);
         continue;
       }
 
@@ -283,6 +332,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
             'attempt': rejoinState!.attemptCount,
           },
         );
+        await processExitBestEffort(group.id);
         continue;
       }
 
@@ -295,6 +345,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       // waiting for the next app-resume drainAll. Never throws (sink-wrapped);
       // a no-op when nothing is queued or no sink is wired.
       await triggerGroupPendingBroadcastDrainForGroup(group.id);
+      await processExitBestEffort(group.id);
 
       emitFlowEvent(
         layer: 'FL',
@@ -356,6 +407,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
         },
       );
+      await processExitBestEffort(group.id);
     }
   }
 

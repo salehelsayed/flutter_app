@@ -49,13 +49,15 @@ import 'package:flutter_app/features/groups/application/archive_group_use_case.d
 import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
-import 'package:flutter_app/features/groups/application/leave_group_and_delete_local_history_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
@@ -346,8 +348,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   final Set<String> _changedGroupIds = <String>{};
   bool _refreshPendingIntroductionsOnPop = false;
   int _introLoadRequestId = 0;
-  LeaveGroupAndDeleteLocalHistoryUseCase? _groupExitAction;
   bool _isGroupExitInFlight = false;
+  Set<String> _exitIntentGroupIds = <String>{};
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
 
@@ -510,19 +512,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         : OrbitViewMode.innerCircle;
     final hasGroupSurfaces =
         widget.groupRepository != null && widget.groupMessageRepository != null;
-    final groupRepo = widget.groupRepository;
-    if (groupRepo != null) {
-      _groupExitAction = LeaveGroupAndDeleteLocalHistoryUseCase(
-        bridge: widget.bridge,
-        groupRepo: groupRepo,
-        groupMessageRepo: widget.groupMessageRepository,
-        identityRepo: widget.identityRepo,
-        sendP2PMessage: (peerId, message) =>
-            widget.p2pService.sendMessage(peerId, message),
-        storeP2PMessageInInbox: (peerId, message) =>
-            widget.p2pService.storeInInbox(peerId, message),
-      );
-    }
     _activeGroupsLoaded = !hasGroupSurfaces;
     _archivedGroupsLoaded = !hasGroupSurfaces;
     _publishAllProjections();
@@ -894,6 +883,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       return;
     }
 
+    final exitIntents = await loadAllGroupExitIntents();
+    if (exitIntents.isAvailable) {
+      _exitIntentGroupIds = exitIntents.intents
+          .map((intent) => intent.groupId)
+          .toSet();
+    }
+
     try {
       final active = await loadOrbitGroups(
         groupRepo: groupRepository,
@@ -910,6 +906,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           .map(
             (group) => group.copyWith(
               rejoinAttemptCount: rejoinStates[group.groupId]?.attemptCount,
+              hasExitIntent: _exitIntentGroupIds.contains(group.groupId),
             ),
           )
           .toList();
@@ -939,7 +936,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         includeArchived: true,
       );
       if (!mounted) return;
-      _archivedGroups = archived;
+      _archivedGroups = archived
+          .map(
+            (group) => group.copyWith(
+              hasExitIntent: _exitIntentGroupIds.contains(group.groupId),
+            ),
+          )
+          .toList();
       _archivedGroupsLoaded = true;
       _publishAllProjections();
     } catch (e) {
@@ -1127,10 +1130,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       // loader — otherwise tapping "Retry now" (which refreshes this row) would
       // make the still-stuck group's badge + actions silently vanish.
       final rejoinStates = await groupRepository.loadGroupRejoinStates();
+      final exitIntent = await loadGroupExitIntent(groupId);
       if (!mounted) return;
+
+      OrbitGroup? previous;
+      for (final entry in [..._activeGroups, ..._archivedGroups]) {
+        if (entry.groupId == groupId) {
+          previous = entry;
+          break;
+        }
+      }
 
       final refreshed = group?.copyWith(
         rejoinAttemptCount: rejoinStates[groupId]?.attemptCount,
+        hasExitIntent: exitIntent.isAvailable
+            ? exitIntent.intent != null
+            : previous?.hasExitIntent ?? false,
       );
 
       final activeGroups = List<OrbitGroup>.from(_activeGroups)
@@ -2896,16 +2911,28 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<GroupExitSnapshot?> _resolveFreshGroupExit(String groupId) async {
     final groupRepository = widget.groupRepository;
     if (groupRepository == null) return null;
-    final identity = await widget.identityRepo.loadIdentity();
-    if (identity == null) return null;
-    return resolveGroupExitSnapshot(
-      groupRepo: groupRepository,
-      groupId: groupId,
-      selfPeerId: identity.peerId,
-      messageRepo: widget.groupMessageRepository,
-      inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
-      loadPendingBroadcasts: loadGroupPendingBroadcasts,
-    );
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) return null;
+      return await resolveGroupExitSnapshot(
+        groupRepo: groupRepository,
+        groupId: groupId,
+        selfPeerId: identity.peerId,
+        messageRepo: widget.groupMessageRepository,
+        inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
+        loadPendingBroadcasts: loadGroupPendingBroadcasts,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_GROUP_EXIT_CLASSIFY_ERROR',
+        details: {'groupId': groupId, 'error': error.toString()},
+      );
+      if (mounted) {
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+      }
+      return null;
+    }
   }
 
   Future<void> _onLeaveGroup(OrbitGroup group) async {
@@ -2964,8 +2991,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         await _confirmDeleteSelfRemovedGroupShell(group.id);
         return;
       case GroupExitDisposition.soleAdminRecovery:
-      case GroupExitDisposition.pendingRoleSync:
         await _showGroupExitRecovery(snapshot);
+        return;
+      case GroupExitDisposition.pendingRoleSync:
+        await _runActiveGroupExit(group, openRecoveryWhenBlocked: true);
         return;
       case GroupExitDisposition.leave:
         if (confirmNormalLeave) {
@@ -2993,64 +3022,158 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             return;
           }
         }
-        await _runActiveGroupExit(group.id, openRecoveryWhenBlocked: true);
+        await _runActiveGroupExit(group, openRecoveryWhenBlocked: true);
         return;
     }
   }
 
   Future<bool> _runActiveGroupExit(
-    String groupId, {
+    GroupModel group, {
     required bool openRecoveryWhenBlocked,
   }) async {
-    final action = _groupExitAction;
-    if (action == null) return false;
-    final result = await action.call(groupId);
-    if (!mounted) return result.didLeave;
+    final result = await requestGroupExitIntentLeave(group.id);
+    return _handleGroupExitIntentResult(
+      group,
+      result,
+      openRecoveryWhenBlocked: openRecoveryWhenBlocked,
+    );
+  }
+
+  Future<bool> _handleGroupExitIntentResult(
+    GroupModel group,
+    GroupExitIntentRequestResult result, {
+    required bool openRecoveryWhenBlocked,
+  }) async {
+    if (!mounted) return false;
     switch (result.status) {
-      case LeaveGroupAndDeleteLocalHistoryStatus.left:
+      case GroupExitIntentRequestStatus.started:
+      case GroupExitIntentRequestStatus.noOp:
         _openRowNotifier.value = null;
-        _markGroupChanged(groupId);
-        await _refreshOrbitGroup(groupId);
+        _markGroupChanged(group.id);
+        await _refreshOrbitGroup(group.id);
         return true;
-      case LeaveGroupAndDeleteLocalHistoryStatus.leftCleanupIncomplete:
-        _openRowNotifier.value = null;
-        _markGroupChanged(groupId);
-        await _refreshOrbitGroup(groupId);
-        if (mounted) {
-          _showSnackBar(
-            AppLocalizations.of(context)!.group_exit_cleanup_incomplete,
-          );
+      case GroupExitIntentRequestStatus.pendingRoleSync:
+        await _showPendingIntentExit(group);
+        return false;
+      case GroupExitIntentRequestStatus.queued:
+        await _showQueuedIntentExit(group);
+        return false;
+      case GroupExitIntentRequestStatus.blockedLastAdmin:
+        if (result.intent != null) {
+          await _showQueuedIntentExit(group);
+          return false;
         }
-        return true;
-      case LeaveGroupAndDeleteLocalHistoryStatus.blockedLastAdmin:
-        final refreshed = await _resolveFreshGroupExit(groupId);
+        final refreshed = await _resolveFreshGroupExit(group.id);
         if (openRecoveryWhenBlocked && mounted && refreshed != null) {
-          await _showGroupExitRecovery(refreshed);
+          if (refreshed.disposition == GroupExitDisposition.soleAdminRecovery) {
+            await _showGroupExitRecovery(refreshed);
+          } else if (refreshed.disposition ==
+              GroupExitDisposition.pendingRoleSync) {
+            await _showPendingIntentExit(group);
+          }
         }
         return false;
-      case LeaveGroupAndDeleteLocalHistoryStatus.preworkFailed:
-      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveFailed:
-        _markGroupChanged(groupId);
-        await _refreshOrbitGroup(groupId);
+      case GroupExitIntentRequestStatus.unavailable:
+        if (result.intent != null) {
+          await _showQueuedIntentExit(group);
+          return false;
+        }
+        _markGroupChanged(group.id);
+        await _refreshOrbitGroup(group.id);
         if (mounted) {
           _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
         }
         return false;
-      case LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveUncertain:
-        _markGroupChanged(groupId);
-        await _refreshOrbitGroup(groupId);
+      case GroupExitIntentRequestStatus.failed:
+        if (result.intent != null) {
+          await _showQueuedIntentExit(group);
+          return false;
+        }
+        _markGroupChanged(group.id);
+        await _refreshOrbitGroup(group.id);
         if (mounted) {
-          _showSnackBar(
-            AppLocalizations.of(context)!.group_exit_leave_uncertain,
-          );
+          _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
         }
         return false;
     }
   }
 
+  Future<bool> _closeSheetForGroupExitResult(
+    GroupExitIntentRequestResult result,
+  ) async {
+    if (!mounted) return false;
+    switch (result.status) {
+      case GroupExitIntentRequestStatus.started:
+      case GroupExitIntentRequestStatus.queued:
+      case GroupExitIntentRequestStatus.noOp:
+        return true;
+      case GroupExitIntentRequestStatus.pendingRoleSync:
+        return false;
+      case GroupExitIntentRequestStatus.blockedLastAdmin:
+        _showSnackBar(lastAdminLeaveBlockedMessage);
+        return false;
+      case GroupExitIntentRequestStatus.unavailable:
+      case GroupExitIntentRequestStatus.failed:
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+        return false;
+    }
+  }
+
+  Future<void> _showPendingIntentExit(GroupModel group) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => GroupExitRecoverySheet.pendingRoleSync(
+        groupName: group.name,
+        onLeaveWhenSyncCompletes: () async => _closeSheetForGroupExitResult(
+          await queueGroupExitIntentLeaveWhenSyncCompletes(group.id),
+        ),
+        onTryAgain: () async => _closeSheetForGroupExitResult(
+          await retryGroupExitIntentLeave(group.id),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _markGroupChanged(group.id);
+    await _refreshOrbitGroup(group.id);
+  }
+
+  Future<void> _showQueuedIntentExit(GroupModel group) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => GroupExitRecoverySheet.queuedLeave(
+        groupName: group.name,
+        onTryAgain: () async => _closeSheetForGroupExitResult(
+          await retryGroupExitIntentLeave(group.id),
+        ),
+        onCancelQueuedLeave: () async {
+          final result = await cancelQueuedGroupExitIntent(group.id);
+          return switch (result.status) {
+            GroupExitIntentCancelStatus.cancelled ||
+            GroupExitIntentCancelStatus.notFound =>
+              GroupExitQueuedCancelUiResult.cancelled,
+            GroupExitIntentCancelStatus.tooLate =>
+              GroupExitQueuedCancelUiResult.tooLate,
+            GroupExitIntentCancelStatus.unavailable ||
+            GroupExitIntentCancelStatus.failed =>
+              GroupExitQueuedCancelUiResult.failed,
+          };
+        },
+        onRefreshQueuedState: () => _refreshOrbitGroup(group.id),
+      ),
+    );
+    if (!mounted) return;
+    _markGroupChanged(group.id);
+    await _refreshOrbitGroup(group.id);
+  }
+
   Future<void> _showGroupExitRecovery(GroupExitSnapshot snapshot) async {
     final group = snapshot.group;
     if (!mounted || group == null) return;
+    var roleSyncPending = snapshot.hasPendingRoleSync;
     String? pendingSourceEventId;
     for (final row in snapshot.pendingRoleBroadcasts) {
       final sourceMessageId = row.sourceMessageId;
@@ -3085,6 +3208,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                   widget.p2pService.sendMessage(peerId, message),
             );
             pendingSourceEventId = result.sourceEventId;
+            roleSyncPending =
+                result.outcome ==
+                ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync;
             _markGroupChanged(group.id);
             await _refreshOrbitGroup(group.id);
             return switch (result.outcome) {
@@ -3114,14 +3240,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                     isPendingGroupMemberRoleBroadcastKind(row.kind) &&
                     row.sourceMessageId == exactSource,
               )) {
+            roleSyncPending = true;
             return false;
           }
-          return !pending.any(
+          final ready = !pending.any(
             (row) => isPendingGroupMemberRoleBroadcastKind(row.kind),
           );
+          roleSyncPending = !ready;
+          return ready;
         },
-        onContinueLeave: () =>
-            _runActiveGroupExit(group.id, openRecoveryWhenBlocked: false),
+        onContinueLeave: () async {
+          final result = roleSyncPending
+              ? await queueGroupExitIntentLeaveWhenSyncCompletes(group.id)
+              : await requestGroupExitIntentLeave(group.id);
+          return _closeSheetForGroupExitResult(result);
+        },
         onDissolve: () async {
           final committed = await _dissolveGroupFromOrbit(group.id);
           if (committed && mounted) {
@@ -3133,6 +3266,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         },
       ),
     );
+    if (mounted) await _refreshOrbitGroup(group.id);
   }
 
   Future<bool> _dissolveGroupFromOrbit(String groupId) async {
@@ -3165,6 +3299,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         bridge: widget.bridge,
         groupRepo: groupRepo,
         msgRepo: messageRepo,
+        preflightAuthority: requireGroupDissolvePreflightAuthority(),
         groupId: groupId,
         actorPeerId: identity.peerId,
         actorUsername: identity.username,
@@ -3251,6 +3386,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             DissolveGroupResult.unauthorized =>
               l10n.group_info_admins_only_dissolve,
             DissolveGroupResult.notFound => l10n.group_info_not_found,
+            DissolveGroupResult.exitWorkPending =>
+              l10n.group_info_dissolve_failed,
             null => l10n.group_info_dissolve_failed,
           };
     _showSnackBar(message);
@@ -3364,6 +3501,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         bridge: widget.bridge,
         groupRepo: groupRepository,
         reason: RejoinReason.nodeRequestedRecovery,
+        canRejoinForExitIntent: canRejoinForExitIntent,
+        processExitIntent: processExistingGroupExitIntent,
       );
     } catch (e) {
       emitFlowEvent(
@@ -3415,26 +3554,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await _refreshOrbitGroup(group.group.id);
       return;
     }
-    try {
-      await leaveGroup(
-        bridge: widget.bridge,
-        groupRepo: groupRepository,
-        groupId: group.group.id,
-      );
-      _openRowNotifier.value = null;
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'ORBIT_FL_STUCK_LEAVE_ERROR',
-        details: {'error': e.toString()},
-      );
-      if (mounted) {
-        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
-      }
-    } finally {
-      _markGroupChanged(group.group.id);
-      await _refreshOrbitGroup(group.group.id);
-    }
+    await _dispatchFreshGroupExit(snapshot, confirmNormalLeave: false);
+    _markGroupChanged(group.group.id);
+    await _refreshOrbitGroup(group.group.id);
   }
 
   void _onGroupTap(OrbitGroup group) {

@@ -15,6 +15,8 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -470,10 +472,15 @@ Map<String, dynamic> _decodeReplayPayload(Map<String, dynamic> inboxPayload) {
 void main() {
   setUp(() {
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
   });
 
   tearDown(() {
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+    setGroupExitIntentAccessSinks();
   });
 
   group('GroupConversationWired Section 3 background-task protection', () {

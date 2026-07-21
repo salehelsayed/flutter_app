@@ -1,12 +1,13 @@
 # 264 - Durable “Leave When Sync Completes” For Pending Role Broadcasts
 
-Status: planned v3 (recommendation selected and review findings folded in
-2026-07-20); execution prerequisite-blocked on Plan 263's immutable handoff
+Status: implemented and accepted (2026-07-21)
 Type: Bug + reliability hardening + UX
 Spec: when a signed role change is still pending, leaving must remain safe without
 trapping the user on the current screen or pretending uncertain delivery never
 happened
 Classification: post-263 DB/schema + application + lifecycle + wired UI
+Implementation classification: complete on DB v103; Plan 265 remains an
+evidence-gated residual and was not implemented concurrently
 Closure tier: host causal proof, real SQLite/SQLCipher boundary proof, one existing
 Go idempotence contract; no new relay, wire, crypto, native-handler, or two-peer
 production behavior
@@ -53,8 +54,10 @@ and no spinner that asks the user to keep a screen open.
 | 2026-07-20 | Independent requested `$tdd-review` | plan plus source counterexamples | Found vacuous fixtures, keyed-tail cleanup/error gaps, optional-sink fail-open, post-snapshot role races, Dissolve bypass/cleanup issues, and incomplete preflight. Verdict was not ready while terminal policy remained open. | Select terminal behavior and triage findings. |
 | 2026-07-20 | Product/UX decision | recovery sheet and durable status surfaces | Selected immediate Retry → **Leave when sync completes**; keep Dissolve separate; never offer force-local divergence. | Replan as post-v102 durable work. |
 | 2026-07-20 | State/restart grounding | v102 registry, Plan-263 authority, voluntary-leave prework, pending outbox, native `LeaveGroupTopic`, startup/resume/rejoin | A process-memory leave marker is insufficient. Native leave is idempotent, but signed notice, rotation, cleanup, membership generation, and rejoin ordering need durable phases. | Execute only after immutable Plan 263 handoff. |
+| 2026-07-21 | Prerequisite handoff | Plan 263 accepted tree, shared DB/authority/lock/UI surfaces | Accepted `refs/plan-handoffs/263` at `1bb3c1c95792686cba69bed39ca9a583a311ea2a` (parent `19dc1ca3a79277baa7079772352d77190d7c870b`, tree `a0fd598729216ab2936702a7c40058f2fe225826`, 141 paths); v103 remained free. | Execute Plan 264 on the immutable authority base. |
+| 2026-07-21 | Implementation and counterexample closure | v103 storage/CAS, keyed runner, durable phases, startup/rejoin/resume/manual recovery, four UI surfaces, projection ordering, l10n, gates | Delivered all 19 contract rows. Late audits found and closed queued-loader/removal ordering plus old-account terminal-fence leakage; both have exact lifecycle regressions. Plan 265 was classified as residual because aggregate-only recipient semantics and combined degradation reporting are not fully covered. | Run final gates and freeze the scoped handoff. |
 
-## Confirmed Problem And Source Evidence
+## Pre-Implementation Problem And Source Evidence
 
 - A valid `member_role_updated` or `member_role_updated_prepared` row blocks active
   leave before signed prework and is checked again at the native boundary in
@@ -81,29 +84,32 @@ and no spinner that asks the user to keep a screen open.
   removes its topic/config/key state when present. Reissuing only native leave is
   safe for the same exact membership instance if queued-exit rejoin is excluded at
   the correct phase; this contract gets an explicit Go sentinel.
-- Plan 263 currently establishes DB v102 `groups.self_removed_at`, exact
+- Plan 263 established DB v102 `groups.self_removed_at`, exact
   `selfPeerId + joinedAt` membership-instance authority, membership serialization,
   and terminal work manifests. Its in-flight workspace is user-owned and must not
   be edited by Plan 264.
-- Current DB version on the planning workspace is 102. Version 103 is the expected
-  reservation, but execution must recheck the next free version after Plan 263's
-  immutable handoff.
+- The accepted Plan 263 base ended at DB v102. Execution confirmed v103 was free and
+  delivered `group_exit_intents` as the production DB v103 migration.
 
-Planning baseline: committed `HEAD 19dc1ca3a79277baa7079772352d77190d7c870b` plus
-the user's uncommitted Plan 263 implementation as prerequisite evidence only.
+Planning baseline was `HEAD 19dc1ca3a79277baa7079772352d77190d7c870b`.
+Execution used the accepted Plan 263 handoff ref and its exact tree recorded above.
 
 ## Graph Grounding Snapshot
 
-- Graph fingerprint / freshness: `6e239a985c1da4d8`;
-  `confidence=anchored`, `freshness=stale:lib/main.dart`.
-- Query / profile:
+- Planning fingerprint was `6e239a985c1da4d8` with stale `lib/main.dart`.
+  Closure ran the required affected query, one incremental refresh, and a final
+  `review` query with `confidence=anchored`, `freshness=current`, fingerprint
+  `7b7d2c6210119196`.
+- Planning query / profile:
   `python3 graphify-arch/tdd_context.py query "Plan 264 durable queued group leave after pending member_role_updated: LeaveGroupAndDeleteLocalHistoryUseCase nativeLeaveUncertain leftCleanupIncomplete GroupPendingBroadcastRunner retryPendingGroupRoleTransition GroupExitRecoverySheet GroupExitPolicy group_info_wired group_list_wired orbit_wired database migrations currentIdentityDatabaseVersion GROUP_TESTS core-host-all real SQLCipher; find storage authority, restart lifecycle, cancellation race, tests, gates, and Plan 263 overlap" --profile tdd --budget 700`.
 - Anchors: `retryPendingGroupRoleTransition`, `GroupPendingBroadcastRunner`, and
   `GroupExitRecoverySheet`. Targeted source verification added v102 migration and
   helpers, voluntary-leave/key-rotation phases, Go native leave, rejoin/resume,
   all wired surfaces, l10n, and gates.
-- Reuse rule: re-run the compact query and re-anchor every line/name against the
-  immutable post-263 base. No graph refresh is performed for this plan-only edit.
+- Closure impact query covered v103 migration/helpers, coordinator, runner, keyed
+  drain, resume, recovery sheet, and notification projection. The single
+  `./graphify-arch/refresh_arch_graph.sh --incremental` run refreshed 22 changed code
+  files into 59,554 nodes / 90,831 edges and a 1,435-file TDD overlay.
 
 ## Durable Authority And State Machine
 
@@ -162,12 +168,14 @@ queued (cancelable)
   network work. New role preparation is refused while an intent exists; activation
   of the already-existing exact prepared row is still allowed only while `queued`.
 - `leave_notice_attempted`: one exact transaction completes the leave-notice row
-  and advances the intent. Signed payload/timeline creation is mandatory. The folded
-  Plan-265 policy preserves live publish as best-effort and makes per-recipient
-  offline notice explicitly best-effort: a typed delivered or explicitly classified
-  degraded attempt may advance, while storage/identity/state ambiguity may not.
-  Generic and role pending rows remain success-only and are never retired by this
-  policy.
+  and advances the intent. Signed payload/timeline creation is mandatory. Plan 264
+  preserves live publish as best-effort and permits a bounded explicitly classified
+  offline-notice degradation after durable notice authority, while storage/identity/
+  state ambiguity may not advance. Generic and role pending rows remain success-only
+  and are never retired by this policy. Plan 265 remains an evidence-gated residual:
+  its aggregate-only recipient contract conflicts with the delivered per-recipient
+  salvage path, and its combined notice-plus-rotation outcome is not yet preserved in
+  the single bounded error field.
 - `rotation_claimed`: CAS before the existing best-effort rotation. Only the winner
   attempts rotation. A restart in this state does not rotate another epoch; it
   records rotation deferred and proceeds, relying on the remaining-admin rekey path
@@ -274,9 +282,9 @@ Hard `Do not`:
   re-push.
 - Do not change wire payloads, relay schema, crypto, native handlers, or add a
   cross-device claim under this plan.
-- Do not edit Plan 263's active workspace or execute Plan 265 concurrently. Plan 264's
-  durable notice phases subsume Plan 265's non-durable voluntary-prework outline;
-  Plan 265 must be folded/resequenced and re-reviewed before either implementation.
+- Plan 263's accepted base remains immutable. Plan 265 was not executed concurrently;
+  it is resequenced as a post-264 evidence-gated residual that requires contract
+  reconciliation and a first-uncovered causal RED before implementation.
 
 Explicitly deferred:
 
@@ -288,42 +296,42 @@ Explicitly deferred:
 - Optional real-relay two-peer confidence is not closure: this plan changes local
   persistence/orchestration and reuses existing signed/wire behavior.
 
-## Dependencies And Execution Preconditions
+## Dependencies And Execution Preconditions (Satisfied At Execution)
 
-- Plan 263 is a hard prerequisite. Its owner must hand off an immutable accepted SHA
-  or patch; shared DB/helpers/lifecycle/policy/UI/tests must no longer be edited in
-  parallel. Re-run all grounding on that base.
-- Confirm DB remains v102 and v103 is free; otherwise reserve the actual next version
-  and update every filename/test/command before RED.
+- Plan 263 was the hard prerequisite. Its accepted handoff is
+  `refs/plan-handoffs/263` (`1bb3c1c95792686cba69bed39ca9a583a311ea2a`), and
+  shared DB/helpers/lifecycle/policy/UI/tests were re-grounded on that tree.
+- DB was v102 on the accepted prerequisite and v103 was free; Plan 264 reserved and
+  shipped v103 consistently across migration, registry, tests, and device proof.
 - Confirm accepted re-entry changes exact self `joined_at`, the pending re-push owns
   one bounded membership leaf, and Plan 263's terminalizer can atomically include the
   new intent table.
-- The current in-flight self-ban branch still raw-leaves. Require Plan 263's handoff
-  to provide a named authenticated self-ban terminalization sentinel, or land a
-  separately reviewed prerequisite. Plan 264 must not build a competing ban engine.
-- Confirm the post-263 lock hierarchy permits cleanup-only execution without nesting.
+- The accepted Plan 263 handoff supplied authenticated self-ban terminalization; the
+  exact Plan 264 preservation selector passes without a competing ban engine.
+- The post-263 lock hierarchy was verified; cleanup-only execution does not nest the
+  non-reentrant membership phase.
 - Full `host-all` belongs to the Plans 263-267 wave and release closure, not this plan.
 
 ## Test Contract
 
 | Case | Behavior and named proof | Fixture / discriminator | RED -> GREEN and mutation | Gate / registration |
 |---|---|---|---|---|
-| TC-264-01 | `group_pending_broadcast_runner_test.dart::PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller` | Four controlled callers; second remains active when first completes; row enqueued between turns; max-active counter | Current unlocked runner overlaps. GREEN requires one exact push, reload inside each turn, and identity-safe tail removal. Remove `identical` cleanup or reuse an old load -> red. | Focused file; add once to `GROUP_TESTS`. |
-| TC-264-02 | `::PB264-02 repository failure releases the keyed turn while another group progresses` | `repository.forGroup` and runner-owned remove rejection, not `rePush` throw (which is swallowed); unrelated-group barrier | Current code has no keyed turn. GREEN releases same-group successor and never creates a global lock. Globalize/leak tail -> red. | Same focused file/registration. |
+| TC-264-01 | `group_pending_broadcast_runner_test.dart::PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller` | Four controlled callers; second remains active when first completes; row enqueued between turns; max-active counter | Historical RED: the unlocked runner overlapped. GREEN requires one exact push, reload inside each turn, and identity-safe tail removal. Remove `identical` cleanup or reuse an old load -> red. | Focused file; add once to `GROUP_TESTS`. |
+| TC-264-02 | `::PB264-02 repository failure releases the keyed turn while another group progresses` | `repository.forGroup` and runner-owned remove rejection, not `rePush` throw (which is swallowed); unrelated-group barrier | Historical RED: no keyed turn existed. GREEN releases same-group successor and never creates a global lock. Globalize/leak tail -> red. | Same focused file/registration. |
 | TC-264-03 | `::PB264-03 empty-recipient and prepared-row sentinels reach their claimed branches`; `group_exit_actions_test.dart::PB264-03 self-only role transition rejects empty recipients` | Active parent, self row, usable identity/key; generic empty row publishes once/inbox zero/removes exact row; prepared fixture has exact parent/identity/key/watermark; literal self-only role fixture | Existing claims can pass vacuously through absent-parent/null-identity. GREEN proves the leaf is reached. Remove recipient rejection or watermark guard -> named red. | Focused runner/actions; both once in `GROUP_TESTS`. |
 | TC-264-04 | `103_group_exit_intents_test.dart::PB264-04 v103 schema, empty backfill, constraints, registry, and rerun are exact`; full migration-chain preservation | Real SQLite v102 seed, onCreate/onUpgrade, CHECK/unique/index inspection, run twice, v102 rows byte-equal | Compile/schema RED before v103. Drop a constraint, guess a legacy intent, misorder registry -> red. | Add migration test once to `GROUP_TESTS`; `core-host-all`. |
 | TC-264-05 | `group_exit_intents_sqlcipher_proof_test.dart::PB264-05 real SQLCipher v102 to v103 survives reopen and rejects wrong key/downgrade` | Production callbacks on explicit available Android; upgrade + fresh + reopen + rerun + `PRAGMA cipher_version` | Device RED before migration; GREEN proves encrypted production boundary. Remove registry/version or use plaintext DB -> red. | Manual discovery classifier; run on discovered `21071FDF600CSC` while available, otherwise policy `N/A`. |
 | TC-264-06 | `group_exit_intents_db_helpers_test.dart::PB264-06 exact membership enqueue and cancel-versus-start CAS have one winner` | Active/absent/dissolved/self-removed/different-joinedAt table; two DB handles/barriers; repeat cancel | GREEN permits cancel only from exact `queued`, increments revision, deletes no role/group/history row, and refuses later phase. Remove revision/state/joinedAt predicate -> red. | Add helper test once; `core-host-all` + groups. |
-| TC-264-07 | `::PB264-07 role absence claim is atomic with role prepare/activation` | Misleading drain counts; multiple role rows; metadata control; new role prepare racing claim; activation of pre-existing prepared row | Current read/check can race. GREEN: either role row wins and intent stays queued, or exit claim wins and new prepare is refused; never native leave with a role row. Split transaction or inspect first row/count -> red. | Helper + role action focused files. |
-| TC-264-08 | `group_exit_intent_coordinator_test.dart::PB264-08 unavailable storage or queue authority cannot authorize leave` | Required concrete repositories whose load/write throws typed unavailable; optional global sinks deliberately unwired | Current sink APIs fabricate `0`/`[]`. GREEN persists nothing, returns typed failure, and issues zero notice/rotation/native/cleanup. Reintroduce a null/no-op default -> red. | Add coordinator test once to `GROUP_TESTS`; `feature-host-all`. |
+| TC-264-07 | `::PB264-07 role absence claim is atomic with role prepare/activation` | Misleading drain counts; multiple role rows; metadata control; new role prepare racing claim; activation of pre-existing prepared row | Historical RED: the read/check could race. GREEN: either role row wins and intent stays queued, or exit claim wins and new prepare is refused; never native leave with a role row. Split transaction or inspect first row/count -> red. | Helper + role action focused files. |
+| TC-264-08 | `group_exit_intent_coordinator_test.dart::PB264-08 unavailable storage or queue authority cannot authorize leave` | Required concrete repositories whose load/write throws typed unavailable; optional global sinks deliberately unwired | Historical RED: optional sink APIs fabricated `0`/`[]`. GREEN persists nothing, returns typed failure, and issues zero notice/rotation/native/cleanup. Reintroduce a null/no-op default -> red. | Add coordinator test once to `GROUP_TESTS`; `feature-host-all`. |
 | TC-264-09 | `group_exit_intent_runner_test.dart::PB264-09 signed leave notice is watermark-newer, stable, and atomically handed off` | Converged role watermark, fixed clock/id, transaction fault points, restart, delivered and explicitly degraded live/inbox outcomes, generic role-row failure control | GREEN mints once strictly after the role watermark, never remints time/signature, atomically saves source/time + timeline + exact outbox + phase, and atomically completes only that notice. Missing row is not success; role rows retain success-only policy. Mint at queue time, rerun old prework, or delete generic failure -> red. | Add runner test once; groups + `feature-host-all`. |
 | TC-264-10 | `::PB264-10 process recreation at every durable phase never repeats an earlier side effect` | Recreate repository/runner after `queued`, notice pending/attempted, rotation claimed, native pending, cleanup pending; call counters | GREEN: stable notice may dedup-retry; rotation is at most once; native-only and cleanup-only phases never publish/sign/rotate. Remove phase persistence -> red. | Same runner file. |
-| TC-264-11 | `go-mknoon/node/pubsub_test.go::TestPB264LeaveGroupTopicRepeatedIsIdempotent`; `rejoin_group_topics_use_case_test.dart::PB264-11 rejoin eligibility follows exit phase` | Join then native leave twice; topic/config/key absence; queued/notice/rotation/native phase matrix | Existing Go implementation should be a GREEN contract; new Flutter phase gating starts RED. Rejoin after native-pending or make second native leave fail -> red. | Exact Go test from `go-mknoon/`; focused rejoin; no device pair. |
+| TC-264-11 | `go-mknoon/node/pubsub_test.go::TestPB264LeaveGroupTopicRepeatedIsIdempotent`; `rejoin_group_topics_use_case_test.dart::PB264-11 rejoin eligibility follows exit phase` | Join then native leave twice; topic/config/key absence; queued/notice/rotation/native phase matrix | The existing Go behavior was a GREEN preservation contract; the Flutter phase gating began RED and is now GREEN. Rejoin after native-pending or make second native leave fail -> red. | Exact Go test from `go-mknoon/`; focused rejoin; no device pair. |
 | TC-264-12 | `group_exit_intent_runner_test.dart::PB264-12 confirmed cleanup is atomic and membership-generation safe` | Cleanup transaction failure/reopen; group absent; group present/self missing; later same-id joinedAt; exact old membership | GREEN leaves no partial SQL state, pauses ambiguity, deletes intent last, and preserves every row of a later membership. Restore sequential read/delete or group-id-only cleanup -> red. | Runner + real SQLite helper; groups/core family. |
 | TC-264-13 | `self_removed_group_shell_db_helpers_test.dart::PB264-13 Plan-263 terminalization retires exact exit work`; listener sentinel for authenticated self-ban; dissolved loaded-repush sentinel | B3/self-ban/absent/dissolved/same-id re-entry; already-loaded outbox held behind barrier; network counters | GREEN atomically removes/refuses old intent + leave notice and performs zero later network. Omit table from manifest or check dissolved only before load -> red. | Exact Plan-263 helper/listener/repush files; hard prerequisite sentinel. |
 | TC-264-14 | `group_exit_intent_coordinator_test.dart::PB264-14 pending-role Leave retries once before offering or starting durable exit` | Role clears, remains, drain throws, metadata/no-role control, sole admin; exact immediate-drain counter | GREEN pending-role fixtures drain exactly once; clear starts one durable exit; remaining/throw returns queue choice with no intent until primary tap; metadata/no-role starts without a drain; queue persistence precedes sheet dismissal. Trust count, drain an already-ready exit, or retry twice -> red. | Coordinator test once in `GROUP_TESTS`. |
 | TC-264-15 | `group_exit_recovery_sheet_test.dart::PB264-15 pending and queued stages use the selected hierarchy without destructive escape` plus l10n parity/integrity | Callback spies/completers; 2x text scale; RTL; pending versus already queued | GREEN exact EN hierarchy/copy, single-flight, queued Try again + Cancel, no Dissolve/Continue/discard/force. Change primary order/copy or expose destructive action -> red. | Existing sheet test once; exact l10n tests. |
-| TC-264-16 | Group Info/List/Orbit named `PB264-16 ... routes every active/stuck Leave through the durable coordinator and fails closed` tests | Table: pending snapshot, identity null, classifier/load throw, role row inserted after snapshot, ordinary no-pending control; bridge command log | Current Group Info generic-fails and two stuck paths raw-leave. GREEN opens recovery/queues or fails typed; zero raw/native leave on error/pending; ordinary control still starts signed durable exit. Any fallthrough -> red. | Existing Group Info/List/Orbit files already once in `GROUP_TESTS`. |
+| TC-264-16 | Group Info/List/Orbit named `PB264-16 ... routes every active/stuck Leave through the durable coordinator and fails closed` tests | Table: pending snapshot, identity null, classifier/load throw, role row inserted after snapshot, ordinary no-pending control; bridge command log | Historical RED: Group Info generic-failed and two stuck paths could raw-leave. GREEN opens recovery/queues or fails typed; zero raw/native leave on error/pending; ordinary control still starts signed durable exit. Any fallthrough -> red. | Existing Group Info/List/Orbit files already once in `GROUP_TESTS`. |
 | TC-264-17 | `group_conversation_wired_test.dart::PB264-17 queued exit is restart-visible, read-only, and cancel-refreshable`; matching Group List/Orbit row tests; resumed recovery test | Cold open, return from Info, resume, status precedence over rejoin; composer/attachment/record/quote/reaction spies | GREEN row says `Leaving…`; conversation readable with Info reachable but every mutation disabled; cancel restores writes only after fresh absence. Ephemeral widget latch or partial composer gate -> red. | Existing conversation/list/orbit/lifecycle files once; `feature-host-all`. |
 | TC-264-18 | `group_exit_intent_runner_test.dart::PB264-18 enqueue, startup, rejoin, resume, and manual retry share one processor`; lifecycle exact test | Process recreation; initial startup without resumed callback; drain-before-process ordering; same/different group barriers | GREEN resumes durable rows across restart, serializes same group, lets other groups progress, and isolates errors. Resume-only wiring or process-before-drain -> red. | Runner + lifecycle/rejoin focused files. |
 | TC-264-19 | `group_exit_actions_test.dart::PB264-19 separate Dissolve cannot bypass queued intent or pending role`; existing Plan-261/263 preservation selectors | Queued/noncancelable intent, pending-role-only, ordinary clear control, confirmed direct Group Info dissolve, fresh remote-dissolved state, unrelated rows | GREEN local dissolve refuses while either authority exists and never silently cancels; after explicit safe cancel it still waits for role convergence; ordinary clear control dissolves once; fresh remote-dissolved state terminalizes the stale intent/notice with zero voluntary leave. General commit-unknown remains deferred. Bypass preflight or expose Dissolve in queued sheet -> red. | Actions/Group Info/policy focused files; no new dissolve engine. |
@@ -360,15 +368,16 @@ The recovery/action/Group Info/List/conversation/Orbit files already occur once 
 must remain single entries. Add the SQLCipher proof once to the reliability discovery
 classifier; the Go test stays an exact direct command.
 
-## Implementation Steps
+## Executed Implementation Sequence
 
 1. **Prerequisite freeze.** Receive Plan 263's immutable accepted handoff. Verify the
    DB version, exact joinedAt re-entry, membership lock chain, terminal manifest,
    self-ban sentinel, and current test/gate names. Run the compact Graphify query on
    that base. Stop on any material mismatch.
-2. **Resolve plan ownership.** Mark Plan 265 folded into/resequenced after this durable
-   design; do not edit voluntary-leave files from two sessions. Record v103 (or the
-   actual next free version) before adding tests.
+2. **Resolve plan ownership.** Plan 265 was resequenced after this durable design and
+   received no concurrent implementation. Its post-handoff audit found residual
+   contract work rather than an all-covered stale close. v103 was recorded before
+   storage implementation.
 3. Add TC-264-01 through TC-264-08 RED tests first. Correct the existing vacuous
    pending-runner fixtures before treating them as preservation evidence.
 4. Implement the identity-safe per-group drain tail and route group/all drains through
@@ -439,24 +448,24 @@ Stop-if conditions:
   exact l10n/integrity and registration/discovery checks, `groups`, justified
   `core-host-all` for v103/DB helpers, and justified `feature-host-all` for lifecycle
   and wired UI.
-- Required real-SQLCipher proof uses the explicitly rediscovered available Android
-  target. Current planning discovery found USB Android `21071FDF600CSC` (API 36), plus
-  emulators `emulator-5554` and `emulator-5556`. If no Android is available at
-  execution, record the device leg `N/A (target unavailable by project policy)`.
+- Execution rediscovered USB Android `21071FDF600CSC` (API 36) and available Android
+  emulators, pinned the required SQLCipher command to the USB id, and passed upgrade,
+  fresh-create, reopen, rerun, wrong-key, and downgrade assertions. Unavailable
+  version-specific hardware remained outside the closure matrix by project policy.
 - No two-phone, iOS, relay, or unavailable API-band leg is required.
 - Full `host-all` runs once after the Plans 263-267 dependency wave and once at final
   rollout/release closure, not per plan.
 
 ## Acceptance Gates
 
-Do not execute the RED/GREEN block until Plan 263 has handed off a stable base.
+The RED/GREEN block was executed only after the immutable Plan 263 handoff recorded
+above; the commands below are the retained reproducible acceptance contract.
 
 ```bash
-# Prerequisite and ownership preflight. Record the immutable base and expect no
-# concurrent output for every planned shared path.
+# Recorded prerequisite and ownership preflight.
 git rev-parse HEAD
 git status --short -- lib/main.dart lib/core/database/app_database_version.dart lib/core/database/production_migration_registry.dart lib/core/database/migrations lib/core/database/helpers lib/features/groups/application lib/features/groups/domain lib/features/groups/presentation lib/features/orbit/presentation lib/l10n test/core/database test/features/groups test/features/orbit test/l10n integration_test scripts/run_test_gates.sh scripts/check_reliability_simulation_discovery.sh
-rg -n 'currentIdentityDatabaseVersion = 102' lib/core/database/app_database_version.dart
+rg -n 'currentIdentityDatabaseVersion = 103' lib/core/database/app_database_version.dart
 rg -n 'runSelfRemovedGroupLifecycleLeaf' lib/features/groups/application/group_pending_broadcast_repush.dart
 rg -n 'runGroupMembershipMutationLocked' lib/features/groups/application/self_removed_group_lifecycle_guard.dart
 rg -n 'member_banned|self.*ban' test/features/groups/application/group_message_listener_test.dart
@@ -475,7 +484,7 @@ flutter test test/features/groups/application/group_pending_broadcast_runner_tes
 
 # Wired UI and localization RED/GREEN.
 flutter gen-l10n
-flutter test test/features/groups/presentation/widgets/group_exit_recovery_sheet_test.dart test/features/groups/presentation/group_info_wired_test.dart test/features/groups/presentation/group_list_wired_test.dart test/features/groups/presentation/group_conversation_wired_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart
+flutter test --concurrency=1 test/features/groups/presentation/widgets/group_exit_recovery_sheet_test.dart test/features/groups/presentation/group_info_wired_test.dart test/features/groups/presentation/group_list_wired_test.dart test/features/groups/presentation/group_conversation_wired_test.dart test/features/orbit/presentation/screens/orbit_wired_test.dart
 flutter test test/l10n/orbit_strings_parity_test.dart test/l10n/l10n_integrity_test.dart
 
 # Exact Plan-263 authority preservation, re-anchored after handoff.
@@ -506,7 +515,7 @@ test "$(rg -c 'test/core/lifecycle/handle_app_resumed_group_recovery_test.dart' 
 
 # Analysis and scoped hygiene.
 flutter analyze --no-pub
-git diff --check -- lib/main.dart lib/core/database lib/features/groups lib/features/orbit lib/l10n test/core/database test/features/groups test/features/orbit test/l10n integration_test scripts Test-Flight-Improv/264-pending-role-broadcast-convergence-tdd-plan.md Test-Flight-Improv/00-INDEX.md
+git diff --check -- lib/main.dart lib/core/database lib/core/notifications lib/features/groups lib/features/orbit lib/l10n test/core/database test/features/groups test/features/orbit test/l10n integration_test scripts Test-Flight-Improv/264-pending-role-broadcast-convergence-tdd-plan.md Test-Flight-Improv/265-voluntary-leave-prework-degradation-tdd-plan.md Test-Flight-Improv/00-INDEX.md
 
 # After coherent app-owned implementation only.
 ./graphify-arch/refresh_arch_graph.sh --incremental
@@ -521,48 +530,60 @@ a per-plan command.
 
 ## Done Criteria
 
-- [ ] Plan 263 has an immutable accepted handoff, v103 is execution-time free, its
+- [x] Plan 263 has an immutable accepted handoff, v103 was execution-time free and
+      shipped, its
       terminalization/lock/re-entry contracts are re-verified, and a self-ban sentinel
       exists.
-- [ ] Plan 265 is folded/resequenced; no concurrent voluntary-leave implementation is
-      active.
-- [ ] Every test-contract row has causal RED or an explicitly recorded GREEN sentinel
+- [x] Plan 265 is resequenced and residual-classified; no concurrent voluntary-leave
+      implementation is active.
+- [x] Every test-contract row has causal RED or an explicitly recorded GREEN sentinel
       plus representative mutation re-red.
-- [ ] Same-group drains serialize/reload/release identity-safely; unrelated groups
+- [x] Same-group drains serialize/reload/release identity-safely; unrelated groups
       progress and non-vacuous queue sentinels pass.
-- [ ] The v103 intent survives restart, binds exact membership, and advances only by
+- [x] The v103 intent survives restart, binds exact membership, and advances only by
       revision/state CAS through notice, rotation, native, and cleanup phases.
-- [ ] Cancellation wins only while queued and deletes no role/group/history state.
-- [ ] Role absence is atomically rechecked; count, optional sink, classification error,
+- [x] Cancellation wins only while queued and deletes no role/group/history state.
+- [x] Role absence is atomically rechecked; count, optional sink, classification error,
       and post-snapshot insertion cannot authorize leave.
-- [ ] Startup, rejoin, resume, enqueue, and manual retry continue durable work without
+- [x] Startup, rejoin, resume, enqueue, and manual retry continue durable work without
       rejoining native/cleanup phases.
-- [ ] All exit surfaces use the shared coordinator; queued rows show `Leaving…`, the
+- [x] All exit surfaces use the shared coordinator; queued rows show `Leaving…`, the
       conversation is comprehensively read-only, and refresh/cancel behavior is durable.
-- [ ] Pending/queued UI uses the selected hierarchy and exact localized en/de/ar copy;
+- [x] Pending/queued UI uses the selected hierarchy and exact localized en/de/ar copy;
       no force-local, discard, Continue, or Dissolve escape appears there.
-- [ ] Fresh self-removal/self-ban/dissolution/re-entry terminalizes stale intent/outbox
+- [x] Fresh self-removal/self-ban/dissolution/re-entry terminalizes stale intent/outbox
       work with zero network; exact cleanup cannot delete a newer membership.
-- [ ] General Dissolve commit-unknown/CAS hardening remains explicitly deferred and is
+- [x] General Dissolve commit-unknown/CAS hardening remains explicitly deferred and is
       not falsely claimed by closure.
-- [ ] Focused tests, Plan-261/263 sentinels, SQLCipher, Go contract, registrations,
+- [x] Focused tests, Plan-261/263 sentinels, SQLCipher, Go contract, registrations,
       groups, justified core/feature host families, l10n, analyzer, and diff hygiene pass.
-- [ ] The architecture graph is refreshed once after coherent implementation, and full
+- [x] The architecture graph is refreshed once after coherent implementation, and full
       `host-all` remains at wave/release cadence.
 
 ## Handoff
 
+- Immutable snapshot: `refs/plan-handoffs/264`, based on
+  `refs/plan-handoffs/263`; the exact commit is recorded in the closure metadata after
+  the ref is frozen without moving `HEAD` or the main index.
 - First causal RED:
   `flutter test test/features/groups/application/group_pending_broadcast_runner_test.dart --plain-name 'PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller'`.
+- Representative mutation re-red: replacing the post-loader generation-aware
+  `_ownedAccountPeerId(current)` check with account-only comparison made
+  `identity switch during post-loader read cannot seed a stale terminal fence` fail
+  (`Actual: {}`); restoring the ownership check returned GREEN.
 - Test Contract: 19 rows spanning keyed drains, v103/SQLCipher, exact CAS, signed
   notice phases, native/rejoin, cleanup/re-entry, Plan-263 terminalization, UX, all
   wired surfaces, lifecycle, and narrow Dissolve interaction.
-- New durable authority: `group_exit_intents`, expected DB v103, empty legacy backfill,
+- New durable authority: `group_exit_intents`, production DB v103, empty legacy backfill,
   exact `selfPeerId + joinedAt`, no FK/cascade, revisioned state CAS.
-- Manual proof: real SQLCipher on an explicitly available Android; exact Go repeated
-  native-leave sentinel. No two-peer/relay/iOS leg.
+- Manual proof: real SQLCipher passed on USB Android `21071FDF600CSC` with production
+  v102 -> v103 upgrade/fresh/reopen/rerun plus wrong-key and downgrade rejection; the
+  exact Go repeated-native-leave sentinel passed. No two-peer/relay/iOS leg.
 - Gate cadence: focused + sentinels + groups + justified `core-host-all` and
   `feature-host-all`; full `host-all` only at dependency-wave and release closure.
+- Final families: `groups` 2,751 plus Go/relay contracts; `core-host-all` 2,719 across
+  343 paths plus renderer manifest; `feature-host-all` 8,437 across 815 paths with one
+  expected skip; completeness 1,334/1,334; analyzer clean.
 - Confirmed review findings incorporated: keyed tail/error/late-caller race, vacuous
   empty/prepared fixtures, raw stuck-row bypass, optional-sink fail-open, post-snapshot
   role race, self-ban/terminal manifest dependency, l10n/schema/gate preflight.
@@ -574,3 +595,6 @@ a per-plan command.
 | Time | Phase | Files | Last command/result | Evidence / blocker | Next |
 |---|---|---|---|---|---|
 | 2026-07-20 | planning complete | plan + index only | read-only Graphify/source/device grounding; no tests run | Plan 263 remains active in another session; Plan 264 production/test edits are blocked. | Receive immutable Plan 263 handoff, re-anchor, then begin TC-264-01 RED. |
+| 2026-07-21 | causal implementation | v103 storage/repository, keyed drain, coordinator/runner phases, lifecycle/rejoin, four exit surfaces, l10n/tests | Focused DB/application/UI/Plan-263/Go suites GREEN after causal RED | All 19 PB264 rows delivered; Plan 265 classified as a separate residual rather than silently absorbed. | Run affected family and device closure. |
+| 2026-07-21 | boundary and family closure | production/tests/gates | SQLCipher 1/1 on `21071FDF600CSC`; groups 2,751; core 2,719/343; feature 8,437/815 with one expected skip | Feature lane exposed and closed explicit `removedAt` fixture authority plus dissolved exit-processing expectation. | Counterexample audit, analyzer, graph, scoped ref. |
+| 2026-07-21 | counterexample closure | notification projection + lifecycle regression | generation-check mutation RED, restored GREEN; `flutter analyze --no-pub` no issues | Queued authoritative loads cannot restore removed groups or leak an old account's terminal fence into same-id new-account state. | Freeze `refs/plan-handoffs/264` and record exact metadata. |

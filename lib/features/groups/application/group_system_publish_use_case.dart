@@ -44,7 +44,7 @@ Future<GroupSystemPublishResult> publishGroupSystemMessage({
 }) {
   return runGroupMembershipMutationLocked(
     groupId: groupId,
-    action: () => _publishGroupSystemMessageAssumingMembershipPhaseHeld(
+    action: () => publishGroupSystemMessageAssumingMembershipPhaseHeld(
       bridge: bridge,
       groupRepo: groupRepo,
       groupId: groupId,
@@ -66,8 +66,13 @@ Future<GroupSystemPublishResult> publishGroupSystemMessage({
   );
 }
 
+/// Publishes while the caller already owns the per-group membership phase.
+///
+/// Most callers must use [publishGroupSystemMessage]. This entry point exists
+/// for compound membership transitions that must perform a final authority
+/// check and their first externally visible effect in one uninterrupted phase.
 Future<GroupSystemPublishResult>
-_publishGroupSystemMessageAssumingMembershipPhaseHeld({
+publishGroupSystemMessageAssumingMembershipPhaseHeld({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required String groupId,

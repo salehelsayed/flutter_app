@@ -15247,6 +15247,119 @@ void main() {
     );
 
     test(
+      'PB264-19 fresh remote dissolve terminalizes exact exit work without voluntary network',
+      () async {
+        listener.dispose();
+        var exitIntentPresent = true;
+        var exactLeaveNoticePresent = true;
+        var terminalizeCalls = 0;
+        var observedFreshDissolvedAuthority = false;
+        var commandsAtTerminalization = <String>[];
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          terminalizeGroupExitWorkAfterRemoteDissolve: (groupId) async {
+            terminalizeCalls++;
+            observedFreshDissolvedAuthority =
+                (await groupRepo.getGroup(groupId))?.isDissolved == true;
+            commandsAtTerminalization = List<String>.of(bridge.commandLog);
+            exitIntentPresent = false;
+            exactLeaveNoticePresent = false;
+          },
+        );
+
+        await listener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': '2026-04-05T12:00:00.000Z',
+            'dissolvedBy': 'peer-admin',
+          }),
+          'timestamp': '2026-04-05T12:00:00.000Z',
+          'messageId': 'pb264-19-remote-dissolve',
+        });
+
+        expect(terminalizeCalls, 1);
+        expect(observedFreshDissolvedAuthority, isTrue);
+        expect(exitIntentPresent, isFalse);
+        expect(exactLeaveNoticePresent, isFalse);
+        expect(commandsAtTerminalization, isEmpty);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        for (final voluntaryCommand in [
+          'payload.sign',
+          'group:publish',
+          'group:inboxStore',
+          'group:generateNextKey',
+        ]) {
+          expect(bridge.commandLog, isNot(contains(voluntaryCommand)));
+        }
+      },
+    );
+
+    test(
+      'PB264-19 remote dissolve isolates terminalization failure and accepted replay retries it',
+      () async {
+        listener.dispose();
+        var terminalizeCalls = 0;
+        var terminalized = false;
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          terminalizeGroupExitWorkAfterRemoteDissolve: (_) async {
+            terminalizeCalls++;
+            if (terminalizeCalls == 1) {
+              throw StateError('transient exit-work cleanup failure');
+            }
+            terminalized = true;
+          },
+        );
+        final envelope = <String, dynamic>{
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': '2026-04-05T12:00:00.000Z',
+            'dissolvedBy': 'peer-admin',
+          }),
+          'timestamp': '2026-04-05T12:00:00.000Z',
+          'messageId': 'pb264-19-terminalize-retry',
+        };
+
+        await listener.handleReplayEnvelope(envelope);
+
+        expect(terminalizeCalls, 1);
+        expect(terminalized, isFalse);
+        expect((await groupRepo.getGroup('group-1'))!.isDissolved, isTrue);
+        expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+
+        await listener.handleReplayEnvelope(envelope);
+
+        expect(terminalizeCalls, 2);
+        expect(terminalized, isTrue);
+        expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    test(
       'B4 signed group_dissolved with a present matching binding but a DIVERGED '
       'local pre-transition state is REJECTED on the current tree and APPLIED '
       'after the terminal-dissolve relaxation',

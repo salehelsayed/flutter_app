@@ -1096,6 +1096,60 @@ abstract class AppLocalizations {
   /// **'Wait for the signed admin change to finish syncing before you leave.'**
   String get group_exit_admin_sync_pending_body;
 
+  /// No description provided for @group_exit_sync_finishing_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing a role change'**
+  String get group_exit_sync_finishing_title;
+
+  /// No description provided for @group_exit_sync_finishing_body.
+  ///
+  /// In en, this message translates to:
+  /// **'You can leave this screen. We’ll leave the group as soon as the role update is safely delivered.'**
+  String get group_exit_sync_finishing_body;
+
+  /// No description provided for @group_exit_leave_when_sync_completes.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave when sync completes'**
+  String get group_exit_leave_when_sync_completes;
+
+  /// No description provided for @group_exit_try_again.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get group_exit_try_again;
+
+  /// No description provided for @group_exit_cancel_queued_leave.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel queued leave'**
+  String get group_exit_cancel_queued_leave;
+
+  /// No description provided for @group_exit_cancel_queued_leave_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This cancels automatic leave. The role change will keep syncing.'**
+  String get group_exit_cancel_queued_leave_body;
+
+  /// No description provided for @group_exit_leaving_status.
+  ///
+  /// In en, this message translates to:
+  /// **'Leaving…'**
+  String get group_exit_leaving_status;
+
+  /// No description provided for @group_exit_leaving_read_only.
+  ///
+  /// In en, this message translates to:
+  /// **'This group is read-only while we finish leaving.'**
+  String get group_exit_leaving_read_only;
+
+  /// No description provided for @group_exit_cancel_too_late.
+  ///
+  /// In en, this message translates to:
+  /// **'Leaving has already started and can’t be cancelled.'**
+  String get group_exit_cancel_too_late;
+
   /// No description provided for @group_exit_leave_uncertain.
   ///
   /// In en, this message translates to:

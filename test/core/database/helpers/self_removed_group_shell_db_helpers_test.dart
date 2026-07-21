@@ -84,12 +84,15 @@ Map<String, Object?> _acceptedKeyRow(
   };
 }
 
-List<Map<String, Object?>> _acceptedRoster(String groupId) {
+List<Map<String, Object?>> _acceptedRoster(
+  String groupId, {
+  String selfJoinedAt = '2026-07-05T04:00:00.000Z',
+}) {
   return <Map<String, Object?>>[
     _acceptedMemberRow(
       groupId: groupId,
       peerId: 'self-peer',
-      joinedAt: '2026-07-05T04:00:00.000Z',
+      joinedAt: selfJoinedAt,
     ),
     _acceptedMemberRow(
       groupId: groupId,
@@ -247,6 +250,17 @@ Future<void> _insertAttachment(
 }
 
 Future<void> _seedMembershipInstanceWork(Database db, String groupId) async {
+  await db.insert('group_exit_intents', <String, Object?>{
+    'group_id': groupId,
+    'intent_id': 'exit-intent-$groupId',
+    'self_peer_id': 'self-peer',
+    'self_joined_at': _joinedAt,
+    'state': 'queued',
+    'pending_broadcast_id': 'exit-notice-$groupId',
+    'revision': 0,
+    'created_at': _createdAt,
+    'updated_at': _createdAt,
+  });
   await db.insert('group_rejoin_state', <String, Object?>{
     'group_id': groupId,
     'rejoin_attempt_count': 1,
@@ -537,7 +551,7 @@ void main() {
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(singleInstance: false),
     );
-    await runProductionOnCreate(db, 102);
+    await runProductionOnCreate(db, 103);
   });
 
   tearDown(() => db.close());
@@ -721,6 +735,7 @@ void main() {
       );
 
       for (final table in const <String>[
+        'group_exit_intents',
         'group_rejoin_state',
         'pending_group_broadcasts',
         'group_pending_key_repairs',
@@ -802,6 +817,77 @@ void main() {
       );
     },
   );
+
+  test('PB264-13 Plan-263 terminalization retires exact exit work', () async {
+    Future<void> seedExactExitWork(String groupId) async {
+      await db.insert('group_exit_intents', <String, Object?>{
+        'group_id': groupId,
+        'intent_id': 'exit-intent-$groupId',
+        'self_peer_id': 'self-peer',
+        'self_joined_at': _joinedAt,
+        'state': 'leave_notice_pending',
+        'pending_broadcast_id': 'exit-notice-$groupId',
+        'source_event_id': 'exit-source-$groupId',
+        'event_at': '2026-07-03T01:00:00.000Z',
+        'revision': 1,
+        'created_at': _createdAt,
+        'updated_at': _createdAt,
+      });
+      await db.insert('pending_group_broadcasts', <String, Object?>{
+        'id': 'exit-notice-$groupId',
+        'group_id': groupId,
+        'kind': 'member_removed_exit_intent',
+        'sys_text': '{"signed":true}',
+        'recipient_peer_ids': '["other-peer"]',
+        'event_at': '2026-07-03T01:00:00.000Z',
+        'source_message_id': 'exit-source-$groupId',
+        'created_at': _createdAt,
+        'updated_at': _createdAt,
+      });
+    }
+
+    for (final groupId in const ['group-target', 'group-unrelated']) {
+      await _insertGroup(db, groupId);
+      await _insertMember(db, groupId: groupId, peerId: 'self-peer');
+      await seedExactExitWork(groupId);
+    }
+
+    final authority = await dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+      db,
+      groupId: 'group-target',
+      selfPeerId: 'self-peer',
+    );
+    final committed = await dbCommitSelfRemovalAuthority(
+      db,
+      expected: authority,
+      removalAt: DateTime.parse(_removedAt),
+      removalEventId: 'event-target-removed',
+    );
+
+    expect(committed.committed, isTrue);
+    expect(committed.terminalization.pendingRowsDeleted, 2);
+    expect(await _countForGroup(db, 'group_exit_intents', 'group-target'), 0);
+    expect(
+      await _countForGroup(db, 'pending_group_broadcasts', 'group-target'),
+      0,
+    );
+    expect(
+      await _countForGroup(db, 'group_exit_intents', 'group-unrelated'),
+      1,
+    );
+    expect(
+      await _countForGroup(db, 'pending_group_broadcasts', 'group-unrelated'),
+      1,
+    );
+    expect(
+      (await db.query(
+        'pending_group_broadcasts',
+        where: 'group_id = ?',
+        whereArgs: ['group-unrelated'],
+      )).single['id'],
+      'exit-notice-group-unrelated',
+    );
+  });
 
   test(
     'marked or absent parent refuses every terminalized pending-work upsert',
@@ -1094,6 +1180,28 @@ void main() {
         malformed.disposition,
         SelfRemovedGroupAcceptedReentryDisposition.refusedMalformedAuthority,
       );
+      final malformedRoster = _acceptedRoster('group-marked');
+      malformedRoster[1] = <String, Object?>{
+        ...malformedRoster[1],
+        'joined_at': 'not-a-time',
+      };
+      final malformedRosterResult = await _commitAcceptedReentry(
+        db,
+        groupRow: _acceptedGroupRow('group-marked'),
+        rosterRows: malformedRoster,
+        stagedKeyRow: _acceptedKeyRow('group-marked'),
+        selfPeerId: 'self-peer',
+        authorizationId: 'invite-marked-malformed-roster',
+        signedMembershipWatermark: '2026-07-07T00:00:00.000Z',
+        signedIssuedAt: '2026-07-06T00:00:00.000Z',
+        bindingNonce: 'nonce-malformed-roster',
+      );
+      expect(
+        malformedRosterResult.disposition,
+        SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial,
+        reason:
+            'every accepted roster generation must retain Plan-263 time validation',
+      );
       final stale = await _commitAcceptedReentry(
         db,
         groupRow: _acceptedGroupRow('group-marked'),
@@ -1308,6 +1416,59 @@ void main() {
         absentRollbackReplay.binding!.encryptedKeyReference,
         'secure:accepted-absent-key',
       );
+    },
+  );
+
+  test(
+    'accepted re-entry refuses self joined_at that is not strictly newer than removal authority',
+    () async {
+      for (final candidate in <String>[_joinedAt, _removedAt]) {
+        final groupId = candidate == _joinedAt
+            ? 'group-stale-self-generation'
+            : 'group-equal-self-generation';
+        await _insertGroup(db, groupId);
+        await _insertMember(db, groupId: groupId, peerId: 'self-peer');
+        final active = await dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+          db,
+          groupId: groupId,
+          selfPeerId: 'self-peer',
+        );
+        final removal = await dbCommitSelfRemovalAuthority(
+          db,
+          expected: active,
+          removalAt: DateTime.parse(_removedAt),
+          removalEventId: 'remove-$groupId',
+        );
+        expect(removal.committed, isTrue);
+
+        final refused = await _commitAcceptedReentry(
+          db,
+          groupRow: _acceptedGroupRow(groupId),
+          rosterRows: _acceptedRoster(groupId, selfJoinedAt: candidate),
+          stagedKeyRow: _acceptedKeyRow(groupId),
+          selfPeerId: 'self-peer',
+          authorizationId: 'invite-$groupId',
+          signedMembershipWatermark: '2026-07-07T00:00:00.000Z',
+          signedIssuedAt: '2026-07-06T00:00:00.000Z',
+          bindingNonce: 'nonce-$groupId',
+        );
+
+        expect(
+          refused.disposition,
+          SelfRemovedGroupAcceptedReentryDisposition.refusedStaleAuthority,
+        );
+        final preserved = await dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+          db,
+          groupId: groupId,
+          selfPeerId: 'self-peer',
+        );
+        expect(
+          preserved.shape,
+          SelfRemovedGroupShellAuthorityShape.markedSelfAbsent,
+        );
+        expect(await _countForGroup(db, 'group_keys', groupId), 0);
+        expect(await _countForGroup(db, 'group_event_log', groupId), 0);
+      }
     },
   );
 

@@ -642,6 +642,39 @@ class AppLocalizationsAr extends AppLocalizations {
       'انتظر حتى تكتمل مزامنة تغيير المشرف الموقّع قبل المغادرة.';
 
   @override
+  String get group_exit_sync_finishing_title => 'جارٍ إكمال تغيير الدور';
+
+  @override
+  String get group_exit_sync_finishing_body =>
+      'يمكنك مغادرة هذه الشاشة. سنغادر المجموعة بمجرد تسليم تحديث الدور بأمان.';
+
+  @override
+  String get group_exit_leave_when_sync_completes =>
+      'المغادرة عند اكتمال المزامنة';
+
+  @override
+  String get group_exit_try_again => 'المحاولة مرة أخرى';
+
+  @override
+  String get group_exit_cancel_queued_leave =>
+      'إلغاء المغادرة في قائمة الانتظار';
+
+  @override
+  String get group_exit_cancel_queued_leave_body =>
+      'يؤدي هذا إلى إلغاء المغادرة التلقائية. سيستمر تغيير الدور في المزامنة.';
+
+  @override
+  String get group_exit_leaving_status => 'جارٍ المغادرة…';
+
+  @override
+  String get group_exit_leaving_read_only =>
+      'هذه المجموعة للقراءة فقط بينما ننتهي من المغادرة.';
+
+  @override
+  String get group_exit_cancel_too_late =>
+      'بدأت المغادرة بالفعل ولا يمكن إلغاؤها.';
+
+  @override
   String get group_exit_leave_uncertain =>
       'ربما اكتمل طلب المغادرة. حدّث المجموعة قبل المحاولة مرة أخرى.';
 

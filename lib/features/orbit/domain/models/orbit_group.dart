@@ -25,6 +25,9 @@ class OrbitGroup {
   /// "Couldn't join" badge.
   final int? rejoinAttemptCount;
 
+  /// True while a durable voluntary-exit intent exists for this group.
+  final bool hasExitIntent;
+
   const OrbitGroup({
     required this.group,
     this.latestMessageSenderUsername,
@@ -33,6 +36,7 @@ class OrbitGroup {
     this.unreadCount = 0,
     this.lastActivityTimestamp,
     this.rejoinAttemptCount,
+    this.hasExitIntent = false,
     this.latestMedia,
   });
 
@@ -40,7 +44,7 @@ class OrbitGroup {
   String get name => group.name;
   GroupType get type => group.type;
 
-  OrbitGroup copyWith({int? rejoinAttemptCount}) {
+  OrbitGroup copyWith({int? rejoinAttemptCount, bool? hasExitIntent}) {
     return OrbitGroup(
       group: group,
       latestMessageSenderUsername: latestMessageSenderUsername,
@@ -49,6 +53,7 @@ class OrbitGroup {
       unreadCount: unreadCount,
       lastActivityTimestamp: lastActivityTimestamp,
       rejoinAttemptCount: rejoinAttemptCount ?? this.rejoinAttemptCount,
+      hasExitIntent: hasExitIntent ?? this.hasExitIntent,
       latestMedia: latestMedia,
     );
   }

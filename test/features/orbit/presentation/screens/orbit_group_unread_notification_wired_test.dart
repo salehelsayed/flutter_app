@@ -11,6 +11,8 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -35,6 +37,14 @@ import '../../../contact_request/domain/repositories/fake_contact_request_reposi
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
+  setUp(() {
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
+  });
+  tearDown(setGroupExitIntentAccessSinks);
+
   late FakeIdentityRepository identityRepo;
   late FakeContactRepository contactRepo;
   late FakeContactRequestRepository contactRequestRepo;

@@ -3,6 +3,9 @@ import 'dart:convert';
 const groupPendingBroadcastKindMemberRoleUpdated = 'member_role_updated';
 const groupPendingBroadcastKindMemberRolePrepared =
     'member_role_updated_prepared';
+const groupPendingBroadcastKindExitLeaveNotice =
+    'member_removed_exit_intent';
+const groupPendingBroadcastKindMemberRemoved = 'member_removed';
 
 bool isPendingGroupMemberRoleBroadcastKind(String kind) =>
     kind == groupPendingBroadcastKindMemberRoleUpdated ||

@@ -430,6 +430,15 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/self_removed_group_lifecycle_guard_test.dart"
   "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart"
   "test/features/groups/application/group_pending_broadcast_runner_test.dart"
+  # 264: keyed role convergence and restart-safe, membership-scoped exit
+  # intents (v103 storage, coordinator/runner, rejoin, and resume ordering).
+  "test/core/database/migrations/103_group_exit_intents_test.dart"
+  "test/core/database/helpers/group_exit_intents_db_helpers_test.dart"
+  "test/features/groups/domain/repositories/group_exit_intent_repository_impl_test.dart"
+  "test/features/groups/application/group_exit_intent_coordinator_test.dart"
+  "test/features/groups/application/group_exit_intent_runner_test.dart"
+  "test/features/groups/application/rejoin_group_topics_use_case_test.dart"
+  "test/core/lifecycle/handle_app_resumed_group_recovery_test.dart"
   "test/features/groups/application/group_pending_key_distribution_service_test.dart"
   "test/features/groups/application/group_pending_key_repair_service_test.dart"
   "test/features/groups/application/manage_pending_sibling_device_test.dart"

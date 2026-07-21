@@ -28,6 +28,28 @@ bool _resumeGroupRecoveryEnabled(P2PService p2pService) {
       true;
 }
 
+/// Runs one bounded durable-exit recovery pass in the only safe order.
+///
+/// Role broadcasts are attempted first. A discovery/drain failure is reported
+/// but cannot strand unrelated native-leave or local-cleanup phases; queued
+/// intents perform their own per-group role drain and remain fail-closed.
+Future<void> runGroupExitIntentRecoveryPass({
+  required Future<void> Function() drainPendingBroadcasts,
+  required Future<void> Function() processExitIntents,
+  void Function(Object error, StackTrace stackTrace)? onError,
+}) async {
+  try {
+    await drainPendingBroadcasts();
+  } catch (error, stackTrace) {
+    onError?.call(error, stackTrace);
+  }
+  try {
+    await processExitIntents();
+  } catch (error, stackTrace) {
+    onError?.call(error, stackTrace);
+  }
+}
+
 /// Handles app resume lifecycle recovery.
 ///
 /// Checks bridge health (reinitializes if dead), triggers P2P health check,
@@ -42,6 +64,8 @@ Future<bool?> handleAppResumed({
   GroupRepository? groupRepo,
   GroupMessageRepository? groupMsgRepo,
   GroupMessageListener? groupMessageListener,
+  Future<bool> Function(String groupId)? canRejoinForExitIntent,
+  Future<void> Function(String groupId)? processExitIntent,
   GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
   GroupHistoryGapRepairRepository? historyGapRepairRepo,
   RequestGroupKeyRepair? requestGroupKeyRepair,
@@ -347,6 +371,8 @@ Future<bool?> handleAppResumed({
           bridge: bridge,
           groupRepo: groupRepo,
           reason: reason,
+          canRejoinForExitIntent: canRejoinForExitIntent,
+          processExitIntent: processExitIntent,
         );
         final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
         groupReregisterMs = rejoinMs;
@@ -463,6 +489,8 @@ Future<bool?> handleAppResumed({
         bridge: bridge,
         groupRepo: groupRepo,
         reason: reason,
+        canRejoinForExitIntent: canRejoinForExitIntent,
+        processExitIntent: processExitIntent,
       );
       final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
       groupReregisterMs = rejoinMs;

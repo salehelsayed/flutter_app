@@ -621,6 +621,38 @@ class AppLocalizationsEn extends AppLocalizations {
       'Wait for the signed admin change to finish syncing before you leave.';
 
   @override
+  String get group_exit_sync_finishing_title => 'Finishing a role change';
+
+  @override
+  String get group_exit_sync_finishing_body =>
+      'You can leave this screen. We’ll leave the group as soon as the role update is safely delivered.';
+
+  @override
+  String get group_exit_leave_when_sync_completes =>
+      'Leave when sync completes';
+
+  @override
+  String get group_exit_try_again => 'Try again';
+
+  @override
+  String get group_exit_cancel_queued_leave => 'Cancel queued leave';
+
+  @override
+  String get group_exit_cancel_queued_leave_body =>
+      'This cancels automatic leave. The role change will keep syncing.';
+
+  @override
+  String get group_exit_leaving_status => 'Leaving…';
+
+  @override
+  String get group_exit_leaving_read_only =>
+      'This group is read-only while we finish leaving.';
+
+  @override
+  String get group_exit_cancel_too_late =>
+      'Leaving has already started and can’t be cancelled.';
+
+  @override
   String get group_exit_leave_uncertain =>
       'The leave request may have completed. Refresh the group before trying again.';
 

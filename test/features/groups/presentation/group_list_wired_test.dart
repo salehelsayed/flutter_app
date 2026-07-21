@@ -7,18 +7,23 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -37,6 +42,8 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/helpers/durable_group_exit_surface_harness.dart';
+import '../../../shared/helpers/legacy_group_exit_coordinator_fixture.dart';
 
 // --- FakeIdentityRepository ---
 
@@ -533,6 +540,15 @@ void main() {
       // 153: capture flow events so decline COMMITTED/UNDONE are observable.
       flowEvents = <Map<String, dynamic>>[];
       debugSetFlowEventSink(flowEvents.add);
+      setGroupExitIntentActionSinks();
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const <GroupExitIntent>[],
+      );
+      setGroupExitIntentRuntimeSinks(
+        canRejoin: (_) async => true,
+        processExisting: (_) async {},
+      );
     });
 
     tearDown(() {
@@ -540,6 +556,9 @@ void main() {
       messageStreamController.close();
       inviteStreamController.close();
       pendingInviteStreamController.close();
+      setGroupExitIntentActionSinks();
+      setGroupExitIntentAccessSinks();
+      setGroupExitIntentRuntimeSinks();
     });
 
     Widget buildWidget({
@@ -584,6 +603,360 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
       expect(find.text('Beta Group'), findsOneWidget);
     });
+
+    testWidgets(
+      'PB264-16 Group List stuck Leave routes through the durable coordinator and fails closed',
+      (tester) async {
+        final group = makeGroup(id: 'pb264-stuck', name: 'Pending Exit');
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: group.createdAt,
+          ),
+        );
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            group.id,
+            nextEligibleAt: future,
+          );
+        }
+        final roleRow = GroupPendingBroadcast(
+          id: 'pb264-list-role-row',
+          groupId: group.id,
+          kind: groupPendingBroadcastKindMemberRoleUpdated,
+          sysText: '{"kind":"member_role_updated"}',
+          recipientPeerIds: const ['peer-other'],
+          eventAt: group.createdAt,
+          sourceMessageId: 'pb264-list-role-source',
+          createdAt: group.createdAt,
+          updatedAt: group.createdAt,
+        );
+        var activeCase = '';
+        var roleInsertedAfterSnapshot = false;
+        Completer<GroupExitIntentRequestResult>? queueCompleter;
+        final calls = <String>[];
+        setGroupExitIntentActionSinks(
+          requestLeave: (groupId) async {
+            calls.add('$activeCase:request:$groupId');
+            if (activeCase == 'post-snapshot-role') {
+              expect(
+                roleInsertedAfterSnapshot,
+                isTrue,
+                reason: 'the stuck row reaches fresh durable authority',
+              );
+            }
+            return GroupExitIntentRequestResult(
+              status: activeCase == 'ordinary'
+                  ? GroupExitIntentRequestStatus.started
+                  : GroupExitIntentRequestStatus.pendingRoleSync,
+            );
+          },
+          queueLeaveWhenSyncCompletes: (groupId) {
+            calls.add('$activeCase:queue:$groupId');
+            return queueCompleter!.future;
+          },
+        );
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (groupId) async {
+            switch (activeCase) {
+              case 'pending-snapshot':
+                return [roleRow];
+              case 'classification-load-error':
+                throw StateError('pending classifier unavailable');
+              case 'post-snapshot-role':
+                roleInsertedAfterSnapshot = true;
+                return const <GroupPendingBroadcast>[];
+              default:
+                return const <GroupPendingBroadcast>[];
+            }
+          },
+        );
+        addTearDown(() => setGroupPendingBroadcastAccessSinks());
+
+        Future<void> runCase(
+          String name, {
+          required bool identityAvailable,
+          required bool expectsCoordinator,
+          required bool expectsPendingSheet,
+          bool verifyQueuePersistence = false,
+          bool identityThrows = false,
+        }) async {
+          activeCase = name;
+          roleInsertedAfterSnapshot = false;
+          queueCompleter = verifyQueuePersistence
+              ? Completer<GroupExitIntentRequestResult>()
+              : null;
+          identityRepo = identityThrows
+              ? _ThrowingIdentityRepository()
+              : FakeIdentityRepository(identity: testIdentity);
+          await tester.pumpWidget(buildWidget());
+          await pumpFrames(tester);
+          if (!identityAvailable && !identityThrows) {
+            identityRepo.identity = null;
+          }
+          final callsBefore = calls.length;
+
+          await tester.tap(
+            find.byKey(const ValueKey('group-stuck-leave-pb264-stuck')),
+          );
+          await pumpFrames(tester);
+
+          expect(
+            calls.length - callsBefore,
+            expectsCoordinator ? 1 : 0,
+            reason: name,
+          );
+          expect(
+            find.byKey(const ValueKey('group-exit-leave-when-synced')),
+            expectsPendingSheet ? findsOneWidget : findsNothing,
+            reason: name,
+          );
+          expect(
+            bridge.commandLog.where((command) => command == 'group:leave'),
+            isEmpty,
+            reason: '$name must not bypass the durable coordinator',
+          );
+          expect(p2pService.sendMessageCallCount, 0, reason: name);
+          expect(p2pService.storeInInboxCallCount, 0, reason: name);
+          if (!expectsCoordinator) {
+            expect(find.text('Failed to leave group'), findsOneWidget);
+          }
+
+          if (verifyQueuePersistence) {
+            await tester.tap(
+              find.byKey(const ValueKey('group-exit-leave-when-synced')),
+            );
+            await tester.pump();
+            expect(
+              find.byKey(const ValueKey('group-exit-leave-when-synced')),
+              findsOneWidget,
+              reason: 'the sheet waits for durable queue persistence',
+            );
+            queueCompleter!.complete(
+              const GroupExitIntentRequestResult(
+                status: GroupExitIntentRequestStatus.queued,
+              ),
+            );
+            await pumpFrames(tester);
+            expect(
+              find.byKey(const ValueKey('group-exit-leave-when-synced')),
+              findsNothing,
+            );
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        await runCase(
+          'pending-snapshot',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: true,
+          verifyQueuePersistence: true,
+        );
+        await runCase(
+          'identity-null',
+          identityAvailable: false,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'identity-load-error',
+          identityAvailable: true,
+          identityThrows: true,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'classification-load-error',
+          identityAvailable: true,
+          expectsCoordinator: false,
+          expectsPendingSheet: false,
+        );
+        await runCase(
+          'post-snapshot-role',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: true,
+        );
+        await runCase(
+          'ordinary',
+          identityAvailable: true,
+          expectsCoordinator: true,
+          expectsPendingSheet: false,
+        );
+
+        expect(calls, [
+          'pending-snapshot:request:${group.id}',
+          'pending-snapshot:queue:${group.id}',
+          'post-snapshot-role:request:${group.id}',
+          'ordinary:request:${group.id}',
+        ]);
+      },
+    );
+
+    testWidgets(
+      'PB264-16 Group List post-snapshot role mutation persists exact queued exit',
+      (tester) async {
+        final group = makeGroup(
+          id: 'pb264-real-list',
+          name: 'Durable List Exit',
+        );
+        await groupRepo.saveGroup(group);
+        final selfMember = GroupMember(
+          groupId: group.id,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          joinedAt: group.createdAt,
+        );
+        await groupRepo.saveMember(selfMember);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-other-admin',
+            username: 'Other Admin',
+            role: MemberRole.admin,
+            joinedAt: group.createdAt,
+          ),
+        );
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            group.id,
+            nextEligibleAt: future,
+          );
+        }
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+        final leaveButton = find.byKey(
+          const ValueKey('group-stuck-leave-pb264-real-list'),
+        );
+        await tester.scrollUntilVisible(
+          leaveButton,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        final harness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.create(
+            group: group,
+            selfMember: selfMember,
+            groupRepository: groupRepo,
+            identityRepository: identityRepo,
+            recipientPeerId: 'peer-other-admin',
+          ),
+        ))!;
+        addTearDown(() async {
+          setGroupPendingBroadcastAccessSinks();
+          setGroupExitIntentAccessSinks();
+          setGroupExitIntentActionSinks();
+          await tester.runAsync(harness.close);
+        });
+        harness.install();
+
+        await tester.tap(leaveButton);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => harness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
+
+        expect(harness.uiSnapshotLoads, 1);
+        expect(harness.roleInsertedAfterSnapshot, isTrue);
+        expect(harness.requestLeaveCalls, 1);
+        expect(harness.rolePushAttempts, 1);
+        expect(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+          findsOneWidget,
+        );
+        expect(await tester.runAsync(harness.loadIntent), isNull);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-exit-leave-when-synced')),
+        );
+        await pumpDurableGroupExitUntil(
+          tester,
+          () =>
+              harness.queueLeaveCompletions >= 1 &&
+              find.text('Leaving…').evaluate().isNotEmpty,
+        );
+        await pumpFrames(tester);
+
+        final intent = await tester.runAsync(harness.loadIntent);
+        expect(harness.queueLeaveCalls, 1);
+        expect(intent, isNotNull);
+        expect(intent!.groupId, group.id);
+        expect(intent.intentId, 'pb264-surface-1');
+        expect(intent.selfPeerId, testIdentity.peerId);
+        expect(intent.selfJoinedAt, selfMember.joinedAt.toUtc());
+        expect(intent.state, GroupExitIntentState.queued);
+        expect(intent.pendingBroadcastId, 'group-exit-notice:pb264-surface-2');
+        expect(intent.revision, 0);
+        final pending = (await tester.runAsync(
+          () => harness.pendingRepository.forGroup(group.id),
+        ))!;
+        expect(pending, hasLength(1));
+        expect(
+          sameExactGroupPendingBroadcast(pending.single, harness.roleBroadcast),
+          isTrue,
+        );
+        expect(find.text('Leaving…'), findsOneWidget);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          isEmpty,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    testWidgets(
+      'PB264-17 queued exit row says Leaving and suppresses competing stuck actions',
+      (tester) async {
+        final group = makeGroup(id: 'pb264-leaving', name: 'Leaving Group');
+        await groupRepo.saveGroup(group);
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            group.id,
+            nextEligibleAt: future,
+          );
+        }
+        final at = DateTime.utc(2026, 7, 21, 10);
+        final intent = GroupExitIntent(
+          groupId: group.id,
+          intentId: 'pb264-leaving-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: group.createdAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb264-list-pending-broadcast',
+          createdAt: at,
+          updatedAt: at,
+        );
+        setGroupExitIntentAccessSinks(
+          forGroup: (groupId) async => groupId == group.id ? intent : null,
+          all: () async => [intent],
+        );
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(find.text('Leaving…'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-stuck-retry-pb264-leaving')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-stuck-leave-pb264-leaving')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets(
       'G2: "Retry now" on a stuck group force-eligibles it and triggers a '
@@ -631,8 +1004,41 @@ void main() {
     testWidgets(
       'G2: "Leave" on a stuck group leaves it (group torn down, never silent)',
       (tester) async {
-        final group = makeGroup(id: 'g-1', name: 'Stuck Group');
+        final group = makeGroup(
+          id: 'g-1',
+          name: 'Stuck Group',
+        ).copyWith(createdBy: 'peer-owner', myRole: GroupRole.member);
         await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.writer,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: group.createdAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-owner',
+            username: 'Owner',
+            role: MemberRole.admin,
+            publicKey: 'pk-owner',
+            mlKemPublicKey: 'mlkem-pk-owner',
+            joinedAt: group.createdAt,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: group.id,
+            keyGeneration: 1,
+            encryptedKey: 'stuck-group-key',
+            createdAt: group.createdAt,
+          ),
+        );
         final future = DateTime.now().toUtc().add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
           await groupRepo.recordGroupRejoinFailure(
@@ -640,6 +1046,15 @@ void main() {
             nextEligibleAt: future,
           );
         }
+
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
 
         await tester.pumpWidget(buildWidget());
         await pumpFrames(tester);
@@ -829,8 +1244,38 @@ void main() {
         final ordinaryGroup = makeGroup(
           id: ordinaryGroupId,
           name: 'Ordinary List Stuck',
-        ).copyWith(myRole: GroupRole.member);
+        ).copyWith(createdBy: 'peer-owner', myRole: GroupRole.member);
         await groupRepo.saveGroup(ordinaryGroup);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: ordinaryGroupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.writer,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: ordinaryGroup.createdAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: ordinaryGroupId,
+            peerId: 'peer-owner',
+            username: 'Owner',
+            role: MemberRole.admin,
+            publicKey: 'pk-owner',
+            mlKemPublicKey: 'mlkem-pk-owner',
+            joinedAt: ordinaryGroup.createdAt,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: ordinaryGroupId,
+            keyGeneration: 1,
+            encryptedKey: 'ordinary-stuck-group-key',
+            createdAt: ordinaryGroup.createdAt,
+          ),
+        );
         final future = marker.add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
           await groupRepo.recordGroupRejoinFailure(
@@ -839,6 +1284,14 @@ void main() {
           );
         }
         var unexpectedLocalDeleteCalls = 0;
+        installLegacyGroupExitCoordinatorFixture(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        );
         await tester.pumpWidget(
           buildWidget(
             groupListKey: const ValueKey('group-list-ordinary-control'),

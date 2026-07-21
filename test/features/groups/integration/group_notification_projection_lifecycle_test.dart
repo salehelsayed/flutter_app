@@ -593,6 +593,104 @@ void main() {
     },
   );
 
+  test(
+    'paused old-account context load cannot fence a same-id new-account group',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: oldAccount,
+        transportPeerId: oldAccount,
+      );
+
+      final loadCaptured = Completer<void>();
+      final releaseLoad = Completer<void>();
+      final oldAccountBackfill = projection
+          .replaceContextsFromAuthoritativeLoader(() async {
+            loadCaptured.complete();
+            await releaseLoad.future;
+            return (
+              groups: <GroupModel>[],
+              membersByGroup: <String, List<GroupMember>>{},
+              latestKeysByGroup: <String, GroupKeyInfo?>{},
+              terminalGroupIds: <String>{'group-1'},
+            );
+          });
+      await loadCaptured.future;
+
+      final replaceIdentity = projection.replaceLocalIdentity(
+        accountPeerId: newAccount,
+        deviceId: newAccount,
+        transportPeerId: newAccount,
+      );
+      releaseLoad.complete();
+      await Future.wait<void>([oldAccountBackfill, replaceIdentity]);
+
+      await projection.replaceContexts(
+        groups: <GroupModel>[group(name: 'New Account Group')],
+        membersByGroup: <String, List<GroupMember>>{},
+        latestKeysByGroup: <String, GroupKeyInfo?>{},
+      );
+
+      final contexts = await projection.readContexts();
+      expect(contexts['localAccountPeerId'], newAccount);
+      expect(
+        (contexts['groups']! as Map<String, Object?>),
+        contains('group-1'),
+      );
+    },
+  );
+
+  test(
+    'identity switch during post-loader read cannot seed a stale terminal fence',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: oldAccount,
+        deviceId: oldAccount,
+        transportPeerId: oldAccount,
+      );
+
+      final readBarrierArmed = Completer<void>();
+      final oldAccountBackfill = projection
+          .replaceContextsFromAuthoritativeLoader(() async {
+            store.armNextReadBarrier(sharedGroupReactionContextsKey);
+            readBarrierArmed.complete();
+            return (
+              groups: <GroupModel>[],
+              membersByGroup: <String, List<GroupMember>>{},
+              latestKeysByGroup: <String, GroupKeyInfo?>{},
+              terminalGroupIds: <String>{'group-1'},
+            );
+          });
+      await readBarrierArmed.future;
+      await store.readCaptured.future;
+
+      final replaceIdentity = projection.replaceLocalIdentity(
+        accountPeerId: newAccount,
+        deviceId: newAccount,
+        transportPeerId: newAccount,
+      );
+      store.releaseRead();
+      await Future.wait<void>([oldAccountBackfill, replaceIdentity]);
+
+      await projection.replaceContexts(
+        groups: <GroupModel>[group(name: 'New Account Group')],
+        membersByGroup: <String, List<GroupMember>>{},
+        latestKeysByGroup: <String, GroupKeyInfo?>{},
+      );
+
+      final contexts = await projection.readContexts();
+      expect(contexts['localAccountPeerId'], newAccount);
+      expect(
+        (contexts['groups']! as Map<String, Object?>),
+        contains('group-1'),
+      );
+    },
+  );
+
   test('failed group eligibility write invalidates prior context', () async {
     final store = _MemorySecureKeyStore();
     final projection = GroupReactionNotificationProjection(store: store);
@@ -1304,6 +1402,19 @@ class _MemorySecureKeyStore implements SecureKeyStore {
   bool failWrites = false;
   int failNextWrites = 0;
   final Set<String> failNextWriteKeys = <String>{};
+  String? _pauseNextReadKey;
+  Completer<void> readCaptured = Completer<void>()..complete();
+  Completer<void> _releaseRead = Completer<void>()..complete();
+
+  void armNextReadBarrier(String key) {
+    _pauseNextReadKey = key;
+    readCaptured = Completer<void>();
+    _releaseRead = Completer<void>();
+  }
+
+  void releaseRead() {
+    if (!_releaseRead.isCompleted) _releaseRead.complete();
+  }
 
   @override
   Future<bool> containsKey(String key) async => values.containsKey(key);
@@ -1315,7 +1426,15 @@ class _MemorySecureKeyStore implements SecureKeyStore {
   }
 
   @override
-  Future<String?> read(String key) async => values[key];
+  Future<String?> read(String key) async {
+    final value = values[key];
+    if (_pauseNextReadKey == key) {
+      _pauseNextReadKey = null;
+      if (!readCaptured.isCompleted) readCaptured.complete();
+      await _releaseRead.future;
+    }
+    return value;
+  }
 
   @override
   Future<void> write(String key, String value) async {

@@ -275,6 +275,8 @@ void main() {
           bridge: bridge,
           groupRepo: groupRepo,
           msgRepo: msgRepo,
+          canRejoinForExitIntent: (_) async => true,
+          processExitIntent: (_) async {},
           multiDeviceSyncEnabled: true,
         ),
         0,

@@ -69,6 +69,7 @@ void main() {
     expect((await resolve()).disposition, GroupExitDisposition.noOp);
 
     await groupRepo.saveGroup(group(myRole: GroupRole.member));
+    await groupRepo.saveMember(member(selfPeerId, MemberRole.writer));
     expect((await resolve()).disposition, GroupExitDisposition.leave);
 
     await groupRepo.updateGroup(group());
@@ -110,6 +111,61 @@ void main() {
       GroupExitDisposition.deleteDissolvedLocally,
     );
   });
+
+  test(
+    'active exit authority requires one exact self row and ignores stale group role projection',
+    () async {
+      final groupRepo = _OverrideMembersGroupRepository();
+      await groupRepo.saveGroup(group());
+      var pendingRows = <GroupPendingBroadcast>[pending('member_role_updated')];
+      var pendingLoads = 0;
+
+      Future<GroupExitSnapshot> resolve() => resolveGroupExitSnapshot(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        loadPendingBroadcasts: (_) async {
+          pendingLoads++;
+          return pendingRows;
+        },
+      );
+
+      groupRepo.overrideMembers = [member('peer-candidate', MemberRole.writer)];
+      expect((await resolve()).disposition, GroupExitDisposition.noOp);
+      expect(pendingLoads, 0, reason: 'missing self fails before queue policy');
+
+      groupRepo.overrideMembers = [
+        member(selfPeerId, MemberRole.admin),
+        member(selfPeerId, MemberRole.writer),
+        member('peer-candidate', MemberRole.admin),
+      ];
+      expect((await resolve()).disposition, GroupExitDisposition.noOp);
+      expect(
+        pendingLoads,
+        0,
+        reason: 'duplicate self fails before queue policy',
+      );
+
+      pendingRows = const <GroupPendingBroadcast>[];
+      groupRepo.overrideMembers = [member(selfPeerId, MemberRole.writer)];
+      expect(
+        (await resolve()).disposition,
+        GroupExitDisposition.leave,
+        reason: 'the exact writer row outranks stale group.myRole=admin',
+      );
+
+      await groupRepo.updateGroup(group(myRole: GroupRole.member));
+      groupRepo.overrideMembers = [
+        member(selfPeerId, MemberRole.admin),
+        member('peer-candidate', MemberRole.writer),
+      ];
+      expect(
+        (await resolve()).disposition,
+        GroupExitDisposition.soleAdminRecovery,
+        reason: 'the exact admin row outranks stale group.myRole=member',
+      );
+    },
+  );
 
   test('successor candidates require current joined evidence', () async {
     for (final status in GroupInviteDeliveryStatus.values) {
@@ -365,6 +421,21 @@ class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
   Future<List<GroupMember>> getMembers(String groupId) {
     if (failMembers) {
       throw StateError('member read failed');
+    }
+    return super.getMembers(groupId);
+  }
+}
+
+class _OverrideMembersGroupRepository extends InMemoryGroupRepository {
+  List<GroupMember>? overrideMembers;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) {
+    final members = overrideMembers;
+    if (members != null) {
+      return Future<List<GroupMember>>.value(
+        List<GroupMember>.of(members, growable: false),
+      );
     }
     return super.getMembers(groupId);
   }

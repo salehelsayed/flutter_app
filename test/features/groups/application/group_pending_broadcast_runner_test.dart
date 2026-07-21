@@ -16,7 +16,10 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
-class _FakeRepo implements GroupPendingBroadcastRepository {
+class _FakeRepo
+    implements
+        GroupPendingBroadcastRepository,
+        GroupPendingBroadcastExactRepository {
   final Map<String, GroupPendingBroadcast> rows = {};
   Future<void> Function(String groupId)? beforeForGroup;
   Future<void> Function(String id)? beforeRemove;
@@ -41,6 +44,17 @@ class _FakeRepo implements GroupPendingBroadcastRepository {
   Future<void> remove(String id) async {
     await beforeRemove?.call(id);
     rows.remove(id);
+  }
+
+  @override
+  Future<bool> removeIfExact(GroupPendingBroadcast expected) async {
+    final current = rows[expected.id];
+    if (current == null || !sameExactGroupPendingBroadcast(current, expected)) {
+      return false;
+    }
+    await beforeRemove?.call(expected.id);
+    rows.remove(expected.id);
+    return true;
   }
 
   @override
@@ -135,16 +149,30 @@ void main() {
   test(
     'PB264-01 same-group group/all drains serialize, reload, and protect the current tail from a late fourth caller',
     () async {
-      await repo.enqueue(_b('serialized'));
+      await repo.enqueue(_b('first-turn'));
       final releases = <Completer<void>>[];
+      final secondLoadEntered = Completer<void>();
+      final releaseSecondLoad = Completer<void>();
+      final pushed = <String>[];
+      var groupLoads = 0;
       var active = 0;
       var maxActive = 0;
+      repo.beforeForGroup = (groupId) async {
+        if (groupId != 'group-1') return;
+        groupLoads++;
+        if (groupLoads == 2) {
+          secondLoadEntered.complete();
+          await releaseSecondLoad.future;
+        } else if (groupLoads == 3) {
+          await repo.enqueue(_b('third-turn'));
+        } else if (groupLoads == 4) {
+          await repo.enqueue(_b('fourth-turn'));
+        }
+      };
       final runner = GroupPendingBroadcastRunner(
         repository: repo,
-        // Keep the row present so every queued turn proves it reloads and
-        // reaches the controlled leaf. Production finalizes inside rePush.
-        rePushFinalizesSuccess: true,
-        rePush: (_) async {
+        rePush: (broadcast) async {
+          pushed.add(broadcast.id);
           active++;
           if (active > maxActive) maxActive = active;
           final release = Completer<void>();
@@ -156,6 +184,7 @@ void main() {
       );
 
       addTearDown(() {
+        if (!releaseSecondLoad.isCompleted) releaseSecondLoad.complete();
         for (final release in releases) {
           if (!release.isCompleted) release.complete();
         }
@@ -177,6 +206,13 @@ void main() {
       expect(maxActive, 1, reason: 'same-group entry points must share a tail');
 
       releases[0].complete();
+      await secondLoadEntered.future;
+
+      // This row did not exist in drainAll's discovery snapshot or in the
+      // first turn. It must be loaded inside the second keyed turn and removed
+      // exactly once; reusing the old load makes this assertion fail.
+      await repo.enqueue(_b('between-turns'));
+      releaseSecondLoad.complete();
       await waitForCalls(2);
 
       // Schedule after the first turn has cleaned up while the second is still
@@ -197,6 +233,14 @@ void main() {
       expect(await third, 1);
       expect(await fourth, 1);
       expect(maxActive, 1);
+      expect(pushed, <String>[
+        'first-turn',
+        'between-turns',
+        'third-turn',
+        'fourth-turn',
+      ]);
+      expect(await repo.forGroup('group-1'), isEmpty);
+      expect(groupLoads, 5, reason: 'four turns plus the final assertion load');
       expect(releases, hasLength(4), reason: 'every turn reloads the group');
     },
   );
@@ -204,12 +248,17 @@ void main() {
   test(
     'PB264-02 repository failure releases the keyed turn while another group progresses',
     () async {
-      await repo.enqueue(_b('same', groupId: 'group-1'));
-      await repo.enqueue(_b('other', groupId: 'group-2'));
+      await repo.enqueue(_b('load-same', groupId: 'group-1'));
+      await repo.enqueue(_b('load-other', groupId: 'group-2'));
+      final loadEntered = Completer<void>();
+      final releaseLoad = Completer<void>();
+      final unrelatedLoadPush = Completer<void>();
       var failFirstGroupLoad = true;
       repo.beforeForGroup = (groupId) async {
         if (groupId == 'group-1' && failFirstGroupLoad) {
           failFirstGroupLoad = false;
+          loadEntered.complete();
+          await releaseLoad.future;
           throw StateError('injected repository failure');
         }
       };
@@ -218,18 +267,72 @@ void main() {
         repository: repo,
         rePush: (broadcast) async {
           pushed.add(broadcast.id);
+          if (broadcast.groupId == 'group-2' &&
+              !unrelatedLoadPush.isCompleted) {
+            unrelatedLoadPush.complete();
+          }
           return true;
         },
       );
 
       final failed = runner.drainForGroup('group-1');
+      await loadEntered.future;
       final sameGroupSuccessor = runner.drainForGroup('group-1');
       final unrelated = runner.drainForGroup('group-2');
 
+      await unrelatedLoadPush.future;
+      expect(pushed, [
+        'load-other',
+      ], reason: 'an unrelated group must cross while group-1 is held');
+      releaseLoad.complete();
       await expectLater(failed, throwsStateError);
       expect(await unrelated, 1);
       expect(await sameGroupSuccessor, 1);
-      expect(pushed.toSet(), {'same', 'other'});
+      expect(pushed.toSet(), {'load-same', 'load-other'});
+
+      // Runner-owned exact removal is outside the swallowed rePush boundary.
+      // Its rejection must release the same keyed tail while preserving the
+      // same non-global-lock property.
+      final removeRepo = _FakeRepo();
+      await removeRepo.enqueue(_b('remove-same', groupId: 'group-1'));
+      await removeRepo.enqueue(_b('remove-other', groupId: 'group-2'));
+      final removeEntered = Completer<void>();
+      final releaseRemove = Completer<void>();
+      final unrelatedRemovePush = Completer<void>();
+      var rejectFirstRemove = true;
+      var samePushes = 0;
+      removeRepo.beforeRemove = (id) async {
+        if (id == 'remove-same' && rejectFirstRemove) {
+          rejectFirstRemove = false;
+          removeEntered.complete();
+          await releaseRemove.future;
+          throw StateError('injected exact remove rejection');
+        }
+      };
+      final removeRunner = GroupPendingBroadcastRunner(
+        repository: removeRepo,
+        rePush: (broadcast) async {
+          if (broadcast.groupId == 'group-1') samePushes++;
+          if (broadcast.groupId == 'group-2' &&
+              !unrelatedRemovePush.isCompleted) {
+            unrelatedRemovePush.complete();
+          }
+          return true;
+        },
+      );
+
+      final removeFailed = removeRunner.drainForGroup('group-1');
+      await removeEntered.future;
+      final removeSuccessor = removeRunner.drainForGroup('group-1');
+      final removeUnrelated = removeRunner.drainForGroup('group-2');
+      await unrelatedRemovePush.future;
+      expect(samePushes, 1, reason: 'same-group successor remains behind tail');
+      releaseRemove.complete();
+      await expectLater(removeFailed, throwsStateError);
+      expect(await removeUnrelated, 1);
+      expect(await removeSuccessor, 1);
+      expect(samePushes, 2);
+      expect(await removeRepo.forGroup('group-1'), isEmpty);
     },
   );
 
@@ -577,82 +680,92 @@ void main() {
     },
   );
 
-  test('prepared role row sends only with exact commit watermark', () async {
-    final eventAt = DateTime.utc(2026, 6, 17);
-    const sourceEventId = 'role-source';
-    final groupRepo = InMemoryGroupRepository();
-    await groupRepo.saveGroup(
-      GroupModel(
-        id: 'group-1',
-        name: 'Group',
-        type: GroupType.chat,
-        topicName: 'topic-group-1',
+  test(
+    'PB264-03 exact role watermark cannot publish a row without signed transition authority',
+    () async {
+      final eventAt = DateTime.utc(2026, 6, 17);
+      const sourceEventId = 'role-source';
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Group',
+          type: GroupType.chat,
+          topicName: 'topic-group-1',
+          createdAt: eventAt,
+          createdBy: 'peer-self',
+          myRole: GroupRole.admin,
+          lastMembershipEventAt: eventAt,
+          lastMembershipEventId: sourceEventId,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'pk-self',
+          mlKemPublicKey: 'mlkem-self',
+          joinedAt: eventAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-other',
+          username: 'Other',
+          role: MemberRole.admin,
+          publicKey: 'pk-other',
+          mlKemPublicKey: 'mlkem-other',
+          joinedAt: eventAt,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'group-key-1',
+          createdAt: eventAt,
+        ),
+      );
+      final identityRepo = FakeIdentityRepository();
+      identityRepo.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: 'peer-self',
+          publicKey: 'pk-self',
+          privateKey: 'sk-self',
+          mlKemPublicKey: 'mlkem-self',
+        ),
+      );
+      final bridge = FakeBridge();
+      final rePush = buildGroupPendingBroadcastRePush(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        loadIdentity: identityRepo.loadIdentity,
+      );
+      final prepared = GroupPendingBroadcast(
+        id: 'prepared-role-exact',
+        groupId: 'group-1',
+        kind: groupPendingBroadcastKindMemberRolePrepared,
+        sysText: '{"member":{"peerId":"peer-other","role":"admin"}}',
+        recipientPeerIds: const ['peer-other'],
+        eventAt: eventAt,
+        sourceMessageId: sourceEventId,
         createdAt: eventAt,
-        createdBy: 'peer-self',
-        myRole: GroupRole.admin,
-        lastMembershipEventAt: eventAt,
-        lastMembershipEventId: sourceEventId,
-      ),
-    );
-    await groupRepo.saveMember(
-      GroupMember(
-        groupId: 'group-1',
-        peerId: 'peer-self',
-        username: 'Self',
-        role: MemberRole.admin,
-        publicKey: 'pk-self',
-        mlKemPublicKey: 'mlkem-self',
-        joinedAt: eventAt,
-      ),
-    );
-    await groupRepo.saveMember(
-      GroupMember(
-        groupId: 'group-1',
-        peerId: 'peer-other',
-        username: 'Other',
-        role: MemberRole.admin,
-        publicKey: 'pk-other',
-        mlKemPublicKey: 'mlkem-other',
-        joinedAt: eventAt,
-      ),
-    );
-    await groupRepo.saveKey(
-      GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 1,
-        encryptedKey: 'group-key-1',
-        createdAt: eventAt,
-      ),
-    );
-    final identityRepo = FakeIdentityRepository();
-    identityRepo.seed(
-      FakeIdentityRepository.makeIdentity(
-        peerId: 'peer-self',
-        publicKey: 'pk-self',
-        privateKey: 'sk-self',
-        mlKemPublicKey: 'mlkem-self',
-      ),
-    );
-    final bridge = FakeBridge();
-    final rePush = buildGroupPendingBroadcastRePush(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      loadIdentity: identityRepo.loadIdentity,
-    );
-    final prepared = GroupPendingBroadcast(
-      id: 'prepared-role-exact',
-      groupId: 'group-1',
-      kind: groupPendingBroadcastKindMemberRolePrepared,
-      sysText: '{"member":{"peerId":"peer-other","role":"admin"}}',
-      recipientPeerIds: const ['peer-other'],
-      eventAt: eventAt,
-      sourceMessageId: sourceEventId,
-      createdAt: eventAt,
-      updatedAt: eventAt,
-    );
+        updatedAt: eventAt,
+      );
 
-    expect(await rePush(prepared), isTrue);
-    expect(bridge.commandLog, contains('group:publish'));
-    expect(bridge.commandLog, contains('group:inboxStore'));
-  });
+      expect(await rePush(prepared), isFalse);
+      expect(identityRepo.loadIdentityCallCount, 1);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        isEmpty,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:inboxStore'),
+        isEmpty,
+      );
+    },
+  );
 }

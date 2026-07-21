@@ -131,8 +131,8 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 102);
-        expect(await _userVersion(db), 102);
+        expect(currentIdentityDatabaseVersion, 103);
+        expect(await _userVersion(db), 103);
         final entry = productionUpgradeMigrations.singleWhere(
           (candidate) => candidate.version == 102,
         );

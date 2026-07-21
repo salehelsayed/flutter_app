@@ -154,11 +154,12 @@ void main() {
   // 164: extracted so a test can inject a counting push store (the produced
   // repo is byte-identical to the original setUp construction otherwise).
   GroupRepositoryImpl makeRepo(
-    FakeSecureKeyStore pushStore, {
+    FakeSecureKeyStore? pushStore, {
     GroupReactionNotificationProjection? projection,
     bool selfRemovedShellAuthorityEnabled = false,
     void Function()? beforeSelfRemovedReferenceFinalize,
     Future<List<Map<String, Object?>>> Function()? loadAllGroupsOverride,
+    Future<bool> Function(String groupId)? hasExitCleanupPending,
   }) {
     return GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -206,6 +207,7 @@ void main() {
       groupKeyStore: groupKeyStore,
       pushSharedKeyStore: pushStore,
       groupReactionProjection: projection,
+      dbHasGroupExitCleanupPending: hasExitCleanupPending,
       selfRemovedShellAuthorityEnabled: selfRemovedShellAuthorityEnabled,
       dbLoadSelfRemovedGroupShellAuthority:
           ({required groupId, required selfPeerId}) =>
@@ -1049,6 +1051,278 @@ void main() {
     });
 
     test(
+      'PB264-12 exact exit keeps SQL retry addresses until strict external cleanup and finalizes last',
+      () async {
+        final order = <String>[];
+        final primary = _OrderedSecureKeyStore('primary', order);
+        final mirror = _OrderedSecureKeyStore('mirror', order);
+        final projection = _RecordingProjection(order);
+        groupKeyStore = primary;
+        repo = makeRepo(mirror, projection: projection);
+
+        await repo.saveGroup(makeGroup());
+        await repo.saveMember(makeMember(peerId: 'peer-self'));
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        await repo.savePendingKeyRotation(makeKey(keyGeneration: 2));
+        await mirror.write(sharedGroupMutedKeyName('group-1'), '1');
+        order.clear();
+
+        final cleanup = repo as GroupExitCleanupRepository;
+        var finalSqlCalls = 0;
+        mirror.failDeleteContaining = sharedGroupPushKeyName('group-1', 1);
+        await expectLater(
+          cleanup.cleanupExactVoluntaryExit<void>(
+            groupId: 'group-1',
+            selfPeerId: 'peer-self',
+            selfJoinedAt: now,
+            finalizeSql: () async {
+              finalSqlCalls++;
+              order.add('sql');
+            },
+          ),
+          throwsStateError,
+        );
+
+        expect(finalSqlCalls, 0);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
+        expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNotNull);
+        expect(await dbLoadGroup(db, 'group-1'), isNotNull);
+        expect(
+          order,
+          containsAllInOrder(<String>[
+            'projection:group-1',
+            'primary:${groupKeyMaterialStoreName('group-1', 1)}',
+            'primary:${groupKeyMaterialStoreName('group-1', 2)}',
+            'mirror:${sharedGroupPushKeyName('group-1', 1)}',
+          ]),
+        );
+
+        order.clear();
+        mirror.failDeleteContaining = null;
+        await expectLater(
+          cleanup.cleanupExactVoluntaryExit<void>(
+            groupId: 'group-1',
+            selfPeerId: 'peer-self',
+            selfJoinedAt: now,
+            finalizeSql: () async {
+              finalSqlCalls++;
+              order.add('sql');
+              throw StateError('injected final SQL failure');
+            },
+          ),
+          throwsStateError,
+        );
+        expect(finalSqlCalls, 1);
+        expect(order.last, 'sql');
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
+        expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNotNull);
+        expect(await dbLoadGroup(db, 'group-1'), isNotNull);
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 1)),
+          isFalse,
+        );
+        expect(
+          await mirror.containsKey(sharedGroupMutedKeyName('group-1')),
+          isFalse,
+        );
+
+        order.clear();
+        await cleanup.cleanupExactVoluntaryExit<void>(
+          groupId: 'group-1',
+          selfPeerId: 'peer-self',
+          selfJoinedAt: now,
+          finalizeSql: () async {
+            finalSqlCalls++;
+            expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
+            expect(
+              await dbLoadPendingGroupKeyRotation(db, 'group-1'),
+              isNotNull,
+            );
+            order.add('sql');
+            await dbDeleteAllGroupKeys(db, 'group-1');
+            await dbDeletePendingGroupKeyRotations(db, 'group-1');
+            await dbDeleteAllGroupMembers(db, 'group-1');
+            await dbDeleteGroup(db, 'group-1');
+          },
+        );
+
+        expect(finalSqlCalls, 2);
+        expect(order.last, 'sql');
+        expect(await dbLoadGroup(db, 'group-1'), isNull);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), isEmpty);
+        expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNull);
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 1)),
+          isFalse,
+        );
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 2)),
+          isFalse,
+        );
+        expect(
+          await mirror.containsKey(sharedGroupPushKeyName('group-1', 1)),
+          isFalse,
+        );
+        expect(
+          await mirror.containsKey(sharedGroupMutedKeyName('group-1')),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'PB264-12 non-iOS cleanup treats absent shared notification stores as unconfigured',
+      () async {
+        repo = makeRepo(null);
+        await repo.saveGroup(makeGroup());
+        await repo.saveMember(makeMember(peerId: 'peer-self'));
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        await repo.savePendingKeyRotation(makeKey(keyGeneration: 2));
+
+        final primaryGenerationOne = groupKeyMaterialStoreName('group-1', 1);
+        final primaryGenerationTwo = groupKeyMaterialStoreName('group-1', 2);
+        expect(await groupKeyStore.containsKey(primaryGenerationOne), isTrue);
+        expect(await groupKeyStore.containsKey(primaryGenerationTwo), isTrue);
+
+        await (repo as GroupExitCleanupRepository)
+            .cleanupExactVoluntaryExit<void>(
+              groupId: 'group-1',
+              selfPeerId: 'peer-self',
+              selfJoinedAt: now,
+              finalizeSql: () async {
+                await dbDeleteAllGroupKeys(db, 'group-1');
+                await dbDeletePendingGroupKeyRotations(db, 'group-1');
+                await dbDeleteAllGroupMembers(db, 'group-1');
+                await dbDeleteGroup(db, 'group-1');
+              },
+            );
+
+        expect(await groupKeyStore.containsKey(primaryGenerationOne), isFalse);
+        expect(await groupKeyStore.containsKey(primaryGenerationTwo), isFalse);
+        expect(await dbLoadGroup(db, 'group-1'), isNull);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), isEmpty);
+        expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNull);
+      },
+    );
+
+    test(
+      'PB264-12 newer same-ID membership refuses external exit cleanup',
+      () async {
+        final order = <String>[];
+        final primary = _OrderedSecureKeyStore('primary', order);
+        final mirror = _OrderedSecureKeyStore('mirror', order);
+        groupKeyStore = primary;
+        repo = makeRepo(mirror, projection: _RecordingProjection(order));
+        final newerJoinedAt = now.add(const Duration(days: 1));
+
+        await repo.saveGroup(makeGroup());
+        await repo.saveMember(
+          makeMember(peerId: 'peer-self').copyWith(joinedAt: newerJoinedAt),
+        );
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        order.clear();
+        var finalSqlCalled = false;
+
+        await expectLater(
+          (repo as GroupExitCleanupRepository).cleanupExactVoluntaryExit<void>(
+            groupId: 'group-1',
+            selfPeerId: 'peer-self',
+            selfJoinedAt: now,
+            finalizeSql: () async => finalSqlCalled = true,
+          ),
+          throwsStateError,
+        );
+
+        expect(order, isEmpty);
+        expect(finalSqlCalled, isFalse);
+        expect(await dbLoadGroup(db, 'group-1'), isNotNull);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 1)),
+          isTrue,
+        );
+        expect(
+          await mirror.containsKey(sharedGroupPushKeyName('group-1', 1)),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'PB264-12 final SQL stays inside the group mutation lock and rejects queued key writers',
+      () async {
+        final order = <String>[];
+        final primary = _OrderedSecureKeyStore('primary', order);
+        final mirror = _OrderedSecureKeyStore('mirror', order);
+        groupKeyStore = primary;
+        repo = makeRepo(
+          mirror,
+          projection: _RecordingProjection(order),
+          selfRemovedShellAuthorityEnabled: true,
+        );
+        await repo.saveGroup(makeGroup());
+        await repo.saveMember(makeMember(peerId: 'peer-self'));
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        order.clear();
+
+        final finalSqlEntered = Completer<void>();
+        final releaseFinalSql = Completer<void>();
+        final cleanupFuture = (repo as GroupExitCleanupRepository)
+            .cleanupExactVoluntaryExit<void>(
+              groupId: 'group-1',
+              selfPeerId: 'peer-self',
+              selfJoinedAt: now,
+              finalizeSql: () async {
+                order.add('sql-entered');
+                finalSqlEntered.complete();
+                await releaseFinalSql.future;
+                await dbDeleteAllGroupKeys(db, 'group-1');
+                await dbDeletePendingGroupKeyRotations(db, 'group-1');
+                await dbDeleteAllGroupMembers(db, 'group-1');
+                await dbDeleteGroup(db, 'group-1');
+                order.add('sql-committed');
+              },
+            );
+        await finalSqlEntered.future;
+
+        final queuedKeyWrite = expectLater(
+          repo.saveKey(makeKey(keyGeneration: 2)),
+          throwsStateError,
+        );
+        final queuedDraftWrite = expectLater(
+          repo.savePendingKeyRotation(makeKey(keyGeneration: 3)),
+          throwsStateError,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(await dbLoadGroupKeyByGeneration(db, 'group-1', 2), isNull);
+        expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNull);
+
+        releaseFinalSql.complete();
+        await cleanupFuture;
+        await queuedKeyWrite;
+        await queuedDraftWrite;
+
+        expect(
+          order,
+          containsAllInOrder(<String>['sql-entered', 'sql-committed']),
+        );
+        expect(await dbLoadGroup(db, 'group-1'), isNull);
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 2)),
+          isFalse,
+        );
+        expect(
+          await primary.containsKey(groupKeyMaterialStoreName('group-1', 3)),
+          isFalse,
+        );
+        expect(
+          await mirror.containsKey(sharedGroupPushKeyName('group-1', 2)),
+          isFalse,
+        );
+      },
+    );
+
+    test(
       'mirrorAllKeysToSecureStore mirrors existing persisted keys',
       () async {
         await repo.saveGroup(makeGroup());
@@ -1108,6 +1382,72 @@ void main() {
           await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
           '1',
         );
+      },
+    );
+
+    test(
+      'PB264-12 restart backfill cannot resurrect cleanup-pending iOS authority',
+      () async {
+        final sharedStore = FakeSecureKeyStore();
+        final firstProjection = GroupReactionNotificationProjection(
+          store: sharedStore,
+        );
+        await firstProjection.replaceLocalIdentity(
+          accountPeerId: 'peer-self',
+          deviceId: 'device-1',
+          transportPeerId: 'transport-1',
+        );
+        final firstProcess = makeRepo(sharedStore, projection: firstProjection);
+        await firstProcess.saveGroup(makeGroup().copyWith(isMuted: true));
+        await firstProcess.saveMember(makeMember(peerId: 'peer-self'));
+        await firstProcess.saveKey(makeKey(keyGeneration: 1));
+        await firstProcess.updateGroup(makeGroup().copyWith(isMuted: true));
+
+        final pushKey = sharedGroupPushKeyName('group-1', 1);
+        final muteKey = sharedGroupMutedKeyName('group-1');
+        expect(await sharedStore.containsKey(pushKey), isTrue);
+        expect(await sharedStore.containsKey(muteKey), isTrue);
+        expect(
+          await sharedStore.read(sharedGroupReactionContextsKey),
+          contains('group-1'),
+        );
+
+        // Model a cleanup attempt that removed all external addresses but
+        // faulted before final SQL, leaving those SQL rows as retry authority.
+        await firstProjection.removeGroupStrict('group-1');
+        await sharedStore.delete(pushKey);
+        await sharedStore.delete(muteKey);
+        expect(await dbLoadGroup(db, 'group-1'), isNotNull);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
+
+        // A new process has an empty in-memory terminal set. Durable
+        // cleanup_pending must still prevent every launch-time self-heal from
+        // recreating the deleted key, mute, or reaction projection.
+        final restartedProjection = GroupReactionNotificationProjection(
+          store: sharedStore,
+        );
+        await restartedProjection.replaceLocalIdentity(
+          accountPeerId: 'peer-self',
+          deviceId: 'device-1',
+          transportPeerId: 'transport-1',
+        );
+        final restarted = makeRepo(
+          sharedStore,
+          projection: restartedProjection,
+          hasExitCleanupPending: (_) async => true,
+        );
+        await restarted.mirrorAllKeysToSecureStore();
+        await restarted.mirrorAllMutedGroups();
+        await restarted.mirrorAllGroupReactionNotificationContexts();
+
+        expect(await sharedStore.containsKey(pushKey), isFalse);
+        expect(await sharedStore.containsKey(muteKey), isFalse);
+        expect(
+          await sharedStore.read(sharedGroupReactionContextsKey),
+          isNot(contains('group-1')),
+        );
+        expect(await dbLoadGroup(db, 'group-1'), isNotNull);
+        expect(await dbLoadAllGroupKeys(db, 'group-1'), hasLength(1));
       },
     );
 
@@ -1489,7 +1829,11 @@ void main() {
         final acceptedKey = makeKey(keyGeneration: 3);
         final result = await acceptedRepo.commitAcceptedReentry(
           group: makeGroup().copyWith(selfRemovedAt: null),
-          roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+          roster: <GroupMember>[
+            makeMember(peerId: 'peer-self').copyWith(
+              joinedAt: marked.selfRemovedAt!.add(const Duration(minutes: 2)),
+            ),
+          ],
           key: acceptedKey,
           selfPeerId: 'peer-self',
           authorizationId: 'invite-accepted-1',
@@ -1617,7 +1961,11 @@ void main() {
 
         final result = await acceptedRepo.commitAcceptedReentry(
           group: makeGroup().copyWith(selfRemovedAt: null),
-          roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+          roster: <GroupMember>[
+            makeMember(peerId: 'peer-self').copyWith(
+              joinedAt: marked.selfRemovedAt!.add(const Duration(minutes: 2)),
+            ),
+          ],
           key: makeKey(keyGeneration: 3),
           selfPeerId: 'peer-self',
           authorizationId: 'invite-sql-before-primary',
@@ -1729,7 +2077,11 @@ void main() {
         await expectLater(
           acceptedRepo.commitAcceptedReentry(
             group: makeGroup().copyWith(selfRemovedAt: null),
-            roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+            roster: <GroupMember>[
+              makeMember(peerId: 'peer-self').copyWith(
+                joinedAt: marked.selfRemovedAt!.add(const Duration(minutes: 2)),
+              ),
+            ],
             key: makeKey(keyGeneration: 3),
             selfPeerId: 'peer-self',
             authorizationId: 'invite-projection-failure',
@@ -1796,7 +2148,11 @@ void main() {
         const nonce = 'rollback-phase';
         final committed = await acceptedRepo.commitAcceptedReentry(
           group: makeGroup().copyWith(selfRemovedAt: null),
-          roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+          roster: <GroupMember>[
+            makeMember(peerId: 'peer-self').copyWith(
+              joinedAt: marked.selfRemovedAt!.add(const Duration(minutes: 2)),
+            ),
+          ],
           key: makeKey(keyGeneration: 3),
           selfPeerId: 'peer-self',
           authorizationId: 'invite-rollback',
@@ -1871,7 +2227,9 @@ void main() {
         await expectLater(
           acceptedRepo.commitAcceptedReentry(
             group: makeGroup().copyWith(selfRemovedAt: null),
-            roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+            roster: <GroupMember>[
+              makeMember(peerId: 'peer-self').copyWith(joinedAt: issuedAt),
+            ],
             key: makeKey(keyGeneration: 3),
             selfPeerId: 'peer-self',
             authorizationId: 'invite-preserved-accepted',
@@ -1925,7 +2283,11 @@ void main() {
         const nonce = 'rollback-refusal-phase';
         final committed = await acceptedRepo.commitAcceptedReentry(
           group: makeGroup().copyWith(selfRemovedAt: null),
-          roster: <GroupMember>[makeMember(peerId: 'peer-self')],
+          roster: <GroupMember>[
+            makeMember(peerId: 'peer-self').copyWith(
+              joinedAt: marked.selfRemovedAt!.add(const Duration(minutes: 2)),
+            ),
+          ],
           key: makeKey(keyGeneration: 3),
           selfPeerId: 'peer-self',
           authorizationId: 'newest-invite',

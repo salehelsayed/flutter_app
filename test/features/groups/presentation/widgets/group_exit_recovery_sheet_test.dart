@@ -159,6 +159,7 @@ void main() {
     final promotionGate = Completer<GroupExitPromotionUiResult>();
     var promotionCalls = 0;
     var retryCalls = 0;
+    var continueCalls = 0;
     await pumpSheet(
       tester,
       candidates: [candidate],
@@ -184,7 +185,7 @@ void main() {
     expect(promotionCalls, 1);
     promotionGate.complete(GroupExitPromotionUiResult.pendingSync);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('group-exit-retry-sync')), findsOneWidget);
+    expect(find.byKey(const ValueKey('group-exit-try-again')), findsOneWidget);
 
     // Close/reopen with the durable role row still present.
     await tester.tap(find.byKey(const ValueKey('group-exit-close')));
@@ -201,25 +202,30 @@ void main() {
         retryCalls++;
         return retryCalls > 1;
       },
-      onContinue: () async => false,
+      onContinue: () async {
+        continueCalls++;
+        return false;
+      },
       onDissolve: () async => false,
     );
-    await tester.tap(find.byKey(const ValueKey('group-exit-retry-sync')));
+    await tester.tap(find.byKey(const ValueKey('group-exit-try-again')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('group-exit-retry-sync')));
+    await tester.tap(find.byKey(const ValueKey('group-exit-try-again')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('group-exit-continue')), findsOneWidget);
+    expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('group-exit-stay')));
     await tester.pumpAndSettle();
     expect(promotionCalls, 1);
     expect(retryCalls, 2);
+    expect(continueCalls, 1);
   });
 
   testWidgets('retry failure leaves the recovery sheet operable', (
     tester,
   ) async {
     var retryCalls = 0;
+    var continueCalls = 0;
     await pumpSheet(
       tester,
       pendingRoleSync: true,
@@ -231,15 +237,18 @@ void main() {
         }
         return true;
       },
-      onContinue: () async => false,
+      onContinue: () async {
+        continueCalls++;
+        return false;
+      },
       onDissolve: () async => false,
     );
 
-    final retryFinder = find.byKey(const ValueKey('group-exit-retry-sync'));
+    final retryFinder = find.byKey(const ValueKey('group-exit-try-again'));
     await tester.tap(retryFinder);
     await tester.pumpAndSettle();
     expect(retryCalls, 1);
-    expect(tester.widget<FilledButton>(retryFinder).onPressed, isNotNull);
+    expect(tester.widget<OutlinedButton>(retryFinder).onPressed, isNotNull);
     expect(
       tester
           .widget<IconButton>(find.byKey(const ValueKey('group-exit-close')))
@@ -250,7 +259,8 @@ void main() {
     await tester.tap(retryFinder);
     await tester.pumpAndSettle();
     expect(retryCalls, 2);
-    expect(find.byKey(const ValueKey('group-exit-continue')), findsOneWidget);
+    expect(continueCalls, 1);
+    expect(find.byKey(const ValueKey('group-exit-continue')), findsNothing);
   });
 
   testWidgets('exit guidance is semantic RTL and large-text safe', (
@@ -445,9 +455,7 @@ void main() {
         findsNothing,
       );
 
-      final retryFinder = find.byKey(
-        const ValueKey('group-exit-try-again'),
-      );
+      final retryFinder = find.byKey(const ValueKey('group-exit-try-again'));
       await tester.tap(retryFinder);
       await tester.pump();
       await tester.tap(retryFinder, warnIfMissed: false);
@@ -479,6 +487,57 @@ void main() {
     },
   );
 
+  testWidgets(
+    'PB264-15 queued cancel failure refreshes and shows localized feedback',
+    (tester) async {
+      var cancelCalls = 0;
+      var refreshCalls = 0;
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.queuedLeave(
+          groupName: 'Night Owls',
+          onTryAgain: () async => false,
+          onCancelQueuedLeave: () async {
+            cancelCalls++;
+            if (cancelCalls == 1) {
+              throw StateError('private storage diagnostic');
+            }
+            return GroupExitQueuedCancelUiResult.failed;
+          },
+          onRefreshQueuedState: () async {
+            refreshCalls++;
+          },
+        ),
+        locale: const Locale('de'),
+      );
+
+      final sheetContext = tester.element(find.byType(GroupExitRecoverySheet));
+      final l10n = AppLocalizations.of(sheetContext)!;
+      final cancelFinder = find.byKey(
+        const ValueKey('group-exit-cancel-queued'),
+      );
+
+      await tester.tap(cancelFinder);
+      await tester.pumpAndSettle();
+
+      expect(cancelCalls, 1);
+      expect(refreshCalls, 1);
+      expect(find.text(l10n.group_info_leave_failed), findsOneWidget);
+      expect(find.text('private storage diagnostic'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('group-exit-cancel-failed')),
+        findsOneWidget,
+      );
+      expect(tester.widget<OutlinedButton>(cancelFinder).onPressed, isNotNull);
+
+      await tester.tap(cancelFinder);
+      await tester.pumpAndSettle();
+      expect(cancelCalls, 2);
+      expect(refreshCalls, 2);
+      expect(find.text(l10n.group_info_leave_failed), findsOneWidget);
+    },
+  );
+
   testWidgets('PB264-15 pending and queued recovery are 2x-text RTL safe', (
     tester,
   ) async {
@@ -491,8 +550,7 @@ void main() {
       GroupExitRecoverySheet.queuedLeave(
         groupName: 'Night Owls',
         onTryAgain: () async => false,
-        onCancelQueuedLeave: () async =>
-            GroupExitQueuedCancelUiResult.failed,
+        onCancelQueuedLeave: () async => GroupExitQueuedCancelUiResult.failed,
         onRefreshQueuedState: () async {},
       ),
     ]) {

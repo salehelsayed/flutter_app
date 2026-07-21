@@ -35,11 +35,13 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -1395,6 +1397,10 @@ void main() {
       wakeLockDriver = FakeUploadWakeLockDriver();
       UploadWakeLockController.debugReset(driver: wakeLockDriver);
       groupRecoveryGate.resetForTest();
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const <GroupExitIntent>[],
+      );
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-1',
@@ -1409,6 +1415,7 @@ void main() {
       messageStreamController.close();
       UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
       groupRecoveryGate.resetForTest();
+      setGroupExitIntentAccessSinks();
     });
 
     Widget buildWidget({
@@ -1502,6 +1509,134 @@ void main() {
         ),
       );
     }
+
+    testWidgets(
+      'PB264-17 queued exit is restart-visible, read-only, and cancel-refreshable',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'pb264-readable',
+            groupId: group.id,
+            senderPeerId: 'peer-other',
+            senderUsername: 'Other',
+            text: 'Still readable while leaving',
+            timestamp: DateTime.utc(2026, 7, 21, 10),
+            createdAt: DateTime.utc(2026, 7, 21, 10),
+            isIncoming: true,
+            status: 'delivered',
+          ),
+        );
+        final at = DateTime.utc(2026, 7, 21, 9);
+        final queuedIntent = GroupExitIntent(
+          groupId: group.id,
+          intentId: 'pb264-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: group.createdAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb264-pending-broadcast',
+          createdAt: at,
+          updatedAt: at,
+        );
+        GroupExitIntent? durableIntent = queuedIntent;
+        setGroupExitIntentAccessSinks(
+          forGroup: (groupId) async =>
+              groupId == group.id ? durableIntent : null,
+          all: () async => durableIntent == null
+              ? const <GroupExitIntent>[]
+              : <GroupExitIntent>[durableIntent],
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            audioRecorderService: FakeAudioRecorderService(),
+            reactionRepo: FakeReactionRepository(),
+            reactionReplayOutboxRepo: FakeGroupReactionReplayOutboxRepository(),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(find.text('Still readable while leaving'), findsOneWidget);
+        expect(screen.onInfo, isNotNull);
+        expect(screen.canWrite, isFalse);
+        expect(
+          screen.readOnlyBannerText,
+          'This group is read-only while we finish leaving.',
+        );
+        expect(screen.onAttach, isNull);
+        expect(screen.onRecordStart, isNull);
+        expect(screen.onQuoteReply, isNull);
+        expect(screen.onReactionSelected, isNull);
+        expect(screen.onRetryFailedMessage, isNull);
+        expect(screen.onRetryFailedMedia, isNull);
+        expect(screen.onRetryUnavailableMedia, isNull);
+
+        durableIntent = null;
+        screen.onInfo!();
+        await pumpFrames(tester, count: 10);
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        tester.state<NavigatorState>(find.byType(Navigator)).pop();
+        await pumpFrames(tester, count: 20);
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue, reason: 'Info return reloads absence');
+
+        durableIntent = queuedIntent;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 20);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.canWrite,
+          isFalse,
+          reason: 'resume reloads durable intent',
+        );
+
+        durableIntent = null;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 20);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+        expect(screen.onAttach, isNotNull);
+        expect(screen.onQuoteReply, isNotNull);
+        expect(screen.onReactionSelected, isNotNull);
+      },
+    );
 
     // ---- 210: group offline-send (queued-offline snackbar + clock, not tick) ----
     group('210 offline queued-offline send', () {

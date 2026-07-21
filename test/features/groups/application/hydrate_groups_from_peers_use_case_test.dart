@@ -45,6 +45,8 @@ void main() {
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      canRejoinForExitIntent: (_) async => true,
+      processExitIntent: (_) async {},
       multiDeviceSyncEnabled: false,
     );
     expect(count, 0);
@@ -56,6 +58,8 @@ void main() {
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      canRejoinForExitIntent: (_) async => true,
+      processExitIntent: (_) async {},
       multiDeviceSyncEnabled: true,
     );
     // Only the single active group is drained; the dissolved one is skipped.
@@ -63,4 +67,25 @@ void main() {
     // rejoinGroupTopics ran (it issues bridge work for the keyed active group).
     expect(bridge.commandLog, isNotEmpty);
   });
+
+  test(
+    'PB264-11 hydrate processes an exit phase without rejoining or draining it',
+    () async {
+      final processed = <String>[];
+
+      final count = await hydrateGroupsFromPeers(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        canRejoinForExitIntent: (groupId) async => groupId != 'g-active',
+        processExitIntent: (groupId) async => processed.add(groupId),
+        multiDeviceSyncEnabled: true,
+      );
+
+      expect(count, 0);
+      expect(processed, <String>['g-active', 'g-dissolved']);
+      expect(bridge.commandLog, isNot(contains('group:join')));
+      expect(bridge.commandLog, isNot(contains('group:inboxDrain')));
+    },
+  );
 }

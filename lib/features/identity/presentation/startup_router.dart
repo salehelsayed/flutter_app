@@ -172,6 +172,11 @@ class StartupRouter extends StatefulWidget {
   /// The group message listener for incoming group messages.
   final GroupMessageListener? groupMessageListener;
 
+  /// Durable group-exit authority used by cold-start rejoin and recovery.
+  final Future<bool> Function(String groupId)? canRejoinForExitIntent;
+  final Future<void> Function(String groupId)? processExitIntent;
+  final Future<void> Function()? groupExitIntentRecovery;
+
   /// The group invite listener for incoming group invites.
   final GroupInviteListener? groupInviteListener;
 
@@ -268,6 +273,9 @@ class StartupRouter extends StatefulWidget {
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
+    this.canRejoinForExitIntent,
+    this.processExitIntent,
+    this.groupExitIntentRecovery,
     this.groupInviteListener,
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
@@ -733,39 +741,56 @@ class _StartupRouterState extends State<StartupRouter> {
       if (groupRepo != null) {
         unawaited(
           runWithGroupRecoveryGate(() async {
-            final identity = await widget.repository.loadIdentity();
-            await rejoinGroupTopics(
-              bridge: widget.bridge,
-              groupRepo: groupRepo,
-            );
-            // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
-            // group dissolved while we were offline converges (and is left)
-            // instead of staying live. Runs AFTER rejoin so active groups
-            // re-subscribe immediately — the cursor-independent inbox scan must
-            // not delay live-message reception (see IR-018).
-            final groupMsgListener = widget.groupMessageListener;
-            if (groupMsgListener != null) {
-              await reconcileMissedGroupDissolves(
+            IdentityModel? identity;
+            try {
+              identity = await widget.repository.loadIdentity();
+              await rejoinGroupTopics(
                 bridge: widget.bridge,
                 groupRepo: groupRepo,
-                groupMessageListener: groupMsgListener,
-                selfPeerId: identity?.peerId,
+                canRejoinForExitIntent: widget.canRejoinForExitIntent,
+                processExitIntent: widget.processExitIntent,
               );
-            }
-            if (groupMsgRepo != null) {
-              await drainGroupOfflineInbox(
-                bridge: widget.bridge,
-                groupRepo: groupRepo,
-                msgRepo: groupMsgRepo,
-                groupMessageListener: widget.groupMessageListener,
-                mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                reactionRepo: widget.reactionRepository,
-                pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
-                historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-                requestGroupKeyRepair:
-                    widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
-                selfPeerId: identity?.peerId,
+              // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
+              // group dissolved while we were offline converges (and is left)
+              // instead of staying live. Runs AFTER rejoin so active groups
+              // re-subscribe immediately — the cursor-independent inbox scan must
+              // not delay live-message reception (see IR-018).
+              final groupMsgListener = widget.groupMessageListener;
+              if (groupMsgListener != null) {
+                await reconcileMissedGroupDissolves(
+                  bridge: widget.bridge,
+                  groupRepo: groupRepo,
+                  groupMessageListener: groupMsgListener,
+                  selfPeerId: identity?.peerId,
+                );
+              }
+              if (groupMsgRepo != null) {
+                await drainGroupOfflineInbox(
+                  bridge: widget.bridge,
+                  groupRepo: groupRepo,
+                  msgRepo: groupMsgRepo,
+                  groupMessageListener: widget.groupMessageListener,
+                  mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                  reactionRepo: widget.reactionRepository,
+                  pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+                  historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+                  requestGroupKeyRepair:
+                      widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
+                  selfPeerId: identity?.peerId,
+                );
+              }
+            } catch (error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_STARTUP_NETWORK_RECOVERY_ERROR',
+                details: {'error': error.toString()},
               );
+              return;
+            } finally {
+              // PB264-18: a fresh launch cannot depend on an initial resumed
+              // callback. Recovery is independent of discovery/rejoin/drain
+              // success so local terminal/cleanup phases cannot be stranded.
+              await _recoverGroupExitIntentsAtStartup();
             }
             // R1 (B1b): if this is a freshly-restored device, announce its new
             // per-device identity to its groups so a sibling/admin can admit it
@@ -780,7 +805,27 @@ class _StartupRouterState extends State<StartupRouter> {
             );
           }),
         );
+      } else {
+        unawaited(_recoverGroupExitIntentsAtStartup());
       }
+    } else {
+      // Node startup can fail while cleanup_pending work is entirely local.
+      // Queue one isolated pass even though no network prerequisite is usable.
+      unawaited(_recoverGroupExitIntentsAtStartup());
+    }
+  }
+
+  Future<void> _recoverGroupExitIntentsAtStartup() async {
+    final recover = widget.groupExitIntentRecovery;
+    if (recover == null) return;
+    try {
+      await recover();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_EXIT_INTENT_STARTUP_RECOVERY_ERROR',
+        details: {'error': error.toString()},
+      );
     }
   }
 
@@ -1174,6 +1219,9 @@ class _StartupRouterState extends State<StartupRouter> {
       groupReactionReplayOutboxRepository:
           widget.groupReactionReplayOutboxRepository,
       groupMessageListener: widget.groupMessageListener,
+      canRejoinForExitIntent: widget.canRejoinForExitIntent,
+      processExitIntent: widget.processExitIntent,
+      groupExitIntentRecovery: widget.groupExitIntentRecovery,
       groupInviteListener: widget.groupInviteListener,
       waitForGroupMembershipUpdateIdle: widget.waitForGroupMembershipUpdateIdle,
       groupConversationTracker: widget.groupConversationTracker,

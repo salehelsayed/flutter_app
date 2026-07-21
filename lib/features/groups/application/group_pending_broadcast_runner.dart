@@ -89,6 +89,12 @@ class GroupPendingBroadcastRunner {
 
     var drained = 0;
     for (final broadcast in pending) {
+      // Durable voluntary-leave notices advance an adjacent intent state in
+      // the same SQL transaction that removes their exact row. The generic
+      // queue runner must leave them to GroupExitIntentRunner.
+      if (broadcast.kind == groupPendingBroadcastKindExitLeaveNotice) {
+        continue;
+      }
       bool pushed;
       try {
         pushed = await rePush(broadcast);

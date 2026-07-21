@@ -21,6 +21,7 @@ class InMemoryGroupRepository
         PendingSiblingDeviceRepository,
         GroupKeyRotationDraftRepository,
         GroupMembershipWatermarkRepository,
+        GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
@@ -753,6 +754,25 @@ class InMemoryGroupRepository
   Future<void> removeAllKeys(String groupId) async {
     _keys.remove(groupId);
     _pendingKeyRotations.remove(groupId);
+  }
+
+  @override
+  Future<T> cleanupExactVoluntaryExit<T>({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime selfJoinedAt,
+    required Future<T> Function() finalizeSql,
+  }) async {
+    final group = _groups[groupId];
+    final self = _members[groupId]?[selfPeerId];
+    if (group == null ||
+        group.selfRemovedAt != null ||
+        group.isDissolved ||
+        self == null ||
+        !_sameTestInstant(self.joinedAt, selfJoinedAt)) {
+      throw StateError('Exact voluntary-exit authority is unavailable.');
+    }
+    return finalizeSql();
   }
 
   @override

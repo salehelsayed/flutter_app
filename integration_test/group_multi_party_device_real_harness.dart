@@ -75,6 +75,7 @@ import 'package:flutter_app/features/settings/application/helpers/avatar_normali
 
 import 'group_multi_device_real_harness.dart';
 import 'scripts/group_multi_party_runtime_config.dart';
+import '../test/shared/fakes/fake_group_dissolve_preflight.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 late final GroupMultiPartyRuntimeConfig _runtimeConfig;
@@ -10073,6 +10074,7 @@ Future<(DissolveGroupResult, GroupModel?)> _dissolveGroupViaUseCase({
     bridge: stack.bridge,
     groupRepo: stack.groupRepo,
     msgRepo: stack.groupMsgRepo,
+    preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
     groupId: groupId,
     actorPeerId: stack.identity.peerId,
     actorUsername: stack.identity.username,

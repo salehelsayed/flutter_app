@@ -162,10 +162,7 @@ void main() {
         'This deletes the retained messages from this device only. '
         'You will not leave or notify the group.',
       );
-      expect(
-        en.group_exit_sync_finishing_title,
-        'Finishing a role change',
-      );
+      expect(en.group_exit_sync_finishing_title, 'Finishing a role change');
       expect(
         en.group_exit_sync_finishing_body,
         'You can leave this screen. We’ll leave the group as soon as the role '

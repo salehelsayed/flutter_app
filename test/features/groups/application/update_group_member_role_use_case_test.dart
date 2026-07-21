@@ -168,7 +168,7 @@ void main() {
   });
 
   test(
-    'BB-013 group:updateConfig timeout rolls back the optimistic role mutation',
+    'BB-013 group:updateConfig timeout rolls back locally but reports commit ambiguity',
     () async {
       final timeoutBridge = _TimeoutCommandBridge('group:updateConfig');
 
@@ -181,7 +181,13 @@ void main() {
           role: MemberRole.admin,
           selfPeerId: 'peer-admin',
         ),
-        throwsA(isA<TimeoutException>()),
+        throwsA(
+          isA<GroupMemberRoleCommitAmbiguous>().having(
+            (error) => error.cause,
+            'cause',
+            isA<TimeoutException>(),
+          ),
+        ),
       );
 
       final writer = await groupRepo.getMember('group-1', 'peer-writer');

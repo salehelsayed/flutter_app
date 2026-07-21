@@ -28,6 +28,8 @@ Future<int> hydrateGroupsFromPeers({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
+  required Future<bool> Function(String groupId) canRejoinForExitIntent,
+  required Future<void> Function(String groupId) processExitIntent,
   GroupMessageListener? groupMessageListener,
   String? selfPeerId,
   bool multiDeviceSyncEnabled = kMultiDeviceSyncEnabled,
@@ -44,12 +46,21 @@ Future<int> hydrateGroupsFromPeers({
 
   // 1. Re-subscribe to every known group topic (idempotent; skips keyless +
   //    dissolved groups internally).
-  await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+  final rejoinResult = await rejoinGroupTopics(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    canRejoinForExitIntent: canRejoinForExitIntent,
+    processExitIntent: processExitIntent,
+  );
 
   // 2. Drain each non-dissolved group's relay offline inbox to converge history.
   final groups = await groupRepo.getAllGroups();
   var hydrated = 0;
   for (final group in groups) {
+    if (rejoinResult.perGroupOutcomes[group.id] ==
+        RejoinOutcome.skippedExitInProgress) {
+      continue;
+    }
     final currentGroup = await groupRepo.getGroup(group.id);
     if (currentGroup == null ||
         currentGroup.isDissolved ||

@@ -49,6 +49,9 @@ class GroupRow extends StatelessWidget {
           ? l10n.group_join_failed_retry
           : l10n.group_joining_in_progress;
     }
+    if (group.hasExitIntent) {
+      joinStatusLabel = l10n.group_exit_leaving_status;
+    }
     final relativeTime = group.lastActivityTimestamp != null
         ? formatRelativeTime(
             group.lastActivityTimestamp!.toUtc().toIso8601String(),
@@ -218,7 +221,9 @@ class GroupRow extends StatelessWidget {
 
     // The give-up badge is a dead-end without an action: surface a manual
     // "Retry now" (force-eligible + rejoin) and a "Leave" exit (G2).
-    if (isStuck && (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
+    if (!group.hasExitIntent &&
+        isStuck &&
+        (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [card, _buildStuckActions(context)],

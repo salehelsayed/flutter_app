@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -248,6 +249,74 @@ void main() {
     );
 
     test(
+      'PB264-11 rejoin eligibility follows exit phase and drains before processing',
+      () async {
+        final statesByGroup = <String, GroupExitIntentState>{};
+        final now = DateTime.utc(2026, 7, 21, 8);
+        for (final state in GroupExitIntentState.values) {
+          final groupId = 'group-${state.databaseValue}';
+          statesByGroup[groupId] = state;
+          await seedGroup(
+            groupId: groupId,
+            name: state.databaseValue,
+            keyInfo: GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'key-${state.databaseValue}',
+              createdAt: now,
+            ),
+          );
+        }
+
+        final orderByGroup = <String, List<String>>{};
+        setGroupPendingBroadcastDrainSinks(
+          forGroup: (groupId) async {
+            orderByGroup.putIfAbsent(groupId, () => <String>[]).add('drain');
+            return 0;
+          },
+          all: null,
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastDrainSinks(forGroup: null, all: null),
+        );
+
+        final result = await rejoinGroupTopics(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          canRejoinForExitIntent: (groupId) async =>
+              !statesByGroup[groupId]!.preventsRejoin,
+          processExitIntent: (groupId) async {
+            orderByGroup.putIfAbsent(groupId, () => <String>[]).add('process');
+          },
+        );
+
+        final joinedGroupIds = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:join')
+            .map(
+              (message) =>
+                  (message['payload'] as Map<String, dynamic>)['groupId']
+                      as String,
+            )
+            .toSet();
+        for (final entry in statesByGroup.entries) {
+          if (entry.value.preventsRejoin) {
+            expect(joinedGroupIds, isNot(contains(entry.key)));
+            expect(
+              result.perGroupOutcomes[entry.key],
+              RejoinOutcome.skippedExitInProgress,
+            );
+            expect(orderByGroup[entry.key], <String>['process']);
+          } else {
+            expect(joinedGroupIds, contains(entry.key));
+            expect(result.perGroupOutcomes[entry.key], RejoinOutcome.joined);
+            expect(orderByGroup[entry.key], <String>['drain', 'process']);
+          }
+        }
+      },
+    );
+
+    test(
       'G4: does not trigger a per-group drain for a group skipped for no key',
       () async {
         final drained = <String>[];
@@ -279,6 +348,102 @@ void main() {
         await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
 
         expect(drained, <String>['group-1']);
+      },
+    );
+
+    test(
+      'PB264-11 every visited rejoin outcome advances durable exit work but only joined drains',
+      () async {
+        final now = DateTime.utc(2026, 7, 21, 9);
+        const withKey = <String>{
+          'branch-joined',
+          'branch-exit',
+          'branch-dissolved',
+          'branch-self-removed',
+          'branch-deferred',
+          'branch-error',
+        };
+        for (final groupId in <String>{...withKey, 'branch-no-key'}) {
+          await seedGroup(
+            groupId: groupId,
+            name: groupId,
+            keyInfo: withKey.contains(groupId)
+                ? GroupKeyInfo(
+                    groupId: groupId,
+                    keyGeneration: 1,
+                    encryptedKey: 'key-$groupId',
+                    createdAt: now,
+                  )
+                : null,
+          );
+        }
+        final dissolved = await groupRepo.getGroup('branch-dissolved');
+        await groupRepo.updateGroup(
+          dissolved!.copyWith(
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'admin-peer',
+          ),
+        );
+        final removed = await groupRepo.getGroup('branch-self-removed');
+        await groupRepo.updateGroup(removed!.copyWith(selfRemovedAt: now));
+        await groupRepo.recordGroupRejoinFailure(
+          'branch-deferred',
+          nextEligibleAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        );
+
+        final drained = <String>[];
+        setGroupPendingBroadcastDrainSinks(
+          forGroup: (groupId) async {
+            drained.add(groupId);
+            return 0;
+          },
+          all: null,
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastDrainSinks(forGroup: null, all: null),
+        );
+        final processed = <String>[];
+        bridge = _SelectiveJoinFailureBridge(failGroupId: 'branch-error');
+
+        final result = await rejoinGroupTopics(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          canRejoinForExitIntent: (groupId) async => groupId != 'branch-exit',
+          processExitIntent: (groupId) async => processed.add(groupId),
+        );
+
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-joined', RejoinOutcome.joined),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-exit', RejoinOutcome.skippedExitInProgress),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-dissolved', RejoinOutcome.skippedDissolved),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-self-removed', RejoinOutcome.skippedSelfRemoved),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-no-key', RejoinOutcome.skippedNoKey),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-deferred', RejoinOutcome.deferred),
+        );
+        expect(
+          result.perGroupOutcomes,
+          containsPair('branch-error', RejoinOutcome.error),
+        );
+        expect(processed.toSet(), <String>{...withKey, 'branch-no-key'});
+        expect(processed, hasLength(7));
+        expect(drained, <String>['branch-joined']);
       },
     );
 

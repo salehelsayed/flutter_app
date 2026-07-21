@@ -87,6 +87,7 @@ import 'package:flutter_app/core/database/migrations/086_pending_group_broadcast
 import 'package:flutter_app/core/database/migrations/100_direct_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/migrations/102_groups_self_removed_at.dart';
+import 'package:flutter_app/core/database/migrations/103_group_exit_intents.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -1462,7 +1463,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 102);
+        expect(currentIdentityDatabaseVersion, 103);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1482,7 +1483,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 102);
+        expect(currentIdentityDatabaseVersion, 103);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1497,9 +1498,9 @@ void main() {
       },
     );
     test(
-      'production registries preserve v100/v101 and end with removed-shell v102',
+      'production registries preserve v100-v102 and end with exit intents v103',
       () {
-        expect(currentIdentityDatabaseVersion, 102);
+        expect(currentIdentityDatabaseVersion, 103);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1508,14 +1509,17 @@ void main() {
           final index100 = registry.indexWhere((entry) => entry.version == 100);
           final index101 = registry.indexWhere((entry) => entry.version == 101);
           final index102 = registry.indexWhere((entry) => entry.version == 102);
+          final index103 = registry.indexWhere((entry) => entry.version == 103);
           expect(registry.where((entry) => entry.version == 100), hasLength(1));
           expect(registry.where((entry) => entry.version == 101), hasLength(1));
           expect(registry.where((entry) => entry.version == 102), hasLength(1));
+          expect(registry.where((entry) => entry.version == 103), hasLength(1));
           expect(index99, greaterThanOrEqualTo(0));
           expect(index100, index99 + 1);
           expect(index101, index100 + 1);
           expect(index102, index101 + 1);
-          expect(index102, registry.length - 1);
+          expect(index103, index102 + 1);
+          expect(index103, registry.length - 1);
           expect(registry[index100].name, '100_direct_private_media_lifecycle');
           expect(
             registry[index100].run,
@@ -1528,6 +1532,8 @@ void main() {
           );
           expect(registry[index102].name, '102_groups_self_removed_at');
           expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
+          expect(registry[index103].name, '103_group_exit_intents');
+          expect(registry[index103].run, same(runGroupExitIntentsMigration));
         }
       },
     );
@@ -1840,7 +1846,7 @@ void main() {
         'state v96', () async {
       // TC-228-13: v96 is the current version and appears exactly once, as
       // the final entry, in BOTH production registry branches.
-      expect(currentIdentityDatabaseVersion, 102);
+      expect(currentIdentityDatabaseVersion, 103);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,
@@ -1883,6 +1889,7 @@ void main() {
           "AND tbl_name='media_attachments'",
         )).map((r) => r['name'] as String).toList();
         expect(indexNames, contains('idx_media_attachments_owner_message'));
+        expect(await getRegistryTableNames(db), contains('group_exit_intents'));
         expect(
           indexNames,
           contains('idx_media_attachments_owner_bookmark_message'),

@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
@@ -72,6 +73,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -159,6 +161,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -185,6 +188,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -210,6 +214,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -259,11 +264,21 @@ void main() {
 
   test('returns unauthorized for non-admin users', () async {
     await groupRepo.updateGroup(baseGroup.copyWith(myRole: GroupRole.member));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.writer,
+        joinedAt: now,
+      ),
+    );
 
     final (result, group) = await dissolveGroup(
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
       groupId: 'group-1',
       actorPeerId: 'peer-admin',
       actorUsername: 'Admin',
@@ -295,6 +310,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -323,6 +339,7 @@ void main() {
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
+      preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
       groupId: 'group-1',
       actorPeerId: 'peer-admin',
       actorUsername: 'Admin',
@@ -349,6 +366,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -368,6 +386,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin Again',
@@ -411,6 +430,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',
@@ -443,6 +463,7 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
         groupId: 'group-1',
         actorPeerId: 'peer-admin',
         actorUsername: 'Admin',

@@ -18,6 +18,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_missed_message_telemetry.dart';
@@ -36,6 +37,7 @@ import 'package:flutter_app/features/groups/application/update_group_metadata_us
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -1724,10 +1726,15 @@ void main() {
   setUp(() {
     network = FakeGroupPubSubNetwork();
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+    setGroupExitIntentAccessSinks(
+      forGroup: (_) async => null,
+      all: () async => const <GroupExitIntent>[],
+    );
   });
 
   tearDown(() {
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+    setGroupExitIntentAccessSinks();
   });
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
