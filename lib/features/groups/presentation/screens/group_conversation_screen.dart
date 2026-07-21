@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
@@ -42,7 +42,6 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
-import 'package:flutter_app/shared/widgets/private_media_policy_picker_sheet.dart';
 
 /// Privacy-safe quoted-parent projection shared by persisted reply bubbles and
 /// the wired/restored composer quote preview. A private or unsupported parent
@@ -106,9 +105,6 @@ class GroupConversationScreen extends StatelessWidget {
   final void Function(String messageId, int index)? onMediaTap;
   final ValueChanged<String>? onOpenPrivateMedia;
   final bool privateMediaEnabled;
-  final bool privateMediaComposerEligible;
-  final GroupPrivateMediaPolicy privateMediaPolicy;
-  final ValueChanged<GroupPrivateMediaPolicy>? onPrivateMediaPolicyChanged;
 
   /// 235: received-media actions for INCOMING discussion image/video rows.
   /// Availability is decided per attachment by
@@ -202,9 +198,6 @@ class GroupConversationScreen extends StatelessWidget {
     this.onMediaTap,
     this.onOpenPrivateMedia,
     this.privateMediaEnabled = false,
-    this.privateMediaComposerEligible = false,
-    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
-    this.onPrivateMediaPolicyChanged,
     this.onMediaSave,
     this.onMediaShare,
     this.onMediaInfo,
@@ -327,12 +320,6 @@ class GroupConversationScreen extends StatelessWidget {
         else
           Column(
             children: [
-              if (privateMediaComposerEligible &&
-                  onPrivateMediaPolicyChanged != null)
-                _GroupPrivateMediaSelector(
-                  policy: privateMediaPolicy,
-                  onChanged: onPrivateMediaPolicyChanged!,
-                ),
               ComposeArea(
                 onSend: onSend,
                 onAttach: onAttach,
@@ -1440,82 +1427,6 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 }
-
-class _GroupPrivateMediaSelector extends StatelessWidget {
-  const _GroupPrivateMediaSelector({
-    required this.policy,
-    required this.onChanged,
-  });
-
-  final GroupPrivateMediaPolicy policy;
-  final ValueChanged<GroupPrivateMediaPolicy> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final selection = _pickerSelectionForGroupPolicy(policy);
-    final recipientName = l10n.group_members_title;
-    return Align(
-      alignment: AlignmentDirectional.centerStart,
-      child: Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 12, 0),
-        child: PrivateMediaSummaryChip(
-          key: const ValueKey('group-private-media-selector'),
-          selection: selection,
-          recipientName: recipientName,
-          onTap: () async {
-            final picked = await showPrivateMediaPolicyPickerSheet(
-              context: context,
-              initialSelection: selection,
-              title: l10n.group_private_media_sheet_title,
-              recipientName: recipientName,
-              targetPlatform: defaultTargetPlatform,
-              optionKeyPrefix: 'group-private-media-option',
-            );
-            if (picked == null || !context.mounted) return;
-            onChanged(_groupPolicyForPickerSelection(picked));
-          },
-        ),
-      ),
-    );
-  }
-}
-
-PrivateMediaPickerSelection _pickerSelectionForGroupPolicy(
-  GroupPrivateMediaPolicy policy,
-) => switch (policy.lifecycle) {
-  GroupMediaLifecycle.standard => PrivateMediaPickerSelection(
-    mode: policy.protected
-        ? PrivateMediaPickerMode.protected
-        : PrivateMediaPickerMode.ordinary,
-  ),
-  GroupMediaLifecycle.viewOnce => const PrivateMediaPickerSelection(
-    mode: PrivateMediaPickerMode.viewOnce,
-  ),
-  GroupMediaLifecycle.disappearing => PrivateMediaPickerSelection(
-    mode: PrivateMediaPickerMode.disappearing,
-    durationSeconds:
-        GroupPrivateMediaPolicy.allowedDurationsSeconds.contains(
-          policy.durationSeconds,
-        )
-        ? policy.durationSeconds
-        : 86400,
-  ),
-  GroupMediaLifecycle.unsupported => const PrivateMediaPickerSelection(
-    mode: PrivateMediaPickerMode.ordinary,
-  ),
-};
-
-GroupPrivateMediaPolicy _groupPolicyForPickerSelection(
-  PrivateMediaPickerSelection selection,
-) => switch (selection.mode) {
-  PrivateMediaPickerMode.ordinary => const GroupPrivateMediaPolicy.ordinary(),
-  PrivateMediaPickerMode.protected => const GroupPrivateMediaPolicy.protected(),
-  PrivateMediaPickerMode.viewOnce => const GroupPrivateMediaPolicy.viewOnce(),
-  PrivateMediaPickerMode.disappearing => GroupPrivateMediaPolicy.disappearing(
-    selection.durationSeconds ?? 86400,
-  ),
-};
 
 class _GroupConversationLoadingShell extends StatelessWidget {
   const _GroupConversationLoadingShell();

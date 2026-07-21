@@ -24,6 +24,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -2020,6 +2021,7 @@ void main() {
       final savedGroupMessage = (await groupMessages.getMessagesPage(
         destGroup.id,
       )).first;
+      expect(savedGroupMessage.privateMediaPolicy.isOrdinary, isTrue);
       final groupAttachment = (await media.getAttachmentsForMessage(
         savedGroupMessage.id,
         owner: MediaOwnerLane.group,
@@ -2107,6 +2109,32 @@ void main() {
           jsonDecode(replayEnvelope['ciphertext'] as String)
               as Map<String, dynamic>;
       expect(replayPlaintext['isForwarded'], isTrue);
+
+      final availableGroupMaps =
+          <({String boundary, Map<String, dynamic> payload})>[
+            (boundary: 'group publish', payload: publishPayload),
+            (boundary: 'group replay', payload: replayPlaintext),
+          ];
+      for (final raw in bridge.sentMessages) {
+        final message = jsonDecode(raw) as Map<String, dynamic>;
+        if (message['cmd'] != 'group:sendReliable') continue;
+        final payload = (message['payload'] as Map).cast<String, dynamic>();
+        if (payload['messageId'] == savedGroupMessage.id) {
+          availableGroupMaps.add((
+            boundary: 'group reliable',
+            payload: payload,
+          ));
+        }
+      }
+      for (final entry in availableGroupMaps) {
+        for (final key in GroupPrivateMediaPolicy.wireKeys) {
+          expect(
+            entry.payload,
+            isNot(contains(key)),
+            reason: '${entry.boundary} must omit ordinary policy key $key',
+          );
+        }
+      }
     },
   );
 

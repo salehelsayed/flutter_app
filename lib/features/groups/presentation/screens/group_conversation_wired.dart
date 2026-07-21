@@ -313,7 +313,6 @@ class GroupConversationWired extends StatefulWidget {
   final GroupHistoryGapRepairRepository? historyGapRepairRepo;
   final UploadMediaFn uploadMediaFn;
   final GroupUploadRetryProjectionRepository? uploadRetryProjectionRepo;
-  final GroupPrivateMediaPolicy privateMediaPolicy;
   final GroupPrivateMediaAvailability privateMediaAvailability;
   final int maxAttachmentBudgetBytes;
   final DateTime? notificationTappedAt;
@@ -389,7 +388,6 @@ class GroupConversationWired extends StatefulWidget {
     this.historyGapRepairRepo,
     this.uploadMediaFn = uploadMedia,
     this.uploadRetryProjectionRepo,
-    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
     this.privateMediaAvailability = productionGroupPrivateMediaAvailability,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.notificationTappedAt,
@@ -489,8 +487,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Set<String> _retryingFailedMessageIds = const {};
   String? _activeQuoteMessageId;
   String _draftText = '';
-  GroupPrivateMediaPolicy _privateMediaPolicy =
-      const GroupPrivateMediaPolicy.ordinary();
   String? _messageLoadErrorText;
   GroupSecurityStatusViewState? _securityStatus;
   GroupHistoryGapRepair? _historyGapRepair;
@@ -787,7 +783,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         defaultGroupMediaDeleteForMeCoordinator;
     _isLifecycleResumed = _currentLifecycleAllowsVisibleRead();
     _draftText = widget.initialText ?? '';
-    _privateMediaPolicy = widget.privateMediaPolicy;
     widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     final initialPendingMedia = widget.initialPendingMedia;
@@ -1090,10 +1085,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!identical(widget.msgRepo, oldWidget.msgRepo)) {
       _restartOutgoingLocalMessageChangeSubscription();
     }
-    if (widget.privateMediaPolicy != oldWidget.privateMediaPolicy &&
-        _privateMediaPolicy == oldWidget.privateMediaPolicy) {
-      _privateMediaPolicy = widget.privateMediaPolicy;
-    }
     final oldCanWrite = _canWrite;
     final newCanWrite = _canWriteForGroup(widget.group);
     final shouldSyncGroupFromWidget =
@@ -1172,7 +1163,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _initialLoadDone = false;
     _activeQuoteMessageId = null;
     _draftText = widget.initialText ?? '';
-    _privateMediaPolicy = widget.privateMediaPolicy;
     _pendingAttachments = [];
     _clearRestoredMediaContinuationTracking();
     _clearRestoredVoiceContinuationTracking();
@@ -1407,7 +1397,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _draftText = '';
       _pendingAttachments = [];
       _activeQuoteMessageId = null;
-      _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
       _upsertMessage(message.copyWith(media: hydratedMedia));
       _updateMediaForMessage(message.id, hydratedMedia);
     });
@@ -2629,6 +2618,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
         uploadResults.add(result);
         if (result == null) return null;
+        if (result.completedAttachment == null) {
+          final terminal = result.failureProjection?.isTerminal ?? false;
+          _lastUploadProjectionTerminal |= terminal;
+          if (terminal) return null;
+        }
       }
     } finally {
       await _stopRelayUploadTracking();
@@ -2740,65 +2734,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
   }
 
-  GroupPrivateMediaAttachmentKind _pendingPrivateMediaAttachmentKind(
-    List<PendingComposerMedia> media,
-  ) {
-    if (media.length != 1) {
-      return GroupPrivateMediaAttachmentKind.unknown;
-    }
-    final mime = _mimeFromPath(media.single.file.path).toLowerCase();
-    if (mime == 'image/gif') return GroupPrivateMediaAttachmentKind.gif;
-    if (mime.startsWith('image/')) {
-      return GroupPrivateMediaAttachmentKind.image;
-    }
-    if (mime.startsWith('video/')) {
-      return GroupPrivateMediaAttachmentKind.video;
-    }
-    if (mime.startsWith('audio/')) {
-      return GroupPrivateMediaAttachmentKind.audio;
-    }
-    return GroupPrivateMediaAttachmentKind.file;
-  }
-
-  bool get _privateMediaComposerEligible {
-    if (!widget.privateMediaAvailability.canAuthorPrivateMedia(_group.type) ||
-        !_canWrite ||
-        !_supportsDurableGroupMediaUploads) {
-      return false;
-    }
-    final ownPeerId = _ownPeerId?.trim();
-    if (!_securityStatusLoaded ||
-        ownPeerId == null ||
-        ownPeerId.isEmpty ||
-        _membersByPeerId.isEmpty) {
-      return false;
-    }
-    final ownMember = _membersByPeerId[ownPeerId];
-    if (ownMember == null ||
-        !widget.privateMediaAvailability.canCurrentMemberAuthorPrivateMedia(
-          groupType: _group.type,
-          localRole: _group.myRole,
-          memberRole: ownMember.role,
-        )) {
-      return false;
-    }
-    final eligibility = GroupPrivateMediaEligibility(
-      attachmentCount: _pendingAttachments.length,
-      attachmentKind: _pendingPrivateMediaAttachmentKind(_pendingAttachments),
-      hasTextOrCaption: _draftText.trim().isNotEmpty,
-      hasQuote: _activeQuoteMessageId?.trim().isNotEmpty == true,
-    );
-    return eligibility.allowsPrivateMedia;
-  }
-
-  void _onPrivateMediaPolicyChanged(GroupPrivateMediaPolicy policy) {
-    final next = policy.isPrivate && _privateMediaComposerEligible
-        ? policy
-        : const GroupPrivateMediaPolicy.ordinary();
-    if (_privateMediaPolicy == next) return;
-    setState(() => _privateMediaPolicy = next);
-  }
-
   Future<void> _onSend(String text) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
@@ -2809,24 +2744,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (text.isEmpty && !hasAttachments) return;
     final draftText = text;
     final quotedMessageId = _activeQuoteMessageId;
-    final privateMediaPolicy = _privateMediaPolicy;
-    var privateKeyGeneration = 0;
-    if (privateMediaPolicy.isUnsupported) return;
-    if (privateMediaPolicy.isPrivate) {
-      final eligibility = GroupPrivateMediaEligibility(
-        attachmentCount: mediaToUpload.length,
-        attachmentKind: _pendingPrivateMediaAttachmentKind(mediaToUpload),
-        hasTextOrCaption: text.trim().isNotEmpty,
-        hasQuote: quotedMessageId?.trim().isNotEmpty == true,
-      );
-      if (privateMediaPolicy.validatedFor(eligibility) != privateMediaPolicy ||
-          !_privateMediaComposerEligible) {
-        return;
-      }
-      final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
-      if (latestKey == null) return;
-      privateKeyGeneration = latestKey.keyGeneration;
-    }
+    const privateMediaPolicy = GroupPrivateMediaPolicy.ordinary();
+    const privateKeyGeneration = 0;
     final restoredResolution = await _resolveRestoredMediaContinuationForSend(
       draftText: draftText,
       quotedMessageId: quotedMessageId,
@@ -2845,7 +2764,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       draftText: draftText,
       quotedMessageId: quotedMessageId,
       pendingAttachments: List<PendingComposerMedia>.from(_pendingAttachments),
-      privateMediaPolicy: privateMediaPolicy,
     );
 
     // 1. Generate IDs upfront for optimistic display
@@ -2887,7 +2805,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     _pendingAttachments = [];
     _draftText = '';
-    _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     _updateComposerState(
       pendingAttachments: const [],
       isUploading: mediaToUpload.isNotEmpty,
@@ -2992,7 +2909,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             }
             if (uploadedAttachments == null) {
               if (_uploadRetryProjection != null) {
-                _applyProjectedGroupUploadFailureUi(
+                await _applyProjectedGroupUploadFailureUi(
                   composerSnapshot,
                   messageId: messageId,
                   terminal: _lastUploadProjectionTerminal,
@@ -3087,7 +3004,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   attachmentId: attachmentId,
                   failure: uploadOutcome as UploadMediaFailed,
                 );
-                _applyProjectedGroupUploadFailureUi(
+                await _applyProjectedGroupUploadFailureUi(
                   composerSnapshot,
                   messageId: messageId,
                   terminal: projected.isTerminal,
@@ -3133,9 +3050,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         quotedMessageId: quotedMessageId,
         privateMediaPolicy: privateMediaPolicy,
         privateMediaAvailability: widget.privateMediaAvailability,
-        expectedPrivateParentBeforeDispatch: privateMediaPolicy.isPrivate
-            ? optimisticMessage
-            : null,
         senderDeviceId: senderDeviceId,
         senderTransportPeerId: senderDeviceId,
         mediaAttachments: uploadedAttachments,
@@ -3203,27 +3117,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         // attachments) and latch the composer read-only — instead of deleting
         // the row and flashing a 4s snackbar. saveMessage upserts, so even a
         // plain-text row that was never pre-persisted survives a reopen.
-        final preserveCurrentPrivateParent =
-            privateMediaPolicy.isPrivate &&
-            result == SendGroupMessageResult.unauthorized &&
-            message != null &&
-            !sameExactGroupPrivateMediaDispatchParent(
-              message,
-              optimisticMessage,
-            );
-        if (preserveCurrentPrivateParent) {
-          if (mounted) {
-            setState(() => _upsertMessage(message));
-          }
-        } else {
-          final failedMessage = optimisticMessage.copyWith(
-            status: GroupMessage.statusSendFailed,
-          );
-          try {
-            await widget.msgRepo.saveMessage(failedMessage);
-          } catch (_) {}
-          _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
-        }
+        final failedMessage = optimisticMessage.copyWith(
+          status: GroupMessage.statusSendFailed,
+        );
+        try {
+          await widget.msgRepo.saveMessage(failedMessage);
+        } catch (_) {}
+        _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
         if (result == SendGroupMessageResult.groupDissolved) {
           // Refreshes the rest of the group UI. The read-only override below is
           // what actually flips the banner: the row is NOT marked dissolved in
@@ -3274,12 +3174,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   void _onDraftChanged(String text) {
     if (!_canWrite) return;
     if (_draftText == text) return;
-    setState(() {
-      _draftText = text;
-      if (text.trim().isNotEmpty && _privateMediaPolicy.isPrivate) {
-        _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
-      }
-    });
+    setState(() => _draftText = text);
     final restored = _restoredMediaContinuation;
     if (restored != null && text != restored.draftText) {
       _clearRestoredMediaContinuationTracking();
@@ -3643,7 +3538,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }) async {
     _draftText = '';
     _pendingAttachments = [];
-    _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     _clearRestoredMediaContinuationTracking();
     if (mounted) {
       _updateComposerState(pendingAttachments: const [], isUploading: false);
@@ -3680,7 +3574,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _pendingAttachments = List<PendingComposerMedia>.from(
       snapshot.pendingAttachments,
     );
-    _privateMediaPolicy = snapshot.privateMediaPolicy;
     if (mounted) {
       _updateComposerState(
         pendingAttachments: _pendingAttachmentFiles(),
@@ -3715,17 +3608,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
-  void _applyProjectedGroupUploadFailureUi(
+  Future<void> _applyProjectedGroupUploadFailureUi(
     _GroupComposerSnapshot snapshot, {
     required String messageId,
     required bool terminal,
-  }) {
+  }) async {
     if (terminal) {
       _draftText = snapshot.draftText;
       _pendingAttachments = List<PendingComposerMedia>.from(
         snapshot.pendingAttachments,
       );
-      _privateMediaPolicy = snapshot.privateMediaPolicy;
       _updateLocalMessageStatus(messageId, 'failed');
       if (mounted) {
         setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
@@ -3736,6 +3628,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       } else {
         _activeQuoteMessageId = snapshot.quotedMessageId;
       }
+      await _cleanupRestoredComposerRetryState(messageId);
+      await _trackRestoredMediaContinuation(
+        snapshot: snapshot,
+        messageId: messageId,
+      );
       return;
     }
 
@@ -3761,7 +3658,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           snapshot.pendingAttachments,
         );
         _activeQuoteMessageId = snapshot.quotedMessageId;
-        _privateMediaPolicy = snapshot.privateMediaPolicy;
         _removeLocalMessage(messageId);
       });
       _updateComposerState(
@@ -4662,15 +4558,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final updated = List<PendingComposerMedia>.from(_pendingAttachments);
     updated.removeAt(index);
     _pendingAttachments = updated;
-    if (_privateMediaPolicy.isPrivate && !_privateMediaComposerEligible) {
-      if (mounted) {
-        setState(
-          () => _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
-        );
-      } else {
-        _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
-      }
-    }
     _clearRestoredMediaContinuationTracking();
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
   }
@@ -5568,7 +5455,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     setState(() {
       _activeQuoteMessageId = messageId;
-      _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     });
   }
 
@@ -7792,7 +7678,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (!mounted || _canWrite || _activeQuoteMessageId == null) return;
         setState(() {
           _activeQuoteMessageId = null;
-          _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
         });
       });
     }
@@ -7857,14 +7742,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 ? null
                 : (messageId) => unawaited(_openGroupPrivateMedia(messageId)),
             privateMediaEnabled: widget.privateMediaAvailability.isEnabled,
-            privateMediaComposerEligible: _privateMediaComposerEligible,
-            privateMediaPolicy: _privateMediaPolicy,
-            onPrivateMediaPolicyChanged:
-                widget.privateMediaAvailability.canAuthorPrivateMedia(
-                  _group.type,
-                )
-                ? _onPrivateMediaPolicyChanged
-                : null,
             onMediaSave: _mediaActionsController != null ? _onMediaSave : null,
             onMediaShare: _mediaActionsController != null
                 ? _onMediaShare
@@ -7952,13 +7829,11 @@ class _GroupComposerSnapshot {
   final String draftText;
   final String? quotedMessageId;
   final List<PendingComposerMedia> pendingAttachments;
-  final GroupPrivateMediaPolicy privateMediaPolicy;
 
   const _GroupComposerSnapshot({
     required this.draftText,
     required this.quotedMessageId,
     required this.pendingAttachments,
-    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
   });
 }
 

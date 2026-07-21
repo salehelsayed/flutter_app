@@ -1,9 +1,9 @@
 # 268 - Group Media Keep-In-Chat-Only Composer
 
-Status: execution-ready
+Status: implemented and host-gate accepted 2026-07-21
 Type: Bug
 Spec: free-text intent — group-chat media must always use Keep in chat; Protected view, View once, and Set an expiry remain 1:1-only
-Classification: implementation-ready
+Classification: implemented / host-verified
 Closure tier: host
 
 ## Planning Progress
@@ -163,6 +163,11 @@ Hard `Do not`:
   ordinary, leak its bytes into ordinary actions, or mint a replacement row.
 - Do not modify the 1:1 `ComposeArea`, shared private picker, direct policy, Go,
   relay, native platform code, database schema, or wire vocabulary.
+- Do not remove or normalize the receive-side private-policy construction in
+  `lib/features/push/application/push_decrypt_preview.dart:725`; it preserves
+  notification redaction for incoming legacy private rows and is guarded by
+  `push_decrypt_preview_test.dart` in `GROUP_TESTS`
+  (`scripts/run_test_gates.sh:581`).
 
 Deferred / accepted difference:
 
@@ -194,7 +199,7 @@ Dependencies:
 | TC-268-06 | Group voice recording, external image share, and internal media forwarding to a group remain Keep in chat even though they bypass the visual-attachment composer selector | `test/features/groups/presentation/group_conversation_wired_test.dart::successful voice send uses the durable copy, cleans pending uploads, and survives temp deletion`; `test/features/groups/integration/external_share_group_media_liveness_test.dart::external image share to an open group conversation surfaces the message with its thumbnail while mounted`; `test/features/share/application/share_batch_delivery_coordinator_test.dart::GMF-03 group origin forward reencrypts independently and keeps provenance local` | GREEN sentinel / widget and application host integration with fake recorder, bridge, P2P/media services, and in-memory repositories | GREEN sentinel on HEAD -> remains GREEN with added assertions that each destination group row is ordinary and its publish/reliable/replay maps omit every private-policy wire key | route any sibling path through mutable group-composer policy, pass a nonordinary policy, or emit private fields for ordinary -> TC-268-06 red | exact three focused commands in Acceptance Gates; existing `GROUP_TESTS` entries at `scripts/run_test_gates.sh:366,516,520`, AUTO feature-host glob |
 | TC-268-07 | Announcement authorization stays asymmetric: current admins retain media/voice compose controls while readers cannot compose, attach, record, or send | `test/features/groups/presentation/group_conversation_wired_test.dart::non-admin in announcement group cannot write`; `::announcement admin sees mic button for voice recording`; TC-268-01's writable-announcement send | GREEN sentinel / production wired widget with in-memory announcement roles and fake recorder | GREEN sentinel on HEAD -> remains GREEN; reader has read-only copy and null callbacks/no controls, while admin can stage/send ordinary visual media and start voice recording | weaken `canWrite`, expose any reader callback/control, or remove admin attach/record/send capability -> TC-268-07 red | exact two focused commands in Acceptance Gates plus TC-268-01; existing `GROUP_TESTS` entry at `scripts/run_test_gates.sh:366`, AUTO feature-host glob |
 | TC-268-08 | Existing private group/announcement media remains truthfully openable and protected, then lifecycle cleanup removes only exact private artifacts without resurrection | `test/features/groups/presentation/group_private_media_viewer_test.dart::GPL-11 viewer is privacy minimized denies PiP and shows truthful platform copy`; `test/features/groups/presentation/announcement_private_media_capabilities_test.dart::APL-04 reader sees one generic open path without compose thumbnail reactions or egress`; `test/features/groups/integration/group_private_media_cleanup_replay_test.dart::GPL-08 cleanup is scoped durable and replay cannot resurrect private media`; `test/features/groups/integration/announcement_private_media_lifecycle_test.dart::APL-05 announcement view once commits before cleanup and stays consumed after settle` | GREEN sentinel / protected viewer widget plus real-SQLite lifecycle fixtures with exact files, attachment rows, keys, and ordinary/direct siblings | GREEN sentinel on HEAD -> remains GREEN; group viewer is minimized/protected, announcement reader retains one open path, terminal private bytes/rows/keys are removed, placeholders and unrelated siblings survive, and replay cannot resurrect media | remove legacy viewer/open wiring, expose private egress, delete ordinary/direct siblings, skip exact cleanup, or allow terminal replay -> TC-268-08 red | exact four focused commands in Acceptance Gates; existing `GROUP_TESTS` entries at `scripts/run_test_gates.sh:578,582,589,590`, AUTO feature-host glob |
-| TC-268-09 | A terminal projected media-upload failure cannot restore hidden private composer state; the media-only draft resends ordinary into the same durable parent, while the existing ordinary text/attachment/quote restoration remains intact | `test/features/groups/presentation/group_conversation_wired_test.dart::P268 projected media failure restores ordinary and resends the same parent`; existing `::ordinary media upload failure persists failed parent state and restores composer and quote` | causal widget/host integration plus GREEN sentinel / fake picker, current group key, projection-enabled terminal-failure repository, two-outcome uploader (first null, second valid attachment), bridge/media manager, one media-only draft; existing in-memory quoted-parent fixture remains separate | Causal RED on HEAD: with no caption/quote, conditionally commit Protected, fail the first upload through the production projection branch, and observe restored private state; current projected restoration also lacks continuation, so resend can mint a second ID -> GREEN: restored media-only draft has no selector/private state, second send reuses the exact parent ID/timestamp, leaves exactly one authored `sent` ordinary row and one finalized attachment, and emits no private wire keys; the separate existing ordinary fixture remains GREEN for text/attachment/quote restoration | restore snapshot private policy or omit projected-terminal continuation tracking; mutate resend to a new ID/timestamp or leave the failed attachment orphaned -> TC-268-09 red | exact two focused commands in Acceptance Gates; existing `GROUP_TESTS` entry at `scripts/run_test_gates.sh:366`, AUTO feature-host glob |
+| TC-268-09 | A terminal projected media-upload failure cannot restore hidden private composer state or lose the rest of a multi-item draft: one- and two-item media-only drafts resend ordinary into the same durable parent, while the existing ordinary text/attachment/quote restoration remains intact | `test/features/groups/presentation/group_conversation_wired_test.dart::P268 projected media failure restores ordinary and resends the same parent`; `::P268 projected first-of-two media failure restores both and resends the same parent`; existing `::ordinary media upload failure persists failed parent state and restores composer and quote` | causal widget/host integration plus GREEN sentinels / current group key, terminal projection repository fake, one- and two-item media-only drafts, bridge/media repositories, and media manager; existing in-memory quoted-parent fixture remains separate | Initial RED restored private state and minted a second parent. A closure counterexample RED then showed that a terminal first-of-two projection restored zero attachments, made only one upload call, left the first attachment failed, and could not resend. GREEN folds terminal state before the sibling guard can return, restores the complete original draft, reuses the exact parent ID/timestamp, finalizes replacement attachments in one ordinary `sent` row with no private wire keys, and leaves no stale failed attachment | restore snapshot private policy, omit projected-terminal continuation tracking, or return before folding terminal projection state -> one of the two projected tests is red | exact three focused commands in Acceptance Gates; existing `GROUP_TESTS` entry at `scripts/run_test_gates.sh:366`, AUTO feature-host glob |
 
 ### Test Notes
 
@@ -208,7 +213,17 @@ Dependencies:
   conditional discriminators. It forbids only authoring symbols in exact
   screen/constructor/state/snapshot slices; persisted
   `message.privateMediaPolicy` receive/view/retry references remain explicitly
-  allowed. Each forbidden seam is an independent mutation target.
+  allowed. The contract reads only the `GroupConversationScreen` authoring
+  field/constructor/composer slice and the `GroupConversationWired`
+  constructor/state/`_GroupComposerSnapshot` slices, then forbids the literal
+  identifiers `privateMediaComposerEligible`, `onPrivateMediaPolicyChanged`,
+  `widget.privateMediaPolicy`, `_privateMediaPolicy`, and the snapshot field
+  `privateMediaPolicy`. It also forbids any group-screen import of
+  `private_media_policy_picker_sheet.dart` and any
+  `showPrivateMediaPolicyPickerSheet` or `PrivateMediaSummaryChip` reference,
+  so a renamed selector cannot evade the proof. Receive-side
+  `message.privateMediaPolicy` reads are outside the forbidden slices. Each
+  forbidden seam is an independent mutation target.
 - TC-268-09 deliberately uses a media-only draft for its HEAD discriminator.
   Private eligibility rejects captions and quotes, and both transitions
   already normalize the policy, so combining them could never expose restored
@@ -221,11 +236,18 @@ Dependencies:
   attachment as `upload_failed` with its projected retry count and the parent
   as `failed` in the same fake repositories. Inject the helper's `mediaRepo`
   (widget `mediaAttachmentRepo`) and `mediaFileManager`; continuation acceptance
-  and replacement require those durable states and dependencies. Its resend
-  oracle requires the original parent ID/timestamp, exactly one authored row,
-  one finalized replacement
-  attachment, and no stale failed attachment; a second successful row is not
-  sufficient.
+  and replacement require those durable states and dependencies. The one-item
+  resend oracle requires the original parent ID/timestamp, exactly one
+  authored row, one finalized replacement attachment, and no stale failed
+  attachment; a second successful row is not sufficient.
+- TC-268-09's two-item terminal counterexample proves that a failure on the
+  first leaf restores both original composer items even though only the first
+  durable attachment row reached projection. The resend replaces that failed
+  row, uploads both original sources, and takes the exact original parent
+  ID/timestamp to one ordinary `sent` row with two `done` attachments and no
+  private wire keys. Its causal RED restored zero attachments because the
+  second-leaf parent guard returned before terminal projection state was
+  folded.
 - TC-268-09 must collect both HEAD observations before asserting: capture the
   restored private selector/policy, perform the resend, then gather parent ID,
   timestamp, row, and attachment evidence. An early selector assertion must
@@ -271,6 +293,11 @@ Dependencies:
 
 ## Implementation Steps
 
+Execution status: steps 1-7 are complete through focused, preservation, full
+wired-suite, analyzer, scope, whitespace, curated groups, and incremental
+Graphify checks. Independent final review reported no findings, and the closure
+commit is recorded.
+
 1. Snapshot `git status --short` and `flutter analyze`, preserving the unrelated
    existing Docker/iOS changes. Before editing, run the three composer
    sentinels that this plan changes or relies on directly: the ordinary durable
@@ -293,8 +320,10 @@ Dependencies:
    optimistic parent, and final dispatch. When a terminal
    `GroupUploadRetryProjectionRepository` result restores the composer, track
    the same continuation already tracked by fallback restoration so the second
-   send reuses the parent ID/timestamp and replaces its failed attachment. Keep
-   manual/automatic retries reading the persisted parent policy. Stop-if: the
+   send reuses the parent ID/timestamp and replaces its failed attachment.
+   Fold terminal projection state before any sibling early return so a
+   first-of-many terminal failure restores the complete original draft.
+   Keep manual/automatic retries reading the persisted parent policy. Stop-if: the
    change requires relabeling, deleting, or denying an already-durable private
    row; replan that compatibility boundary instead.
 4. Replace the obsolete positive group-picker tests at
@@ -317,12 +346,18 @@ Dependencies:
    receive/retry behavior. Steps 2-4 are one compile-complete slice: neither
    composer test file is a valid GREEN checkpoint after production removal
    until this helper/test surgery is complete.
+   Before retiring `GPL-03A-W`, copy its `mediaAttachmentRepo` plus
+   `mediaFileManager` injection pattern into TC-268-09; the projected-failure
+   replacement path needs both dependencies. All cited line ranges are
+   HEAD-relative and shift when step 1 appends tests: locate every surgery
+   target by its test or helper name, treating line numbers only as pre-edit
+   anchors.
 5. Extend the ordinary wired sentinel and the three TC-268-06 sibling tests
    with exact saved-policy/wire-absence assertions. Run TC-268-09's separate
-   production-projection fail-then-same-parent-resend proof without weakening
-   the existing ordinary failure/restoration sentinel. Run all five exact
-   TC-268-04 sentinels plus TC-268-05/08 without editing legacy/direct
-   production.
+   one-item and first-of-two terminal fail-then-same-parent-resend proofs
+   without weakening the existing ordinary failure/restoration sentinel. Run
+   all five exact TC-268-04 sentinels plus TC-268-05/08 without editing
+   legacy/direct production.
 6. No harness change is required while the new causal tests stay in
    `group_conversation_wired_test.dart`; it is already a literal `GROUP_TESTS`
    member and AUTO-globbed by feature-host. If execution instead creates a new
@@ -342,6 +377,9 @@ Dependencies:
   continuation tracking, so the apparent resend leaves a failed parent and
   mints a second successful row -> TC-268-09 requires the same ID/timestamp,
   one authored row, and replacement rather than orphaned failed attachments.
+- A first-of-many terminal projection can return before the loop folds terminal
+  state -> the strengthened TC-268-09 test requires whole-draft restore and
+  same-parent ordinary resend.
 - Normalizing fresh authoring could accidentally discard GPL-03H with its
   obsolete private constructor input, leaving wired post-upload parent drift
   unguarded -> TC-268-03 converts that test to ordinary and still kills the
@@ -400,6 +438,17 @@ flutter test test/features/groups/presentation/group_conversation_wired_test.dar
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
   --plain-name 'ordinary media upload failure persists failed parent state and restores composer and quote'
 
+# Full untouched-tree preservation attribution required by the review fix-list.
+# The groups lane covers TC-268-03/04/06/07/08; the three direct TC-268-05
+# sentinels are outside GROUP_TESTS and therefore run exactly here.
+./scripts/run_test_gates.sh groups
+flutter test test/features/conversation/presentation/screens/conversation_private_media_composer_test.dart \
+  --plain-name 'sheet uses consequence-led labels, title, and duration chips'
+flutter test test/features/conversation/presentation/screens/conversation_private_media_composer_test.dart \
+  --plain-name 'view-once and exact disappearing durations emit typed policy'
+flutter test test/features/conversation/presentation/screens/conversation_wired_test.dart \
+  --plain-name 'selected private policy reaches the injected send seam'
+
 # First causal RED before production edits: expect non-zero because the
 # production group/announcement selector is present on HEAD.
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
@@ -422,7 +471,14 @@ flutter test test/features/groups/presentation/group_conversation_wired_test.dar
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
   --plain-name 'P268 projected media failure restores ordinary and resends the same parent'
 
-# Causal GREEN after the compile-complete steps 2-4 slice: re-run the same four
+# Closure counterexample RED against the first GREEN implementation: the
+# command loaded and failed at its precommitted multi-item terminal-projection
+# oracle, then passed unchanged after terminal state was folded before return.
+flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
+  --plain-name 'P268 projected first-of-two media failure restores both and resends the same parent'
+
+# Causal GREEN after the compile-complete steps 2-4 slice and projection
+# strengthening: re-run the same five
 # contracts; expect exit 0, absent authoring symbols, ordinary durable/wire
 # assertions, exact projected-failure parent reuse, and zero failed tests.
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
@@ -433,13 +489,16 @@ flutter test test/features/groups/presentation/group_conversation_wired_test.dar
   --plain-name 'P268 second group attachment cannot inherit a hidden private mode or stall send'
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
   --plain-name 'P268 projected media failure restores ordinary and resends the same parent'
+flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
+  --plain-name 'P268 projected first-of-two media failure restores both and resends the same parent'
 
 # Existing fallback restoration preservation: expect exit 0; nonempty text,
 # one attachment, and quote remain restored after an ordinary upload failure.
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart \
   --plain-name 'ordinary media upload failure persists failed parent state and restores composer and quote'
 
-# Affected composer files: expect exit 0 and zero failed tests.
+# Affected composer files: expect exit 0 and zero failed tests. Final focused
+# execution recorded 215/215 in the wired file.
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart
 flutter test test/features/groups/presentation/group_conversation_screen_test.dart
 
@@ -528,7 +587,9 @@ git diff --check
   TC-268-02 reaches the current hidden-private-policy silent return and records
   no upload/publication; TC-268-09 uses an eligible media-only private draft,
   fails through terminal projection, and exposes both restored private state
-  and missing same-parent continuation.
+  and missing same-parent continuation. The closure counterexample then
+  exposed the first GREEN implementation's multi-item gap: terminal
+  first-of-two restored zero attachments and could not resend.
 - A causal RED is valid only when the named test loads, runs, and its recorded
   output shows the precommitted behavioral oracle. No-match, load, or compile
   failures do not count as RED.
@@ -539,8 +600,9 @@ git diff --check
   voice/share/forward group destinations ordinary; TC-268-07 preserves
   announcement roles; TC-268-08 preserves legacy private viewer/cleanup
   behavior. TC-268-09 turns GREEN only after projected restoration resends the
-  exact original parent ordinary with no failed attachment orphan, while the
-  existing ordinary text/attachment/quote restoration test stays GREEN.
+  exact original parent ordinary with no failed attachment orphan, terminal
+  first-of-two restores and replaces both items, and the existing ordinary
+  text/attachment/quote restoration test stays GREEN.
 - Pre-existing dirty tree / known failure: planning baseline contains unrelated
   modifications in `docker-ws/deploy_all_phones.sh`,
   `docker-ws/run_fresh_all_phones.sh`, and `info.plist`, plus untracked
@@ -555,16 +617,23 @@ git diff --check
   document-picker work, direct-composer change, or failure that persists with an
   ordinary policy blocks completion and requires a separate diagnosis.
 
-- [ ] Every behavior has a named test or justified proof.
-- [ ] Causal RED and focused GREEN are recorded. Two bounded mutation checks
-      also re-red: omit projected-terminal continuation tracking -> TC-268-09;
-      remove the post-upload parent/attachment CAS -> converted TC-268-03.
-- [ ] Preservation and named gates pass with semantic outcomes.
-- [ ] Existing AUTO/`GROUP_TESTS` registration is verified; any new-file
-      fallback registration is implemented and selected.
-- [ ] No migration or device/relay proof is required.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] Scope Contract And Guard is respected.
+- [x] Every behavior has a named test or justified proof.
+- [x] Causal RED and focused GREEN are recorded across selector/runtime,
+      authoring source, hidden-policy multi-item send, one-item projected
+      resend, terminal first-of-two restore/resend, and ordinary post-upload
+      CAS boundaries.
+- [x] Preservation and named gates pass with semantic outcomes; the complete
+      wired suite is 215/215.
+- [x] Existing AUTO/`GROUP_TESTS` registration is verified; all added tests
+      remain in the existing wired test file, so no harness edit is required.
+- [x] No migration or device/relay proof is required.
+- [x] `flutter analyze` reports `No issues found`; `git diff --check` is clean.
+- [x] Scope Contract And Guard is respected; the direct/shared picker
+      production scope diff is empty.
+- [x] Final `./scripts/run_test_gates.sh groups` closure run completes.
+- [x] `./graphify-arch/refresh_arch_graph.sh --incremental` completes after
+      the coherent source/test/doc change.
+- [x] The completed Plan-268 change is committed.
 
 ## Handoff
 
@@ -584,9 +653,21 @@ git diff --check
 - Unresolved evidence: exact user-device flow events are absent. Post-GREEN
   recurrence with an ordinary policy opens a separate group-media reliability
   diagnosis; it does not authorize speculative transport edits in this plan.
+- Deferred reliability follow-up: a nonterminal projected failure on the first
+  item of a multi-item draft can transfer the parent to `queued_offline` before
+  later prepared items have durable rows. Fixing that safely requires one
+  parent-plus-exact-attachment-set transaction and foreground-lease alignment;
+  the reviewed non-atomic presentation-layer attempt was discarded. This
+  pre-existing retry/outbox boundary is separate from Plan 268's terminal
+  composer-restoration contract.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-07-21 22:50 CEST | immutable baseline + review-fix reconciliation | Plan/fix-list; current untouched source/tests | `flutter analyze` -> no issues; `./scripts/run_test_gates.sh groups` -> 2,821 Flutter tests plus Go/relay legs passed; three composer sentinels and all three direct TC-268-05 sentinels passed | clean HEAD `34feba57a`; all asserted-GREEN behavior attributable before edits; §A-§E omissions reconciled in the execution contract | author four causal tests and record mechanism-valid RED |
+| 2026-07-21 22:57 CEST | causal RED | `group_conversation_wired_test.dart` only | all four exact P268 focused commands loaded/ran and exited 1 at their behavioral assertions | TC-268-01 runtime found the discussion selector; source contract found the shared-picker import; TC-268-02 recorded `(uploadCalls: 0, reliableCalls: 0, publishCalls: 0)`; TC-268-09 recorded restored private UI, two rows, a new sent ID/timestamp, and `sentOrdinary: false` | all failures match the precommitted mechanisms; no no-match, load, compile, or fixture failure | apply the compile-complete production + obsolete-test/helper surgery slice |
+| 2026-07-21 23:05 CEST | causal GREEN | group composer production and four affected test files | identical four exact P268 commands -> 1/1 each, exit 0 | discussion and writable announcement visual sends persist ordinary and omit private wire keys; source contract finds no authoring seam; two-item send uploads/publishes; projected terminal resend reuses the exact parent and replaces its failed attachment | compile-complete steps 2-4 slice is GREEN; legacy receive/retry stack untouched | run preservation, mutation, full composer, and curated lane gates |
+| 2026-07-21 23:16 CEST | adversarial multi-item projection RED | `group_conversation_wired_test.dart`; live projection upload loop | `P268 projected first-of-two media failure restores both and resends the same parent` loaded/ran and exited 1 at its precommitted behavioral record | actual: `restoredAttachmentCount: 0`, `uploadCalls: 1`, no sent row, one failed attachment left | a sibling early return skipped terminal folding | fold terminal projection state before the sibling guard can return |
+| 2026-07-21 23:33 CEST | strengthened GREEN + host verification | group composer production; four affected test files; scope surfaces | first-of-two terminal test -> 1/1, exit 0; full `group_conversation_wired_test.dart` -> 215/215; `flutter analyze` -> `No issues found`; direct/shared scope diff and `git diff --check` -> clean | terminal resend restores/replaces both items on the exact ordinary parent; focused, preservation, policy/wire, and full wired coverage are GREEN | a reviewed non-atomic expansion for the separate retryable multi-item outbox edge was discarded and recorded as follow-up | run final curated groups lane, refresh Graphify, and commit |
+| 2026-07-21 23:45 CEST | final host closure | final source/tests/docs and architecture graph | clean-environment `./scripts/run_test_gates.sh groups` -> 2,818/2,818 Flutter tests, Go bridge/node legs, relay toolchain contract, and relay server passed; `./graphify-arch/refresh_arch_graph.sh --incremental` -> 60,562 nodes / 92,120 edges, overlay 1,444 files / 14,040 named tests / 1,078 production targets | the preceding lane attempt's three concurrent failures did not reproduce; the suspected Orbit suite passed 80/80 alone and all 11 curated Orbit files passed 286/286 before the complete clean rerun | host closure accepted; independent final review reported no findings; no device leg applies | record the closure commit and close the persistent goal |

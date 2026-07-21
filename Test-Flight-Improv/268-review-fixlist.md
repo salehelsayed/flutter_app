@@ -1,5 +1,9 @@
 # 268 Review — Fix-List (apply against `268-group-media-keep-in-chat-only-tdd-plan.md`)
 
+Applied: 2026-07-21 during Plan 268 execution. Sections §A–§E are now
+incorporated into the plan contract; the untouched-tree baseline includes the
+full curated groups lane plus the direct TC-268-05 sentinels.
+
 Source: 8-agent `/tdd-review` audit (2 source verifiers, 5 dimension assessors, completeness critic; workflow `wf_6127595b-1f9`) + orchestrator source verification, 2026-07-21. Plan is **ready-with-tightening**; core bet **verified sound** — do not execute until §A–§D land in the plan text. No production-code change is prescribed here; every item is a plan-text edit.
 
 Decisions locked with the user:

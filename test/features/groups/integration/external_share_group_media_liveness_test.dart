@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -432,10 +433,11 @@ void main() {
           .map((entry) => entry.key)
           .toSet();
       expect(mediaMessageIds, hasLength(1));
-      expect(
-        screen.messages.any((message) => mediaMessageIds.contains(message.id)),
-        isTrue,
-      );
+      final messageId = mediaMessageIds.single;
+      final savedMessage = await messages.getMessage(messageId);
+      expect(savedMessage, isNotNull);
+      expect(savedMessage!.privateMediaPolicy.isOrdinary, isTrue);
+      expect(screen.messages.any((message) => message.id == messageId), isTrue);
       expect(find.byType(MediaGrid), findsWidgets);
       expect(find.byType(MediaThumbnailImage), findsOneWidget);
       expect(
@@ -443,6 +445,44 @@ void main() {
         initialPageLoads,
         reason: 'the inserted row must hydrate without reloading the page',
       );
+
+      final availableGroupMaps =
+          <({String boundary, Map<String, dynamic> payload})>[];
+      for (final raw in bridge.sentMessages) {
+        final message = jsonDecode(raw) as Map<String, dynamic>;
+        final command = message['cmd'];
+        if (command != 'group:sendReliable' && command != 'group:publish') {
+          continue;
+        }
+        final payload = (message['payload'] as Map).cast<String, dynamic>();
+        if (payload['messageId'] == messageId) {
+          availableGroupMaps.add((
+            boundary: command as String,
+            payload: payload,
+          ));
+        }
+      }
+      final retryPayload = savedMessage.inboxRetryPayload;
+      if (retryPayload != null) {
+        final retry = jsonDecode(retryPayload) as Map<String, dynamic>;
+        final envelope =
+            jsonDecode(retry['message'] as String) as Map<String, dynamic>;
+        availableGroupMaps.add((
+          boundary: 'group replay',
+          payload: (jsonDecode(envelope['ciphertext'] as String) as Map)
+              .cast<String, dynamic>(),
+        ));
+      }
+      expect(availableGroupMaps, isNotEmpty);
+      for (final entry in availableGroupMaps) {
+        for (final key in GroupPrivateMediaPolicy.wireKeys) {
+          expect(
+            entry.payload,
+            isNot(contains(key)),
+            reason: '${entry.boundary} must omit ordinary policy key $key',
+          );
+        }
+      }
     },
   );
 

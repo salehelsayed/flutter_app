@@ -530,13 +530,6 @@ class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
   }
 }
 
-class _ThrowingMembersGroupRepository extends InMemoryGroupRepository {
-  @override
-  Future<List<GroupMember>> getMembers(String groupId) async {
-    throw StateError('simulated roster load failure');
-  }
-}
-
 class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
     implements GroupManualUploadRetryRearmRepository {
   InMemoryMediaAttachmentRepository? manualRearmMediaRepo;
@@ -622,53 +615,57 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
   }
 }
 
-class _RevokeWriterOnPrivateParentSaveRepository
-    extends CountingGroupMessageRepository {
-  _RevokeWriterOnPrivateParentSaveRepository({
-    required this.groupRepo,
-    required this.senderPeerId,
-  });
+class _TerminalProjectionGroupMessageRepository
+    extends CountingGroupMessageRepository
+    implements GroupUploadRetryProjectionRepository {
+  _TerminalProjectionGroupMessageRepository({required this.mediaRepo});
 
-  final InMemoryGroupRepository groupRepo;
-  final String senderPeerId;
-  bool sawPrivateParentSave = false;
-  int reloadsAfterPrivateParentSave = 0;
+  final CountingMediaAttachmentRepository mediaRepo;
+  int projectionCalls = 0;
+  UploadMediaFailed? lastFailure;
 
   @override
-  Future<void> saveMessage(GroupMessage message) async {
-    await super.saveMessage(message);
-    if (sawPrivateParentSave || !message.privateMediaPolicy.isPrivate) return;
-    sawPrivateParentSave = true;
-    final member = await groupRepo.getMember(message.groupId, senderPeerId);
-    if (member != null) {
-      await groupRepo.saveMember(member.copyWith(role: MemberRole.reader));
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    projectionCalls++;
+    lastFailure = failure;
+    if (failure.disposition != UploadMediaDisposition.terminal) {
+      throw StateError('P268 fixture expected one terminal upload failure');
     }
-  }
 
-  @override
-  Future<GroupMessage?> getMessage(String id) async {
-    if (sawPrivateParentSave) reloadsAfterPrivateParentSave++;
-    return super.getMessage(id);
-  }
-}
+    final parent = await super.getMessage(messageId);
+    final attachments = await mediaRepo.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    );
+    final matching = attachments
+        .where((attachment) => attachment.id == attachmentId)
+        .toList(growable: false);
+    if (parent == null ||
+        parent.isIncoming ||
+        matching.length != 1 ||
+        matching.single.downloadStatus != 'upload_pending') {
+      throw StateError('P268 terminal projection fixture lost durable state');
+    }
 
-class _RemoveRecipientOnPrivateParentSaveRepository
-    extends CountingGroupMessageRepository {
-  _RemoveRecipientOnPrivateParentSaveRepository({
-    required this.groupRepo,
-    required this.recipientPeerId,
-  });
-
-  final InMemoryGroupRepository groupRepo;
-  final String recipientPeerId;
-  bool sawPrivateParentSave = false;
-
-  @override
-  Future<void> saveMessage(GroupMessage message) async {
-    await super.saveMessage(message);
-    if (sawPrivateParentSave || !message.privateMediaPolicy.isPrivate) return;
-    sawPrivateParentSave = true;
-    await groupRepo.removeMember(message.groupId, recipientPeerId);
+    final attachment = matching.single;
+    final projectedRetryCount = attachment.uploadRetryCount ?? 0;
+    await mediaRepo.saveAttachment(
+      attachment.copyWith(
+        downloadStatus: 'upload_failed',
+        uploadRetryCount: projectedRetryCount,
+        ownerLane: MediaOwnerLane.group,
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    await super.saveMessage(parent.copyWith(status: 'failed'));
+    return UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.terminal,
+      uploadRetryCount: projectedRetryCount,
+    );
   }
 }
 
@@ -1305,6 +1302,15 @@ List<Map<String, dynamic>> groupPublishPayloads(FakeBridge bridge) {
       .toList();
 }
 
+Map<String, dynamic> groupPublishPayloadForMessage(
+  FakeBridge bridge,
+  String messageId,
+) {
+  return groupPublishPayloads(
+    bridge,
+  ).singleWhere((payload) => payload['messageId'] == messageId);
+}
+
 String groupTextRetryPayload({
   required String groupId,
   required String senderPeerId,
@@ -1355,6 +1361,82 @@ Map<String, dynamic> groupInboxStorePayloadForMessage(
     if (envelope['messageId'] == messageId) return payload;
   }
   fail('missing group:inboxStore for $messageId');
+}
+
+Map<String, dynamic> groupReplayPlaintextForMessage(
+  FakeBridge bridge,
+  String messageId,
+) {
+  final inboxPayload = groupInboxStorePayloadForMessage(bridge, messageId);
+  final envelope = jsonDecode(inboxPayload['message'] as String) as Map;
+  return (jsonDecode(envelope['ciphertext'] as String) as Map)
+      .cast<String, dynamic>();
+}
+
+void expectNoGroupPrivateWireKeys(
+  Iterable<({String boundary, Map<String, dynamic> payload})> payloads,
+) {
+  for (final entry in payloads) {
+    for (final key in GroupPrivateMediaPolicy.wireKeys) {
+      expect(
+        entry.payload,
+        isNot(contains(key)),
+        reason: '${entry.boundary} must omit ordinary policy key $key',
+      );
+    }
+  }
+}
+
+Future<bool> commitProtectedIfGroupSelectorExists(WidgetTester tester) async {
+  final selector = find.byKey(const ValueKey('group-private-media-selector'));
+  if (selector.evaluate().isEmpty) return false;
+
+  await tester.ensureVisible(selector);
+  await tester.tap(selector);
+  await pumpFrames(tester, count: 6);
+  final sheet = find.byKey(const ValueKey('private-media-policy-sheet'));
+  expect(sheet, findsOneWidget);
+  final sheetScrollable = find.descendant(
+    of: sheet,
+    matching: find.byType(Scrollable),
+  );
+  final protectedOption = find.byKey(
+    const ValueKey('group-private-media-option-protected'),
+  );
+  await tester.scrollUntilVisible(
+    protectedOption,
+    200,
+    scrollable: sheetScrollable,
+  );
+  await tester.pump();
+  await tester.tap(protectedOption);
+  await tester.pump();
+  final commit = find.byKey(const ValueKey('private-media-use-mode'));
+  await tester.scrollUntilVisible(commit, 200, scrollable: sheetScrollable);
+  await tester.tap(commit);
+  await pumpFrames(tester, count: 8);
+  return true;
+}
+
+MediaAttachment successfulGroupUploadFixture({
+  required String blobId,
+  required String mime,
+  required String localFilePath,
+}) {
+  return MediaAttachment(
+    id: blobId,
+    messageId: '',
+    mime: mime,
+    size: 1,
+    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+    localPath: localFilePath,
+    downloadStatus: 'done',
+    contentHash: _validContentHash,
+    encryptionKeyBase64: 'key-$blobId',
+    encryptionNonce: 'nonce-$blobId',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+    createdAt: DateTime.now().toUtc().toIso8601String(),
+  );
 }
 
 void main() {
@@ -1459,8 +1541,6 @@ void main() {
       MessageRepository? forwardMessageRepository,
       ChatMessageListener? forwardChatMessageListener,
       OpenAnnouncementSenderConversation? openAnnouncementSenderConversation,
-      GroupPrivateMediaPolicy privateMediaPolicy =
-          const GroupPrivateMediaPolicy.ordinary(),
       GroupPrivateMediaAvailability privateMediaAvailability =
           productionGroupPrivateMediaAvailability,
     }) {
@@ -1495,7 +1575,6 @@ void main() {
           uploadMediaFn: uploadMediaFn == null
               ? uploadMedia
               : adaptLegacyTestUploadMediaFn(uploadMediaFn),
-          privateMediaPolicy: privateMediaPolicy,
           privateMediaAvailability: privateMediaAvailability,
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
@@ -3788,6 +3867,695 @@ void main() {
     );
 
     testWidgets(
+      'P268 production chat and announcement media send ordinary without a private selector',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p268-group-types-ordinary-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final scenarios = <({String label, GroupModel group})>[
+          (label: 'discussion', group: makeChatGroup()),
+          (
+            label: 'announcement',
+            group: makeAnnouncementGroup(role: GroupRole.admin),
+          ),
+        ];
+
+        for (final scenario in scenarios) {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          groupRepo = InMemoryGroupRepository();
+          msgRepo = CountingGroupMessageRepository();
+          mediaAttachmentRepo = CountingMediaAttachmentRepository();
+          msgRepo.manualRearmMediaRepo = mediaAttachmentRepo;
+          bridge = FakeBridge(
+            initialResponses: {
+              'group:publish': {'ok': true, 'messageId': 'msg-published'},
+            },
+          );
+          final group = scenario.group;
+          await groupRepo.saveGroup(group);
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: group.id,
+              keyGeneration: 1,
+              encryptedKey: 'p268-${scenario.label}-key',
+              createdAt: DateTime.utc(2026, 7, 21, 12),
+            ),
+          );
+          await saveActiveGroupMembers(groupRepo, group);
+          final file = File('${tempDir.path}/${scenario.label}.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes);
+          var uploadCalls = 0;
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              initialPendingMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: file,
+                  budgetBytes: file.lengthSync(),
+                ),
+              ],
+              privateMediaAvailability:
+                  const GroupPrivateMediaAvailability.enabledForTesting(),
+              uploadMediaFn:
+                  ({
+                    required bridge,
+                    required localFilePath,
+                    required mime,
+                    required recipientPeerId,
+                    String? blobId,
+                    mediaFileManager,
+                    width,
+                    height,
+                    durationMs,
+                    waveform,
+                    allowedPeers,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
+                  }) async {
+                    uploadCalls++;
+                    return successfulGroupUploadFixture(
+                      blobId: blobId!,
+                      mime: mime,
+                      localFilePath: localFilePath,
+                    );
+                  },
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+          expect(find.byType(ComposeArea), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('group-private-media-selector')),
+            findsNothing,
+            reason:
+                '${scenario.label} fresh media must expose no private selector',
+          );
+
+          final send =
+              tester
+                      .widget<GroupConversationScreen>(
+                        find.byType(GroupConversationScreen),
+                      )
+                      .onSend
+                  as Future<void> Function(String);
+          await tester.runAsync(() => send(''));
+          await pumpFrames(tester, count: 20);
+
+          final rows = await msgRepo.getMessagesPage(group.id);
+          expect(rows, hasLength(1), reason: scenario.label);
+          final sent = rows.single;
+          expect(uploadCalls, 1, reason: scenario.label);
+          expect(sent.status, 'sent', reason: scenario.label);
+          expect(sent.privateMediaPolicy.isOrdinary, isTrue);
+          final attachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage(sent.id, owner: MediaOwnerLane.group);
+          expect(attachments, hasLength(1), reason: scenario.label);
+          expect(attachments.single.downloadStatus, 'done');
+          expectNoGroupPrivateWireKeys([
+            (
+              boundary: '${scenario.label} reliable',
+              payload: groupSendReliablePayloadForMessage(bridge, sent.id),
+            ),
+            (
+              boundary: '${scenario.label} publish',
+              payload: groupPublishPayloadForMessage(bridge, sent.id),
+            ),
+            (
+              boundary: '${scenario.label} replay',
+              payload: groupReplayPlaintextForMessage(bridge, sent.id),
+            ),
+          ]);
+        }
+      },
+    );
+
+    test(
+      'P268 group composer source has no private authoring API or mutable policy state',
+      () {
+        final screenSource = File(
+          'lib/features/groups/presentation/screens/group_conversation_screen.dart',
+        ).readAsStringSync();
+        final wiredSource = File(
+          'lib/features/groups/presentation/screens/group_conversation_wired.dart',
+        ).readAsStringSync();
+        final screenAuthoringSlice = screenSource.substring(
+          screenSource.indexOf('class GroupConversationScreen '),
+          screenSource.indexOf('class _GroupConversationLoadingShell '),
+        );
+        final wiredWidgetSlice = wiredSource.substring(
+          wiredSource.indexOf('class GroupConversationWired '),
+          wiredSource.indexOf('class _GroupConversationWiredState '),
+        );
+        final wiredStateSlice = wiredSource.substring(
+          wiredSource.indexOf('class _GroupConversationWiredState '),
+          wiredSource.indexOf('class _GroupComposerSnapshot '),
+        );
+        final snapshotSlice = wiredSource.substring(
+          wiredSource.indexOf('class _GroupComposerSnapshot '),
+          wiredSource.indexOf('class _GroupActiveAttachmentUpload '),
+        );
+
+        expect(
+          screenSource.contains('private_media_policy_picker_sheet.dart'),
+          isFalse,
+          reason: 'the group screen must not import the shared private picker',
+        );
+        for (final forbidden in const <String>[
+          'privateMediaComposerEligible',
+          'onPrivateMediaPolicyChanged',
+          '_GroupPrivateMediaSelector',
+          'showPrivateMediaPolicyPickerSheet',
+          'PrivateMediaSummaryChip',
+          'final GroupPrivateMediaPolicy privateMediaPolicy;',
+          'this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),',
+        ]) {
+          expect(
+            screenAuthoringSlice.contains(forbidden),
+            isFalse,
+            reason: 'group screen retains private authoring seam $forbidden',
+          );
+        }
+        for (final forbidden in const <String>[
+          'final GroupPrivateMediaPolicy privateMediaPolicy;',
+          'this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),',
+        ]) {
+          expect(
+            wiredWidgetSlice.contains(forbidden),
+            isFalse,
+            reason:
+                'wired constructor retains private authoring seam $forbidden',
+          );
+        }
+        for (final forbidden in const <String>[
+          'widget.privateMediaPolicy',
+          '_privateMediaPolicy',
+          '_privateMediaComposerEligible',
+          '_onPrivateMediaPolicyChanged',
+        ]) {
+          expect(
+            wiredStateSlice.contains(forbidden),
+            isFalse,
+            reason: 'wired state retains private authoring seam $forbidden',
+          );
+        }
+        expect(snapshotSlice.contains('privateMediaPolicy'), isFalse);
+        expect(snapshotSlice.contains('GroupPrivateMediaPolicy'), isFalse);
+      },
+    );
+
+    testWidgets(
+      'P268 second group attachment cannot inherit a hidden private mode or stall send',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p268-second-attachment-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final first = File('${tempDir.path}/first.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final second = File('${tempDir.path}/second.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final picker = FakeMediaPicker()
+          ..multipleMediaResult = <XFile>[XFile(second.path)];
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaPicker: picker,
+            mediaFileManager: FakeMediaFileManager(),
+            initialPendingMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: first,
+                budgetBytes: first.lengthSync(),
+              ),
+            ],
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  return successfulGroupUploadFixture(
+                    blobId: blobId!,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await commitProtectedIfGroupSelectorExists(tester);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen
+                  .composerStateListenable
+                  ?.value
+                  .pendingAttachments
+                  .length ==
+              2;
+        });
+        expect(
+          find.byKey(const ValueKey('group-private-media-selector')),
+          findsNothing,
+        );
+
+        final send = await startScreenSend(tester, '');
+        await tester.runAsync(() => send.future);
+        await pumpFrames(tester, count: 20);
+        final sendActivity = (
+          uploadCalls: uploadCalls,
+          reliableCalls: bridge.commandLog
+              .where((command) => command == 'group:sendReliable')
+              .length,
+          publishCalls: bridge.commandLog
+              .where((command) => command == 'group:publish')
+              .length,
+        );
+        expect(
+          sendActivity,
+          equals((uploadCalls: 2, reliableCalls: 1, publishCalls: 1)),
+          reason:
+              'a stale hidden private mode currently returns before upload and publication',
+        );
+
+        final rows = await msgRepo.getMessagesPage(group.id);
+        expect(rows, hasLength(1));
+        final sent = rows.single;
+        expect(sent.status, 'sent');
+        expect(sent.privateMediaPolicy.isOrdinary, isTrue);
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          sent.id,
+          owner: MediaOwnerLane.group,
+        );
+        expect(attachments, hasLength(2));
+        expect(
+          attachments.every(
+            (attachment) => attachment.downloadStatus == 'done',
+          ),
+          isTrue,
+        );
+        expectNoGroupPrivateWireKeys([
+          (
+            boundary: 'second attachment reliable',
+            payload: groupSendReliablePayloadForMessage(bridge, sent.id),
+          ),
+          (
+            boundary: 'second attachment publish',
+            payload: groupPublishPayloadForMessage(bridge, sent.id),
+          ),
+          (
+            boundary: 'second attachment replay',
+            payload: groupReplayPlaintextForMessage(bridge, sent.id),
+          ),
+        ]);
+      },
+    );
+
+    testWidgets(
+      'P268 projected media failure restores ordinary and resends the same parent',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final projectionRepo = _TerminalProjectionGroupMessageRepository(
+          mediaRepo: mediaAttachmentRepo,
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p268-projected-resend-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/one.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final uploadedBlobIds = <String>[];
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: projectionRepo,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialPendingMedia: <PendingComposerMedia>[
+              PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
+            ],
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  uploadedBlobIds.add(blobId!);
+                  if (uploadCalls == 1) return null;
+                  return successfulGroupUploadFixture(
+                    blobId: blobId,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        final selectedProtectedOnHead =
+            await commitProtectedIfGroupSelectorExists(tester);
+
+        final firstSend = await startScreenSend(tester, '');
+        await tester.runAsync(() => firstSend.future);
+        await pumpFrames(tester, count: 20);
+        expect(projectionRepo.projectionCalls, 1);
+        expect(
+          projectionRepo.lastFailure?.disposition,
+          UploadMediaDisposition.terminal,
+        );
+        final restoredSelector = find.byKey(
+          const ValueKey('group-private-media-selector'),
+        );
+        final restoredPrivateUi =
+            selectedProtectedOnHead &&
+            restoredSelector.evaluate().isNotEmpty &&
+            find
+                .descendant(
+                  of: restoredSelector,
+                  matching: find.text('Protected view'),
+                )
+                .evaluate()
+                .isNotEmpty;
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+
+        final failedRows = await projectionRepo.getMessagesPage(group.id);
+        expect(failedRows, hasLength(1));
+        final failedParent = failedRows.single;
+        expect(failedParent.status, 'failed');
+        final originalMessageId = failedParent.id;
+        final originalTimestamp = failedParent.timestamp;
+        final failedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(
+              originalMessageId,
+              owner: MediaOwnerLane.group,
+            );
+        expect(failedAttachments, hasLength(1));
+        expect(failedAttachments.single.downloadStatus, 'upload_failed');
+        final failedAttachmentId = failedAttachments.single.id;
+
+        final secondSend = await startScreenSend(tester, '');
+        await tester.runAsync(() => secondSend.future);
+        await pumpFrames(tester, count: 20);
+
+        final finalRows = await projectionRepo.getMessagesPage(group.id);
+        final sentRows = finalRows
+            .where((message) => message.status == 'sent')
+            .toList(growable: false);
+        final finalSent = sentRows.length == 1 ? sentRows.single : null;
+        final continuationEvidence = (
+          restoredPrivateUi: restoredPrivateUi,
+          rowCount: finalRows.length,
+          sentCount: sentRows.length,
+          sentId: finalSent?.id,
+          sentTimestamp: finalSent?.timestamp,
+          sentOrdinary: finalSent?.privateMediaPolicy.isOrdinary,
+        );
+        expect(
+          continuationEvidence,
+          equals((
+            restoredPrivateUi: false,
+            rowCount: 1,
+            sentCount: 1,
+            sentId: originalMessageId,
+            sentTimestamp: originalTimestamp,
+            sentOrdinary: true,
+          )),
+          reason:
+              'projected terminal restoration must clear private state and continue the failed parent',
+        );
+
+        expect(uploadedBlobIds, hasLength(2));
+        final finalAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(
+              originalMessageId,
+              owner: MediaOwnerLane.group,
+            );
+        expect(finalAttachments, hasLength(1));
+        expect(finalAttachments.single.id, uploadedBlobIds.last);
+        expect(finalAttachments.single.downloadStatus, 'done');
+        expect(
+          await mediaAttachmentRepo.getAttachmentById(failedAttachmentId),
+          isNull,
+        );
+        expectNoGroupPrivateWireKeys([
+          (
+            boundary: 'projected resend reliable',
+            payload: groupSendReliablePayloadForMessage(
+              bridge,
+              originalMessageId,
+            ),
+          ),
+          (
+            boundary: 'projected resend publish',
+            payload: groupPublishPayloadForMessage(bridge, originalMessageId),
+          ),
+          (
+            boundary: 'projected resend replay',
+            payload: groupReplayPlaintextForMessage(bridge, originalMessageId),
+          ),
+        ]);
+      },
+    );
+
+    testWidgets(
+      'P268 projected first-of-two media failure restores both and resends the same parent',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final projectionRepo = _TerminalProjectionGroupMessageRepository(
+          mediaRepo: mediaAttachmentRepo,
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p268-projected-two-resend-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final firstFile = File('${tempDir.path}/one.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final secondFile = File('${tempDir.path}/two.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final uploadedBlobIds = <String>[];
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: projectionRepo,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialPendingMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: firstFile,
+                budgetBytes: firstFile.lengthSync(),
+              ),
+              PendingComposerMedia(
+                file: secondFile,
+                budgetBytes: secondFile.lengthSync(),
+              ),
+            ],
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  uploadedBlobIds.add(blobId!);
+                  if (uploadCalls == 1) return null;
+                  return successfulGroupUploadFixture(
+                    blobId: blobId,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final firstSend = await startScreenSend(tester, '');
+        await tester.runAsync(() => firstSend.future);
+        await pumpFrames(tester, count: 20);
+        expect(projectionRepo.projectionCalls, 1);
+        expect(
+          projectionRepo.lastFailure?.disposition,
+          UploadMediaDisposition.terminal,
+        );
+
+        final restoredScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final restoredAttachmentCount =
+            restoredScreen
+                .composerStateListenable
+                ?.value
+                .pendingAttachments
+                .length ??
+            0;
+        final failedRows = await projectionRepo.getMessagesPage(group.id);
+        expect(failedRows, hasLength(1));
+        final failedParent = failedRows.single;
+        expect(failedParent.status, 'failed');
+        expect(failedParent.privateMediaPolicy.isOrdinary, isTrue);
+        final originalMessageId = failedParent.id;
+        final originalTimestamp = failedParent.timestamp;
+        final failedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(
+              originalMessageId,
+              owner: MediaOwnerLane.group,
+            );
+        expect(failedAttachments, hasLength(1));
+        expect(failedAttachments.single.downloadStatus, 'upload_failed');
+        final failedAttachmentId = failedAttachments.single.id;
+
+        final secondSend = await startScreenSend(tester, '');
+        await tester.runAsync(() => secondSend.future);
+        await pumpFrames(tester, count: 20);
+
+        final finalRows = await projectionRepo.getMessagesPage(group.id);
+        final sentRows = finalRows
+            .where((message) => message.status == 'sent')
+            .toList(growable: false);
+        final finalSent = sentRows.length == 1 ? sentRows.single : null;
+        final finalAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(
+              originalMessageId,
+              owner: MediaOwnerLane.group,
+            );
+        final finalAttachmentIds =
+            finalAttachments
+                .map((attachment) => attachment.id)
+                .toList(growable: false)
+              ..sort();
+        final replacementBlobIds = uploadedBlobIds.length == 3
+            ? (uploadedBlobIds.sublist(1)..sort())
+            : <String>[];
+        final continuationEvidence = (
+          restoredAttachmentCount: restoredAttachmentCount,
+          uploadCalls: uploadCalls,
+          uploadedBlobIdCount: uploadedBlobIds.length,
+          rowCount: finalRows.length,
+          sentCount: sentRows.length,
+          sentId: finalSent?.id,
+          sentTimestamp: finalSent?.timestamp,
+          sentOrdinary: finalSent?.privateMediaPolicy.isOrdinary,
+          finalAttachmentCount: finalAttachments.length,
+          allFinalAttachmentsDone: finalAttachments.every(
+            (attachment) => attachment.downloadStatus == 'done',
+          ),
+          replacementIdsMatch:
+              finalAttachmentIds.join('|') == replacementBlobIds.join('|'),
+          failedAttachmentRemoved:
+              await mediaAttachmentRepo.getAttachmentById(failedAttachmentId) ==
+              null,
+        );
+        expect(
+          continuationEvidence,
+          equals((
+            restoredAttachmentCount: 2,
+            uploadCalls: 3,
+            uploadedBlobIdCount: 3,
+            rowCount: 1,
+            sentCount: 1,
+            sentId: originalMessageId,
+            sentTimestamp: originalTimestamp,
+            sentOrdinary: true,
+            finalAttachmentCount: 2,
+            allFinalAttachmentsDone: true,
+            replacementIdsMatch: true,
+            failedAttachmentRemoved: true,
+          )),
+          reason:
+              'a terminal first-of-two projection must restore the whole draft and continue the exact failed parent',
+        );
+
+        expectNoGroupPrivateWireKeys([
+          (
+            boundary: 'projected two-item resend reliable',
+            payload: groupSendReliablePayloadForMessage(
+              bridge,
+              originalMessageId,
+            ),
+          ),
+          (
+            boundary: 'projected two-item resend publish',
+            payload: groupPublishPayloadForMessage(bridge, originalMessageId),
+          ),
+          (
+            boundary: 'projected two-item resend replay',
+            payload: groupReplayPlaintextForMessage(bridge, originalMessageId),
+          ),
+        ]);
+      },
+    );
+
+    testWidgets(
       'ordinary media pre-persists the parent row before upload completes and finalizes after sendGroupMessage',
       (tester) async {
         final group = makeChatGroup();
@@ -3887,6 +4655,7 @@ void main() {
         expect(persistedBeforeUpload, isNotNull);
         expect(persistedBeforeUpload!.text, 'Durable parent row');
         expect(persistedBeforeUpload.status, 'sending');
+        expect(persistedBeforeUpload.privateMediaPolicy.isOrdinary, isTrue);
 
         await tester.runAsync(() async {
           uploadGate.complete();
@@ -3897,6 +4666,7 @@ void main() {
         final persistedAfterSend = await msgRepo.getMessage(messageId);
         expect(persistedAfterSend, isNotNull);
         expect(persistedAfterSend!.status, 'sent');
+        expect(persistedAfterSend.privateMediaPolicy.isOrdinary, isTrue);
         expect(
           await mediaAttachmentRepo.getUploadPendingAttachments(
             owner: MediaOwnerLane.group,
@@ -3909,328 +4679,20 @@ void main() {
         expect(savedAttachments.single.id, receivedBlobId);
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(deletedDirs, contains(messageId));
-      },
-    );
-
-    testWidgets('group private media sheet commits through real wired action', (
-      tester,
-    ) async {
-      final tempDir = Directory.systemTemp.createTempSync(
-        'group-private-copy-',
-      );
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      final file = File('${tempDir.path}/private.png')
-        ..writeAsBytesSync(_tinyPngBytes);
-      final group = makeChatGroup();
-      await groupRepo.saveGroup(group);
-      await saveActiveGroupMembers(groupRepo, group);
-
-      await tester.pumpWidget(
-        buildWidget(
-          group: group,
-          mediaRepo: mediaAttachmentRepo,
-          mediaFileManager: FakeMediaFileManager(),
-          initialPendingMedia: <PendingComposerMedia>[
-            PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
-          ],
-          privateMediaAvailability:
-              const GroupPrivateMediaAvailability.enabledForTesting(),
-        ),
-      );
-      await pumpFrames(tester, count: 20);
-
-      final selector = find.byKey(
-        const ValueKey('group-private-media-selector'),
-      );
-      expect(selector, findsOneWidget);
-      await tester.ensureVisible(selector);
-      await tester.tap(selector);
-      await pumpFrames(tester, count: 6);
-
-      expect(find.text('How should members see this photo?'), findsOneWidget);
-      expect(find.text('Keep in chat'), findsWidgets);
-      expect(find.text('Protected view'), findsOneWidget);
-      expect(find.text('Ordinary'), findsNothing);
-      expect(find.text('They can save or share it.'), findsOneWidget);
-
-      final sheetScrollable = find.descendant(
-        of: find.byKey(const ValueKey('private-media-policy-sheet')),
-        matching: find.byType(Scrollable),
-      );
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('group-private-media-option-protected')),
-        200,
-        scrollable: sheetScrollable,
-      );
-      await tester.pump();
-      await tester.tap(
-        find.byKey(const ValueKey('group-private-media-option-protected')),
-      );
-      await tester.pump();
-      var screen = tester.widget<GroupConversationScreen>(
-        find.byType(GroupConversationScreen),
-      );
-      expect(
-        screen.privateMediaPolicy,
-        const GroupPrivateMediaPolicy.ordinary(),
-      );
-
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('private-media-use-mode')),
-        200,
-        scrollable: sheetScrollable,
-      );
-      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
-      await pumpFrames(tester, count: 8);
-
-      screen = tester.widget<GroupConversationScreen>(
-        find.byType(GroupConversationScreen),
-      );
-      expect(
-        screen.privateMediaPolicy,
-        const GroupPrivateMediaPolicy.protected(),
-      );
-      expect(
-        find.descendant(of: selector, matching: find.text('Protected view')),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets(
-      'GPL-03A-S private selection fails closed for missing identity empty or failed roster and reader role',
-      (tester) async {
-        final tempDir = Directory.systemTemp.createTempSync(
-          'group-private-selection-boundary-',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final file = File('${tempDir.path}/private.png')
-          ..writeAsBytesSync(_tinyPngBytes);
-        final pending = PendingComposerMedia(
-          file: file,
-          budgetBytes: file.lengthSync(),
-        );
-
-        Future<void> seedCurrentKey(InMemoryGroupRepository repository) {
-          return repository.saveKey(
-            GroupKeyInfo(
-              groupId: 'group-1',
-              keyGeneration: 1,
-              encryptedKey: 'selection-test-key',
-              createdAt: DateTime.utc(2026, 7, 12),
-            ),
-          );
-        }
-
-        Future<void> expectSelectionDenied({
-          required String scenario,
-          required InMemoryGroupRepository repository,
-          required FakeIdentityRepository identities,
-          MemberRole? selfRole,
-        }) async {
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump();
-          groupRepo = repository;
-          identityRepo = identities;
-          final group = makeChatGroup();
-          await groupRepo.saveGroup(group);
-          await seedCurrentKey(groupRepo);
-          if (selfRole != null) {
-            await groupRepo.saveMember(
-              GroupMember(
-                groupId: group.id,
-                peerId: testIdentity.peerId,
-                username: testIdentity.username,
-                role: selfRole,
-                publicKey: testIdentity.publicKey,
-                mlKemPublicKey: testIdentity.mlKemPublicKey,
-                joinedAt: DateTime.utc(2026, 7, 12, 9),
-              ),
-            );
-            await groupRepo.saveMember(
-              GroupMember(
-                groupId: group.id,
-                peerId: 'peer-bob',
-                username: 'Bob',
-                role: MemberRole.writer,
-                publicKey: 'pk-bob',
-                joinedAt: DateTime.utc(2026, 7, 12, 9, 1),
-              ),
-            );
-          }
-
-          await tester.pumpWidget(
-            buildWidget(
-              group: group,
-              mediaRepo: mediaAttachmentRepo,
-              mediaFileManager: FakeMediaFileManager(),
-              initialPendingMedia: <PendingComposerMedia>[pending],
-              privateMediaAvailability:
-                  const GroupPrivateMediaAvailability.enabledForTesting(),
-            ),
-          );
-          await pumpFrames(tester, count: 20);
-
-          var screen = tester.widget<GroupConversationScreen>(
-            find.byType(GroupConversationScreen),
-          );
-          expect(
-            screen.privateMediaComposerEligible,
-            isFalse,
-            reason: scenario,
-          );
-          expect(
-            find.byKey(const ValueKey('group-private-media-selector')),
-            findsNothing,
-            reason: scenario,
-          );
-          expect(screen.onPrivateMediaPolicyChanged, isNotNull);
-          screen.onPrivateMediaPolicyChanged!(
-            const GroupPrivateMediaPolicy.viewOnce(),
-          );
-          await tester.pump();
-          screen = tester.widget<GroupConversationScreen>(
-            find.byType(GroupConversationScreen),
-          );
-          expect(
-            screen.privateMediaPolicy,
-            const GroupPrivateMediaPolicy.ordinary(),
-            reason: '$scenario must reject a stale selection callback',
-          );
-        }
-
-        final missingIdentityRepo = InMemoryGroupRepository();
-        await expectSelectionDenied(
-          scenario: 'missing own peer',
-          repository: missingIdentityRepo,
-          identities: FakeIdentityRepository(),
-          selfRole: MemberRole.writer,
-        );
-        await expectSelectionDenied(
-          scenario: 'empty roster',
-          repository: InMemoryGroupRepository(),
-          identities: FakeIdentityRepository(identity: testIdentity),
-        );
-        await expectSelectionDenied(
-          scenario: 'reader role',
-          repository: InMemoryGroupRepository(),
-          identities: FakeIdentityRepository(identity: testIdentity),
-          selfRole: MemberRole.reader,
-        );
-        await expectSelectionDenied(
-          scenario: 'failed roster load',
-          repository: _ThrowingMembersGroupRepository(),
-          identities: FakeIdentityRepository(identity: testIdentity),
-        );
-      },
-    );
-
-    testWidgets(
-      'APL-02W announcement private composer requires matching current admin roles',
-      (tester) async {
-        final tempDir = Directory.systemTemp.createTempSync(
-          'announcement-private-selection-boundary-',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final file = File('${tempDir.path}/private.png')
-          ..writeAsBytesSync(_tinyPngBytes);
-        final pending = PendingComposerMedia(
-          file: file,
-          budgetBytes: file.lengthSync(),
-        );
-
-        Future<void> expectEligibility({
-          required String scenario,
-          required GroupRole localRole,
-          required MemberRole memberRole,
-          required bool expected,
-        }) async {
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump();
-          groupRepo = InMemoryGroupRepository();
-          identityRepo = FakeIdentityRepository(identity: testIdentity);
-          final group = makeAnnouncementGroup(role: localRole);
-          await groupRepo.saveGroup(group);
-          await groupRepo.saveKey(
-            GroupKeyInfo(
-              groupId: group.id,
-              keyGeneration: 1,
-              encryptedKey: 'announcement-private-key',
-              createdAt: DateTime.utc(2026, 7, 12),
-            ),
-          );
-          await groupRepo.saveMember(
-            GroupMember(
-              groupId: group.id,
-              peerId: testIdentity.peerId,
-              username: testIdentity.username,
-              role: memberRole,
-              publicKey: testIdentity.publicKey,
-              mlKemPublicKey: testIdentity.mlKemPublicKey,
-              joinedAt: DateTime.utc(2026, 7, 12, 9),
-            ),
-          );
-          await groupRepo.saveMember(
-            GroupMember(
-              groupId: group.id,
-              peerId: 'peer-reader',
-              username: 'Reader',
-              role: MemberRole.reader,
-              publicKey: 'pk-reader',
-              joinedAt: DateTime.utc(2026, 7, 12, 9, 1),
-            ),
-          );
-
-          await tester.pumpWidget(
-            buildWidget(
-              group: group,
-              mediaRepo: mediaAttachmentRepo,
-              mediaFileManager: FakeMediaFileManager(),
-              initialPendingMedia: <PendingComposerMedia>[pending],
-              privateMediaAvailability:
-                  const GroupPrivateMediaAvailability.enabledForTesting(),
-            ),
-          );
-          await pumpFrames(tester, count: 20);
-
-          final screen = tester.widget<GroupConversationScreen>(
-            find.byType(GroupConversationScreen),
-          );
-          expect(
-            screen.privateMediaComposerEligible,
-            expected,
-            reason: scenario,
-          );
-          expect(
-            find.byKey(const ValueKey('group-private-media-selector')),
-            expected ? findsOneWidget : findsNothing,
-            reason: scenario,
-          );
-        }
-
-        await expectEligibility(
-          scenario: 'current admin group row and roster role',
-          localRole: GroupRole.admin,
-          memberRole: MemberRole.admin,
-          expected: true,
-        );
-        await expectEligibility(
-          scenario: 'stale admin group row with writer roster role',
-          localRole: GroupRole.admin,
-          memberRole: MemberRole.writer,
-          expected: false,
-        );
-        await expectEligibility(
-          scenario: 'reader group row cannot borrow an admin roster role',
-          localRole: GroupRole.member,
-          memberRole: MemberRole.admin,
-          expected: false,
-        );
+        expectNoGroupPrivateWireKeys([
+          (
+            boundary: 'ordinary media reliable',
+            payload: groupSendReliablePayloadForMessage(bridge, messageId),
+          ),
+          (
+            boundary: 'ordinary media publish',
+            payload: groupPublishPayloadForMessage(bridge, messageId),
+          ),
+          (
+            boundary: 'ordinary media replay',
+            payload: groupReplayPlaintextForMessage(bridge, messageId),
+          ),
+        ]);
       },
     );
 
@@ -4256,153 +4718,13 @@ void main() {
     );
 
     testWidgets(
-      'GPL-03A-W wired initial private upload reloads its durable parent and requalifies immediately before callback',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        final privateMsgRepo = _RevokeWriterOnPrivateParentSaveRepository(
-          groupRepo: groupRepo,
-          senderPeerId: testIdentity.peerId,
-        );
-        final tempDir = Directory.systemTemp.createTempSync(
-          'group-private-initial-boundary-',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final file = File('${tempDir.path}/private.png')
-          ..writeAsBytesSync(_tinyPngBytes);
-        var uploadCalls = 0;
-
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            messageRepo: privateMsgRepo,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-            initialAttachments: [file],
-            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
-            privateMediaAvailability:
-                const GroupPrivateMediaAvailability.enabledForTesting(),
-            uploadMediaFn:
-                ({
-                  required bridge,
-                  required localFilePath,
-                  required mime,
-                  required recipientPeerId,
-                  String? blobId,
-                  mediaFileManager,
-                  width,
-                  height,
-                  durationMs,
-                  waveform,
-                  allowedPeers,
-                  deleteSourceWhenDone = false,
-                  preparedArtifact,
-                }) async {
-                  uploadCalls++;
-                  return null;
-                },
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        final send = screen.onSend as Future<void> Function(String);
-        await tester.runAsync(() => send(''));
-        await pumpFrames(tester, count: 5);
-
-        expect(privateMsgRepo.sawPrivateParentSave, isTrue);
-        expect(privateMsgRepo.reloadsAfterPrivateParentSave, greaterThan(0));
-        expect(uploadCalls, 0);
-        expect(bridge.commandLog, isNot(contains('group:sendReliable')));
-        expect(bridge.commandLog, isNot(contains('group:publish')));
-        expect(
-          (await groupRepo.getMember(group.id, testIdentity.peerId))!.role,
-          MemberRole.reader,
-        );
-      },
-    );
-
-    testWidgets(
-      'GPL-03A-R wired initial private upload rejects a stale recipient ACL after parent persistence',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        final privateMsgRepo = _RemoveRecipientOnPrivateParentSaveRepository(
-          groupRepo: groupRepo,
-          recipientPeerId: 'peer-bob',
-        );
-        final tempDir = Directory.systemTemp.createTempSync(
-          'group-private-initial-recipient-boundary-',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final file = File('${tempDir.path}/private.png')
-          ..writeAsBytesSync(_tinyPngBytes);
-        var uploadCalls = 0;
-
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            messageRepo: privateMsgRepo,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-            initialAttachments: [file],
-            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
-            privateMediaAvailability:
-                const GroupPrivateMediaAvailability.enabledForTesting(),
-            uploadMediaFn:
-                ({
-                  required bridge,
-                  required localFilePath,
-                  required mime,
-                  required recipientPeerId,
-                  String? blobId,
-                  mediaFileManager,
-                  width,
-                  height,
-                  durationMs,
-                  waveform,
-                  allowedPeers,
-                  deleteSourceWhenDone = false,
-                  preparedArtifact,
-                }) async {
-                  uploadCalls++;
-                  return null;
-                },
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        final send = screen.onSend as Future<void> Function(String);
-        await tester.runAsync(() => send(''));
-        await pumpFrames(tester, count: 5);
-
-        expect(privateMsgRepo.sawPrivateParentSave, isTrue);
-        expect(await groupRepo.getMember(group.id, 'peer-bob'), isNull);
-        expect(uploadCalls, 0);
-        expect(bridge.commandLog, isNot(contains('group:sendReliable')));
-        expect(bridge.commandLog, isNot(contains('group:publish')));
-      },
-    );
-
-    testWidgets(
-      'GPL-03H wired private upload cannot replace a parent drifted while upload is in flight',
+      'P268 ordinary wired upload cannot replace a parent drifted while upload is in flight',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
         await saveActiveGroupMembers(groupRepo, group);
         final tempDir = Directory.systemTemp.createTempSync(
-          'group-private-upload-parent-drift-',
+          'group-ordinary-upload-parent-drift-',
         );
         addTearDown(() {
           if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
@@ -4421,7 +4743,6 @@ void main() {
             mediaRepo: mediaAttachmentRepo,
             mediaFileManager: FakeMediaFileManager(),
             initialAttachments: [file],
-            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
             privateMediaAvailability:
                 const GroupPrivateMediaAvailability.enabledForTesting(),
             uploadMediaFn:
@@ -4481,7 +4802,7 @@ void main() {
         final messageId = pending.single.messageId;
         final durableBeforeDrift = await msgRepo.getMessage(messageId);
         expect(durableBeforeDrift, isNotNull);
-        expect(durableBeforeDrift!.privateMediaPolicy.isPrivate, isTrue);
+        expect(durableBeforeDrift!.privateMediaPolicy.isOrdinary, isTrue);
         await msgRepo.saveMessage(
           durableBeforeDrift.copyWith(senderUsername: 'Drifted sender'),
         );
@@ -4498,6 +4819,7 @@ void main() {
         final durableAfterSend = await msgRepo.getMessage(messageId);
         expect(durableAfterSend, isNotNull);
         expect(durableAfterSend!.senderUsername, 'Drifted sender');
+        expect(durableAfterSend.privateMediaPolicy.isOrdinary, isTrue);
         final rows = await msgRepo.getMessagesPage(group.id);
         expect(rows, hasLength(1));
         expect(rows.single.id, messageId);
@@ -14145,15 +14467,11 @@ void main() {
 
         final savedMessage = await msgRepo.getLatestMessage(group.id);
         expect(savedMessage, isNotNull);
-        expect(
-          mediaFileManager.deletedPendingUploadDirs,
-          contains(savedMessage!.id),
-        );
+        final messageId = savedMessage!.id;
+        expect(savedMessage.privateMediaPolicy.isOrdinary, isTrue);
+        expect(mediaFileManager.deletedPendingUploadDirs, contains(messageId));
         final savedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(
-              savedMessage.id,
-              owner: MediaOwnerLane.group,
-            );
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
         expect(savedAttachments, hasLength(1));
         expect(savedAttachments.single.id, receivedBlobId);
         expect(savedAttachments.single.downloadStatus, 'done');
@@ -14164,6 +14482,20 @@ void main() {
           ),
           isEmpty,
         );
+        expectNoGroupPrivateWireKeys([
+          (
+            boundary: 'voice reliable',
+            payload: groupSendReliablePayloadForMessage(bridge, messageId),
+          ),
+          (
+            boundary: 'voice publish',
+            payload: groupPublishPayloadForMessage(bridge, messageId),
+          ),
+          (
+            boundary: 'voice replay',
+            payload: groupReplayPlaintextForMessage(bridge, messageId),
+          ),
+        ]);
       },
     );
 
