@@ -8,6 +8,17 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 const strictDissolvedLocalDeleteRequiredMessage =
     'Local-only group deletion requires a dissolved group.';
 
+/// Typed refusal for a stale dissolved-shell presentation snapshot.
+///
+/// This remains a [StateError] for compatibility with existing callers, but
+/// gives Plan 266's diagnostic decorator a structural way to distinguish an
+/// expected state race from an invoked cleanup failure. No exception text is
+/// inspected.
+class DissolvedGroupDeleteStateChangedException extends StateError {
+  DissolvedGroupDeleteStateChangedException()
+    : super(strictDissolvedLocalDeleteRequiredMessage);
+}
+
 /// Leaves a group and then deletes its local message history.
 Future<void> deleteGroupAndMessages({
   required Bridge bridge,
@@ -20,7 +31,8 @@ Future<void> deleteGroupAndMessages({
     layer: 'UC',
     event: 'DELETE_GROUP_AND_MESSAGES_START',
     details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'phase': deleteLocallyIfDissolved ? 'local_delete' : 'native',
+      'severity': 'info',
     },
   );
 
@@ -28,7 +40,7 @@ Future<void> deleteGroupAndMessages({
     if (deleteLocallyIfDissolved) {
       final observedGroup = await groupRepo.getGroup(groupId);
       if (observedGroup?.isDissolved != true) {
-        throw StateError(strictDissolvedLocalDeleteRequiredMessage);
+        throw DissolvedGroupDeleteStateChangedException();
       }
 
       // The swipe/dialog can outlive its row snapshot. Re-read at the actual
@@ -36,12 +48,10 @@ Future<void> deleteGroupAndMessages({
       // active again.
       final commitGroup = await groupRepo.getGroup(groupId);
       if (commitGroup == null || !commitGroup.isDissolved) {
-        throw StateError(strictDissolvedLocalDeleteRequiredMessage);
+        throw DissolvedGroupDeleteStateChangedException();
       }
 
-      final deletedCount = await groupMessageRepo.deleteMessagesForGroup(
-        groupId,
-      );
+      await groupMessageRepo.deleteMessagesForGroup(groupId);
       await groupRepo.removeAllMembers(groupId);
       await groupRepo.removeAllKeys(groupId);
       if (groupRepo is GroupKeyRotationDraftRepository) {
@@ -71,50 +81,41 @@ Future<void> deleteGroupAndMessages({
       emitFlowEvent(
         layer: 'UC',
         event: 'DELETE_GROUP_MESSAGES_PURGED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'deletedMessages': deletedCount,
-          'cleanupMode': 'local_only',
-        },
+        details: const {'phase': 'local_delete', 'severity': 'info'},
       );
 
       emitFlowEvent(
         layer: 'UC',
         event: 'DELETE_GROUP_AND_MESSAGES_SUCCESS',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'cleanupMode': 'local_only',
-        },
+        details: const {'phase': 'local_delete', 'severity': 'info'},
       );
       return;
     }
 
     await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
-    final deletedCount = await groupMessageRepo.deleteMessagesForGroup(groupId);
+    await groupMessageRepo.deleteMessagesForGroup(groupId);
 
     emitFlowEvent(
       layer: 'UC',
       event: 'DELETE_GROUP_MESSAGES_PURGED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'deletedMessages': deletedCount,
-        'cleanupMode': 'leave',
-      },
+      details: const {'phase': 'cleanup', 'severity': 'info'},
     );
 
     emitFlowEvent(
       layer: 'UC',
       event: 'DELETE_GROUP_AND_MESSAGES_SUCCESS',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'cleanupMode': 'leave',
-      },
+      details: const {'phase': 'cleanup', 'severity': 'info'},
     );
   } catch (e) {
+    final stateChanged = e is DissolvedGroupDeleteStateChangedException;
     emitFlowEvent(
       layer: 'UC',
       event: 'DELETE_GROUP_AND_MESSAGES_ERROR',
-      details: {'error': e.toString()},
+      details: {
+        if (!stateChanged) 'code': deleteLocallyIfDissolved ? 'EX10' : 'EX99',
+        'phase': deleteLocallyIfDissolved ? 'local_delete' : 'native',
+        'severity': stateChanged ? 'warning' : 'failure',
+      },
     );
     rethrow;
   }

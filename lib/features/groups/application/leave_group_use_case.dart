@@ -17,9 +17,7 @@ Future<void> leaveGroup({
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_LEAVE_USE_CASE_BEGIN',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
+    details: const {'phase': 'authority', 'severity': 'info'},
   );
 
   final group = await groupRepo.getGroup(groupId);
@@ -33,10 +31,7 @@ Future<void> leaveGroup({
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_LEAVE_USE_CASE_BLOCKED_LAST_ADMIN',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'adminCount': adminCount,
-        },
+        details: const {'phase': 'authority', 'severity': 'info'},
       );
       throw StateError(lastAdminLeaveBlockedMessage);
     }
@@ -62,8 +57,6 @@ Future<void> leaveGroup({
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_LEAVE_USE_CASE_SUCCESS',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
+    details: const {'phase': 'cleanup', 'severity': 'info'},
   );
 }

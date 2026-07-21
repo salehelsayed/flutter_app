@@ -32,12 +32,14 @@ import 'package:flutter_app/features/groups/application/delete_self_removed_grou
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -361,6 +363,14 @@ void main() {
       reactionRepository: reactionRepository,
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
+      resolveGroupExitSnapshotForTest: (groupId) =>
+          resolveGroupExitActionSnapshotForPresentation(
+            groupId: groupId,
+            identityRepository: identityRepo,
+            groupRepository: effectiveGroupRepo,
+            messageRepository: effectiveGroupMessageRepo,
+            loadPendingBroadcasts: loadGroupPendingBroadcasts,
+          ),
       deleteSelfRemovedGroupShell: deleteSelfRemovedGroupShell,
       groupMessageListener: gmListener,
       groupInviteListener: groupInviteListener,
@@ -3423,7 +3433,11 @@ void main() {
         await openRemovedExit(missingGroupName);
         await tester.tap(find.text(l10n.group_removed_delete_action));
         await pumpOrbitFrames(tester, count: 6);
-        expect(find.text(l10n.group_removed_delete_failed), findsOneWidget);
+        expect(
+          find.textContaining(l10n.group_removed_delete_failed),
+          findsOneWidget,
+        );
+        expect(find.textContaining('EX01'), findsOneWidget);
         expect(find.text(missingGroupName), findsOneWidget);
         expect(await missingRepo.getGroup(missingGroupId), isNotNull);
         expect(bridge.commandLog, isEmpty);
@@ -3944,6 +3958,109 @@ void main() {
         );
       },
     );
+
+    testWidgets('PB266-09 Orbit preserves the same route matrix and codes', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final l10n = AppLocalizationsEn();
+      final now = DateTime.utc(2026, 7, 21, 9);
+      const groupId = 'g-pb266-code-parity';
+      const groupName = 'Coded Exit Group';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: groupName,
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: now,
+          createdBy: 'peer-pb266-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await seedOrdinaryGroupExitState(
+        groupId: groupId,
+        adminPeerId: 'peer-pb266-admin',
+        joinedAt: now,
+      );
+      final selfMember = await groupRepo.getMember(
+        groupId,
+        testIdentity.peerId,
+      );
+      final queuedIntent = GroupExitIntent(
+        groupId: groupId,
+        intentId: 'pb266-orbit-intent',
+        selfPeerId: testIdentity.peerId,
+        selfJoinedAt: selfMember!.joinedAt,
+        state: GroupExitIntentState.queued,
+        pendingBroadcastId: 'pb266-orbit-notice',
+        createdAt: now,
+        updatedAt: now,
+      );
+      const facts = <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        GroupExitProcessDiagnosticFact.nativeNodeUnavailable(),
+        GroupExitProcessDiagnosticFact.nativeRejected(),
+        GroupExitProcessDiagnosticFact.nativeUncertain(),
+        GroupExitProcessDiagnosticFact.cleanupIncomplete(),
+        GroupExitProcessDiagnosticFact.unexpected(
+          GroupExitDiagnosticPhase.native,
+        ),
+      ];
+      var activeFact = facts.first;
+      var requestCalls = 0;
+      setGroupExitIntentActionSinks(
+        requestLeave: (requestedGroupId) async {
+          expect(requestedGroupId, groupId);
+          requestCalls++;
+          return GroupExitIntentRequestResult.withDiagnosticFacts(
+            status:
+                activeFact.outcome ==
+                    GroupExitProcessDiagnosticOutcome.authorityUnavailable
+                ? GroupExitIntentRequestStatus.unavailable
+                : GroupExitIntentRequestStatus.failed,
+            intent:
+                activeFact.outcome ==
+                    GroupExitProcessDiagnosticOutcome.authorityUnavailable
+                ? null
+                : queuedIntent,
+            cause: StateError('hostile fixture cause'),
+            diagnosticFacts: [activeFact],
+          );
+        },
+      );
+
+      for (final fact in facts) {
+        activeFact = fact;
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await tester.pump();
+        await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpOrbitFrames(tester, count: 8);
+
+        final code = groupExitPublicCodeForFact(fact).databaseValue;
+        expect(find.textContaining(code), findsOneWidget, reason: code);
+        expect(find.textContaining('hostile fixture'), findsNothing);
+        expect(find.text(groupName), findsOneWidget, reason: code);
+        expect(await groupRepo.getGroup(groupId), isNotNull, reason: code);
+        expect(
+          bridge.commandLog,
+          isNot(contains(anyOf('group:publish', 'group:leave'))),
+          reason: code,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
+
+      expect(requestCalls, facts.length);
+    });
 
     testWidgets(
       'normal exit confirms once and last-admin race reopens guidance',

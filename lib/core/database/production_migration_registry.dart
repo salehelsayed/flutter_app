@@ -103,6 +103,7 @@ import 'migrations/100_direct_private_media_lifecycle.dart';
 import 'migrations/101_group_private_media_lifecycle.dart';
 import 'migrations/102_groups_self_removed_at.dart';
 import 'migrations/103_group_exit_intents.dart';
+import 'migrations/104_group_exit_diagnostics.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -595,6 +596,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '103_group_exit_intents',
     runGroupExitIntentsMigration,
   ),
+  ProductionMigrationEntry(
+    104,
+    '104_group_exit_diagnostics',
+    runGroupExitDiagnosticsMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1076,6 +1082,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     103,
     '103_group_exit_intents',
     runGroupExitIntentsMigration,
+  ),
+  ProductionMigrationEntry(
+    104,
+    '104_group_exit_diagnostics',
+    runGroupExitDiagnosticsMigration,
   ),
 ]);
 

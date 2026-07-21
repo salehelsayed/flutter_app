@@ -80,19 +80,25 @@ enum VoluntaryLeaveNoticeAttemptClassification {
   retryable,
 }
 
+enum VoluntaryLeaveOfflineReplayStatus {
+  notAttempted,
+  notRequired,
+  aggregateAccepted,
+  preparationDegraded,
+  aggregateStoreDegraded,
+}
+
 class VoluntaryLeaveNoticeAttemptResult {
   const VoluntaryLeaveNoticeAttemptResult({
     required this.classification,
     required this.livePublishResult,
-    required this.offlineDeliveredPeerIds,
-    required this.offlineFailedPeerIds,
+    required this.offlineReplayStatus,
     this.retryableCause,
   });
 
   final VoluntaryLeaveNoticeAttemptClassification classification;
   final Map<String, dynamic>? livePublishResult;
-  final List<String> offlineDeliveredPeerIds;
-  final List<String> offlineFailedPeerIds;
+  final VoluntaryLeaveOfflineReplayStatus offlineReplayStatus;
   final Object? retryableCause;
 
   bool get canAdvance =>
@@ -262,8 +268,8 @@ Future<VoluntaryLeaveNoticePreparationResult> prepareVoluntaryLeaveNotice({
 }
 
 /// Attempts the already-signed notice without mutating or clearing its durable
-/// row. Transport failures are classified as degradation after every salvage
-/// recipient gets an attempt; missing local key/state remains retryable.
+/// row. Only the named live/replay-crypto/aggregate-inbox operations can
+/// degrade; missing or inconsistent local authority remains retryable.
 Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -297,8 +303,7 @@ Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
     return VoluntaryLeaveNoticeAttemptResult(
       classification: VoluntaryLeaveNoticeAttemptClassification.retryable,
       livePublishResult: null,
-      offlineDeliveredPeerIds: const [],
-      offlineFailedPeerIds: const [],
+      offlineReplayStatus: VoluntaryLeaveOfflineReplayStatus.notAttempted,
       retryableCause: StateError(
         'Prepared voluntary leave notice context is inconsistent',
       ),
@@ -315,12 +320,14 @@ Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
     return VoluntaryLeaveNoticeAttemptResult(
       classification: VoluntaryLeaveNoticeAttemptClassification.retryable,
       livePublishResult: null,
-      offlineDeliveredPeerIds: const [],
-      offlineFailedPeerIds: const [],
+      offlineReplayStatus: VoluntaryLeaveOfflineReplayStatus.notAttempted,
       retryableCause: cryptographicAuthorityFailure,
     );
   }
 
+  final recipients = _normalizedVoluntaryLeaveRecipientPeerIds(
+    pending.recipientPeerIds,
+  );
   Map<String, dynamic>? livePublishResult;
   var liveDelivered = false;
   try {
@@ -338,43 +345,50 @@ Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
       senderKeyPackageId: prepared.senderBinding.keyPackageId,
       messageId: sourceEventId,
     );
-    liveDelivered = livePublishResult['ok'] == true;
+    final topicPeers = livePublishResult['topicPeers'];
+    liveDelivered =
+        livePublishResult['ok'] == true &&
+        (recipients.isEmpty || (topicPeers is num && topicPeers > 0));
   } catch (_) {
     // Live topic delivery is best-effort once the signed notice is prepared.
   }
 
-  final recipients = pending.recipientPeerIds;
   if (recipients.isEmpty) {
     return VoluntaryLeaveNoticeAttemptResult(
       classification: liveDelivered
           ? VoluntaryLeaveNoticeAttemptClassification.delivered
           : VoluntaryLeaveNoticeAttemptClassification.degraded,
       livePublishResult: livePublishResult,
-      offlineDeliveredPeerIds: const [],
-      offlineFailedPeerIds: const [],
+      offlineReplayStatus: VoluntaryLeaveOfflineReplayStatus.notRequired,
     );
   }
 
   final GroupKeyInfo replayKey;
   try {
     final loadedKey = await groupRepo.getLatestKey(pending.groupId);
-    if (loadedKey == null) {
-      throw StateError('No group key available for voluntary leave replay');
+    if (loadedKey == null ||
+        !_hasExactVoluntaryLeaveReplayKeyAuthority(
+          loadedKey,
+          pending.groupId,
+        )) {
+      throw StateError(
+        'Exact group key authority is unavailable for voluntary leave replay',
+      );
     }
     replayKey = loadedKey;
   } catch (error) {
     return VoluntaryLeaveNoticeAttemptResult(
       classification: VoluntaryLeaveNoticeAttemptClassification.retryable,
       livePublishResult: livePublishResult,
-      offlineDeliveredPeerIds: const [],
-      offlineFailedPeerIds: const [],
+      offlineReplayStatus: VoluntaryLeaveOfflineReplayStatus.notAttempted,
       retryableCause: error,
     );
   }
 
   final inboxPlaintext = _voluntaryLeaveInboxPlaintext(prepared);
+  final String aggregateEnvelope;
   try {
-    final aggregateEnvelope = await buildGroupOfflineReplayEnvelope(
+    aggregateEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: bridge,
       groupRepo: groupRepo,
       groupId: pending.groupId,
@@ -389,7 +403,18 @@ Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
       senderKeyPackageId: prepared.senderBinding.keyPackageId,
       messageId: prepared.timelineMessage.id,
       recipientPeerIds: recipients,
+      classifyPreparationCryptoFailures: true,
     );
+  } on GroupOfflineReplayPreparationException {
+    return VoluntaryLeaveNoticeAttemptResult(
+      classification: VoluntaryLeaveNoticeAttemptClassification.degraded,
+      livePublishResult: livePublishResult,
+      offlineReplayStatus:
+          VoluntaryLeaveOfflineReplayStatus.preparationDegraded,
+    );
+  }
+
+  try {
     await callGroupInboxStore(
       bridge,
       pending.groupId,
@@ -397,57 +422,46 @@ Future<VoluntaryLeaveNoticeAttemptResult> attemptPreparedVoluntaryLeaveNotice({
       recipientPeerIds: recipients,
       preserveRecipientPeerIds: true,
     );
-    return VoluntaryLeaveNoticeAttemptResult(
-      classification: liveDelivered
-          ? VoluntaryLeaveNoticeAttemptClassification.delivered
-          : VoluntaryLeaveNoticeAttemptClassification.degraded,
-      livePublishResult: livePublishResult,
-      offlineDeliveredPeerIds: List<String>.unmodifiable(recipients),
-      offlineFailedPeerIds: const [],
-    );
   } catch (_) {
-    // Preserve the aggregate wire on the normal path, but salvage recipients
-    // independently after aggregate preparation or storage degrades.
+    return VoluntaryLeaveNoticeAttemptResult(
+      classification: VoluntaryLeaveNoticeAttemptClassification.degraded,
+      livePublishResult: livePublishResult,
+      offlineReplayStatus:
+          VoluntaryLeaveOfflineReplayStatus.aggregateStoreDegraded,
+    );
   }
 
-  final deliveredPeerIds = <String>[];
-  final failedPeerIds = <String>[];
-  for (final recipientPeerId in recipients) {
-    try {
-      final recipientEnvelope = await buildGroupOfflineReplayEnvelope(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        groupId: pending.groupId,
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        plaintext: inboxPlaintext,
-        senderPeerId: prepared.identity.peerId,
-        senderPublicKey: prepared.identity.publicKey,
-        senderPrivateKey: prepared.identity.privateKey,
-        keyInfo: replayKey,
-        senderDeviceId: prepared.senderBinding.deviceId,
-        senderTransportPeerId: prepared.senderBinding.transportPeerId,
-        senderKeyPackageId: prepared.senderBinding.keyPackageId,
-        messageId: prepared.timelineMessage.id,
-        recipientPeerIds: [recipientPeerId],
-      );
-      await callGroupInboxStore(
-        bridge,
-        pending.groupId,
-        recipientEnvelope,
-        recipientPeerIds: [recipientPeerId],
-        preserveRecipientPeerIds: true,
-      );
-      deliveredPeerIds.add(recipientPeerId);
-    } catch (_) {
-      failedPeerIds.add(recipientPeerId);
-    }
-  }
   return VoluntaryLeaveNoticeAttemptResult(
-    classification: VoluntaryLeaveNoticeAttemptClassification.degraded,
+    classification: liveDelivered
+        ? VoluntaryLeaveNoticeAttemptClassification.delivered
+        : VoluntaryLeaveNoticeAttemptClassification.degraded,
     livePublishResult: livePublishResult,
-    offlineDeliveredPeerIds: List<String>.unmodifiable(deliveredPeerIds),
-    offlineFailedPeerIds: List<String>.unmodifiable(failedPeerIds),
+    offlineReplayStatus: VoluntaryLeaveOfflineReplayStatus.aggregateAccepted,
   );
+}
+
+List<String> _normalizedVoluntaryLeaveRecipientPeerIds(
+  List<String> recipientPeerIds,
+) {
+  final normalized =
+      recipientPeerIds
+          .map((peerId) => peerId.trim())
+          .where((peerId) => peerId.isNotEmpty)
+          .toSet()
+          .toList(growable: true)
+        ..sort();
+  return List<String>.unmodifiable(normalized);
+}
+
+bool _hasExactVoluntaryLeaveReplayKeyAuthority(
+  GroupKeyInfo key,
+  String expectedGroupId,
+) {
+  final keyMaterial = key.encryptedKey.trim();
+  return key.groupId == expectedGroupId &&
+      key.keyGeneration > 0 &&
+      keyMaterial.isNotEmpty &&
+      keyMaterial == key.encryptedKey;
 }
 
 Future<Object?> _preparedVoluntaryLeaveCryptographicAuthorityFailure({

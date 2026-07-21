@@ -858,6 +858,104 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_section_preferences => 'PRÄFERENZEN';
 
   @override
+  String get settings_group_exit_diagnostics_section => 'SUPPORT';
+
+  @override
+  String get settings_group_exit_diagnostics_title => 'Gruppenaustrittsverlauf';
+
+  @override
+  String settings_group_exit_diagnostics_count(int count) {
+    return '$count gespeicherte Einträge';
+  }
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable =>
+      'Der Gruppenaustrittsverlauf ist nicht verfügbar.';
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable_hint =>
+      'Tippe, um es erneut zu versuchen.';
+
+  @override
+  String get settings_group_exit_diagnostics_empty =>
+      'Keine gespeicherten Gruppenaustrittseinträge.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload => 'Neu laden';
+
+  @override
+  String get settings_group_exit_diagnostics_clear => 'Verlauf löschen';
+
+  @override
+  String get settings_group_exit_diagnostics_reloaded =>
+      'Der Gruppenaustrittsverlauf wurde neu geladen.';
+
+  @override
+  String get settings_group_exit_diagnostics_cleared =>
+      'Der Gruppenaustrittsverlauf wurde gelöscht.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload_failed =>
+      'Der Gruppenaustrittsverlauf konnte nicht neu geladen werden. Vorhandene Einträge bleiben unverändert.';
+
+  @override
+  String get settings_group_exit_diagnostics_clear_failed =>
+      'Der Gruppenaustrittsverlauf konnte nicht gelöscht werden. Vorhandene Einträge bleiben unverändert.';
+
+  @override
+  String get settings_group_exit_diagnostics_close =>
+      'Gruppenaustrittsverlauf schließen';
+
+  @override
+  String settings_group_exit_diagnostics_group_reference(String groupRef) {
+    return 'Gruppenreferenz $groupRef';
+  }
+
+  @override
+  String get settings_group_exit_diagnostic_ex01 =>
+      'Die Berechtigung zum Austritt konnte nicht bestätigt werden.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex02 =>
+      'Aktualisierungen der Mitgliederrollen konnten nicht abgeschlossen werden.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex03 =>
+      'Die Austrittsmitteilung konnte nicht vorbereitet werden.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex04 =>
+      'Die Gruppen-Engine ist nicht verfügbar.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex05 =>
+      'Die Gruppen-Engine hat den Austritt abgelehnt.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex06 =>
+      'Das Ergebnis des Austritts konnte nicht bestätigt werden.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex07 =>
+      'Die Gruppe wurde verlassen, aber die lokale Bereinigung ist unvollständig.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex08 =>
+      'Die Austrittsmitteilung konnte nicht alle Mitglieder erreichen.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex09 =>
+      'Die Rotation des Gruppenschlüssels wurde aufgeschoben.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex10 =>
+      'Das lokale Löschen der Gruppe ist unvollständig.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex99 =>
+      'Beim Gruppenaustritt ist ein unerwartetes Ergebnis aufgetreten.';
+
+  @override
   String get settings_background => 'Hintergrund';
 
   @override

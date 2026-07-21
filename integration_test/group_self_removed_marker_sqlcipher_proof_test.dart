@@ -125,14 +125,14 @@ void main() {
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
-          version: currentIdentityDatabaseVersion,
+          version: 102,
           singleInstance: false,
           onCreate: runProductionOnCreate,
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 103);
-        expect(await _userVersion(db), 103);
+        expect(currentIdentityDatabaseVersion, 104);
+        expect(await _userVersion(db), 102);
         final entry = productionUpgradeMigrations.singleWhere(
           (candidate) => candidate.version == 102,
         );

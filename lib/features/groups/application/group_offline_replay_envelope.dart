@@ -47,6 +47,25 @@ class GroupOfflineReplaySignatureException implements Exception {
   String toString() => 'GroupOfflineReplaySignatureException($reason)';
 }
 
+enum GroupOfflineReplayPreparationOperation { groupEncrypt, payloadSign }
+
+/// Opt-in classification for the two native crypto operations used while
+/// preparing a replay envelope. Other validation and state failures retain
+/// their original exception identity so callers can keep them fail-closed.
+class GroupOfflineReplayPreparationException implements Exception {
+  const GroupOfflineReplayPreparationException({
+    required this.operation,
+    required this.cause,
+  });
+
+  final GroupOfflineReplayPreparationOperation operation;
+  final Object cause;
+
+  @override
+  String toString() =>
+      'GroupOfflineReplayPreparationException(${operation.name})';
+}
+
 class _ReplaySignatureVerification {
   const _ReplaySignatureVerification({
     required this.payloadType,
@@ -100,28 +119,40 @@ Future<String> buildGroupOfflineReplayEnvelope({
   String? senderKeyPackageId,
   List<String>? recipientPeerIds,
   GroupReactionNotificationExtensionInput? reactionNotificationExtension,
+  bool classifyPreparationCryptoFailures = false,
 }) async {
   final resolvedKey = keyInfo ?? await _loadReplayKey(groupRepo, groupId);
-  final encryptResult = await callGroupEncrypt(
-    bridge,
-    resolvedKey.encryptedKey,
-    plaintext,
-  );
-
-  final ciphertext = encryptResult['ciphertext'];
-  final nonce = encryptResult['nonce'];
-  if (encryptResult['ok'] != true ||
-      ciphertext is! String ||
-      ciphertext.isEmpty ||
-      nonce is! String ||
-      nonce.isEmpty) {
-    throw BridgeCommandException(
-      'group.encrypt',
-      encryptResult['errorCode']?.toString() ?? 'GROUP_ENCRYPT_FAILED',
-      encryptResult['errorMessage']?.toString() ??
-          'group.encrypt did not return ciphertext and nonce',
+  Future<Map<String, dynamic>> encryptReplayPayload() async {
+    final result = await callGroupEncrypt(
+      bridge,
+      resolvedKey.encryptedKey,
+      plaintext,
     );
+    final ciphertext = result['ciphertext'];
+    final nonce = result['nonce'];
+    if (result['ok'] != true ||
+        ciphertext is! String ||
+        ciphertext.isEmpty ||
+        nonce is! String ||
+        nonce.isEmpty) {
+      throw BridgeCommandException(
+        'group.encrypt',
+        result['errorCode']?.toString() ?? 'GROUP_ENCRYPT_FAILED',
+        result['errorMessage']?.toString() ??
+            'group.encrypt did not return ciphertext and nonce',
+      );
+    }
+    return result;
   }
+
+  final encryptResult = classifyPreparationCryptoFailures
+      ? await _classifyReplayPreparationFailure(
+          operation: GroupOfflineReplayPreparationOperation.groupEncrypt,
+          action: encryptReplayPayload,
+        )
+      : await encryptReplayPayload();
+  final ciphertext = encryptResult['ciphertext'] as String;
+  final nonce = encryptResult['nonce'] as String;
 
   final resolvedSenderPeerId = _requiredTrimmed(senderPeerId, 'senderPeerId');
   final resolvedSenderPublicKey = _requiredTrimmed(
@@ -158,15 +189,25 @@ Future<String> buildGroupOfflineReplayEnvelope({
     senderKeyPackageId: normalizedSenderKeyPackageId,
     recipientSetHash: recipientSetHash,
   );
-  final signResult = await callSignPayload(
-    bridge: bridge,
-    dataToSign: signedPayload,
-    privateKey: senderPrivateKey,
-  );
-  final signature = signResult['signature'];
-  if (signResult['ok'] != true || signature is! String || signature.isEmpty) {
-    throw StateError('Failed to sign group offline replay envelope');
+  Future<String> signReplayPayload() async {
+    final result = await callSignPayload(
+      bridge: bridge,
+      dataToSign: signedPayload,
+      privateKey: senderPrivateKey,
+    );
+    final signature = result['signature'];
+    if (result['ok'] != true || signature is! String || signature.isEmpty) {
+      throw StateError('Failed to sign group offline replay envelope');
+    }
+    return signature;
   }
+
+  final signature = classifyPreparationCryptoFailures
+      ? await _classifyReplayPreparationFailure(
+          operation: GroupOfflineReplayPreparationOperation.payloadSign,
+          action: signReplayPayload,
+        )
+      : await signReplayPayload();
 
   final baseEnvelope = <String, Object?>{
     'kind': groupOfflineReplayEnvelopeKind,
@@ -210,6 +251,23 @@ Future<String> buildGroupOfflineReplayEnvelope({
     replayRecipientSetHash: recipientSetHash,
   );
   return jsonEncode({...baseEnvelope, 'notificationExtension': extension});
+}
+
+Future<T> _classifyReplayPreparationFailure<T>({
+  required GroupOfflineReplayPreparationOperation operation,
+  required Future<T> Function() action,
+}) async {
+  try {
+    return await action();
+  } catch (error, stackTrace) {
+    Error.throwWithStackTrace(
+      GroupOfflineReplayPreparationException(
+        operation: operation,
+        cause: error,
+      ),
+      stackTrace,
+    );
+  }
 }
 
 Future<void> storeGroupOfflineReplayEnvelope({

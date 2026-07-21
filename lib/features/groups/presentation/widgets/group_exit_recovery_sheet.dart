@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnostic_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/presentation/group_exit_diagnostic_presenter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 enum GroupExitPromotionUiResult { readyToLeave, pendingSync, failed }
@@ -8,6 +11,9 @@ enum GroupExitRecoveryMode { soleAdmin, pendingRoleSync, queuedLeave }
 
 /// Result of attempting to cancel an already-persisted queued leave.
 enum GroupExitQueuedCancelUiResult { cancelled, tooLate, failed }
+
+typedef GroupExitDiagnosticActionRef =
+    ({String groupId, String intentId})? Function();
 
 enum _GroupExitSheetStage {
   choices,
@@ -30,6 +36,10 @@ class GroupExitRecoverySheet extends StatefulWidget {
     required Future<bool> Function() onRetryPendingSync,
     required Future<bool> Function() onContinueLeave,
     required Future<bool> Function() onDissolve,
+    this.diagnosticGroupId,
+    this.diagnosticIntentId,
+    this.initialDiagnosticCode,
+    this.diagnosticActionRef,
   }) : mode = pendingRoleSync
            ? GroupExitRecoveryMode.pendingRoleSync
            : GroupExitRecoveryMode.soleAdmin,
@@ -53,6 +63,10 @@ class GroupExitRecoverySheet extends StatefulWidget {
     required this.groupName,
     required this.onLeaveWhenSyncCompletes,
     required this.onTryAgain,
+    this.diagnosticGroupId,
+    this.diagnosticIntentId,
+    this.initialDiagnosticCode,
+    this.diagnosticActionRef,
   }) : candidates = const [],
        mode = GroupExitRecoveryMode.pendingRoleSync,
        onPromote = null,
@@ -68,6 +82,10 @@ class GroupExitRecoverySheet extends StatefulWidget {
     required this.onTryAgain,
     required this.onCancelQueuedLeave,
     required this.onRefreshQueuedState,
+    this.diagnosticGroupId,
+    this.diagnosticIntentId,
+    this.initialDiagnosticCode,
+    this.diagnosticActionRef,
   }) : candidates = const [],
        mode = GroupExitRecoveryMode.queuedLeave,
        onPromote = null,
@@ -88,6 +106,10 @@ class GroupExitRecoverySheet extends StatefulWidget {
   final Future<bool> Function()? onTryAgain;
   final Future<GroupExitQueuedCancelUiResult> Function()? onCancelQueuedLeave;
   final Future<void> Function()? onRefreshQueuedState;
+  final String? diagnosticGroupId;
+  final String? diagnosticIntentId;
+  final GroupExitDiagnosticPublicCode? initialDiagnosticCode;
+  final GroupExitDiagnosticActionRef? diagnosticActionRef;
 
   @override
   State<GroupExitRecoverySheet> createState() => _GroupExitRecoverySheetState();
@@ -99,11 +121,41 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
   bool _busy = false;
   bool _cancelTooLate = false;
   bool _cancelFailed = false;
+  GroupExitDiagnosticPublicCode? _diagnosticCode;
 
   @override
   void initState() {
     super.initState();
     _stage = _initialStage(widget.mode);
+    _diagnosticCode = widget.initialDiagnosticCode;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reloadDiagnosticCode();
+    });
+  }
+
+  @override
+  void didUpdateWidget(GroupExitRecoverySheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.diagnosticGroupId != widget.diagnosticGroupId ||
+        oldWidget.diagnosticIntentId != widget.diagnosticIntentId) {
+      _diagnosticCode = widget.initialDiagnosticCode;
+      _reloadDiagnosticCode();
+    }
+  }
+
+  Future<void> _reloadDiagnosticCode() async {
+    final dynamicRef = widget.diagnosticActionRef?.call();
+    final groupId = dynamicRef?.groupId ?? widget.diagnosticGroupId;
+    final intentId = dynamicRef?.intentId ?? widget.diagnosticIntentId;
+    if (groupId == null || intentId == null) return;
+    final lookup = await loadGroupExitDiagnosticsForAction(
+      groupId: groupId,
+      intentId: intentId,
+    );
+    if (!mounted || !lookup.isAvailable || lookup.diagnostics.isEmpty) return;
+    final code = lookup.diagnostics.first.publicCode;
+    if (code == _diagnosticCode) return;
+    setState(() => _diagnosticCode = code);
   }
 
   _GroupExitSheetStage _initialStage(GroupExitRecoveryMode mode) {
@@ -159,7 +211,10 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
     try {
       closed = await action();
     } catch (_) {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        await _reloadDiagnosticCode();
+        if (mounted) setState(() => _busy = false);
+      }
       return;
     }
     if (!mounted) return;
@@ -167,6 +222,8 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
       Navigator.of(context).pop();
       return;
     }
+    await _reloadDiagnosticCode();
+    if (!mounted) return;
     setState(() => _busy = false);
   }
 
@@ -274,6 +331,7 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
                     icon: const Icon(Icons.close),
                   ),
                 ),
+                ..._buildDiagnostic(context),
                 ..._buildStage(context),
               ],
             ),
@@ -281,6 +339,27 @@ class _GroupExitRecoverySheetState extends State<GroupExitRecoverySheet> {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildDiagnostic(BuildContext context) {
+    final code = _diagnosticCode;
+    if (code == null) return const <Widget>[];
+    final message = presentGroupExitDiagnostic(
+      AppLocalizations.of(context)!,
+      code,
+    );
+    return <Widget>[
+      Semantics(
+        liveRegion: true,
+        label: message,
+        child: Text(
+          message,
+          key: const ValueKey('group-exit-recovery-diagnostic-code'),
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      ),
+      const SizedBox(height: 12),
+    ];
   }
 
   List<Widget> _buildStage(BuildContext context) {

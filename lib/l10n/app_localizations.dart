@@ -1480,6 +1480,156 @@ abstract class AppLocalizations {
   /// **'PREFERENCES'**
   String get settings_section_preferences;
 
+  /// No description provided for @settings_group_exit_diagnostics_section.
+  ///
+  /// In en, this message translates to:
+  /// **'SUPPORT'**
+  String get settings_group_exit_diagnostics_section;
+
+  /// No description provided for @settings_group_exit_diagnostics_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Group exit history'**
+  String get settings_group_exit_diagnostics_title;
+
+  /// No description provided for @settings_group_exit_diagnostics_count.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} saved records'**
+  String settings_group_exit_diagnostics_count(int count);
+
+  /// No description provided for @settings_group_exit_diagnostics_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Group exit history is unavailable.'**
+  String get settings_group_exit_diagnostics_unavailable;
+
+  /// No description provided for @settings_group_exit_diagnostics_unavailable_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to try again.'**
+  String get settings_group_exit_diagnostics_unavailable_hint;
+
+  /// No description provided for @settings_group_exit_diagnostics_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No saved group exit records.'**
+  String get settings_group_exit_diagnostics_empty;
+
+  /// No description provided for @settings_group_exit_diagnostics_reload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
+  String get settings_group_exit_diagnostics_reload;
+
+  /// No description provided for @settings_group_exit_diagnostics_clear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear history'**
+  String get settings_group_exit_diagnostics_clear;
+
+  /// No description provided for @settings_group_exit_diagnostics_reloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Group exit history reloaded.'**
+  String get settings_group_exit_diagnostics_reloaded;
+
+  /// No description provided for @settings_group_exit_diagnostics_cleared.
+  ///
+  /// In en, this message translates to:
+  /// **'Group exit history cleared.'**
+  String get settings_group_exit_diagnostics_cleared;
+
+  /// No description provided for @settings_group_exit_diagnostics_reload_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t reload group exit history. Existing records are unchanged.'**
+  String get settings_group_exit_diagnostics_reload_failed;
+
+  /// No description provided for @settings_group_exit_diagnostics_clear_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t clear group exit history. Existing records are unchanged.'**
+  String get settings_group_exit_diagnostics_clear_failed;
+
+  /// No description provided for @settings_group_exit_diagnostics_close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close group exit history'**
+  String get settings_group_exit_diagnostics_close;
+
+  /// No description provided for @settings_group_exit_diagnostics_group_reference.
+  ///
+  /// In en, this message translates to:
+  /// **'Group reference {groupRef}'**
+  String settings_group_exit_diagnostics_group_reference(String groupRef);
+
+  /// No description provided for @settings_group_exit_diagnostic_ex01.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit authority could not be established.'**
+  String get settings_group_exit_diagnostic_ex01;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex02.
+  ///
+  /// In en, this message translates to:
+  /// **'Membership-role updates could not finish.'**
+  String get settings_group_exit_diagnostic_ex02;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex03.
+  ///
+  /// In en, this message translates to:
+  /// **'The leave notice could not be prepared.'**
+  String get settings_group_exit_diagnostic_ex03;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex04.
+  ///
+  /// In en, this message translates to:
+  /// **'The group engine is unavailable.'**
+  String get settings_group_exit_diagnostic_ex04;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex05.
+  ///
+  /// In en, this message translates to:
+  /// **'The group engine rejected the leave request.'**
+  String get settings_group_exit_diagnostic_ex05;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex06.
+  ///
+  /// In en, this message translates to:
+  /// **'The leave result could not be confirmed.'**
+  String get settings_group_exit_diagnostic_ex06;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex07.
+  ///
+  /// In en, this message translates to:
+  /// **'The group was left, but local cleanup is incomplete.'**
+  String get settings_group_exit_diagnostic_ex07;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex08.
+  ///
+  /// In en, this message translates to:
+  /// **'The leave notice could not reach every member.'**
+  String get settings_group_exit_diagnostic_ex08;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex09.
+  ///
+  /// In en, this message translates to:
+  /// **'Group-key rotation is deferred.'**
+  String get settings_group_exit_diagnostic_ex09;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex10.
+  ///
+  /// In en, this message translates to:
+  /// **'Local group deletion is incomplete.'**
+  String get settings_group_exit_diagnostic_ex10;
+
+  /// No description provided for @settings_group_exit_diagnostic_ex99.
+  ///
+  /// In en, this message translates to:
+  /// **'An unexpected group-exit result occurred.'**
+  String get settings_group_exit_diagnostic_ex99;
+
   /// No description provided for @settings_background.
   ///
   /// In en, this message translates to:

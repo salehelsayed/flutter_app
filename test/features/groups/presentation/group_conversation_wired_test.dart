@@ -35,13 +35,17 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnostic_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -1401,6 +1405,8 @@ void main() {
         forGroup: (_) async => null,
         all: () async => const <GroupExitIntent>[],
       );
+      setGroupExitIntentActionSinks();
+      setGroupExitDiagnosticAccessSink();
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-1',
@@ -1416,6 +1422,8 @@ void main() {
       UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
       groupRecoveryGate.resetForTest();
       setGroupExitIntentAccessSinks();
+      setGroupExitIntentActionSinks();
+      setGroupExitDiagnosticAccessSink();
     });
 
     Widget buildWidget({
@@ -1635,6 +1643,87 @@ void main() {
         expect(screen.onAttach, isNotNull);
         expect(screen.onQuoteReply, isNotNull);
         expect(screen.onReactionSelected, isNotNull);
+      },
+    );
+
+    testWidgets(
+      'PB266-10 conversation reaches current coded recovery after remount',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final at = DateTime.utc(2026, 7, 21, 9, 30);
+        final self = await groupRepo.getMember(group.id, testIdentity.peerId);
+        final queuedIntent = GroupExitIntent(
+          groupId: group.id,
+          intentId: 'pb266-conversation-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: self!.joinedAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb266-conversation-notice',
+          createdAt: at,
+          updatedAt: at,
+        );
+        final diagnostic = GroupExitDiagnostic.create(
+          occurredAt: at,
+          groupId: group.id,
+          intentId: queuedIntent.intentId,
+          kind: GroupExitDiagnosticKind.voluntary,
+          severity: GroupExitDiagnosticSeverity.failure,
+          phase: GroupExitDiagnosticPhase.native,
+          publicCode: GroupExitDiagnosticPublicCode.ex04,
+          reason: GroupExitDiagnosticReason.nodeNotInitialized,
+        );
+        var exactLookupCalls = 0;
+        setGroupExitIntentAccessSinks(
+          forGroup: (groupId) async =>
+              groupId == group.id ? queuedIntent : null,
+          all: () async => [queuedIntent],
+        );
+        setGroupExitDiagnosticAccessSink(
+          loadForAction: ({required groupId, required intentId}) async {
+            expect(groupId, group.id);
+            expect(intentId, queuedIntent.intentId);
+            exactLookupCalls++;
+            return [diagnostic];
+          },
+        );
+        setGroupExitIntentActionSinks(
+          resolveSnapshot: (groupId) => resolveGroupExitSnapshot(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            selfPeerId: testIdentity.peerId,
+            messageRepo: msgRepo,
+          ),
+          requestLeave: (_) async => GroupExitIntentRequestResult(
+            status: GroupExitIntentRequestStatus.queued,
+            intent: queuedIntent,
+          ),
+        );
+
+        for (var mount = 0; mount < 2; mount++) {
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester, count: 20);
+          await tester.tap(find.byIcon(Icons.info_outline));
+          await pumpFrames(tester, count: 20);
+          expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+          final leave = find.byKey(const ValueKey('group-leave-button'));
+          await tester.scrollUntilVisible(
+            leave,
+            200,
+            scrollable: find.byType(Scrollable).first,
+          );
+          await tester.tap(leave);
+          await pumpFrames(tester, count: 20);
+
+          expect(find.textContaining('EX04'), findsOneWidget);
+          expect(find.textContaining(group.id), findsNothing);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        expect(exactLookupCalls, greaterThanOrEqualTo(2));
       },
     );
 

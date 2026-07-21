@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
@@ -150,6 +151,9 @@ class StartupRouter extends StatefulWidget {
   /// The group message repository for group message persistence.
   final GroupMessageRepository? groupMessageRepository;
 
+  /// Release-visible, bounded group-exit diagnostic history.
+  final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
+
   /// Local invite delivery status repository for group invite UX.
   final GroupInviteDeliveryAttemptRepository?
   groupInviteDeliveryAttemptRepository;
@@ -267,6 +271,7 @@ class StartupRouter extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupExitDiagnosticRepository,
     this.groupInviteDeliveryAttemptRepository,
     this.groupPendingKeyRepairRepository,
     this.requestGroupKeyRepair,
@@ -401,6 +406,7 @@ class _StartupRouterState extends State<StartupRouter> {
             reactionListener: widget.reactionListener,
             groupRepository: widget.groupRepository,
             groupMessageRepository: widget.groupMessageRepository,
+            groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
             groupInviteDeliveryAttemptRepository:
                 widget.groupInviteDeliveryAttemptRepository,
             groupReactionReplayOutboxRepository:
@@ -597,6 +603,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       reactionListener: widget.reactionListener,
                       groupRepository: widget.groupRepository,
                       groupMessageRepository: widget.groupMessageRepository,
+                      groupExitDiagnosticRepository:
+                          widget.groupExitDiagnosticRepository,
                       groupInviteDeliveryAttemptRepository:
                           widget.groupInviteDeliveryAttemptRepository,
                       groupReactionReplayOutboxRepository:
@@ -1067,6 +1075,7 @@ class _StartupRouterState extends State<StartupRouter> {
         reactionListener: reactionListener,
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
+        groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
         groupInviteDeliveryAttemptRepository:
             widget.groupInviteDeliveryAttemptRepository,
         groupMessageListener: groupMessageListener,
@@ -1211,6 +1220,7 @@ class _StartupRouterState extends State<StartupRouter> {
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
       groupInviteDeliveryAttemptRepository:
           widget.groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,

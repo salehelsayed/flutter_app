@@ -503,6 +503,10 @@ classify_path() {
       record "group" "$path" "test" "264 PB264-05 group-exit-intents v103 SQLCipher migration device proof"
       return
       ;;
+    integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart)
+      record "group" "$path" "test" "266 PB266-15 release SQLCipher diagnostic reopen and Settings remount proof"
+      return
+      ;;
     integration_test/group_private_media_platform_proof_test.dart)
       record "ignored" "$path" "ignored" "238 GPL-11 manual Android/iOS native group private-media capture proof outside reliability-sim"
       return

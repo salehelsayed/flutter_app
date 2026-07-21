@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_schema_inventory.dart';
@@ -75,117 +77,126 @@ void main() {
     );
   });
 
-  testWidgets('SQLCipher export → staged open with the transferred key', (
-    _,
-  ) async {
-    // The host E2E fakes the SQLCipher seam; this is the REAL seam: a
-    // multi-table SQLCipher source DB exported with the production exporter
-    // (re-keyed to the transfer key), then opened through the production
-    // import-staging verification chain (checksum + quick_check + schema
-    // hash) using the staged transferred key — with row-level content checks.
-    final tempDir = await Directory.systemTemp.createTemp(
-      'mig_sqlcipher_staged_open_',
-    );
-    const sourceKey = 'source-device-db-key';
-    const transferredKey = 'transferred-db-encryption-key';
-    const sessionId = 'sqlcipher-staged-open-session';
-    sqlcipher.Database? sourceDb;
-    sqlcipher.Database? stagedDb;
-    try {
-      final sourcePath = p.join(tempDir.path, 'source.db');
-      sourceDb = await sqlcipher.openDatabase(
-        sourcePath,
-        password: sourceKey,
-        version: 1,
-        singleInstance: false,
+  testWidgets(
+    'PB266-05 real SQLCipher move export and staged open retain diagnostic row',
+    (_) async {
+      // The host E2E fakes the SQLCipher seam; this is the REAL seam: a
+      // multi-table SQLCipher source DB exported with the production exporter
+      // (re-keyed to the transfer key), then opened through the production
+      // import-staging verification chain (checksum + quick_check + schema
+      // hash) using the staged transferred key — with row-level content checks.
+      final tempDir = await Directory.systemTemp.createTemp(
+        'mig_sqlcipher_staged_open_',
       );
-      await _createMigrationFixtureSchema(sourceDb);
-      await _seedMigrationFixtureRows(sourceDb);
-
-      // Old phone: real export, re-keyed to the transferred key.
-      final exportedPath = p.join(tempDir.path, 'identity.snapshot.db');
-      const exporter = MigrationDatabaseSnapshotExporter();
-      final exportResult = await exporter.exportSnapshot(
-        sourceDb: sourceDb,
-        destinationPath: exportedPath,
-        destinationKey: transferredKey,
-        sourceAppVersion: 'integration-test',
-        sourceBuildNumber: '1',
-      );
-      // Cipher profile pinning (spec gap G2, partial): the captured params
-      // must travel in the manifest for the receiver to re-apply.
-      expect(exportResult.manifest.cipherMetadata.cipherVersion, isNotEmpty);
-      expect(exportResult.manifest.cipherMetadata.kdfIter, isNotNull);
-      expect(exportResult.manifest.cipherMetadata.cipherPageSize, isNotNull);
-
-      // New phone: stage the transferred key, then open through the real
-      // verification chain.
-      final staging = MigrationSecureStorageStaging(
-        primaryStore: _InMemorySecureKeyStore(),
-      );
-      final dbKeyReference = MigrationSecureStorageRegistry.fixedKey(
-        scope: MigrationSecureStoreScope.primary,
-        activeKey: MigrationSecureStorageRegistry.dbEncryptionKey,
-      );
-      expect(dbKeyReference, isNotNull);
-      await staging.stageValue(
-        sessionId: sessionId,
-        key: dbKeyReference!,
-        value: transferredKey,
-      );
-      final stagedPath = p.join(tempDir.path, 'identity.staged.db');
-      await File(exportResult.destinationPath).copy(stagedPath);
-
-      final stagedResult = await MigrationDatabaseImportStaging(
-        secureStorageStaging: staging,
-        // Default opener: the REAL SQLCipher staged-open path.
-      ).openVerifiedStagedDatabase(
-        sessionId: sessionId,
-        stagedDatabasePath: stagedPath,
-        manifest: exportResult.manifest,
-      );
-      stagedDb = stagedResult.database;
-
-      // Row-level content survived the export → stage → verified open chain.
-      final identity = await stagedDb.query('identity');
-      expect(identity, hasLength(1));
-      expect(identity.single['peer_id'], 'old-peer');
-      expect(await stagedDb.query('messages'), hasLength(1));
-      expect(await stagedDb.query('media_attachments'), hasLength(2));
-      expect(await stagedDb.query('group_messages'), hasLength(1));
-      expect(await stagedDb.query('groups'), hasLength(1));
-      final groupKeys = await stagedDb.query('group_keys');
-      expect(groupKeys, hasLength(1));
-      expect(
-        groupKeys.single['encrypted_key'],
-        'secure:group_key_material:group-1:1',
-      );
-
-      // Fail-closed: the snapshot must NOT open with the old source key.
-      await expectLater(() async {
-        final wrongKeyDb = await sqlcipher.openDatabase(
-          stagedPath,
+      const sourceKey = 'source-device-db-key';
+      const transferredKey = 'transferred-db-encryption-key';
+      const sessionId = 'sqlcipher-staged-open-session';
+      sqlcipher.Database? sourceDb;
+      sqlcipher.Database? stagedDb;
+      try {
+        final sourcePath = p.join(tempDir.path, 'source.db');
+        sourceDb = await sqlcipher.openDatabase(
+          sourcePath,
           password: sourceKey,
+          version: currentIdentityDatabaseVersion,
           singleInstance: false,
         );
-        try {
-          await wrongKeyDb.query('identity');
-        } finally {
-          await wrongKeyDb.close();
+        await _createMigrationFixtureSchema(sourceDb);
+        await _seedMigrationFixtureRows(sourceDb);
+
+        // Old phone: real export, re-keyed to the transferred key.
+        final exportedPath = p.join(tempDir.path, 'identity.snapshot.db');
+        const exporter = MigrationDatabaseSnapshotExporter();
+        final exportResult = await exporter.exportSnapshot(
+          sourceDb: sourceDb,
+          destinationPath: exportedPath,
+          destinationKey: transferredKey,
+          sourceAppVersion: 'integration-test',
+          sourceBuildNumber: '1',
+        );
+        // Cipher profile pinning (spec gap G2, partial): the captured params
+        // must travel in the manifest for the receiver to re-apply.
+        expect(exportResult.manifest.cipherMetadata.cipherVersion, isNotEmpty);
+        expect(exportResult.manifest.cipherMetadata.kdfIter, isNotNull);
+        expect(exportResult.manifest.cipherMetadata.cipherPageSize, isNotNull);
+
+        // New phone: stage the transferred key, then open through the real
+        // verification chain.
+        final staging = MigrationSecureStorageStaging(
+          primaryStore: _InMemorySecureKeyStore(),
+        );
+        final dbKeyReference = MigrationSecureStorageRegistry.fixedKey(
+          scope: MigrationSecureStoreScope.primary,
+          activeKey: MigrationSecureStorageRegistry.dbEncryptionKey,
+        );
+        expect(dbKeyReference, isNotNull);
+        await staging.stageValue(
+          sessionId: sessionId,
+          key: dbKeyReference!,
+          value: transferredKey,
+        );
+        final stagedPath = p.join(tempDir.path, 'identity.staged.db');
+        await File(exportResult.destinationPath).copy(stagedPath);
+
+        final stagedResult =
+            await MigrationDatabaseImportStaging(
+              secureStorageStaging: staging,
+              // Default opener: the REAL SQLCipher staged-open path.
+            ).openVerifiedStagedDatabase(
+              sessionId: sessionId,
+              stagedDatabasePath: stagedPath,
+              manifest: exportResult.manifest,
+            );
+        stagedDb = stagedResult.database;
+
+        // Row-level content survived the export → stage → verified open chain.
+        final identity = await stagedDb.query('identity');
+        expect(identity, hasLength(1));
+        expect(identity.single['peer_id'], 'old-peer');
+        expect(await stagedDb.query('messages'), hasLength(1));
+        expect(await stagedDb.query('media_attachments'), hasLength(2));
+        expect(await stagedDb.query('group_messages'), hasLength(1));
+        expect(await stagedDb.query('groups'), hasLength(1));
+        final diagnostics = await stagedDb.query('group_exit_diagnostics');
+        expect(diagnostics, hasLength(1));
+        expect(diagnostics.single, containsPair('public_code', 'EX06'));
+        expect(
+          diagnostics.single,
+          containsPair('reason_code', 'native_uncertain'),
+        );
+        final groupKeys = await stagedDb.query('group_keys');
+        expect(groupKeys, hasLength(1));
+        expect(
+          groupKeys.single['encrypted_key'],
+          'secure:group_key_material:group-1:1',
+        );
+
+        // Fail-closed: the snapshot must NOT open with the old source key.
+        await expectLater(() async {
+          final wrongKeyDb = await sqlcipher.openDatabase(
+            stagedPath,
+            password: sourceKey,
+            singleInstance: false,
+          );
+          try {
+            await wrongKeyDb.query('identity');
+          } finally {
+            await wrongKeyDb.close();
+          }
+        }(), throwsA(anything));
+      } finally {
+        if (stagedDb != null && stagedDb.isOpen) {
+          await stagedDb.close();
         }
-      }(), throwsA(anything));
-    } finally {
-      if (stagedDb != null && stagedDb.isOpen) {
-        await stagedDb.close();
+        if (sourceDb != null && sourceDb.isOpen) {
+          await sourceDb.close();
+        }
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
       }
-      if (sourceDb != null && sourceDb.isOpen) {
-        await sourceDb.close();
-      }
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    }
-  });
+    },
+  );
 }
 
 Future<void> _runPortabilityExport() async {
@@ -197,7 +208,7 @@ Future<void> _runPortabilityExport() async {
     sourceDb = await sqlcipher.openDatabase(
       p.join(tempDir.path, 'source.db'),
       password: 'portability-source-key',
-      version: 1,
+      version: currentIdentityDatabaseVersion,
       singleInstance: false,
     );
     await _createMigrationFixtureSchema(sourceDb);
@@ -270,6 +281,7 @@ Future<void> _runPortabilityVerify() async {
     expect(identity.single['peer_id'], 'old-peer');
     expect(await db.query('media_attachments'), hasLength(2));
     expect(await db.query('group_keys'), hasLength(1));
+    expect(await db.query('group_exit_diagnostics'), hasLength(1));
     // ignore: avoid_print
     print(
       'PORTABILITY_VERIFY_OK source=${meta['platform']} '
@@ -335,6 +347,7 @@ CREATE TABLE group_keys (
   PRIMARY KEY (group_id, key_generation)
 )
 ''');
+  await runGroupExitDiagnosticsMigration(db);
 }
 
 Future<void> _seedMigrationFixtureRows(sqlcipher.Database db) async {
@@ -385,6 +398,16 @@ Future<void> _seedMigrationFixtureRows(sqlcipher.Database db) async {
     'key_generation': 1,
     'encrypted_key': 'secure:group_key_material:group-1:1',
     'created_at': createdAt,
+  });
+  await db.insert('group_exit_diagnostics', {
+    'occurred_at': '2026-07-21T09:03:00.000Z',
+    'group_ref': '0123456789ab',
+    'intent_ref': '0123456789abcdef01234567',
+    'exit_kind': 'voluntary',
+    'severity': 'failure',
+    'phase': 'native',
+    'public_code': 'EX06',
+    'reason_code': 'native_uncertain',
   });
 }
 

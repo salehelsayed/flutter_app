@@ -2,6 +2,7 @@
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/102_groups_self_removed_at.dart';
+import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -336,7 +337,7 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 103);
+      expect(currentIdentityDatabaseVersion, 104);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -344,11 +345,15 @@ void main() {
         final index101 = registry.indexWhere((entry) => entry.version == 101);
         final index102 = registry.indexWhere((entry) => entry.version == 102);
         final index103 = registry.indexWhere((entry) => entry.version == 103);
+        final index104 = registry.indexWhere((entry) => entry.version == 104);
         expect(index102, index101 + 1);
         expect(index103, index102 + 1);
-        expect(index103, registry.length - 1);
+        expect(index104, index103 + 1);
+        expect(index104, registry.length - 1);
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
+        expect(registry[index104].name, '104_group_exit_diagnostics');
+        expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
       }
 
       final columns = await db.rawQuery('PRAGMA table_info(groups)');

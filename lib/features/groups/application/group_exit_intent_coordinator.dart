@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -27,11 +28,19 @@ class GroupExitIntentRequestResult {
     required this.status,
     this.intent,
     this.cause,
-  });
+  }) : diagnosticFacts = const <GroupExitProcessDiagnosticFact>[];
+
+  GroupExitIntentRequestResult.withDiagnosticFacts({
+    required this.status,
+    this.intent,
+    this.cause,
+    required Iterable<GroupExitProcessDiagnosticFact> diagnosticFacts,
+  }) : diagnosticFacts = immutableGroupExitDiagnosticFacts(diagnosticFacts);
 
   final GroupExitIntentRequestStatus status;
   final GroupExitIntent? intent;
   final Object? cause;
+  final List<GroupExitProcessDiagnosticFact> diagnosticFacts;
 }
 
 enum GroupExitIntentCancelStatus {
@@ -86,16 +95,19 @@ class GroupExitIntentCoordinator {
     try {
       final existing = await intentRepository.forGroup(groupId);
       if (existing != null) {
-        try {
-          final processed = await processor.processGroup(groupId);
-          return _mapExistingProcess(existing, processed);
-        } catch (error) {
-          return GroupExitIntentRequestResult(
+        final execution = await _executeProcessor(
+          groupId,
+          knownIntent: existing,
+        );
+        if (execution.hasError) {
+          return GroupExitIntentRequestResult.withDiagnosticFacts(
             status: GroupExitIntentRequestStatus.failed,
-            intent: existing,
-            cause: error,
+            intent: execution.intent ?? existing,
+            cause: execution.error,
+            diagnosticFacts: execution.diagnosticFacts,
           );
         }
+        return _mapExistingProcess(existing, execution.result!);
       }
 
       var authority = await _loadAuthority(groupId);
@@ -106,9 +118,12 @@ class GroupExitIntentCoordinator {
         try {
           await pendingBroadcastRunner.drainForGroup(groupId);
         } catch (error) {
-          return GroupExitIntentRequestResult(
+          return GroupExitIntentRequestResult.withDiagnosticFacts(
             status: GroupExitIntentRequestStatus.pendingRoleSync,
             cause: error,
+            diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+              GroupExitProcessDiagnosticFact.roleSyncFailed(),
+            ],
           );
         }
         pending = await pendingRepository.forGroup(groupId);
@@ -132,24 +147,28 @@ class GroupExitIntentCoordinator {
       final enqueued = await _enqueue(groupId);
       if (enqueued.result != null) return enqueued.result!;
       final intent = enqueued.intent!;
-      try {
-        final processed = await processor.processGroup(
-          groupId,
-          // We already performed the only immediate role retry and fresh read.
-          drainRoleBroadcasts: false,
-        );
-        return _mapNewProcess(intent, processed);
-      } catch (error) {
-        return GroupExitIntentRequestResult(
+      final execution = await _executeProcessor(
+        groupId,
+        // We already performed the only immediate role retry and fresh read.
+        drainRoleBroadcasts: false,
+        knownIntent: intent,
+      );
+      if (execution.hasError) {
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.failed,
-          intent: intent,
-          cause: error,
+          intent: execution.intent ?? intent,
+          cause: execution.error,
+          diagnosticFacts: execution.diagnosticFacts,
         );
       }
+      return _mapNewProcess(intent, execution.result!);
     } catch (error) {
-      return GroupExitIntentRequestResult(
+      return GroupExitIntentRequestResult.withDiagnosticFacts(
         status: GroupExitIntentRequestStatus.unavailable,
         cause: error,
+        diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        ],
       );
     }
   }
@@ -181,23 +200,23 @@ class GroupExitIntentCoordinator {
       if (enqueued.result != null) return enqueued.result!;
       final intent = enqueued.intent!;
       unawaited(
-        processor
-            .processGroup(groupId, drainRoleBroadcasts: false)
-            .catchError(
-              (_) => GroupExitIntentProcessResult(
-                status: GroupExitIntentProcessStatus.failed,
-                intent: intent,
-              ),
-            ),
+        _executeProcessor(
+          groupId,
+          drainRoleBroadcasts: false,
+          knownIntent: intent,
+        ),
       );
       return GroupExitIntentRequestResult(
         status: GroupExitIntentRequestStatus.queued,
         intent: intent,
       );
     } catch (error) {
-      return GroupExitIntentRequestResult(
+      return GroupExitIntentRequestResult.withDiagnosticFacts(
         status: GroupExitIntentRequestStatus.unavailable,
         cause: error,
+        diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        ],
       );
     }
   }
@@ -206,20 +225,23 @@ class GroupExitIntentCoordinator {
     try {
       final existing = await intentRepository.forGroup(groupId);
       if (existing == null) return requestLeave(groupId);
-      try {
-        final processed = await processor.processGroup(groupId);
-        return _mapExistingProcess(existing, processed);
-      } catch (error) {
-        return GroupExitIntentRequestResult(
+      final execution = await _executeProcessor(groupId, knownIntent: existing);
+      if (execution.hasError) {
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.failed,
-          intent: existing,
-          cause: error,
+          intent: execution.intent ?? existing,
+          cause: execution.error,
+          diagnosticFacts: execution.diagnosticFacts,
         );
       }
+      return _mapExistingProcess(existing, execution.result!);
     } catch (error) {
-      return GroupExitIntentRequestResult(
+      return GroupExitIntentRequestResult.withDiagnosticFacts(
         status: GroupExitIntentRequestStatus.unavailable,
         cause: error,
+        diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        ],
       );
     }
   }
@@ -283,8 +305,11 @@ class GroupExitIntentCoordinator {
     final identity = await identityRepository.loadIdentity();
     if (identity == null || identity.peerId.trim().isEmpty) {
       return _ExitAuthority.result(
-        const GroupExitIntentRequestResult(
+        GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.unavailable,
+          diagnosticFacts: <GroupExitProcessDiagnosticFact>[
+            GroupExitProcessDiagnosticFact.authorityUnavailable(),
+          ],
         ),
       );
     }
@@ -299,9 +324,12 @@ class GroupExitIntentCoordinator {
     final self = await groupRepository.getMember(groupId, identity.peerId);
     if (self == null) {
       return _ExitAuthority.result(
-        GroupExitIntentRequestResult(
+        GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.unavailable,
           cause: StateError('Current self membership is unavailable.'),
+          diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+            GroupExitProcessDiagnosticFact.authorityUnavailable(),
+          ],
         ),
       );
     }
@@ -375,15 +403,52 @@ class GroupExitIntentCoordinator {
           return _EnqueueResult.intent(mutation.current!);
         }
         return _EnqueueResult.result(
-          GroupExitIntentRequestResult(
+          GroupExitIntentRequestResult.withDiagnosticFacts(
             status: GroupExitIntentRequestStatus.failed,
             cause: StateError(
               'Exit intent enqueue refused: ${mutation.disposition.name}',
             ),
+            diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+              GroupExitProcessDiagnosticFact.authorityUnavailable(),
+            ],
           ),
         );
       },
     );
+  }
+
+  Future<GroupExitIntentProcessExecution> _executeProcessor(
+    String groupId, {
+    bool drainRoleBroadcasts = true,
+    required GroupExitIntent knownIntent,
+  }) async {
+    final currentProcessor = processor;
+    try {
+      if (currentProcessor is GroupExitIntentExecutionProcessor) {
+        final executable =
+            currentProcessor as GroupExitIntentExecutionProcessor;
+        return await executable.executeGroup(
+          groupId,
+          drainRoleBroadcasts: drainRoleBroadcasts,
+          knownIntent: knownIntent,
+        );
+      }
+      final result = await currentProcessor.processGroup(
+        groupId,
+        drainRoleBroadcasts: drainRoleBroadcasts,
+      );
+      return GroupExitIntentProcessExecution.result(
+        result: result,
+        intent: result.intent ?? knownIntent,
+      );
+    } catch (error, stackTrace) {
+      return GroupExitIntentProcessExecution.error(
+        error: error,
+        stackTrace: stackTrace,
+        intent: knownIntent,
+        diagnosticFacts: const <GroupExitProcessDiagnosticFact>[],
+      );
+    }
   }
 
   GroupExitIntentRequestResult _mapNewProcess(
@@ -392,28 +457,32 @@ class GroupExitIntentCoordinator {
   ) {
     switch (processed.status) {
       case GroupExitIntentProcessStatus.blockedLastAdmin:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.blockedLastAdmin,
           intent: processed.intent ?? intent,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       case GroupExitIntentProcessStatus.failed:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.failed,
           intent: processed.intent ?? intent,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       case GroupExitIntentProcessStatus.waitingForRoleSync:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.queued,
           intent: processed.intent ?? intent,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       default:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.started,
           intent: processed.intent ?? intent,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
     }
   }
@@ -426,29 +495,33 @@ class GroupExitIntentCoordinator {
       case GroupExitIntentProcessStatus.noIntent:
       case GroupExitIntentProcessStatus.completed:
       case GroupExitIntentProcessStatus.retiredStaleMembership:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.noOp,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       case GroupExitIntentProcessStatus.failed:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.failed,
           intent: processed.intent ?? existing,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       case GroupExitIntentProcessStatus.blockedLastAdmin:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.blockedLastAdmin,
           intent: processed.intent ?? existing,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
       case GroupExitIntentProcessStatus.waitingForRoleSync:
       case GroupExitIntentProcessStatus.waitingForNoticeRetry:
       case GroupExitIntentProcessStatus.waitingForNativeRetry:
-        return GroupExitIntentRequestResult(
+        return GroupExitIntentRequestResult.withDiagnosticFacts(
           status: GroupExitIntentRequestStatus.queued,
           intent: processed.intent ?? existing,
           cause: processed.cause,
+          diagnosticFacts: processed.diagnosticFacts,
         );
     }
   }

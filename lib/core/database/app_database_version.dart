@@ -18,4 +18,6 @@
 // self-removed shells and terminalizes legacy membership-instance work.
 // 264: DB v103 adds the exact-membership, revisioned `group_exit_intents`
 // state machine. Its legacy backfill is deliberately empty.
-const int currentIdentityDatabaseVersion = 103;
+// 266: DB v104 adds the bounded, opaque `group_exit_diagnostics` history.
+// Its legacy backfill is deliberately empty.
+const int currentIdentityDatabaseVersion = 104;

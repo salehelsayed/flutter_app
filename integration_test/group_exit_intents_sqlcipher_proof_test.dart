@@ -135,13 +135,13 @@ void main() {
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
-          version: currentIdentityDatabaseVersion,
+          version: 103,
           singleInstance: false,
           onCreate: runProductionOnCreate,
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 103);
+        expect(currentIdentityDatabaseVersion, 104);
         expect(await _userVersion(db), 103);
         expect(await _cipherVersion(db), isNotEmpty);
         final entry = productionUpgradeMigrations.singleWhere(

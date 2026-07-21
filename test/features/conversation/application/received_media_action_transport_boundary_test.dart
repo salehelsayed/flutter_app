@@ -112,7 +112,6 @@ void main() {
         'ReceivedMediaEgressGateway',
         'ReceivedMediaEgressChannel',
         '.perform(',
-        'MethodChannel(',
         'ShareTargetPicker',
         'ShareBatch',
       ]) {
@@ -120,6 +119,32 @@ void main() {
           source.contains(forbidden),
           isFalse,
           reason: '$path must not reference $forbidden',
+        );
+      }
+
+      // The full-screen viewer owns one reviewed native channel for the iOS
+      // capture-protected image view. It is a render-control boundary
+      // (`prepare`/`reveal`), not a received-media egress route. Keep that
+      // exception exact while every other media-action UI file remains at
+      // zero raw MethodChannel construction.
+      final allowedMethodChannelCalls =
+          path == 'lib/shared/widgets/media/full_screen_typed_media_viewer.dart'
+          ? 1
+          : 0;
+      expect(
+        count(source, 'MethodChannel('),
+        allowedMethodChannelCalls,
+        reason: '$path has an unreviewed native channel construction',
+      );
+      if (allowedMethodChannelCalls == 1) {
+        expect(
+          source.contains(
+            "static const _viewType = 'mknoon/private_capture_protected_image';",
+          ),
+          isTrue,
+          reason:
+              'the sole viewer MethodChannel must remain scoped to the '
+              'capture-protected render view',
         );
       }
     }
@@ -139,7 +164,7 @@ void main() {
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
       'widget.p2pService': 19,
-      'widget.bridge': 30,
+      'widget.bridge': 31,
       'widget.sendChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,

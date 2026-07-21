@@ -5,6 +5,7 @@ import android.os.StatFs
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
@@ -25,6 +26,19 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        if (BuildConfig.ENABLE_GROUP_EXIT_RELEASE_DIAGNOSTICS_PROOF) {
+            val proofPlugin = Class.forName(
+                "dev.flutter.plugins.integration_test.IntegrationTestPlugin",
+            ).getDeclaredConstructor().newInstance()
+            check(proofPlugin is FlutterPlugin) {
+                "PB266 release integration plugin has an invalid type."
+            }
+            flutterEngine.plugins.add(proofPlugin)
+            Log.i(
+                "PB266ReleaseProof",
+                "IntegrationTestPlugin registered in release engine",
+            )
+        }
         receivedMediaEgressHandler = ReceivedMediaEgressHandler(
             this,
             flutterEngine.dartExecutor.binaryMessenger,

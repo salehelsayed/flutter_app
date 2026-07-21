@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -21,6 +22,7 @@ class _IntentRepo implements GroupExitIntentRepository {
   bool throwOnLoad = false;
   Object? loadError;
   Object? enqueueError;
+  bool refuseEnqueueWithoutCurrent = false;
   Completer<void>? enqueueGate;
   List<String>? events;
   int loadCalls = 0;
@@ -48,6 +50,11 @@ class _IntentRepo implements GroupExitIntentRepository {
     if (gate != null) await gate.future;
     final error = enqueueError;
     if (error != null) throw error;
+    if (refuseEnqueueWithoutCurrent) {
+      return const GroupExitIntentMutationResult(
+        disposition: GroupExitIntentMutationDisposition.refusedConflict,
+      );
+    }
     final existing = rows[intent.groupId];
     if (existing != null) {
       return GroupExitIntentMutationResult(
@@ -408,6 +415,9 @@ void main() {
           GroupExitIntentRequestStatus.unavailable,
           reason: testCase.name,
         );
+        expect(result.diagnosticFacts, const <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        ], reason: testCase.name);
         expect(intentRepo.rows, isEmpty, reason: testCase.name);
         expect(
           intentRepo.enqueueCalls,
@@ -423,6 +433,30 @@ void main() {
         expect(processor.calls, 0, reason: testCase.name);
       }
 
+      final refusingIntents = _IntentRepo()..refuseEnqueueWithoutCurrent = true;
+      final refusingPending = _PendingRepo();
+      final refusingProcessor = _Processor();
+      final refusingCoordinator = GroupExitIntentCoordinator(
+        intentRepository: refusingIntents,
+        pendingRepository: refusingPending,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: refusingPending,
+          rePush: (_) async => true,
+        ),
+        processor: refusingProcessor,
+        groupRepository: await _groupRepo(),
+        identityRepository: _identityRepo(),
+        newId: () => 'refused-id',
+        now: () => DateTime.utc(2026, 7, 21, 8),
+      );
+      final refused = await refusingCoordinator.requestLeave('group-1');
+      expect(refused.status, GroupExitIntentRequestStatus.failed);
+      expect(refused.intent, isNull);
+      expect(refused.diagnosticFacts, const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.authorityUnavailable(),
+      ]);
+      expect(refusingProcessor.calls, 0);
+
       // The process-wide facade is also required authority: an unwired action
       // or repository lookup must be typed unavailable, never a fabricated
       // empty/ready value that could fall through to a native side effect.
@@ -434,10 +468,14 @@ void main() {
         setGroupExitIntentAccessSinks();
         setGroupExitIntentRuntimeSinks();
       });
+      final missingRequest = await requestGroupExitIntentLeave('group-1');
       expect(
-        (await requestGroupExitIntentLeave('group-1')).status,
-        GroupExitIntentRequestStatus.unavailable,
+        missingRequest.diagnosticFacts,
+        const <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+        ],
       );
+      expect(missingRequest.status, GroupExitIntentRequestStatus.unavailable);
       expect(
         (await queueGroupExitIntentLeaveWhenSyncCompletes('group-1')).status,
         GroupExitIntentRequestStatus.unavailable,
@@ -545,6 +583,7 @@ void main() {
       );
       final pending = await remains.coordinator.requestLeave('group-1');
       expect(pending.status, GroupExitIntentRequestStatus.pendingRoleSync);
+      expect(pending.diagnosticFacts, isEmpty);
       expect(remains.pushes(), 1);
       expect(remains.pending.forGroupCalls, 3);
       expect(remains.pending.removeCalls, 0);
@@ -555,6 +594,7 @@ void main() {
         'group-1',
       );
       expect(queued.status, GroupExitIntentRequestStatus.queued);
+      expect(queued.diagnosticFacts, isEmpty);
       expect(remains.intents.rows, hasLength(1));
       expect(remains.processor.calls, 1);
       expect(remains.processor.drainFlags, [false]);
@@ -577,6 +617,9 @@ void main() {
       final threw = await drainThrows.coordinator.requestLeave('group-1');
       expect(threw.status, GroupExitIntentRequestStatus.pendingRoleSync);
       expect(threw.cause, isA<StateError>());
+      expect(threw.diagnosticFacts, const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.roleSyncFailed(),
+      ]);
       expect(drainThrows.pending.forGroupCalls, 2);
       expect(drainThrows.pushes(), 0);
       expect(drainThrows.intents.rows, isEmpty);

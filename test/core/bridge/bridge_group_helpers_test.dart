@@ -221,7 +221,18 @@ void main() {
         expect(response['layer'], 'FL', reason: entry.key);
         expect(request['details'], isA<Map<String, dynamic>>());
         final responseDetails = response['details'] as Map<String, dynamic>;
-        expect(responseDetails['ok'], isTrue, reason: entry.key);
+        if (entry.key == 'leave') {
+          expect(request['details'], const {
+            'phase': 'native',
+            'severity': 'info',
+          });
+          expect(responseDetails, const {
+            'phase': 'native',
+            'severity': 'info',
+          });
+        } else {
+          expect(responseDetails['ok'], isTrue, reason: entry.key);
+        }
       }
     },
   );

@@ -861,6 +861,103 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_section_preferences => 'التفضيلات';
 
   @override
+  String get settings_group_exit_diagnostics_section => 'الدعم';
+
+  @override
+  String get settings_group_exit_diagnostics_title => 'سجل مغادرة المجموعات';
+
+  @override
+  String settings_group_exit_diagnostics_count(int count) {
+    return '$count سجلات محفوظة';
+  }
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable =>
+      'سجل مغادرة المجموعات غير متاح.';
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable_hint =>
+      'اضغط للمحاولة مجددًا.';
+
+  @override
+  String get settings_group_exit_diagnostics_empty =>
+      'لا توجد سجلات محفوظة لمغادرة المجموعات.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload => 'إعادة التحميل';
+
+  @override
+  String get settings_group_exit_diagnostics_clear => 'مسح السجل';
+
+  @override
+  String get settings_group_exit_diagnostics_reloaded =>
+      'أُعيد تحميل سجل مغادرة المجموعات.';
+
+  @override
+  String get settings_group_exit_diagnostics_cleared =>
+      'مُسح سجل مغادرة المجموعات.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload_failed =>
+      'تعذّرت إعادة تحميل سجل مغادرة المجموعات. لم تتغير السجلات الحالية.';
+
+  @override
+  String get settings_group_exit_diagnostics_clear_failed =>
+      'تعذّر مسح سجل مغادرة المجموعات. لم تتغير السجلات الحالية.';
+
+  @override
+  String get settings_group_exit_diagnostics_close =>
+      'إغلاق سجل مغادرة المجموعات';
+
+  @override
+  String settings_group_exit_diagnostics_group_reference(String groupRef) {
+    return 'مرجع المجموعة $groupRef';
+  }
+
+  @override
+  String get settings_group_exit_diagnostic_ex01 =>
+      'تعذّر إثبات صلاحية المغادرة.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex02 =>
+      'تعذّر إكمال تحديثات أدوار الأعضاء.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex03 =>
+      'تعذّر إعداد إشعار المغادرة.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex04 => 'محرك المجموعات غير متاح.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex05 =>
+      'رفض محرك المجموعات طلب المغادرة.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex06 =>
+      'تعذّر تأكيد نتيجة المغادرة.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex07 =>
+      'تمت مغادرة المجموعة، لكن التنظيف المحلي غير مكتمل.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex08 =>
+      'تعذّر إيصال إشعار المغادرة إلى كل الأعضاء.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex09 =>
+      'تم تأجيل تدوير مفتاح المجموعة.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex10 =>
+      'حذف المجموعة محليًا غير مكتمل.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex99 =>
+      'حدثت نتيجة غير متوقعة أثناء مغادرة المجموعة.';
+
+  @override
   String get settings_background => 'الخلفية';
 
   @override

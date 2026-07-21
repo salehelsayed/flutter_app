@@ -1,12 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnostic_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_exit_recovery_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  tearDown(() => setGroupExitDiagnosticAccessSink());
+
   final candidate = GroupMember(
     groupId: 'group-1',
     peerId: 'peer-bob',
@@ -572,4 +576,101 @@ void main() {
       await tester.pumpAndSettle();
     }
   });
+
+  testWidgets(
+    'PB266-10 recreated recovery shows only current EX02 EX03 and retry code',
+    (tester) async {
+      const groupId = 'group-current';
+      const currentIntentId = 'intent-current';
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.pendingRoleSync(
+          groupName: 'Night Owls',
+          initialDiagnosticCode: GroupExitDiagnosticPublicCode.ex02,
+          onLeaveWhenSyncCompletes: () async => false,
+          onTryAgain: () async => false,
+        ),
+      );
+      expect(find.textContaining('EX02'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('group-exit-close')));
+      await tester.pumpAndSettle();
+
+      var currentRows = <GroupExitDiagnostic>[
+        GroupExitDiagnostic.create(
+          occurredAt: DateTime.utc(2026, 7, 21, 9),
+          groupId: groupId,
+          intentId: currentIntentId,
+          kind: GroupExitDiagnosticKind.voluntary,
+          severity: GroupExitDiagnosticSeverity.failure,
+          phase: GroupExitDiagnosticPhase.notice,
+          publicCode: GroupExitDiagnosticPublicCode.ex03,
+          reason: GroupExitDiagnosticReason.noticePrepareFailed,
+        ),
+      ];
+      setGroupExitDiagnosticAccessSink(
+        loadForAction: ({required groupId, required intentId}) async {
+          expect(groupId, 'group-current');
+          expect(intentId, 'intent-current');
+          return currentRows;
+        },
+      );
+
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.queuedLeave(
+          groupName: 'Night Owls',
+          diagnosticGroupId: groupId,
+          diagnosticIntentId: currentIntentId,
+          onTryAgain: () async {
+            currentRows = <GroupExitDiagnostic>[
+              GroupExitDiagnostic.create(
+                occurredAt: DateTime.utc(2026, 7, 21, 9, 1),
+                groupId: groupId,
+                intentId: currentIntentId,
+                kind: GroupExitDiagnosticKind.voluntary,
+                severity: GroupExitDiagnosticSeverity.failure,
+                phase: GroupExitDiagnosticPhase.native,
+                publicCode: GroupExitDiagnosticPublicCode.ex06,
+                reason: GroupExitDiagnosticReason.nativeUncertain,
+              ),
+            ];
+            return false;
+          },
+          onCancelQueuedLeave: () async => GroupExitQueuedCancelUiResult.failed,
+          onRefreshQueuedState: () async {},
+        ),
+      );
+
+      expect(find.textContaining('EX03'), findsOneWidget);
+      expect(find.textContaining('EX05'), findsNothing);
+      final semantics = tester.getSemantics(
+        find.byKey(const ValueKey('group-exit-recovery-diagnostic-code')),
+      );
+      expect(semantics.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('group-exit-try-again')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('EX06'), findsOneWidget);
+      expect(find.textContaining('EX03'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('group-exit-close')));
+      await tester.pumpAndSettle();
+      currentRows = const <GroupExitDiagnostic>[];
+      await pumpExplicitSheet(
+        tester,
+        sheet: GroupExitRecoverySheet.queuedLeave(
+          groupName: 'Night Owls',
+          diagnosticGroupId: groupId,
+          diagnosticIntentId: currentIntentId,
+          onTryAgain: () async => false,
+          onCancelQueuedLeave: () async => GroupExitQueuedCancelUiResult.failed,
+          onRefreshQueuedState: () async {},
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('group-exit-recovery-diagnostic-code')),
+        findsNothing,
+      );
+    },
+  );
 }

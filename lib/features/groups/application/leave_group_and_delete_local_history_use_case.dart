@@ -157,7 +157,11 @@ class LeaveGroupAndDeleteLocalHistoryUseCase {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ACTIVE_EXIT_SNAPSHOT_FAILED',
-        details: {'groupId': _safeId(groupId), 'error': error.toString()},
+        details: const {
+          'code': 'EX01',
+          'phase': 'authority',
+          'severity': 'failure',
+        },
       );
       return LeaveGroupAndDeleteLocalHistoryResult(
         status: LeaveGroupAndDeleteLocalHistoryStatus.preworkFailed,
@@ -260,7 +264,11 @@ class LeaveGroupAndDeleteLocalHistoryUseCase {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ACTIVE_EXIT_PREWORK_FAILED',
-        details: {'groupId': _safeId(groupId), 'error': cause.toString()},
+        details: const {
+          'code': 'EX03',
+          'phase': 'notice',
+          'severity': 'failure',
+        },
       );
       return LeaveGroupAndDeleteLocalHistoryResult(
         status: LeaveGroupAndDeleteLocalHistoryStatus.preworkFailed,
@@ -279,7 +287,11 @@ class LeaveGroupAndDeleteLocalHistoryUseCase {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ACTIVE_EXIT_NATIVE_UNCERTAIN',
-        details: {'groupId': _safeId(groupId)},
+        details: const {
+          'code': 'EX06',
+          'phase': 'native',
+          'severity': 'failure',
+        },
       );
       return LeaveGroupAndDeleteLocalHistoryResult(
         status: LeaveGroupAndDeleteLocalHistoryStatus.nativeLeaveUncertain,
@@ -364,8 +376,9 @@ class LeaveGroupAndDeleteLocalHistoryUseCase {
           ? 'GROUP_ACTIVE_EXIT_LEFT'
           : 'GROUP_ACTIVE_EXIT_CLEANUP_INCOMPLETE',
       details: {
-        'groupId': _safeId(groupId),
-        if (firstError != null) 'error': firstError.toString(),
+        if (firstError != null) 'code': 'EX07',
+        'phase': 'cleanup',
+        'severity': firstError == null ? 'info' : 'warning',
       },
     );
     return LeaveGroupAndDeleteLocalHistoryResult(
@@ -446,9 +459,10 @@ class LeaveGroupAndDeleteLocalHistoryUseCase {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ACTIVE_EXIT_ROLLBACK_FAILED',
-        details: {
-          'groupId': _safeId(snapshot.groupId),
-          'error': error.toString(),
+        details: const {
+          'code': 'EX03',
+          'phase': 'notice',
+          'severity': 'failure',
         },
       );
       return error;
@@ -481,8 +495,6 @@ class _ConfirmedLeaveMarker {
   final String peerId;
   final DateTime? joinedAt;
 }
-
-String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
 bool _hasPendingRoleTransition(
   Iterable<GroupPendingBroadcast> pending,

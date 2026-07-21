@@ -8,15 +8,19 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnosing_processor.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -57,6 +61,31 @@ class _PendingRepo implements GroupPendingBroadcastRepository {
   Future<void> removeForGroup(String groupId) async {
     rows.removeWhere((_, broadcast) => broadcast.groupId == groupId);
   }
+}
+
+class _NeverCompletingDiagnosticRepository
+    implements GroupExitDiagnosticRepository {
+  final Completer<void> pendingWrite = Completer<void>();
+  final List<List<GroupExitDiagnostic>> batches = <List<GroupExitDiagnostic>>[];
+
+  @override
+  Future<void> appendOutcome(List<GroupExitDiagnostic> diagnostics) {
+    batches.add(diagnostics);
+    return pendingWrite.future;
+  }
+
+  @override
+  Future<void> clear() async => batches.clear();
+
+  @override
+  Future<List<GroupExitDiagnostic>> loadForAction({
+    required String groupId,
+    required String intentId,
+  }) async => const <GroupExitDiagnostic>[];
+
+  @override
+  Future<List<GroupExitDiagnostic>> loadNewest() async =>
+      const <GroupExitDiagnostic>[];
 }
 
 class _ExitCleanupProbeGroupRepository extends InMemoryGroupRepository {
@@ -155,6 +184,9 @@ class _IntentRepo implements GroupExitIntentRepository {
   final List<GroupPendingBroadcast> preparedNotices = <GroupPendingBroadcast>[];
   final List<String> completionCodes = <String>[];
   GroupExitIntentMutationDisposition? refuseNextPrepare;
+  bool removeAfterAdvanceToNative = false;
+  bool refuseAllAdvances = false;
+  GroupExitIntent? replacementAfterAdvanceToNative;
 
   void seed(GroupExitIntent intent) => rows[intent.groupId] = intent;
 
@@ -276,6 +308,7 @@ class _IntentRepo implements GroupExitIntentRepository {
     if (current == null || !sameExactGroupExitIntent(current, expected)) {
       return _conflict(current);
     }
+    if (refuseAllAdvances) return _conflict(current);
     final next = current.copyWith(
       state: nextState,
       revision: current.revision + 1,
@@ -283,6 +316,13 @@ class _IntentRepo implements GroupExitIntentRepository {
       lastErrorCode: lastErrorCode,
     );
     rows[current.groupId] = next;
+    if (removeAfterAdvanceToNative &&
+        nextState == GroupExitIntentState.nativeLeavePending) {
+      rows.remove(current.groupId);
+    } else if (nextState == GroupExitIntentState.nativeLeavePending &&
+        replacementAfterAdvanceToNative != null) {
+      rows[current.groupId] = replacementAfterAdvanceToNative!;
+    }
     return GroupExitIntentMutationResult(
       disposition: GroupExitIntentMutationDisposition.committed,
       current: next,
@@ -503,15 +543,16 @@ String _signedNoticeText(
 Future<InMemoryGroupRepository> _activeGroupRepo({
   DateTime? watermark,
   InMemoryGroupRepository? repository,
+  String groupId = 'group-1',
 }) async {
   final repo = repository ?? InMemoryGroupRepository();
   final joinedAt = DateTime.utc(2026, 7, 20);
   await repo.saveGroup(
     GroupModel(
-      id: 'group-1',
+      id: groupId,
       name: 'Group',
       type: GroupType.chat,
-      topicName: 'topic-group-1',
+      topicName: 'topic-$groupId',
       createdAt: joinedAt,
       createdBy: 'peer-other',
       myRole: GroupRole.member,
@@ -521,7 +562,7 @@ Future<InMemoryGroupRepository> _activeGroupRepo({
   );
   await repo.saveMember(
     GroupMember(
-      groupId: 'group-1',
+      groupId: groupId,
       peerId: 'peer-self',
       username: 'Self',
       role: MemberRole.writer,
@@ -530,7 +571,7 @@ Future<InMemoryGroupRepository> _activeGroupRepo({
   );
   await repo.saveMember(
     GroupMember(
-      groupId: 'group-1',
+      groupId: groupId,
       peerId: 'peer-other',
       username: 'Other',
       role: MemberRole.admin,
@@ -1029,7 +1070,7 @@ void main() {
     () async {
       final source = await File('lib/main.dart').readAsString();
       final runnerStart = source.indexOf(
-        'final groupExitIntentRunner = GroupExitIntentRunner(',
+        'final rawGroupExitIntentRunner = GroupExitIntentRunner(',
       );
       final attemptStart = source.indexOf('attemptNotice:', runnerStart);
       expect(runnerStart, greaterThanOrEqualTo(0));
@@ -1987,6 +2028,453 @@ void main() {
         expect(rotations, phase.$3, reason: phase.$1.name);
         expect(nativeLeaves, phase.$4, reason: phase.$1.name);
         expect(await intentRepo.forGroup(intent.groupId), isNull);
+      }
+    },
+  );
+
+  test(
+    'PB266-11 delivery and rotation warnings commit together while leave remains successful',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final intent = _intent(GroupExitIntentState.leaveNoticePending);
+      final intentRepo = _IntentRepo(pendingRepo)..seed(intent);
+      await pendingRepo.enqueue(_noticeFor(intent));
+      final groupRepo = _ExitCleanupProbeGroupRepository();
+      await _activeGroupRepo(repository: groupRepo);
+      var attempts = 0;
+      var rotations = 0;
+      var nativeLeaves = 0;
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async => intent.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('must not prepare an existing notice'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async {
+          attempts++;
+          return GroupExitNoticeAttemptDisposition.degraded;
+        },
+        rotateKeys: (_) async {
+          rotations++;
+          throw const GroupExitRotationDeferred();
+        },
+        nativeLeave: (_) async => nativeLeaves++,
+      );
+
+      final completed = await runner.processGroup(intent.groupId);
+
+      expect(completed.status, GroupExitIntentProcessStatus.completed);
+      expect(
+        completed.diagnosticFacts.map((fact) => fact.outcome),
+        <GroupExitProcessDiagnosticOutcome>[
+          GroupExitProcessDiagnosticOutcome.deliveryDegraded,
+          GroupExitProcessDiagnosticOutcome.rotationDeferred,
+        ],
+      );
+      expect(attempts, 1);
+      expect(rotations, 1);
+      expect(nativeLeaves, 1);
+
+      final laterRetry = await runner.processGroup(intent.groupId);
+      expect(laterRetry.status, GroupExitIntentProcessStatus.noIntent);
+      expect(laterRetry.diagnosticFacts, isEmpty);
+      expect(attempts, 1);
+      expect(rotations, 1);
+      expect(nativeLeaves, 1);
+
+      final retryPendingRepo = _PendingRepo();
+      final retryIntent = _intent(GroupExitIntentState.nativeLeavePending)
+          .copyWith(
+            lastErrorCode: GroupExitPersistedOutcome
+                .noticeDegradedRotationDeferred
+                .persistedCode,
+          );
+      final retryIntentRepo = _IntentRepo(retryPendingRepo)..seed(retryIntent);
+      final retryGroupRepo = _ExitCleanupProbeGroupRepository();
+      await _activeGroupRepo(repository: retryGroupRepo);
+      var recreatedNativeLeaves = 0;
+      final recreatedRunner = GroupExitIntentRunner(
+        intentRepository: retryIntentRepo,
+        pendingRepository: retryPendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: retryPendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: retryGroupRepo,
+        loadCurrentSelfPeerId: () async => retryIntent.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('must not prepare on native retry'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            throw StateError('must not deliver on native retry'),
+        rotateKeys: (_) async =>
+            throw StateError('must not rotate on native retry'),
+        nativeLeave: (_) async => recreatedNativeLeaves++,
+      );
+
+      final recreatedRetry = await recreatedRunner.processGroup(
+        retryIntent.groupId,
+      );
+      expect(recreatedRetry.status, GroupExitIntentProcessStatus.completed);
+      expect(recreatedRetry.diagnosticFacts, isEmpty);
+      expect(recreatedNativeLeaves, 1);
+
+      final aggregatePendingRepo = _PendingRepo();
+      final aggregateIntent = _intent(GroupExitIntentState.leaveNoticePending);
+      final aggregateIntentRepo = _IntentRepo(aggregatePendingRepo)
+        ..seed(aggregateIntent)
+        ..removeAfterAdvanceToNative = true;
+      await aggregatePendingRepo.enqueue(_noticeFor(aggregateIntent));
+      final aggregateGroupRepo = await _activeGroupRepo();
+      final aggregateRunner = GroupExitIntentRunner(
+        intentRepository: aggregateIntentRepo,
+        pendingRepository: aggregatePendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: aggregatePendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: aggregateGroupRepo,
+        loadCurrentSelfPeerId: () async => aggregateIntent.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('must not prepare an existing notice'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            GroupExitNoticeAttemptDisposition.degraded,
+        rotateKeys: (_) async => throw const GroupExitRotationDeferred(),
+        nativeLeave: (_) async =>
+            throw StateError('removed intent must stop before native leave'),
+      );
+
+      final aggregate = await aggregateRunner.processAll();
+      final aggregateResult = aggregate[aggregateIntent.groupId]!;
+      expect(aggregateResult.status, GroupExitIntentProcessStatus.completed);
+      expect(aggregateResult.intent?.intentId, aggregateIntent.intentId);
+      expect(
+        aggregateResult.diagnosticFacts.map((fact) => fact.outcome),
+        <GroupExitProcessDiagnosticOutcome>[
+          GroupExitProcessDiagnosticOutcome.deliveryDegraded,
+          GroupExitProcessDiagnosticOutcome.rotationDeferred,
+        ],
+      );
+
+      final replacementPendingRepo = _PendingRepo();
+      final original = _intent(
+        GroupExitIntentState.leaveNoticePending,
+        groupId: 'group-replacement',
+      );
+      final replacement =
+          _intent(
+            GroupExitIntentState.queued,
+            groupId: original.groupId,
+          ).copyWith(
+            intentId: 'intent-replacement',
+            pendingBroadcastId: 'leave-notice-replacement',
+            createdAt: original.createdAt.add(const Duration(minutes: 1)),
+            updatedAt: original.updatedAt.add(const Duration(minutes: 1)),
+          );
+      final replacementIntentRepo = _IntentRepo(replacementPendingRepo)
+        ..seed(original)
+        ..replacementAfterAdvanceToNative = replacement;
+      await replacementPendingRepo.enqueue(_noticeFor(original));
+      final replacementGroupRepo = await _activeGroupRepo(
+        groupId: original.groupId,
+      );
+      var replacementNativeLeaves = 0;
+      final replacementRunner = GroupExitIntentRunner(
+        intentRepository: replacementIntentRepo,
+        pendingRepository: replacementPendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: replacementPendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: replacementGroupRepo,
+        loadCurrentSelfPeerId: () async => original.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async =>
+                throw StateError('replacement needs its own invocation'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            GroupExitNoticeAttemptDisposition.degraded,
+        rotateKeys: (_) async => throw const GroupExitRotationDeferred(),
+        nativeLeave: (_) async => replacementNativeLeaves++,
+      );
+
+      final originalResult = await replacementRunner.processGroup(
+        original.groupId,
+      );
+      expect(originalResult.status, GroupExitIntentProcessStatus.completed);
+      expect(originalResult.intent?.intentId, original.intentId);
+      expect(
+        originalResult.diagnosticFacts.map((fact) => fact.outcome),
+        <GroupExitProcessDiagnosticOutcome>[
+          GroupExitProcessDiagnosticOutcome.deliveryDegraded,
+          GroupExitProcessDiagnosticOutcome.rotationDeferred,
+        ],
+      );
+      expect(
+        (await replacementIntentRepo.forGroup(original.groupId))?.intentId,
+        replacement.intentId,
+      );
+      expect(replacementNativeLeaves, 0);
+    },
+  );
+
+  test(
+    'PB266-04 detached writer releases the actual keyed runner tail',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final intent = _intent(GroupExitIntentState.queued);
+      final intentRepo = _IntentRepo(pendingRepo)..seed(intent);
+      final groupRepo = await _activeGroupRepo();
+      var identityLoads = 0;
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async {
+          identityLoads++;
+          return null;
+        },
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('identity must fail first'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            throw StateError('identity must fail first'),
+        rotateKeys: (_) async => throw StateError('identity must fail first'),
+        nativeLeave: (_) async => throw StateError('identity must fail first'),
+      );
+      final diagnosticRepository = _NeverCompletingDiagnosticRepository();
+      final processor = DiagnosingGroupExitIntentProcessor(
+        inner: runner,
+        observer: GroupExitDiagnosticObserver(
+          repository: diagnosticRepository,
+          now: () => DateTime.utc(2026, 7, 21, 12),
+        ),
+      );
+
+      final first = await processor
+          .processGroup(intent.groupId)
+          .timeout(const Duration(seconds: 1));
+      final second = await processor
+          .processGroup(intent.groupId)
+          .timeout(const Duration(seconds: 1));
+
+      expect(first.status, GroupExitIntentProcessStatus.failed);
+      expect(second.status, GroupExitIntentProcessStatus.failed);
+      expect(first.diagnosticFacts, const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.authorityUnavailable(),
+      ]);
+      expect(second.diagnosticFacts, first.diagnosticFacts);
+      expect(identityLoads, 2);
+      expect(diagnosticRepository.batches, hasLength(2));
+    },
+  );
+
+  test(
+    'PB266 phase-bearing bounded EX99 retains the last causal phase',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final intent = _intent(GroupExitIntentState.leaveNoticeAttempted)
+          .copyWith(
+            lastErrorCode:
+                GroupExitPersistedOutcome.noticeDelivered.persistedCode,
+          );
+      final intentRepo = _IntentRepo(pendingRepo)
+        ..seed(intent)
+        ..refuseAllAdvances = true;
+      final groupRepo = await _activeGroupRepo();
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async => intent.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('must not prepare'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            throw StateError('must not deliver'),
+        rotateKeys: (_) async => throw StateError('must not rotate'),
+        nativeLeave: (_) async => throw StateError('must not leave'),
+      );
+
+      final result = await runner.processGroup(intent.groupId);
+
+      expect(result.status, GroupExitIntentProcessStatus.failed);
+      expect(result.diagnosticFacts, const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.unexpected(
+          GroupExitDiagnosticPhase.rotation,
+        ),
+      ]);
+    },
+  );
+
+  test(
+    'post-notice outcomes compose and survive native-to-cleanup advancement',
+    () async {
+      final pendingRepo = _PendingRepo();
+      final intent = _intent(GroupExitIntentState.leaveNoticeAttempted)
+          .copyWith(
+            lastErrorCode:
+                GroupExitPersistedOutcome.noticeDegraded.persistedCode,
+          );
+      final intentRepo = _IntentRepo(pendingRepo)..seed(intent);
+      final groupRepo = _ExitCleanupProbeGroupRepository()
+        ..failNextExternalCleanup = true;
+      await _activeGroupRepo(repository: groupRepo);
+      var rotations = 0;
+      var nativeLeaves = 0;
+      const rawRotationMarker = 'raw rotation transport failure';
+      final runner = GroupExitIntentRunner(
+        intentRepository: intentRepo,
+        pendingRepository: pendingRepo,
+        pendingBroadcastRunner: GroupPendingBroadcastRunner(
+          repository: pendingRepo,
+          rePush: (_) async => true,
+        ),
+        groupRepository: groupRepo,
+        loadCurrentSelfPeerId: () async => intent.selfPeerId,
+        prepareNotice:
+            ({
+              required intent,
+              required sourceEventId,
+              required eventAt,
+            }) async => throw StateError('must not prepare'),
+        attemptNotice: ({required intent, required pendingBroadcast}) async =>
+            throw StateError('must not attempt'),
+        rotateKeys: (_) async {
+          rotations++;
+          throw StateError(rawRotationMarker);
+        },
+        nativeLeave: (_) async => nativeLeaves++,
+      );
+
+      final cleanupFailed = await runner.processGroup(intent.groupId);
+
+      expect(cleanupFailed.status, GroupExitIntentProcessStatus.failed);
+      final cleanupPending = await intentRepo.forGroup(intent.groupId);
+      expect(cleanupPending?.state, GroupExitIntentState.cleanupPending);
+      expect(
+        cleanupPending?.lastErrorCode,
+        GroupExitPersistedOutcome.noticeDegradedRotationDeferred.persistedCode,
+      );
+      expect(cleanupPending?.lastErrorCode, isNot(contains(rawRotationMarker)));
+      expect(rotations, 1);
+      expect(nativeLeaves, 1);
+
+      final completed = await runner.processGroup(intent.groupId);
+      expect(completed.status, GroupExitIntentProcessStatus.completed);
+      expect(await intentRepo.forGroup(intent.groupId), isNull);
+      expect(rotations, 1);
+      expect(nativeLeaves, 1);
+    },
+  );
+
+  test(
+    'rotation-claimed restart preserves known degradation and canonicalizes legacy outcomes',
+    () async {
+      const rawLegacyCode = 'bounded_legacy_code';
+      final cases = <(String?, GroupExitPersistedOutcome)>[
+        (
+          GroupExitPersistedOutcome.noticeDegraded.persistedCode,
+          GroupExitPersistedOutcome.noticeDegradedRotationDeferredRestart,
+        ),
+        (null, GroupExitPersistedOutcome.rotationDeferredRestart),
+        (
+          GroupExitPersistedOutcome.rotationDeferred.persistedCode,
+          GroupExitPersistedOutcome.rotationDeferredRestart,
+        ),
+        (
+          rawLegacyCode,
+          GroupExitPersistedOutcome.legacyUnknownRotationDeferredRestart,
+        ),
+      ];
+
+      for (final (initialCode, expectedOutcome) in cases) {
+        final pendingRepo = _PendingRepo();
+        final intent = _intent(
+          GroupExitIntentState.rotationClaimed,
+        ).copyWith(lastErrorCode: initialCode);
+        final intentRepo = _IntentRepo(pendingRepo)..seed(intent);
+        final groupRepo = await _activeGroupRepo();
+        var rotations = 0;
+        var nativeLeaves = 0;
+        final runner = GroupExitIntentRunner(
+          intentRepository: intentRepo,
+          pendingRepository: pendingRepo,
+          pendingBroadcastRunner: GroupPendingBroadcastRunner(
+            repository: pendingRepo,
+            rePush: (_) async => true,
+          ),
+          groupRepository: groupRepo,
+          loadCurrentSelfPeerId: () async => intent.selfPeerId,
+          prepareNotice:
+              ({
+                required intent,
+                required sourceEventId,
+                required eventAt,
+              }) async => throw StateError('must not prepare'),
+          attemptNotice: ({required intent, required pendingBroadcast}) async =>
+              throw StateError('must not attempt'),
+          rotateKeys: (_) async => rotations++,
+          nativeLeave: (_) async {
+            nativeLeaves++;
+            throw StateError('native outcome unknown');
+          },
+        );
+
+        final result = await runner.processGroup(intent.groupId);
+
+        expect(
+          result.status,
+          GroupExitIntentProcessStatus.waitingForNativeRetry,
+          reason: initialCode,
+        );
+        final nativePending = await intentRepo.forGroup(intent.groupId);
+        expect(
+          nativePending?.state,
+          GroupExitIntentState.nativeLeavePending,
+          reason: initialCode,
+        );
+        expect(
+          nativePending?.lastErrorCode,
+          expectedOutcome.persistedCode,
+          reason: initialCode,
+        );
+        expect(nativePending?.lastErrorCode, isNot(contains(rawLegacyCode)));
+        expect(rotations, 0, reason: initialCode);
+        expect(nativeLeaves, 1, reason: initialCode);
       }
     },
   );

@@ -68,6 +68,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -158,6 +159,7 @@ class FeedWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
   final GroupInviteDeliveryAttemptRepository?
   groupInviteDeliveryAttemptRepository;
   final GroupReactionReplayOutboxRepository?
@@ -205,6 +207,7 @@ class FeedWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupExitDiagnosticRepository,
     this.groupInviteDeliveryAttemptRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
@@ -2607,6 +2610,7 @@ class _FeedWiredState extends State<FeedWired>
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
       groupInviteDeliveryAttemptRepository:
           widget.groupInviteDeliveryAttemptRepository,
       groupReactionReplayOutboxRepository:

@@ -40,6 +40,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
@@ -85,6 +86,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
   final GroupInviteDeliveryAttemptRepository?
   groupInviteDeliveryAttemptRepository;
   final GroupReactionReplayOutboxRepository?
@@ -127,6 +129,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupExitDiagnosticRepository,
     this.groupInviteDeliveryAttemptRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
@@ -274,6 +277,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             reactionListener: widget.reactionListener,
             groupRepository: widget.groupRepository,
             groupMessageRepository: widget.groupMessageRepository,
+            groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
             groupInviteDeliveryAttemptRepository:
                 widget.groupInviteDeliveryAttemptRepository,
             groupReactionReplayOutboxRepository:
@@ -616,6 +620,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           reactionListener: widget.reactionListener,
           groupRepository: widget.groupRepository,
           groupMessageRepository: widget.groupMessageRepository,
+          groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
           groupReactionReplayOutboxRepository:
               widget.groupReactionReplayOutboxRepository,
           groupMessageListener: widget.groupMessageListener,

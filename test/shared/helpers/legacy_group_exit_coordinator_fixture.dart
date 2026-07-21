@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/leave_group_and_delete_local_history_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -58,6 +59,20 @@ void installLegacyGroupExitCoordinatorFixture({
   }
 
   setGroupExitIntentActionSinks(
+    resolveSnapshot: (groupId) async {
+      final identity = await identityRepository.loadIdentity();
+      final selfPeerId = identity?.peerId.trim();
+      if (selfPeerId == null || selfPeerId.isEmpty) {
+        throw StateError('Current group-exit identity is unavailable.');
+      }
+      return resolveGroupExitSnapshot(
+        groupRepo: groupRepository,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        messageRepo: messageRepository,
+        loadPendingBroadcasts: loadPendingBroadcasts,
+      );
+    },
     requestLeave: run,
     queueLeaveWhenSyncCompletes: run,
     retry: run,

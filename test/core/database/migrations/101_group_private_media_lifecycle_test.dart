@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/migrations/100_direct_private_media_li
 import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/migrations/102_groups_self_removed_at.dart';
 import 'package:flutter_app/core/database/migrations/103_group_exit_intents.dart';
+import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -134,7 +135,7 @@ void main() {
       await runProductionOnUpgrade(db, 100, 101);
       await runGroupPrivateMediaLifecycleMigration(db);
 
-      expect(currentIdentityDatabaseVersion, 103);
+      expect(currentIdentityDatabaseVersion, 104);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -143,14 +144,17 @@ void main() {
         final index101 = registry.indexWhere((entry) => entry.version == 101);
         final index102 = registry.indexWhere((entry) => entry.version == 102);
         final index103 = registry.indexWhere((entry) => entry.version == 103);
+        final index104 = registry.indexWhere((entry) => entry.version == 104);
         expect(registry.where((entry) => entry.version == 100), hasLength(1));
         expect(registry.where((entry) => entry.version == 101), hasLength(1));
         expect(registry.where((entry) => entry.version == 102), hasLength(1));
         expect(registry.where((entry) => entry.version == 103), hasLength(1));
+        expect(registry.where((entry) => entry.version == 104), hasLength(1));
         expect(index101, index100 + 1);
         expect(index102, index101 + 1);
         expect(index103, index102 + 1);
-        expect(index103, registry.length - 1);
+        expect(index104, index103 + 1);
+        expect(index104, registry.length - 1);
         expect(
           registry[index100].run,
           same(runDirectPrivateMediaLifecycleMigration),
@@ -164,6 +168,8 @@ void main() {
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
         expect(registry[index103].name, '103_group_exit_intents');
         expect(registry[index103].run, same(runGroupExitIntentsMigration));
+        expect(registry[index104].name, '104_group_exit_diagnostics');
+        expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
       }
 
       final columns = await _columns(db, 'group_messages');

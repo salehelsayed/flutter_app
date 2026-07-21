@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -587,6 +589,98 @@ void main() {
         DeleteSelfRemovedGroupShellResult.deleted,
       );
       expect(reconcilerCalls, 8);
+    },
+  );
+
+  test(
+    'PB266-12 diagnosing self-removed action codes authority and cleanup once',
+    () async {
+      final diagnostics = <GroupExitDiagnostic>[];
+      var deleteCalls = 0;
+      final authorityAction = DiagnosingDeleteSelfRemovedGroupShellAction(
+        loadCurrentSelfPeerId: () async => null,
+        inner: ({required groupId, required selfPeerId}) async {
+          deleteCalls++;
+          return DeleteSelfRemovedGroupShellResult.deleted;
+        },
+        submit: (rows) async => diagnostics.addAll(rows),
+        now: () => marker,
+      );
+
+      final authority = await authorityAction(groupId);
+      expect(
+        authority.result,
+        DeleteSelfRemovedGroupShellResult.cleanupIncomplete,
+      );
+      expect(authority.publicCode, GroupExitDiagnosticPublicCode.ex01);
+      expect(deleteCalls, 0);
+      expect(diagnostics, hasLength(1));
+      expect(diagnostics.single.publicCode, GroupExitDiagnosticPublicCode.ex01);
+      expect(diagnostics.single.intentRef, isNull);
+      expect(diagnostics.single.groupRef, isNot(contains(groupId)));
+
+      diagnostics.clear();
+      final cleanupAction = DiagnosingDeleteSelfRemovedGroupShellAction(
+        loadCurrentSelfPeerId: () async => selfPeerId,
+        inner: ({required groupId, required selfPeerId}) async {
+          deleteCalls++;
+          return DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+        },
+        submit: (rows) async => diagnostics.addAll(rows),
+        now: () => marker,
+      );
+
+      final cleanup = await cleanupAction(groupId);
+      expect(
+        cleanup.result,
+        DeleteSelfRemovedGroupShellResult.cleanupIncomplete,
+      );
+      expect(cleanup.publicCode, GroupExitDiagnosticPublicCode.ex10);
+      expect(deleteCalls, 1);
+      expect(diagnostics, hasLength(1));
+      expect(diagnostics.single.publicCode, GroupExitDiagnosticPublicCode.ex10);
+
+      diagnostics.clear();
+      final stateRaceAction = DiagnosingDeleteSelfRemovedGroupShellAction(
+        loadCurrentSelfPeerId: () async => selfPeerId,
+        inner: ({required groupId, required selfPeerId}) async {
+          deleteCalls++;
+          return DeleteSelfRemovedGroupShellResult.refusedStateChanged;
+        },
+        submit: (rows) async => diagnostics.addAll(rows),
+        now: () => marker,
+      );
+      expect(
+        (await stateRaceAction(groupId)).result,
+        DeleteSelfRemovedGroupShellResult.refusedStateChanged,
+      );
+      expect(deleteCalls, 2);
+      expect(diagnostics, isEmpty);
+
+      final thrown = StateError('hostile cleanup failure');
+      final originalStack = StackTrace.current;
+      final throwingAction = DiagnosingDeleteSelfRemovedGroupShellAction(
+        loadCurrentSelfPeerId: () async => selfPeerId,
+        inner: ({required groupId, required selfPeerId}) async {
+          deleteCalls++;
+          Error.throwWithStackTrace(thrown, originalStack);
+        },
+        submit: (rows) async => diagnostics.addAll(rows),
+        now: () => marker,
+      );
+      Object? caught;
+      StackTrace? caughtStack;
+      try {
+        await throwingAction(groupId);
+      } catch (error, stackTrace) {
+        caught = error;
+        caughtStack = stackTrace;
+      }
+      expect(caught, same(thrown));
+      expect(caughtStack.toString(), originalStack.toString());
+      expect(deleteCalls, 3);
+      expect(diagnostics, hasLength(1));
+      expect(diagnostics.single.publicCode, GroupExitDiagnosticPublicCode.ex10);
     },
   );
 }

@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -583,6 +584,14 @@ void main() {
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
+          resolveGroupExitSnapshotForTest: (groupId) =>
+              resolveGroupExitActionSnapshotForPresentation(
+                groupId: groupId,
+                identityRepository: identityRepo,
+                groupRepository: groupRepo,
+                messageRepository: msgRepo,
+                loadPendingBroadcasts: loadGroupPendingBroadcasts,
+              ),
           deleteSelfRemovedGroupShell: deleteSelfRemovedGroupShell,
           groupInviteListener: groupInviteListener,
           reactionRepo: reactionRepo,
@@ -641,6 +650,20 @@ void main() {
         Completer<GroupExitIntentRequestResult>? queueCompleter;
         final calls = <String>[];
         setGroupExitIntentActionSinks(
+          resolveSnapshot: (groupId) async {
+            final identity = await identityRepo.loadIdentity();
+            final selfPeerId = identity?.peerId.trim();
+            if (selfPeerId == null || selfPeerId.isEmpty) {
+              throw StateError('Current group-exit identity is unavailable.');
+            }
+            return resolveGroupExitSnapshot(
+              groupRepo: groupRepo,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              messageRepo: msgRepo,
+              loadPendingBroadcasts: loadGroupPendingBroadcasts,
+            );
+          },
           requestLeave: (groupId) async {
             calls.add('$activeCase:request:$groupId');
             if (activeCase == 'post-snapshot-role') {

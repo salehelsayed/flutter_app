@@ -91,6 +91,31 @@ void main() {
     'group_removed_delete_body',
     'group_removed_delete_action',
     'group_removed_delete_failed',
+    'settings_group_exit_diagnostics_section',
+    'settings_group_exit_diagnostics_title',
+    'settings_group_exit_diagnostics_count',
+    'settings_group_exit_diagnostics_unavailable',
+    'settings_group_exit_diagnostics_unavailable_hint',
+    'settings_group_exit_diagnostics_empty',
+    'settings_group_exit_diagnostics_reload',
+    'settings_group_exit_diagnostics_clear',
+    'settings_group_exit_diagnostics_reloaded',
+    'settings_group_exit_diagnostics_cleared',
+    'settings_group_exit_diagnostics_reload_failed',
+    'settings_group_exit_diagnostics_clear_failed',
+    'settings_group_exit_diagnostics_close',
+    'settings_group_exit_diagnostics_group_reference',
+    'settings_group_exit_diagnostic_ex01',
+    'settings_group_exit_diagnostic_ex02',
+    'settings_group_exit_diagnostic_ex03',
+    'settings_group_exit_diagnostic_ex04',
+    'settings_group_exit_diagnostic_ex05',
+    'settings_group_exit_diagnostic_ex06',
+    'settings_group_exit_diagnostic_ex07',
+    'settings_group_exit_diagnostic_ex08',
+    'settings_group_exit_diagnostic_ex09',
+    'settings_group_exit_diagnostic_ex10',
+    'settings_group_exit_diagnostic_ex99',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -147,6 +172,52 @@ void main() {
         expect(l10n.group_removed_delete_body.trim(), isNotEmpty);
         expect(l10n.group_removed_delete_action.trim(), isNotEmpty);
         expect(l10n.group_removed_delete_failed.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostics_section.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostics_title.trim(), isNotEmpty);
+        expect(
+          l10n.settings_group_exit_diagnostics_count(2).trim(),
+          isNotEmpty,
+        );
+        expect(
+          l10n.settings_group_exit_diagnostics_unavailable.trim(),
+          isNotEmpty,
+        );
+        expect(
+          l10n.settings_group_exit_diagnostics_unavailable_hint.trim(),
+          isNotEmpty,
+        );
+        expect(l10n.settings_group_exit_diagnostics_empty.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostics_reload.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostics_clear.trim(), isNotEmpty);
+        expect(
+          l10n.settings_group_exit_diagnostics_reloaded.trim(),
+          isNotEmpty,
+        );
+        expect(l10n.settings_group_exit_diagnostics_cleared.trim(), isNotEmpty);
+        expect(
+          l10n.settings_group_exit_diagnostics_reload_failed.trim(),
+          isNotEmpty,
+        );
+        expect(
+          l10n.settings_group_exit_diagnostics_clear_failed.trim(),
+          isNotEmpty,
+        );
+        expect(l10n.settings_group_exit_diagnostics_close.trim(), isNotEmpty);
+        expect(
+          l10n.settings_group_exit_diagnostics_group_reference('abc123').trim(),
+          isNotEmpty,
+        );
+        expect(l10n.settings_group_exit_diagnostic_ex01.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex02.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex03.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex04.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex05.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex06.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex07.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex08.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex09.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex10.trim(), isNotEmpty);
+        expect(l10n.settings_group_exit_diagnostic_ex99.trim(), isNotEmpty);
       }
       final en = AppLocalizationsEn();
       expect(en.orbit_leave_action, 'Leave');

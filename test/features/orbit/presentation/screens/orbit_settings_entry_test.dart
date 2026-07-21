@@ -12,6 +12,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -79,6 +81,24 @@ class _FakeNearbyLocationService implements NearbyLocationService {
 
   @override
   Future<bool> openAppSettings() async => true;
+}
+
+class _EmptyGroupExitDiagnosticRepository
+    implements GroupExitDiagnosticRepository {
+  @override
+  Future<void> appendOutcome(List<GroupExitDiagnostic> diagnostics) async {}
+
+  @override
+  Future<void> clear() async {}
+
+  @override
+  Future<List<GroupExitDiagnostic>> loadForAction({
+    required String groupId,
+    required String intentId,
+  }) async => const [];
+
+  @override
+  Future<List<GroupExitDiagnostic>> loadNewest() async => const [];
 }
 
 void main() {
@@ -176,6 +196,7 @@ void main() {
   Widget buildOrbit({
     required AppShellController appShellController,
     NearbyLocationService? nearbyLocationService,
+    GroupExitDiagnosticRepository? groupExitDiagnosticRepository,
     bool disableAnimations = false,
   }) {
     final crListener = ContactRequestListener(
@@ -212,6 +233,7 @@ void main() {
       feedUnreadCountListenable: ValueNotifier<int>(0),
       postsPrivacySettingsRepository: postsPrivacyRepo,
       nearbyLocationService: nearbyLocationService,
+      groupExitDiagnosticRepository: groupExitDiagnosticRepository,
     );
 
     return MaterialApp(
@@ -468,6 +490,32 @@ void main() {
     },
   );
 
+  testWidgets(
+    'PB266-13 Orbit Settings receives the identical release diagnostic '
+    'repository',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      final repository = _EmptyGroupExitDiagnosticRepository();
+      identityRepo.seed(identityWith());
+
+      await tester.pumpWidget(
+        buildOrbit(
+          appShellController: freshController(),
+          groupExitDiagnosticRepository: repository,
+        ),
+      );
+      await pumpFrames(tester);
+      await openSettings(tester);
+
+      final settings = tester.widget<SettingsWired>(find.byType(SettingsWired));
+      expect(
+        identical(settings.groupExitDiagnosticRepository, repository),
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('TC-206-23 move-account reachable from orbit-opened Settings', (
     tester,
   ) async {
@@ -608,5 +656,113 @@ void main() {
       isTrue,
       reason: 'main.dart OrbitWired must thread nearbyLocationService',
     );
+  });
+
+  test(
+    'PB266-13 source guard threads diagnostics through every live route hop',
+    () {
+      String source(String path) => File(path).readAsStringSync();
+
+      List<String> callBlocks(String input, String symbol) {
+        final blocks = <String>[];
+        var cursor = 0;
+        while (true) {
+          final start = input.indexOf('$symbol(', cursor);
+          if (start < 0) break;
+          if (start > 0 && RegExp(r'[A-Za-z0-9_]').hasMatch(input[start - 1])) {
+            cursor = start + symbol.length;
+            continue;
+          }
+          var depth = 0;
+          var end = -1;
+          for (var i = input.indexOf('(', start); i < input.length; i++) {
+            final char = input[i];
+            if (char == '(') depth++;
+            if (char == ')') {
+              depth--;
+              if (depth == 0) {
+                end = i + 1;
+                break;
+              }
+            }
+          }
+          expect(end, greaterThan(start), reason: 'unclosed $symbol call');
+          blocks.add(input.substring(start, end));
+          cursor = end;
+        }
+        return blocks.where((block) => !block.startsWith('$symbol({')).toList();
+      }
+
+      void expectThreaded(String path, String symbol, {required int count}) {
+        final blocks = callBlocks(source(path), symbol);
+        expect(blocks, hasLength(count), reason: '$path $symbol census');
+        for (final block in blocks) {
+          expect(
+            block,
+            contains('groupExitDiagnosticRepository:'),
+            reason: '$path $symbol must forward the shared repository',
+          );
+        }
+      }
+
+      const startup = 'lib/features/identity/presentation/startup_router.dart';
+      const fte =
+          'lib/features/home/presentation/screens/'
+          'first_time_experience_wired.dart';
+      const qr =
+          'lib/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+      const feed = 'lib/features/feed/presentation/screens/feed_wired.dart';
+      const orbit = 'lib/features/orbit/presentation/screens/orbit_wired.dart';
+
+      expectThreaded(startup, 'StartupRouter', count: 1);
+      expectThreaded(startup, 'FirstTimeExperienceWired', count: 2);
+      expectThreaded(startup, 'FeedWired', count: 1);
+      expectThreaded(fte, 'FeedWired', count: 1);
+      expectThreaded(fte, 'QRScannerWired', count: 1);
+      expectThreaded(qr, 'FeedWired', count: 1);
+      expectThreaded(feed, 'OrbitWired', count: 1);
+      expectThreaded(orbit, 'QRScannerWired', count: 1);
+      expectThreaded(orbit, 'SettingsWired', count: 1);
+
+      for (final path in [startup, fte, qr, feed, orbit]) {
+        final contents = source(path);
+        expect(
+          contents,
+          contains(
+            'GroupExitDiagnosticRepository? groupExitDiagnosticRepository',
+          ),
+          reason: '$path must expose the nullable test seam',
+        );
+        expect(contents, contains('this.groupExitDiagnosticRepository'));
+      }
+    },
+  );
+
+  test('PB266-08 Orbit group-exit events expose only fixed diagnostics', () {
+    final contents = File(
+      'lib/features/orbit/presentation/screens/orbit_wired.dart',
+    ).readAsStringSync();
+    const expected = <String, (String, String)>{
+      'ORBIT_FL_GROUP_EXIT_CLASSIFY_ERROR': ('EX01', 'authority'),
+      'ORBIT_FL_GROUP_EXIT_PROMOTION_ERROR': ('EX02', 'role_sync'),
+      'ORBIT_FL_DELETE_GROUP_ERROR': ('EX10', 'local_delete'),
+      'ORBIT_FL_DELETE_SELF_REMOVED_GROUP_ERROR': ('EX10', 'local_delete'),
+      'ORBIT_FL_STUCK_EXIT_CLASSIFY_ERROR': ('EX01', 'authority'),
+    };
+
+    for (final entry in expected.entries) {
+      final eventOffset = contents.indexOf("event: '${entry.key}'");
+      expect(eventOffset, greaterThanOrEqualTo(0), reason: entry.key);
+      final detailsOffset = contents.indexOf('details:', eventOffset);
+      final endOffset = contents.indexOf('},', detailsOffset);
+      expect(endOffset, greaterThan(detailsOffset), reason: entry.key);
+      final details = contents.substring(detailsOffset, endOffset + 2);
+      expect(details, contains("'code': '${entry.value.$1}'"));
+      expect(details, contains("'phase': '${entry.value.$2}'"));
+      expect(details, contains("'severity': 'failure'"));
+      expect(details, isNot(contains('groupId')));
+      expect(details, isNot(contains("'error'")));
+      expect(details, isNot(contains('toString()')));
+    }
   });
 }

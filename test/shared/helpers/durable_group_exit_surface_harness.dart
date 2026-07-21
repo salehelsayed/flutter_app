@@ -4,6 +4,7 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -129,6 +130,19 @@ class DurableGroupExitSurfaceHarness {
   /// Installs concrete action/access authority and the snapshot-race injector.
   void install() {
     setGroupExitIntentActionSinks(
+      resolveSnapshot: (requestedGroupId) async {
+        final identity = await coordinator.identityRepository.loadIdentity();
+        final selfPeerId = identity?.peerId.trim();
+        if (selfPeerId == null || selfPeerId.isEmpty) {
+          throw StateError('Current group-exit identity is unavailable.');
+        }
+        return resolveGroupExitSnapshot(
+          groupRepo: coordinator.groupRepository,
+          groupId: requestedGroupId,
+          selfPeerId: selfPeerId,
+          loadPendingBroadcasts: _loadUiSnapshot,
+        );
+      },
       requestLeave: (requestedGroupId) async {
         requestLeaveCalls++;
         try {

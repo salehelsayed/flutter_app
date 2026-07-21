@@ -1,11 +1,11 @@
 # 265 - Voluntary-Leave Prework Must Degrade, Not Abort
 
-Status: evidence-gated residual after the accepted Plan 264 implementation
-(post-handoff audit 2026-07-21); not stale-already-covered and not implemented
+Status: implemented and accepted at host closure (2026-07-21); Branch B completed
+with literal causal RED, focused GREEN, mutation re-red, and all required gates
 Type: Bug (reliability hardening)
 Spec: free-text intent from 2026-07-20 — an unambiguous voluntary leave must not be
 vetoed by best-effort live delivery, offline replay, or key rotation
-Classification: post-264 residual / re-review required
+Classification: post-264 residual / implemented
 Closure tier: host (application/fake-bridge decision seam); no new real-crypto,
 relay, simulator, device, or migration claim
 
@@ -17,6 +17,52 @@ relay, simulator, device, or migration claim
 | 2026-07-21 | Evidence Collector / Planner | Plan 264; voluntary-leave, replay-envelope, rotation, signed-transition, bridge, Go inbox, current tests, gates | Current aggregate inbox-store failure is causal; per-recipient-key premise is refuted; Plan 264 subsumes the durable leave phases | Resequence 265 after 264; audit this post-handoff contract |
 | 2026-07-21 | Reviewer / Planner | Review graph plus state/CAS, bridge recipient, zero-peer publish, gate, and current selector sources | Initial `not-ready` blockers corrected in one structural pass; plan is review-ready only as a prerequisite-gated contract | Await immutable 264 handoff, then choose stale or residual RED branch |
 | 2026-07-21 | Post-264 residual audit | accepted Plan 264 runner, broadcast delivery path, bounded error field, PB264 tests | Branch B is required: current per-recipient salvage conflicts with TC-265-09's aggregate-only contract; a later rotation degradation can overwrite notice degradation in the single `last_error_code`, leaving TC-265-11 uncovered; the remaining fault matrix is not yet mapped row by row. | Pause implementation, reconcile TC-265-09/11, map all rows, then select the literal first uncovered causal RED and re-review. |
+| 2026-07-21 | Executor / post-handoff re-review | immutable Plan 264 ref/tree, exact runner/broadcast/replay/DB seams, all TC-265 rows, PB264/current selectors, gate arrays | Handoff is stable; TC-265-01/06/08/10/12 are covered, 04/07 need preservation additions, and 02/03/05/09/11 have residual proof or production gaps. TC-265-09 is reconciled as one aggregate attempt with no peer arrays; TC-265-11 uses the existing column with a closed composite vocabulary. | Select PB265-02 as the first causal RED, then implement only the residual typed branches. |
+| 2026-07-21 | Executor / closure | three application seams, PB265 plus affected PB264 tests, gate registration, refreshed impact graph | Branch B implemented without schema/wire/relay/native/UI scope drift; focused, preservation, `groups`, `feature-host-all`, analyzer, formatting, and diff gates passed | Accept host closure; Plans 266/267 may rebase on the bounded outcome contract |
+
+## Post-Handoff Residual Re-Review
+
+This section records the pre-GREEN residual map. The closure disposition in
+Execution Progress supersedes its forward-looking “uncovered” and “ready” wording.
+
+- Immutable prerequisite: `refs/plan-handoffs/264` remains
+  `a03300cdbc4d9aae900b89684649dca60880211a` with tree
+  `93d9ab4eabc815034964f1c4ab236159b1372833` and parent
+  `f0a5d2777dfd104407d239e111a4a0b8d95651ac`. Execution HEAD is a
+  documentation-only descendant, and the Plan 264 runner/test/gate blobs match the
+  handoff. The dirty snapshot contains no Plan 264/265 implementation overlap.
+- Graphify review was anchored/current at fingerprint `3621afca05d0b1d3` on
+  `attemptPreparedVoluntaryLeaveNotice`, `lastErrorCode`, and `GROUP_TESTS`.
+- Residual map:
+  - TC-265-01 is covered across the existing aggregate-failure classifier and the
+    PB264 degraded-runner completion proof; its contradictory per-recipient assertions
+    are replaced under TC-265-09.
+  - TC-265-02 is the first uncovered causal row: timeout/arbitrary inbox throws have no
+    exact durable-checkpoint proof and the current fallback emits more than one inbox
+    command.
+  - TC-265-03 is uncovered: the whole envelope/store block is caught and repeated,
+    rather than only replay `group.encrypt` and replay `payload.sign` being degradable.
+  - TC-265-04 is source-covered for returned non-OK/throw continuation but lacks the
+    timeout/malformed/generic-throw preservation table.
+  - TC-265-05 is uncovered for zero-peer plus failed-inbox no-custody semantics.
+  - TC-265-06 is covered by mandatory preparation/authority tests; add only a direct
+    primary-sign preservation row if useful to the residual fixture.
+  - TC-265-07 is source-covered and partially proven; add exact replay-key and
+    completion-CAS preservation cases without changing the blocking policy.
+  - TC-265-08 is implemented by the durable rotation claim/restart proofs; add an
+    arbitrary-throw preservation subcase only.
+  - TC-265-09 is a production residual: remove per-recipient fallback and peer-specific
+    result arrays. Preserve exactly one aggregate envelope/store attempt whose signed
+    normalized recipients, outer explicit ids, and bridge preservation flag agree.
+  - TC-265-10 and TC-265-12 remain mapped to the accepted success/order/authority,
+    restart, native-ambiguity, and cleanup sentinels.
+  - TC-265-11 is a production residual: preserve `notice_degraded` across later phase
+    advances and use the closed composites
+    `notice_degraded:rotation_deferred` and
+    `notice_degraded:rotation_deferred_restart`; rotation-only codes remain unchanged.
+- Re-review verdict at the pre-GREEN boundary: ready for Branch B. Execution later
+  closed this branch without schema, DB-helper, wire/relay/native handler, UI,
+  per-recipient claim, or custody-promise changes.
 
 ## Historical Problem And Post-264 Residual Evidence
 
@@ -41,25 +87,26 @@ relay, simulator, device, or migration claim
   `member_removal_integration_test.dart::GM-015 blocked creator leave keeps
   remaining-member sends healthy` selector passed on 2026-07-21, proving the
   last-admin block and subsequent remaining-member sends stay healthy.
-- Remaining coverage is not yet mapped row by row. Plan 264 covers mandatory notice
-  authority, degraded completion, and at-most-once rotation throws, but Plan 265 still
-  must classify the full delivery/preparation fault matrix against those accepted
-  seams before choosing a first causal RED.
+- Pre-execution residual: coverage had not yet been mapped row by row at this point in
+  the audit. The completed re-review mapped all rows and selected PB265-02 as the first
+  causal RED; the final proof inventory appears in Test Contract and Execution
+  Progress.
 - Refuted finding: v1 claimed one recipient could fail because that member lacked key
   material. The envelope is encrypted once with the group replay key and signs one
   normalized recipient set at
   `lib/features/groups/application/group_offline_replay_envelope.dart:87-169`; Go runs
   one aggregate logical inbox operation and returns one final aggregate status at
   `go-mknoon/node/group_inbox.go:229-298`, although that operation may try more than one
-  relay/recovery path internally. Plan 264's fallback deliberately performs
-  per-recipient salvage after an aggregate attempt fails, so the old “cannot identify
-  a failed member” statement is no longer a current implementation fact.
+  relay/recovery path internally. At the immutable Plan 264 handoff, its local fallback
+  deliberately performed per-recipient salvage after an aggregate attempt failed.
+  Plan 265 removes that fallback and restores one aggregate request without inventing
+  peer-specific outcomes.
 - Recipient authority: `callGroupInboxStore` preserves the caller's explicit
   recipient ids only when `preserveRecipientPeerIds: true` at
   `lib/core/bridge/bridge_group_helpers.dart:849-875`; otherwise Go may re-derive the
-  joined-group set. The delivered aggregate and per-recipient Plan 264 calls set that
-  flag, but the per-recipient salvage shape conflicts with TC-265-09's aggregate-only
-  contract and therefore requires reconciliation rather than an implementation claim.
+  joined-group set. Plan 265 now sends one aggregate call with that flag set, and its
+  signed normalized recipient set/hash, replay envelope ids, and outer explicit ids
+  are proven to agree.
 - Confirmed ambiguity boundary: replay-envelope construction resolves the group key,
   identity, and sender binding through repositories before its isolated crypto calls.
   Repository/identity/key ambiguity and a refused/throwing completion CAS are state
@@ -72,17 +119,14 @@ relay, simulator, device, or migration claim
   with Plan 264. The primary signed `member_removed` notice is mandatory and durable;
   signing failure must retain retryable intent authority and issue no unsigned
   delivery or native leave.
-- Post-handoff disposition: Plan 264 delivered the durable notice/rotation/native/
-  cleanup state machine and satisfies several preservation rows, but it does not cover
-  this plan completely. Its per-recipient salvage path conflicts with TC-265-09's
-  aggregate-only contract, and the single bounded error field can lose notice
-  degradation when rotation writes a later code (TC-265-11). The remaining fault
-  matrix still requires exact mapping; therefore this plan is a residual, not a
-  `stale-already-covered` close.
-- Affected files, conditional on that handoff: the post-264 exit runner/delivery seam,
-  `test/features/groups/application/voluntary_leave_prework_degradation_test.dart`,
-  and `scripts/run_test_gates.sh`. No Plan 264 file may be edited while its session is
-  active.
+- Execution disposition: Plan 264 supplied the durable state machine, while Plan 265
+  closed the remaining aggregate replay, typed preparation, exact replay-key
+  authority, live success, and combined-outcome gaps. This is an implemented residual,
+  not a `stale-already-covered` close.
+- Final scoped inventory: `broadcast_voluntary_leave_use_case.dart`,
+  `group_offline_replay_envelope.dart`, `group_exit_intent_runner.dart`, the new
+  PB265 test, affected group-exit action/runner tests, and one `GROUP_TESTS`
+  registration. The plan document and architecture graph were refreshed as evidence.
 
 ## Graph Grounding Snapshot
 
@@ -106,6 +150,12 @@ relay, simulator, device, or migration claim
 - Graph gaps requiring source search: the compact graph did not surface the causal
   inbox-failure selector, aggregate Go relay semantics, or the in-flight Plan 264
   contract; these were verified directly.
+- Closure refresh: one
+  `./graphify-arch/refresh_arch_graph.sh --incremental` run processed 7 changed code
+  files and 2,846 unchanged files, writing 59,681 nodes and 90,991 edges. The
+  deterministic TDD overlay contains 1,436 files, 13,996 named tests, and 1,066
+  production targets; the subsequent affected query kept the impact inside the
+  expected group application consumers and registered tests.
 - Reuse rule: any later Plan 265 review must start from the immutable Plan 264 handoff,
   remap the remaining fault matrix, and re-query these post-264 anchors before a RED.
 
@@ -184,31 +234,27 @@ Dependencies:
 
 ## Test Contract
 
-The named PB265 file is created only when the post-264 preflight finds a residual gap.
-For each causal row, execution HEAD must fail for the named reason before production
-edits. If the equivalent post-264 assertion already passes, map its exact existing test;
-if all causal rows are covered, reclassify `stale-already-covered` and do not fabricate
-RED, production edits, or mutations.
+The post-264 preflight found residual gaps, so the PB265 file was created with literal
+selectors for TC-265-02/03/04/05/07/09/11. TC-265-01/06/08/10/12 remain mapped to the
+exact existing proofs named below; no placeholder PB265 selectors were fabricated.
 
-Outcome names below are semantic requirements, not permission to invent persisted
-uppercase strings or a new result field. Before the first RED, the immutable 264 handoff
-must replace them with its exact accepted, allowlisted constants and observation seam.
-If one bounded `last_error_code` cannot represent delivery plus rotation without raw
-text or information loss, stop and re-review the outcome contract rather than silently
-overwriting one degradation with the next.
+Persisted outcomes use the closed `GroupExitPersistedOutcome` enum and Plan 264's
+existing `last_error_code` field. Unknown legacy strings canonicalize to
+`legacy_unknown`; no raw exception text, new result field, or schema change was
+introduced.
 
 | Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
 |---|---|---|---|---|---|---|
-| TC-265-01 | Aggregate inbox non-OK cannot veto an already-durable signed leave | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-01 aggregate inbox non-ok advances signed leave with offline degradation` | Host application; accepted runner/repository fakes; command-indexed `FakeBridge` | Historical pre-264 baseline was `preworkFailed` with zero native leave. Residual RED or stale mapping -> GREEN completes the exact notice once, reaches native leave once, and exposes the accepted bounded offline-store degradation without raw text. | Reclassify `BridgeCommandException(group:inboxStore)` as blocking -> PB265-01 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-01 aggregate inbox non-ok advances signed leave with offline degradation'`; new file AUTO (`feature-host-all`) and add once to `GROUP_TESTS` if created |
+| TC-265-01 | Aggregate inbox non-OK cannot veto an already-durable signed leave | `test/features/groups/application/group_exit_actions_test.dart::PB265 voluntary leave aggregate failure stays aggregate without peer attribution`; `test/features/groups/application/group_exit_intent_runner_test.dart::PB264-09 missing exact notice waits while degraded completion retires only that notice` | Host application; accepted runner/repository fakes; command-indexed `FakeBridge` | The mapped pair proves one degraded aggregate response and runner completion of the exact durable notice without raw text. | Reclassify aggregate inbox failure as retryable -> PB265-02 and the mapped runner proof red | Both mapped files are registered in `GROUP_TESTS`; the affected focused aggregate and `groups` gate execute them |
 | TC-265-02 | Inbox timeout and arbitrary transport throw have the same narrow post-checkpoint outcome | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-02 inbox timeout and throw degrade only after durable notice checkpoint` | Host; timeout/generic-throw table; phase spy | Residual RED if either error escapes or is caught before authority is pinned -> GREEN proves the checkpoint, one aggregate logical bridge command, one native leave, and no raw exception persisted. | Widen the catch or omit generic throw -> PB265-02 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-02 inbox timeout and throw degrade only after durable notice checkpoint'`; AUTO + one-time `GROUP_TESTS` registration if created |
 | TC-265-03 | Only replay encryption and the second signature are degradable preparation faults | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-03 replay encrypt and second-sign faults degrade after state inputs are pinned` | Host; successfully resolved exact key/identity/sender binding; ordered `group.encrypt` and second `payload.sign` faults | Residual RED if either isolated crypto fault traps the intent -> GREEN skips inbox store, preserves the mandatory signed transition identity, records the accepted replay-preparation degradation, and continues once. | Catch the primary sign/key lookup too, or require a replay envelope to advance -> PB265-03 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-03 replay encrypt and second-sign faults degrade after state inputs are pinned'`; AUTO + same registration |
 | TC-265-04 | Live-publish returned non-OK, timeout/malformed response, and throw stay best-effort and still permit inbox attempt | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-04 live publish non-ok and throw stay degraded and still attempt offline replay` | Host; response/throw table and ordered command log | The historical non-OK subcase was GREEN; the post-264 throw matrix still needs exact mapping. Residual RED or mapping -> GREEN attempts inbox replay and records the accepted bounded live-publish degradation for every non-success shape. | Treat returned non-OK as delivered, let throw escape, or return before inbox -> PB265-04 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-04 live publish non-ok and throw stay degraded and still attempt offline replay'`; AUTO + same registration |
 | TC-265-05 | No delivery custody can be established without vetoing local leave | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-05 zero-peer or failed live plus inbox failure leaves once without custody claim` | Host; cases for live non-OK plus inbox non-OK, live `ok` with zero peers plus inbox non-OK, and live throw plus inbox non-OK | Residual RED if all-delivery uncertainty vetoes. GREEN records the accepted combined notice-delivery degradation, claims rotation once, invokes native leave once, and never reports delivered, peer-observed, or eventual convergence. | Add an all-failed veto or equate `ok/topicPeers:0` with peer delivery -> PB265-05 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-05 zero-peer or failed live plus inbox failure leaves once without custody claim'`; AUTO + same registration |
-| TC-265-06 | Primary sign, exact-authority revalidation, and durable notice persistence remain mandatory | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-06 pre-checkpoint failures retain intent and emit zero downstream commands` | Host; first `payload.sign` failure; membership/identity mismatch; notice transaction throw | GREEN sentinel from mandatory signing plus accepted 264 authority -> retains retryable intent, does not advance notice phase, and emits zero publish/inbox/rotation/native/cleanup commands. | Broaden degradation across signing/revalidation/notice commit -> PB265-06 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-06 pre-checkpoint failures retain intent and emit zero downstream commands'`; AUTO + same registration; accepted PB264 authority selectors run directly |
-| TC-265-07 | Post-checkpoint key/identity/state ambiguity or completion-CAS failure stays blocking | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-07 state lookup or completion CAS failure retains the exact notice` | Host; replay-key lookup missing/throw, sender-binding mismatch, completion CAS false/throw, recreated runner | Residual RED if any state fault is laundered into degradation -> GREEN keeps the exact notice pending, performs zero rotation/native/cleanup, and reuses its source/time after restart; a delivery attempt before CAS failure is not reported complete. | Catch repository/CAS failure as transport degradation or mint a new notice -> PB265-07 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-07 state lookup or completion CAS failure retains the exact notice'`; AUTO + same registration; PB264-09 runs directly |
-| TC-265-08 | Rotation throw after its durable claim is deferred, at-most-once, and cannot veto native leave | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-08 rotation throw advances once and restart never rotates again` | Host; repository/bridge throw after `rotation_claimed`; recreated runner | Plan 264 now catches the runner seam and records `rotation_deferred`; map that accepted PB264 proof before deciding whether any residual RED remains. GREEN preserves one claim, reaches native once, and restart repeats no sign/publish/inbox/rotation. | Advance only on non-throw return or clear the durable claim -> PB265-08 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-08 rotation throw advances once and restart never rotates again'`; AUTO + same registration; PB264-10 runs directly |
+| TC-265-06 | Primary sign, exact-authority revalidation, and durable notice persistence remain mandatory | `test/features/groups/application/group_exit_intent_runner_test.dart::PB264-09 signed leave notice is watermark-newer, stable, and atomically handed off`; `test/features/groups/application/group_exit_actions_test.dart::PB264-09 invalid leave audit or mismatched private key keeps the runner fenced before group network` | Host; accepted mandatory-sign and exact-authority fixtures | Existing GREEN sentinels retain retryable intent, preserve the exact signed notice, and emit no group network/native/cleanup command when authority is invalid. | Broaden degradation across signing/revalidation/notice commit -> mapped PB264 proofs red | Exact PB264 selector plus the registered affected action file; both run in the focused aggregate and `groups` |
+| TC-265-07 | Post-checkpoint key/identity/state ambiguity or completion-CAS failure stays blocking | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-07 state lookup or completion CAS failure retains the exact notice`; existing PB264-09 action tests retain sender-binding/private-key coverage | Host; replay-key lookup missing/throw/wrong-group/invalid-epoch/empty-material, completion CAS false/throw, and accepted sender-binding fixtures | GREEN keeps the exact notice pending, performs zero rotation/native/cleanup, and reuses its source/time after restart; a delivery attempt before CAS failure is not reported complete. | Remove exact key authority or catch repository/CAS failure as transport degradation -> PB265-07 red | Exact PB265-07 plus accepted PB264-09 coverage; PB265 file is registered once |
+| TC-265-08 | Rotation throw after its durable claim is deferred, at-most-once, and cannot veto native leave | `test/features/groups/application/group_exit_intent_runner_test.dart::PB264-10 process recreation at every durable phase never repeats an earlier side effect`; `::PB264-10 normal deferred rotation records a bounded diagnostic and restart is native-only`; PB265-11 adds the combined throw case | Host; throw/deferred rotation after `rotation_claimed`; recreated runner | GREEN preserves one claim, reaches native once, and restart repeats no sign/publish/inbox/rotation. | Advance only on non-throw return, rethrow rotation, or clear the durable claim -> mapped PB264/PB265 proofs red | Exact PB264-10 preservation selector and registered runner/PB265 files |
 | TC-265-09 | Aggregate recipient semantics preserve the exact signed set without peer blame | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-09 aggregate attempt preserves signed recipients and explicit bridge authority` | Host; three-member fixture; inspect signed normalized set/hash and bridge command | Handoff guard -> signed set/hash equals outer explicit ids, `preserveRecipientPeerIds` is true, one aggregate logical operation yields one final status, and no member-specific failure is invented. If the immutable handoff lacks this, stop/replan instead of making a relay claim under 265. | Clear the preservation flag, drift either set, split commands, or blame one member -> PB265-09 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-09 aggregate attempt preserves signed recipients and explicit bridge authority'`; AUTO + same registration |
-| TC-265-10 | Success, live non-OK, and permission-denied rotation remain non-regressed | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-10 successful and expected-degraded legs preserve ordering`; `test/features/groups/application/group_exit_actions_test.dart::active exit completes durable prework before native leave and target cleanup` | Host; current fakes plus accepted runner fixture | GREEN sentinel -> successful ordering stays unchanged; live non-OK is bounded degradation; rotation null/deferred still reaches native once; none reorder native before mandatory notice. | Make expected non-OK/null blocking or reorder native -> PB265-10/current sentinel red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-10 successful and expected-degraded legs preserve ordering'`; exact current selector; PB265 AUTO/`GROUP_TESTS`, current file already registered |
+| TC-265-10 | Success, live non-OK, and permission-denied rotation remain non-regressed | `test/features/groups/application/group_exit_actions_test.dart::active exit completes durable prework before native leave and target cleanup`; PB265-04 and PB264-10 deferred-rotation proofs | Host; current fakes plus accepted runner fixture | GREEN keeps successful ordering unchanged; live non-OK is bounded degradation; rotation null/deferred still reaches native once; none reorder native before mandatory notice. | Make expected non-OK/null blocking or reorder native -> mapped PB265-04/current/PB264-10 sentinels red | Exact current success selector, PB265-04, and the accepted PB264-10 selector |
 | TC-265-11 | Delivery plus rotation degradation preserves both dimensions without raw-text overwrite | `test/features/groups/application/voluntary_leave_prework_degradation_test.dart::PB265-11 delivery and rotation faults retain the accepted combined outcome` | Host; inbox failure followed by rotation null and throw; exact accepted outcome constants | Residual RED if rotation overwrites delivery or arbitrary text is accepted -> GREEN exposes the handoff-approved composite or explicit precedence semantics, preserves both required facts through its typed observation seam, and leaves once. | Assign the later rotation code over delivery or persist exception text -> PB265-11 red | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-11 delivery and rotation faults retain the accepted combined outcome'`; AUTO + same registration |
 | TC-265-12 | Last-admin/pending/exact-membership guards, restart, native ambiguity, and cleanup remain authoritative | `test/features/groups/application/member_removal_integration_test.dart::GM-015 blocked creator leave keeps remaining-member sends healthy`; `test/features/groups/application/group_exit_intent_runner_test.dart::PB264-09 signed leave notice is watermark-newer, stable, and atomically handed off`; `::PB264-10 process recreation at every durable phase never repeats an earlier side effect`; `::PB264-12 confirmed cleanup is atomic and membership-generation safe` | Host; accepted 264 fixtures plus current last-admin fixture | GREEN sentinels -> guarded exits emit zero leave; sign/publish/inbox/rotation never repeat after durable completion/claim; native may retry only while `native_leave_pending` remains ambiguous and never after `cleanup_pending`; cleanup is exact-membership atomic. | Bypass authority, retry an earlier phase, suppress permitted ambiguous native retry, or clean a rejoin -> named sentinel red | Exact GM-015 and PB264-09/10/12 commands in Acceptance Gates; member-removal runs directly; accepted runner file occurs once in `GROUP_TESTS` |
 
@@ -235,19 +281,22 @@ overwriting one degradation with the next.
 
 ## Implementation Steps
 
+Execution completed every step below on 2026-07-21.
+
 1. **Prerequisite handoff.** The accepted Plan 264 implementation establishes DB v103,
    the durable runner, PB264-09/PB264-10/PB264-12, bounded outcome storage, and gate
    registration. Before future Plan 265 execution, freeze/re-verify its scoped ref,
    snapshot `git status --short`, and re-run the compact Graphify query with the exact
    accepted symbols. Stop if ownership becomes shared again or the ref is not stable.
-2. **Residual RED preflight.** Branch B is selected but paused for contract
-   reconciliation. Map every TC-265 row to the post-264 source and tests.
+2. **Residual RED preflight.** Branch B was selected after contract reconciliation.
+   Map every TC-265 row to the post-264 source and tests.
    Run direct equivalent selectors, record each mapping, and choose one literal branch:
    (A) every row is causal and green -> change classification to
    `stale-already-covered`, record exact verification, and make no test/production/
    registration change; or (B) record the first uncovered selector in Handoff, create
    only residual tests, and run that selector to causal RED before any production edit.
-   Do not default to PB265-01 when another row is the first residual gap.
+   Do not default to a presumed TC-265-01 selector when another row is the first
+   residual gap.
 3. **Validate the handoff boundary.** Prove repository/key/identity/sender-binding and
    completion-CAS failures remain blocking, exact recipients are explicitly preserved,
    and the accepted outcome vocabulary can retain delivery plus rotation. If any check
@@ -284,27 +333,30 @@ Stop-if conditions:
 
 ## Risks And Blind Spots
 
-- Catch-all false success -> PB265-03, PB265-06, and PB265-07 place crypto/transport,
-  mandatory preparation, and repository/CAS faults on distinct sides of the boundary.
+- Catch-all false success -> PB265-03, the accepted PB264-09 authority proofs, and
+  PB265-07 place crypto/transport, mandatory preparation, and repository/CAS faults on
+  distinct sides of the boundary.
 - Wrong event/skip-path pass -> every causal test asserts exact intent/source/revision,
   positive degradation code, negative downstream commands where blocking, and exact
   command counts.
-- Double side effects after degradation/restart -> PB265-08 plus accepted PB264-10;
-  PB265-12 separately preserves the permitted native retry while commit is ambiguous.
+- Double side effects after degradation/restart -> accepted PB264-10 and PB264-12
+  preserve at-most-once phases and the permitted native retry while commit is
+  ambiguous; PB265-11 covers the combined degraded rotation path.
 - Aggregate relay response misreported as one peer's failure or one relay request ->
   PB265-09, the explicit-recipient flag assertion, and the hard no-attribution guard.
 - Later degradation overwrites an earlier fact -> PB265-11 requires exact accepted
   composite/precedence semantics rather than arbitrary bounded text.
 - Production-critical end-to-end transport leg: N/A — 265 changes only the local
-  post-checkpoint classification and preserves the existing aggregate call shape; it
-  makes no real-delivery claim. Any wire, relay, custody, or recipient-observation
-  change triggers a new boundary plan instead of substituting this host proof.
+  post-checkpoint classification, preserves the wire-level aggregate request, and
+  removes Plan 264's local per-recipient fallback; it makes no real-delivery claim.
+  Any wire, relay, custody, or recipient-observation change triggers a new boundary
+  plan instead of substituting this host proof.
 - Lifecycle / derived-state durability -> inherited PB264-10/12/18 plus PB265-07; 265
   changes no lifecycle trigger or persistence shape.
 - Sibling-surface consistency -> Plan 264 PB264-16 must prove Group Info/List/Orbit use
   the same coordinator before 265 starts; dissolve and role-change remain out of scope.
-- Destructive-action side effects -> PB265-06/07/08 and PB264-12 prove no cleanup before
-  native authority and no repeated cleanup across restart.
+- Destructive-action side effects -> accepted PB264-09/10/12 plus PB265-07 prove no
+  cleanup before native authority and no repeated cleanup across restart.
 - Invariant re-verification under new transitions -> exact membership/last-admin/
   pending-role guards are re-run through PB264-06/07/13/14/19, not weakened here.
 
@@ -328,10 +380,8 @@ git status --short
 # Re-ground against the accepted post-264 symbols before writing tests.
 python3 graphify-arch/tdd_context.py query "Plan 265 post-264 GroupExitIntentRunner signed leave notice delivery degradation live publish offline replay rotation exact tests GROUP_TESTS" --profile tdd --budget 700
 
-# Branch B only: after mapping, replace this guarded value and this comment with the
-# literal first-uncovered selector from TC-265-01..12; expect non-zero for that reason.
-PB265_FIRST_UNCOVERED_SELECTOR='REPLACE_AFTER_IMMUTABLE_264_HANDOFF'
-test "$PB265_FIRST_UNCOVERED_SELECTOR" != 'REPLACE_AFTER_IMMUTABLE_264_HANDOFF'
+# Branch B first causal RED after the completed post-handoff row mapping.
+PB265_FIRST_UNCOVERED_SELECTOR='PB265-02 inbox timeout and throw degrade only after durable notice checkpoint'
 flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name "$PB265_FIRST_UNCOVERED_SELECTOR"
 
 # Branch B focused GREEN; omit both commands when Branch A stale-closes with no file.
@@ -371,49 +421,56 @@ mapping have been re-reviewed.
 ## Execution Interpretation And Done Criteria
 
 - Expected RED: after Plan 264's handoff, the first uncovered PB265 selector—not
-  automatically PB265-01—must fail because its exact boundary is missing or
+  automatically TC-265-01—must fail because its exact boundary is missing or
   misclassified. The pre-264 baseline is planning evidence only.
 - Green sentinels: successful/non-OK live-publish exit, mandatory signing/authority,
   repository/CAS fail-closed behavior, exact recipient preservation, last-admin/
   pending-role guards, PB264 stable notice/restart/cleanup, and bounded combined outcome.
-- Pre-existing dirty tree / known failure: the 2026-07-21 tree contained extensive
-  unrelated Plan 263/264 work. Execution must snapshot and attribute it; do not absorb
-  those files.
+- Pre-existing dirty tree / known failure: the initial 2026-07-21 snapshot contained
+  unrelated Plan 266/267 document edits, expected dirty Graphify outputs, an unrelated
+  received-media test edit, and an untracked iPhone syslog. All Plan 265 target
+  implementation/test/gate files were initially clean; those unrelated changes remain
+  preserved.
 - Environment blocker: none for host closure. Unavailable mobile targets are N/A; no
   simulator/device claim exists.
 - Scope drift: any schema, relay/wire/native, per-recipient, UI, or parallel-264 edit
   blocks completion and requires replan/review.
 
-- [ ] The immutable Plan 264 handoff is recorded and every PB264 dependency re-anchored.
-- [ ] Every residual behavior has causal RED, GREEN, and representative mutation
+- [x] The immutable Plan 264 handoff is recorded and every PB264 dependency re-anchored.
+- [x] Every residual behavior has causal RED, GREEN, and representative mutation
       re-red, or all rows have a source-backed `stale-already-covered` disposition.
-- [ ] Exact preservation selectors, registration (if any), groups, conditional
+- [x] Exact preservation selectors, registration (if any), groups, conditional
       `feature-host-all`, analyzer, and diff hygiene pass with semantic outcomes.
-- [ ] No error before durable signed-notice authority is downgraded, and no aggregate
+- [x] No error before durable signed-notice authority is downgraded, and no aggregate
       response is reported as a peer-specific fact.
-- [ ] Zero-peer live publish plus failed inbox is reported as no delivery custody; the
+- [x] Zero-peer live publish plus failed inbox is reported as no delivery custody; the
       plan makes no eventual-convergence or forward-secrecy claim.
-- [ ] Scope Contract And Guard is respected.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
-- First causal RED command: intentionally unresolved pending reconciliation of
-  TC-265-09 and TC-265-11 plus mapping of the remaining fault matrix. Replace the
-  guarded selector with the exact first uncovered PB265 row only after re-review;
-  PB265-01 is valid only if it is actually first.
+- First causal RED command:
+  `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-02 inbox timeout and throw degrade only after durable notice checkpoint'`.
 - Preservation command:
   `flutter test test/features/groups/application/group_exit_actions_test.dart --plain-name 'active exit completes durable prework before native leave and target cleanup'`;
   re-anchor to its accepted PB264 equivalent if removed.
-- Manual registration: add the PB265 file exactly once to `GROUP_TESTS` only when it is
-  created; AUTO feature-host glob otherwise applies. No simulator dispatcher entry.
+- Registration: the PB265 file is registered exactly once in `GROUP_TESTS`; the AUTO
+  feature-host glob also discovers it. No simulator dispatcher entry was added.
 - Migration: none. The accepted Plan 264 DB v103 is an inherited prerequisite and
   must not be changed by 265.
 - Boundary closure: host-only decision proof with command-indexed fake bridge; no real
   crypto/relay/device claim and no mobile topology.
-- Residual evidence: explicit-recipient behavior is currently per-recipient salvage,
-  not the aggregate-only TC-265-09 contract; a later rotation outcome can overwrite
-  delivery degradation for TC-265-11; remaining rows and the first causal selector are
-  not yet mapped. No PB265 file or registration is authorized before re-review.
+- Implemented residual: voluntary leave now makes one aggregate offline replay attempt
+  for one normalized signed/outer recipient set with
+  `preserveRecipientPeerIds: true`; it records no peer-specific result arrays.
+  Replay-key authority is exact and fail-closed before degradable crypto. Live delivery
+  requires `ok: true` plus positive numeric `topicPeers`. Typed replay preparation,
+  aggregate-store, and post-claim rotation faults cannot veto local leave.
+- Persisted outcome closure: delivery degradation survives rotation/native/cleanup
+  advancement through the closed composite vocabulary, while unknown legacy strings
+  canonicalize to `legacy_unknown` rather than persisting raw text.
+- PB265-02 was the literal first causal selector. The residual test file, single gate
+  registration, production implementation, and required host evidence are complete.
 
 ## Reviewer Findings
 
@@ -430,12 +487,26 @@ mapping have been re-reviewed.
   delivery-plus-rotation outcome semantics; residual-first RED branching; permitted
   native retry wording; PB264-12/GM-015 preservation; array-bounded gate registration;
   conditional incremental Graphify refresh.
-- Post-264 verdict: Branch B residual, paused before implementation. Reconcile
-  TC-265-09/11, map every remaining row, select the first literal causal RED, and
-  re-review before editing production or creating/registering a PB265 test file.
+- Post-264 pre-GREEN verdict: Branch B residual, re-reviewed and ready for
+  implementation. TC-265-09/11 were reconciled, every row was mapped, and PB265-02 was
+  the first literal causal RED.
+- Implementation review found and corrected three proof/authority issues before
+  closure: exact replay-key group/epoch/material validation, independent SHA-256 proof
+  over a deliberately nonlexical normalized recipient fixture, and literal selector
+  alignment with the plan. The final independent current-snapshot review found no
+  remaining code or test finding.
+- Final verdict: `accepted` for host closure. No schema, DB helper, wire, relay,
+  native, UI, migration, custody, or device claim was added.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-21 | post-264 residual audit | plan only | Refreshed Graphify review query plus accepted PB264 selectors/source inspected; no PB265 command, test file, registration, or production edit run | TC-265-09 aggregate-only semantics conflict with current per-recipient salvage; TC-265-11 combined degradation can be overwritten; remaining rows unmapped | Branch B selected but blocked on contract reconciliation and re-review | Reconcile 09/11, map all rows, then choose the first causal RED |
+| 2026-07-21 | post-handoff residual re-review | plan only | Anchored Graphify review; immutable ref/tree and clean ownership verified; exact PB264/current selectors passed; all TC rows mapped | TC-265-02 selected first; TC-265-09 owns removal of per-recipient salvage/attribution; TC-265-11 owns closed composite outcomes in the existing column | Branch B ready; no stop-if condition remains | Create PB265 residual tests, run PB265-02 to causal RED, then patch typed branches |
+| 2026-07-21 | first causal RED | PB265 test file; `GROUP_TESTS` | `flutter test test/features/groups/application/voluntary_leave_prework_degradation_test.dart --plain-name 'PB265-02 inbox timeout and throw degrade only after durable notice checkpoint'` -> expected 1 aggregate inbox command, actual 3 | Durable exact notice, no remint, bounded `notice_degraded`, and one native leave already held; only the aggregate-plus-two-peer fallback assertion failed | Causal RED accepted | Remove per-recipient salvage and implement the residual typed classifier/outcome branches |
+| 2026-07-21 | GREEN implementation | three group application files; PB265 and affected action/runner/replay tests; `GROUP_TESTS` | Four-file affected aggregate -> `+69: All tests passed!`; exact PB265-02/07/09 and current-success checks also passed | One aggregate replay; typed opt-in crypto classification; exact key authority; positive-peer live success; closed persisted composites/legacy canonicalization | GREEN accepted; no production scope drift | Run representative mutation re-red and preservation/family gates |
+| 2026-07-21 | mutation re-red | restored temporary mutations only | PB265-02 killed aggregate degradation->retryable; PB265-03 killed replay-classification opt-out; PB265-04 killed live rethrow; PB265-05 killed an all-degraded veto; PB265-07 killed wrong-group key acceptance; PB265-09 killed normalization and preservation-flag drift; PB265-11 killed composite downgrade and rotation rethrow | A zero-peer-as-delivered mutant was correctly killed by `PB265 nonempty live delivery requires ok and positive numeric topic peers`; inbox failure independently dominates PB265-05, so that selector was not falsely credited for this mutant | Every representative branch re-red; all mutations restored; transient-pattern, format, and diff checks clean | Run accepted preservation and required gates |
+| 2026-07-21 | preservation and curated gate | current success, GM-015, PB264-09/10/12, registered group suite | All exact preservation selectors passed; PB265 registration count = 1; `./scripts/run_test_gates.sh groups` -> `+2771: All tests passed!`, with Go bridge/node and relay contract/toolchain checks passing | Mandatory notice, last-admin, restart, native ambiguity, cleanup, and affected group behavior remain intact | Curated gate accepted | Run conditional feature family and static closure |
+| 2026-07-21 | feature/static closure | 816 feature test paths and changed Dart sources | `feature-host-all --batch-flutter --concurrency 4 --reporter failures-only` -> `+8453 ~1`, all other tests passed; `flutter analyze` -> no issues; formatter changed 0 files; `git diff --check` passed | One expected skip; no analyzer, format, or whitespace failure | Host regression closure accepted; full `host-all` correctly deferred to wave/release cadence | Refresh Graphify once and perform final review |
+| 2026-07-21 | graph/final closure | architecture graph, TDD overlay, final scoped diff | Single incremental refresh -> 7 changed/2,846 unchanged code files, 59,681 nodes, 90,991 edges; overlay 1,436 files/13,996 tests/1,066 targets; affected query scoped as expected; independent final audit found no findings | Unrelated Plan 266/267, Graphify, received-media, and syslog workspace changes remain preserved | Plan 265 accepted and complete | Hand off the bounded contract to downstream plans |

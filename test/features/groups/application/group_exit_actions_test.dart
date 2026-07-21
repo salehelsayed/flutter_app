@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' show sha256;
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -8,6 +10,7 @@ import 'package:flutter_app/features/groups/application/group_exit_intent_coordi
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
@@ -943,7 +946,7 @@ void main() {
   );
 
   test(
-    'PB265 voluntary leave aggregate failure falls back per recipient and one failure does not abort remaining',
+    'PB265 voluntary leave aggregate failure stays aggregate without peer attribution',
     () async {
       const thirdPeerId = 'peer-third';
       final groupRepo = InMemoryGroupRepository();
@@ -959,14 +962,17 @@ void main() {
         group: group(myRole: GroupRole.member),
         identityRepo: identityRepository(),
         expectedSelfPeerId: selfPeerId,
-        sourceEventId: 'member_removed:per-recipient',
+        sourceEventId: 'member_removed:aggregate-only',
         eventAt: DateTime.utc(2026, 7, 21, 15, 32),
       );
       final attemptBridge = FakeBridge();
+      attemptBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'member_removed:aggregate-only',
+        'topicPeers': 2,
+      };
       attemptBridge.responseSequences['group:inboxStore'] = [
         {'ok': false, 'errorCode': 'AGGREGATE_OFFLINE_STORE_FAILED'},
-        {'ok': false, 'errorCode': 'RECIPIENT_OFFLINE_STORE_FAILED'},
-        {'ok': true},
       ];
 
       final attempt = await attemptPreparedVoluntaryLeaveNotice(
@@ -981,13 +987,15 @@ void main() {
         VoluntaryLeaveNoticeAttemptClassification.degraded,
       );
       expect(attempt.livePublishResult?['ok'], isTrue);
-      expect(attempt.offlineFailedPeerIds, [otherPeerId]);
-      expect(attempt.offlineDeliveredPeerIds, [thirdPeerId]);
+      expect(
+        attempt.offlineReplayStatus,
+        VoluntaryLeaveOfflineReplayStatus.aggregateStoreDegraded,
+      );
       expect(
         attemptBridge.commandLog.where(
           (command) => command == 'group:inboxStore',
         ),
-        hasLength(3),
+        hasLength(1),
       );
       final inboxStorePayloads = attemptBridge.sentMessages
           .map((message) => jsonDecode(message) as Map<String, dynamic>)
@@ -1000,12 +1008,20 @@ void main() {
         ),
         everyElement(isTrue),
       );
-      expect(inboxStorePayloads[0]['recipientPeerIds'], [
-        otherPeerId,
-        thirdPeerId,
-      ]);
-      expect(inboxStorePayloads[1]['recipientPeerIds'], [otherPeerId]);
-      expect(inboxStorePayloads[2]['recipientPeerIds'], [thirdPeerId]);
+      final inboxStorePayload = inboxStorePayloads.single;
+      expect(inboxStorePayload['recipientPeerIds'], [otherPeerId, thirdPeerId]);
+      final replayEnvelope =
+          jsonDecode(inboxStorePayload['message'] as String)
+              as Map<String, dynamic>;
+      expect(replayEnvelope['recipientPeerIds'], [otherPeerId, thirdPeerId]);
+      final replaySignedPayload =
+          jsonDecode(replayEnvelope['signedPayload'] as String)
+              as Map<String, dynamic>;
+      final expectedRecipientSetHash = sha256
+          .convert(utf8.encode(jsonEncode(<String>[otherPeerId, thirdPeerId])))
+          .toString();
+      expect(replayEnvelope['recipientSetHash'], expectedRecipientSetHash);
+      expect(replaySignedPayload['recipientSetHash'], expectedRecipientSetHash);
       expect(
         attemptBridge.commandLog.where((command) => command == 'group:publish'),
         hasLength(1),
@@ -1014,6 +1030,208 @@ void main() {
         attemptBridge.commandLog,
         isNot(contains('group:generateNextKey')),
       );
+    },
+  );
+
+  test(
+    'PB265 replay encrypt and replay-sign failures degrade without inbox storage',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(group(myRole: GroupRole.member));
+      await groupRepo.saveMember(member(selfPeerId, MemberRole.writer));
+      await groupRepo.saveMember(member(otherPeerId, MemberRole.admin));
+      await seedReplayKey(groupRepo);
+      final preparation = await prepareVoluntaryLeaveNotice(
+        bridge: FakeBridge(),
+        groupRepo: groupRepo,
+        group: group(myRole: GroupRole.member),
+        identityRepo: identityRepository(),
+        expectedSelfPeerId: selfPeerId,
+        sourceEventId: 'member_removed:replay-preparation-faults',
+        eventAt: DateTime.utc(2026, 7, 21, 15, 32, 30),
+      );
+
+      Future<void> runCase({
+        required String label,
+        required void Function(FakeBridge bridge) arrange,
+      }) async {
+        final bridge = FakeBridge();
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'member_removed:replay-preparation-faults',
+          'topicPeers': 1,
+        };
+        arrange(bridge);
+
+        final attempt = await attemptPreparedVoluntaryLeaveNotice(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          prepared: preparation.prepared!,
+          expectedSelfPeerId: selfPeerId,
+        );
+
+        expect(
+          attempt.classification,
+          VoluntaryLeaveNoticeAttemptClassification.degraded,
+          reason: label,
+        );
+        expect(
+          attempt.offlineReplayStatus,
+          VoluntaryLeaveOfflineReplayStatus.preparationDegraded,
+          reason: label,
+        );
+        expect(
+          bridge.commandLog,
+          isNot(contains('group:inboxStore')),
+          reason: label,
+        );
+      }
+
+      await runCase(
+        label: 'group.encrypt returned non-ok',
+        arrange: (bridge) {
+          bridge.responses['group.encrypt'] = {
+            'ok': false,
+            'errorCode': 'GROUP_ENCRYPT_FAILED',
+          };
+        },
+      );
+      await runCase(
+        label: 'replay payload.sign returned non-ok',
+        arrange: (bridge) {
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'unused-fallback-signature',
+          };
+          bridge.responseSequences['payload.sign'] = [
+            {'ok': true, 'signature': 'key-pair-proof-signature'},
+            {'ok': false, 'errorCode': 'REPLAY_SIGN_FAILED'},
+          ];
+        },
+      );
+    },
+  );
+
+  test('PB265 replay preparation exception classification is opt-in', () async {
+    final groupRepo = InMemoryGroupRepository();
+    await groupRepo.saveGroup(group(myRole: GroupRole.member));
+    await seedReplayKey(groupRepo);
+
+    Future<String> build({required bool classify}) {
+      final bridge = FakeBridge();
+      bridge.responses['group.encrypt'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ENCRYPT_FAILED',
+      };
+      return buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: '{}',
+        senderPeerId: selfPeerId,
+        senderPublicKey: 'pk-$selfPeerId',
+        senderPrivateKey: 'sk-$selfPeerId',
+        recipientPeerIds: const [otherPeerId],
+        classifyPreparationCryptoFailures: classify,
+      );
+    }
+
+    await expectLater(
+      build(classify: false),
+      throwsA(isA<BridgeCommandException>()),
+    );
+    await expectLater(
+      build(classify: true),
+      throwsA(
+        isA<GroupOfflineReplayPreparationException>().having(
+          (error) => error.operation,
+          'operation',
+          GroupOfflineReplayPreparationOperation.groupEncrypt,
+        ),
+      ),
+    );
+  });
+
+  test(
+    'PB265 nonempty live delivery requires ok and positive numeric topic peers',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(group(myRole: GroupRole.member));
+      await groupRepo.saveMember(member(selfPeerId, MemberRole.writer));
+      await groupRepo.saveMember(member(otherPeerId, MemberRole.admin));
+      await seedReplayKey(groupRepo);
+      final preparation = await prepareVoluntaryLeaveNotice(
+        bridge: FakeBridge(),
+        groupRepo: groupRepo,
+        group: group(myRole: GroupRole.member),
+        identityRepo: identityRepository(),
+        expectedSelfPeerId: selfPeerId,
+        sourceEventId: 'member_removed:live-topic-peers',
+        eventAt: DateTime.utc(2026, 7, 21, 15, 32, 45),
+      );
+      final cases =
+          <
+            ({
+              String label,
+              Map<String, dynamic> response,
+              VoluntaryLeaveNoticeAttemptClassification expected,
+            })
+          >[
+            (
+              label: 'positive numeric peers',
+              response: {'ok': true, 'topicPeers': 1},
+              expected: VoluntaryLeaveNoticeAttemptClassification.delivered,
+            ),
+            (
+              label: 'zero peers',
+              response: {'ok': true, 'topicPeers': 0},
+              expected: VoluntaryLeaveNoticeAttemptClassification.degraded,
+            ),
+            (
+              label: 'missing peers',
+              response: {'ok': true},
+              expected: VoluntaryLeaveNoticeAttemptClassification.degraded,
+            ),
+            (
+              label: 'negative peers',
+              response: {'ok': true, 'topicPeers': -1},
+              expected: VoluntaryLeaveNoticeAttemptClassification.degraded,
+            ),
+            (
+              label: 'malformed peers',
+              response: {'ok': true, 'topicPeers': '1'},
+              expected: VoluntaryLeaveNoticeAttemptClassification.degraded,
+            ),
+            (
+              label: 'non-ok with peers',
+              response: {'ok': false, 'topicPeers': 1},
+              expected: VoluntaryLeaveNoticeAttemptClassification.degraded,
+            ),
+          ];
+
+      for (final testCase in cases) {
+        final bridge = FakeBridge();
+        bridge.responses['group:publish'] = testCase.response;
+
+        final attempt = await attemptPreparedVoluntaryLeaveNotice(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          prepared: preparation.prepared!,
+          expectedSelfPeerId: selfPeerId,
+        );
+
+        expect(
+          attempt.classification,
+          testCase.expected,
+          reason: testCase.label,
+        );
+        expect(
+          attempt.offlineReplayStatus,
+          VoluntaryLeaveOfflineReplayStatus.aggregateAccepted,
+          reason: testCase.label,
+        );
+      }
     },
   );
 
@@ -1049,6 +1267,11 @@ void main() {
         remainingMembers: currentRemaining,
       );
       final attemptBridge = FakeBridge();
+      attemptBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'member_removed:restart-roster-drift',
+        'topicPeers': 2,
+      };
 
       final attempt = await attemptPreparedVoluntaryLeaveNotice(
         bridge: attemptBridge,
@@ -1058,13 +1281,16 @@ void main() {
       );
 
       expect(attempt.canAdvance, isTrue);
-      expect(attempt.offlineDeliveredPeerIds, [otherPeerId, departedPeerId]);
+      expect(
+        attempt.offlineReplayStatus,
+        VoluntaryLeaveOfflineReplayStatus.aggregateAccepted,
+      );
       final inboxStore = attemptBridge.sentMessages
           .map((message) => jsonDecode(message) as Map<String, dynamic>)
           .singleWhere((message) => message['cmd'] == 'group:inboxStore');
       expect(
         (inboxStore['payload'] as Map<String, dynamic>)['recipientPeerIds'],
-        [otherPeerId, departedPeerId],
+        [departedPeerId, otherPeerId],
       );
     },
   );

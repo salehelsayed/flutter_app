@@ -843,6 +843,104 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_section_preferences => 'PREFERENCES';
 
   @override
+  String get settings_group_exit_diagnostics_section => 'SUPPORT';
+
+  @override
+  String get settings_group_exit_diagnostics_title => 'Group exit history';
+
+  @override
+  String settings_group_exit_diagnostics_count(int count) {
+    return '$count saved records';
+  }
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable =>
+      'Group exit history is unavailable.';
+
+  @override
+  String get settings_group_exit_diagnostics_unavailable_hint =>
+      'Tap to try again.';
+
+  @override
+  String get settings_group_exit_diagnostics_empty =>
+      'No saved group exit records.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload => 'Reload';
+
+  @override
+  String get settings_group_exit_diagnostics_clear => 'Clear history';
+
+  @override
+  String get settings_group_exit_diagnostics_reloaded =>
+      'Group exit history reloaded.';
+
+  @override
+  String get settings_group_exit_diagnostics_cleared =>
+      'Group exit history cleared.';
+
+  @override
+  String get settings_group_exit_diagnostics_reload_failed =>
+      'Couldn’t reload group exit history. Existing records are unchanged.';
+
+  @override
+  String get settings_group_exit_diagnostics_clear_failed =>
+      'Couldn’t clear group exit history. Existing records are unchanged.';
+
+  @override
+  String get settings_group_exit_diagnostics_close =>
+      'Close group exit history';
+
+  @override
+  String settings_group_exit_diagnostics_group_reference(String groupRef) {
+    return 'Group reference $groupRef';
+  }
+
+  @override
+  String get settings_group_exit_diagnostic_ex01 =>
+      'Exit authority could not be established.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex02 =>
+      'Membership-role updates could not finish.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex03 =>
+      'The leave notice could not be prepared.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex04 =>
+      'The group engine is unavailable.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex05 =>
+      'The group engine rejected the leave request.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex06 =>
+      'The leave result could not be confirmed.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex07 =>
+      'The group was left, but local cleanup is incomplete.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex08 =>
+      'The leave notice could not reach every member.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex09 =>
+      'Group-key rotation is deferred.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex10 =>
+      'Local group deletion is incomplete.';
+
+  @override
+  String get settings_group_exit_diagnostic_ex99 =>
+      'An unexpected group-exit result occurred.';
+
+  @override
   String get settings_background => 'Background';
 
   @override

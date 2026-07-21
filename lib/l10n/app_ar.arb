@@ -399,6 +399,45 @@
   "settings_title": "الإعدادات",
   "settings_section_identity": "الهوية",
   "settings_section_preferences": "التفضيلات",
+  "settings_group_exit_diagnostics_section": "الدعم",
+  "settings_group_exit_diagnostics_title": "سجل مغادرة المجموعات",
+  "settings_group_exit_diagnostics_count": "{count} سجلات محفوظة",
+  "@settings_group_exit_diagnostics_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settings_group_exit_diagnostics_unavailable": "سجل مغادرة المجموعات غير متاح.",
+  "settings_group_exit_diagnostics_unavailable_hint": "اضغط للمحاولة مجددًا.",
+  "settings_group_exit_diagnostics_empty": "لا توجد سجلات محفوظة لمغادرة المجموعات.",
+  "settings_group_exit_diagnostics_reload": "إعادة التحميل",
+  "settings_group_exit_diagnostics_clear": "مسح السجل",
+  "settings_group_exit_diagnostics_reloaded": "أُعيد تحميل سجل مغادرة المجموعات.",
+  "settings_group_exit_diagnostics_cleared": "مُسح سجل مغادرة المجموعات.",
+  "settings_group_exit_diagnostics_reload_failed": "تعذّرت إعادة تحميل سجل مغادرة المجموعات. لم تتغير السجلات الحالية.",
+  "settings_group_exit_diagnostics_clear_failed": "تعذّر مسح سجل مغادرة المجموعات. لم تتغير السجلات الحالية.",
+  "settings_group_exit_diagnostics_close": "إغلاق سجل مغادرة المجموعات",
+  "settings_group_exit_diagnostics_group_reference": "مرجع المجموعة {groupRef}",
+  "@settings_group_exit_diagnostics_group_reference": {
+    "placeholders": {
+      "groupRef": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_group_exit_diagnostic_ex01": "تعذّر إثبات صلاحية المغادرة.",
+  "settings_group_exit_diagnostic_ex02": "تعذّر إكمال تحديثات أدوار الأعضاء.",
+  "settings_group_exit_diagnostic_ex03": "تعذّر إعداد إشعار المغادرة.",
+  "settings_group_exit_diagnostic_ex04": "محرك المجموعات غير متاح.",
+  "settings_group_exit_diagnostic_ex05": "رفض محرك المجموعات طلب المغادرة.",
+  "settings_group_exit_diagnostic_ex06": "تعذّر تأكيد نتيجة المغادرة.",
+  "settings_group_exit_diagnostic_ex07": "تمت مغادرة المجموعة، لكن التنظيف المحلي غير مكتمل.",
+  "settings_group_exit_diagnostic_ex08": "تعذّر إيصال إشعار المغادرة إلى كل الأعضاء.",
+  "settings_group_exit_diagnostic_ex09": "تم تأجيل تدوير مفتاح المجموعة.",
+  "settings_group_exit_diagnostic_ex10": "حذف المجموعة محليًا غير مكتمل.",
+  "settings_group_exit_diagnostic_ex99": "حدثت نتيجة غير متوقعة أثناء مغادرة المجموعة.",
   "settings_background": "الخلفية",
   "settings_background_default": "الافتراضية",
   "settings_background_default_desc": "انسياب كوني معكوس بتوهجات لونية ناعمة.",

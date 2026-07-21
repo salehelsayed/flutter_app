@@ -437,6 +437,16 @@ readonly GROUP_TESTS=(
   "test/features/groups/domain/repositories/group_exit_intent_repository_impl_test.dart"
   "test/features/groups/application/group_exit_intent_coordinator_test.dart"
   "test/features/groups/application/group_exit_intent_runner_test.dart"
+  "test/features/groups/application/voluntary_leave_prework_degradation_test.dart"
+  # 266: release-safe group-exit codes, exact observer/action wiring, bounded
+  # encrypted v104 history, terminal cleanup decorators, and Settings history.
+  "test/features/groups/application/group_exit_release_diagnostics_test.dart"
+  "test/features/groups/application/group_exit_diagnostic_wiring_test.dart"
+  "test/core/database/migrations/104_group_exit_diagnostics_test.dart"
+  "test/core/database/helpers/group_exit_diagnostics_db_helpers_test.dart"
+  "test/features/groups/domain/repositories/group_exit_diagnostic_repository_impl_test.dart"
+  "test/features/settings/presentation/widgets/group_exit_diagnostics_sheet_test.dart"
+  "test/features/groups/application/delete_group_and_messages_use_case_test.dart"
   "test/features/groups/application/rejoin_group_topics_use_case_test.dart"
   "test/core/lifecycle/handle_app_resumed_group_recovery_test.dart"
   "test/features/groups/application/group_pending_key_distribution_service_test.dart"

@@ -441,6 +441,45 @@
   "settings_title": "Settings",
   "settings_section_identity": "IDENTITY",
   "settings_section_preferences": "PREFERENCES",
+  "settings_group_exit_diagnostics_section": "SUPPORT",
+  "settings_group_exit_diagnostics_title": "Group exit history",
+  "settings_group_exit_diagnostics_count": "{count} saved records",
+  "@settings_group_exit_diagnostics_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settings_group_exit_diagnostics_unavailable": "Group exit history is unavailable.",
+  "settings_group_exit_diagnostics_unavailable_hint": "Tap to try again.",
+  "settings_group_exit_diagnostics_empty": "No saved group exit records.",
+  "settings_group_exit_diagnostics_reload": "Reload",
+  "settings_group_exit_diagnostics_clear": "Clear history",
+  "settings_group_exit_diagnostics_reloaded": "Group exit history reloaded.",
+  "settings_group_exit_diagnostics_cleared": "Group exit history cleared.",
+  "settings_group_exit_diagnostics_reload_failed": "Couldn’t reload group exit history. Existing records are unchanged.",
+  "settings_group_exit_diagnostics_clear_failed": "Couldn’t clear group exit history. Existing records are unchanged.",
+  "settings_group_exit_diagnostics_close": "Close group exit history",
+  "settings_group_exit_diagnostics_group_reference": "Group reference {groupRef}",
+  "@settings_group_exit_diagnostics_group_reference": {
+    "placeholders": {
+      "groupRef": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_group_exit_diagnostic_ex01": "Exit authority could not be established.",
+  "settings_group_exit_diagnostic_ex02": "Membership-role updates could not finish.",
+  "settings_group_exit_diagnostic_ex03": "The leave notice could not be prepared.",
+  "settings_group_exit_diagnostic_ex04": "The group engine is unavailable.",
+  "settings_group_exit_diagnostic_ex05": "The group engine rejected the leave request.",
+  "settings_group_exit_diagnostic_ex06": "The leave result could not be confirmed.",
+  "settings_group_exit_diagnostic_ex07": "The group was left, but local cleanup is incomplete.",
+  "settings_group_exit_diagnostic_ex08": "The leave notice could not reach every member.",
+  "settings_group_exit_diagnostic_ex09": "Group-key rotation is deferred.",
+  "settings_group_exit_diagnostic_ex10": "Local group deletion is incomplete.",
+  "settings_group_exit_diagnostic_ex99": "An unexpected group-exit result occurred.",
   "settings_background": "Background",
   "settings_background_default": "Default",
   "settings_background_default_desc": "Mirrored cosmic drift with soft color blooms.",

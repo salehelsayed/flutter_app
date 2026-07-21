@@ -44,6 +44,7 @@ import 'package:flutter_app/core/database/helpers/group_pending_key_distribution
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_exit_diagnostics_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -147,6 +148,7 @@ import 'package:flutter_app/features/groups/domain/repositories/pending_group_in
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_media_deletion_journal_reconciler.dart';
@@ -166,8 +168,12 @@ import 'package:flutter_app/features/groups/application/group_pending_broadcast_
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnostic_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_diagnosing_processor.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
+import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -175,6 +181,8 @@ import 'package:flutter_app/features/groups/application/group_sender_device_bind
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -517,6 +525,21 @@ void main() async {
     secureKeyStore: secureKeyStore,
   );
   StartupTiming.instance.mark('identity_store_ready');
+
+  final groupExitDiagnosticRepository = GroupExitDiagnosticRepositoryImpl(
+    dbAppendOutcome: (rows) => dbAppendGroupExitDiagnosticOutcome(db, rows),
+    dbLoadNewest: () => dbLoadNewestGroupExitDiagnostics(db),
+    dbLoadForAction: ({required groupRef, required intentRef}) =>
+        dbLoadGroupExitDiagnosticsForAction(
+          db,
+          groupRef: groupRef,
+          intentRef: intentRef,
+        ),
+    dbClear: () => dbClearGroupExitDiagnostics(db),
+  );
+  setGroupExitDiagnosticAccessSink(
+    loadForAction: groupExitDiagnosticRepository.loadForAction,
+  );
 
   // 5. Create repository with database helpers + secure key store
   final repository = IdentityRepositoryImpl(
@@ -1868,7 +1891,6 @@ void main() async {
           '$selfRemovedShellOperationSequence';
     },
   );
-  defaultDeleteSelfRemovedGroupShell = deleteSelfRemovedGroupShellUseCase.call;
   // 164 (cold-start-3): the shared-Keychain mirror backfill (every group key ×
   // generation + every mute projection, re-written on every launch) is unbounded
   // work that scales with group history. Move it OFF the pre-runApp critical path
@@ -2187,6 +2209,15 @@ void main() async {
     enableInboxPageTransactions: true,
     enableReactionProjection: true,
   );
+  final diagnosingDeleteSelfRemovedGroupShellAction =
+      DiagnosingDeleteSelfRemovedGroupShellAction(
+        loadCurrentSelfPeerId: () async =>
+            (await repository.loadIdentity())?.peerId,
+        inner: deleteSelfRemovedGroupShellUseCase.call,
+        submit: groupExitDiagnosticRepository.appendOutcome,
+      );
+  defaultDiagnosingDeleteSelfRemovedGroupShellAction =
+      diagnosingDeleteSelfRemovedGroupShellAction.call;
   final groupReactionAuthoredTargetBackfill = () async {
     await groupReactionProjectionIdentityReady;
     await groupMessageRepository.mirrorAllGroupReactionAuthoredTargets();
@@ -2641,6 +2672,19 @@ void main() async {
 
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
+  final diagnosingDeleteDissolvedGroupShellAction =
+      DiagnosingDeleteDissolvedGroupShellAction(
+        inner: (groupId) => deleteGroupAndMessages(
+          bridge: bridge,
+          groupRepo: groupRepository,
+          groupMessageRepo: groupMessageRepository,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        ),
+        submit: groupExitDiagnosticRepository.appendOutcome,
+      );
+  defaultDiagnosingDeleteDissolvedGroupShellAction =
+      diagnosingDeleteDissolvedGroupShellAction.call;
 
   // ── Auto-setup for simulator scripts (debug/test harness only) ──
   final autoSetupUsername = await resolveAutoSetupUsername(appDocDir.path);
@@ -3800,7 +3844,22 @@ void main() async {
         dbTerminalizeGroupExitIntentForGroup(db, groupId),
   );
 
-  final groupExitIntentRunner = GroupExitIntentRunner(
+  final groupExitDiagnosticObserver = GroupExitDiagnosticObserver(
+    repository: groupExitDiagnosticRepository,
+    now: () => DateTime.now().toUtc(),
+    onSubmissionFailure: () {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_EXIT_DIAGNOSTIC_WRITE_FAILED',
+        details: const {
+          'code': 'EX01',
+          'phase': 'authority',
+          'severity': 'failure',
+        },
+      );
+    },
+  );
+  final rawGroupExitIntentRunner = GroupExitIntentRunner(
     intentRepository: groupExitIntentRepository,
     pendingRepository: groupPendingBroadcastRepository,
     pendingBroadcastRunner: groupPendingBroadcastRunner,
@@ -3922,19 +3981,29 @@ void main() async {
       }
     },
     nativeLeave: (intent) async {
-      final identity = await repository.loadIdentity();
-      if (identity == null || identity.peerId != intent.selfPeerId) {
-        throw StateError('Group exit identity changed before native leave.');
+      try {
+        final identity = await repository.loadIdentity();
+        if (identity == null || identity.peerId != intent.selfPeerId) {
+          throw StateError('Group exit identity changed before native leave.');
+        }
+      } catch (error, stackTrace) {
+        throwGroupExitAuthorityFailure(error, stackTrace);
       }
-      await callGroupLeave(bridge, intent.groupId);
+      await runTypedGroupExitNativeLeave(
+        () => callGroupLeave(bridge, intent.groupId),
+      );
     },
+  );
+  final groupExitIntentProcessor = DiagnosingGroupExitIntentProcessor(
+    inner: rawGroupExitIntentRunner,
+    observer: groupExitDiagnosticObserver,
   );
   final uuid = const Uuid();
   final groupExitIntentCoordinator = GroupExitIntentCoordinator(
     intentRepository: groupExitIntentRepository,
     pendingRepository: groupPendingBroadcastRepository,
     pendingBroadcastRunner: groupPendingBroadcastRunner,
-    processor: groupExitIntentRunner,
+    processor: groupExitIntentProcessor,
     groupRepository: groupRepository,
     identityRepository: repository,
     newId: uuid.v4,
@@ -3947,11 +4016,26 @@ void main() async {
         loadCurrentSelfPeerId: () async =>
             (await repository.loadIdentity())?.peerId,
       );
+  final currentGroupExitSnapshotResolver = CurrentGroupExitSnapshotResolver(
+    identityRepository: repository,
+    groupRepository: groupRepository,
+    messageRepository: groupMessageRepository,
+    inviteDeliveryAttemptRepository: groupInviteDeliveryAttemptRepository,
+    loadPendingBroadcasts: groupPendingBroadcastRepository.forGroup,
+  );
+  final groupExitActionAdapter = DiagnosingGroupExitActionAdapter(
+    resolveSnapshot: currentGroupExitSnapshotResolver.call,
+    requestLeaveInner: groupExitIntentCoordinator.requestLeave,
+    queueLeaveInner: groupExitIntentCoordinator.queueLeaveWhenSyncCompletes,
+    retryInner: groupExitIntentCoordinator.retry,
+    observer: groupExitDiagnosticObserver,
+  );
   setGroupExitIntentActionSinks(
-    requestLeave: groupExitIntentCoordinator.requestLeave,
+    resolveSnapshot: groupExitActionAdapter.loadSnapshot,
+    requestLeave: groupExitActionAdapter.requestLeave,
     queueLeaveWhenSyncCompletes:
-        groupExitIntentCoordinator.queueLeaveWhenSyncCompletes,
-    retry: groupExitIntentCoordinator.retry,
+        groupExitActionAdapter.queueLeaveWhenSyncCompletes,
+    retry: groupExitActionAdapter.retry,
     cancelQueued: groupExitIntentCoordinator.cancelQueued,
   );
   setGroupExitIntentAccessSinks(
@@ -3961,7 +4045,7 @@ void main() async {
   setGroupExitIntentRuntimeSinks(
     canRejoin: authorizeCurrentAccountGroupRejoin,
     processExisting: (groupId) async {
-      await groupExitIntentRunner.processGroup(groupId);
+      await groupExitIntentProcessor.processGroup(groupId);
     },
   );
   setGroupDissolvePreflightAuthority(
@@ -3975,13 +4059,17 @@ void main() async {
     await runGroupExitIntentRecoveryPass(
       drainPendingBroadcasts: groupPendingBroadcastRunner.drainAll,
       processExitIntents: () async {
-        await groupExitIntentRunner.processAll();
+        await groupExitIntentProcessor.processAll();
       },
       onError: (error, _) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_EXIT_INTENT_RECOVERY_FAILED',
-          details: {'error': error.runtimeType.toString()},
+          details: const {
+            'code': 'EX99',
+            'phase': 'authority',
+            'severity': 'failure',
+          },
         );
       },
     );
@@ -4173,7 +4261,7 @@ void main() async {
             reason: reason,
             canRejoinForExitIntent: authorizeCurrentAccountGroupRejoin,
             processExitIntent: (groupId) async {
-              await groupExitIntentRunner.processGroup(groupId);
+              await groupExitIntentProcessor.processGroup(groupId);
             },
           );
           // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
@@ -4607,6 +4695,7 @@ void main() async {
       conversationTracker: conversationTracker,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
+      groupExitDiagnosticRepository: groupExitDiagnosticRepository,
       groupInviteDeliveryAttemptRepository:
           groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: groupPendingKeyRepairRepository,
@@ -4617,7 +4706,7 @@ void main() async {
       groupExitIntentRecovery: recoverGroupExitIntents,
       canRejoinForExitIntent: authorizeCurrentAccountGroupRejoin,
       processGroupExitIntent: (groupId) async {
-        await groupExitIntentRunner.processGroup(groupId);
+        await groupExitIntentProcessor.processGroup(groupId);
       },
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
@@ -4918,6 +5007,7 @@ class MyApp extends StatefulWidget {
   final ActiveConversationTracker conversationTracker;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
+  final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
   final GroupInviteDeliveryAttemptRepositoryImpl
   groupInviteDeliveryAttemptRepository;
   final GroupPendingKeyRepairRepositoryImpl groupPendingKeyRepairRepository;
@@ -5026,6 +5116,7 @@ class MyApp extends StatefulWidget {
     required this.conversationTracker,
     required this.groupRepository,
     required this.groupMessageRepository,
+    this.groupExitDiagnosticRepository,
     required this.groupInviteDeliveryAttemptRepository,
     required this.groupPendingKeyRepairRepository,
     required this.groupPendingReactionRepository,
@@ -5979,6 +6070,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
         groupInviteDeliveryAttemptRepository:
             widget.groupInviteDeliveryAttemptRepository,
         groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
@@ -6916,6 +7008,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           reactionListener: widget.reactionListener,
           groupRepository: widget.groupRepository,
           groupMessageRepository: widget.groupMessageRepository,
+          groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
           groupPendingKeyRepairRepository:
               widget.groupPendingKeyRepairRepository,
           groupHistoryGapRepairRepository:

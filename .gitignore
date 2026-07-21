@@ -184,3 +184,6 @@ graphify-arch/tdd-overlay.json
 # SIMS iOS notification external inputs (credential-adjacent) — never commit.
 /docker-ws/sims-ios-notification/
 graphify-arch/graphify-out/20*/
+
+# Device log captures — large, session-local.
+/docker-ws/iphone13_syslog.txt

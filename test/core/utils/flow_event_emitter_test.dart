@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -225,6 +226,196 @@ KeyMaterialShouldNeverAppearInDiagnostics
           }
           expect(payload, contains('[redacted]'));
           expect(payload, contains('[redacted:multiaddr]'));
+        }
+      },
+    );
+
+    test(
+      'PB266-08 exit flow events expose only allowlisted code phase and severity',
+      () {
+        String fixedEventBlock({
+          required String path,
+          required String event,
+          required String code,
+          required String phase,
+        }) {
+          final source = File(path).readAsStringSync();
+          var offset = 0;
+          while (true) {
+            final eventOffset = source.indexOf("'$event'", offset);
+            expect(
+              eventOffset,
+              greaterThanOrEqualTo(0),
+              reason: '$path $event',
+            );
+            final start = source.lastIndexOf('emitFlowEvent(', eventOffset);
+            final end = source.indexOf(');', eventOffset);
+            expect(start, greaterThanOrEqualTo(0), reason: '$path $event');
+            expect(end, greaterThan(eventOffset), reason: '$path $event');
+            final block = source.substring(start, end + 2);
+            if (block.contains("'code': '$code'") &&
+                block.contains("'phase': '$phase'")) {
+              return block;
+            }
+            offset = eventOffset + event.length;
+          }
+        }
+
+        const expected = <({String path, String event, String code, String phase})>[
+          (
+            path: 'lib/core/bridge/bridge_group_helpers.dart',
+            event: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
+            code: 'EX99',
+            phase: 'native',
+          ),
+          (
+            path: 'lib/core/bridge/bridge_group_helpers.dart',
+            event: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
+            code: 'EX06',
+            phase: 'native',
+          ),
+          (
+            path:
+                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
+            event: 'GROUP_ACTIVE_EXIT_SNAPSHOT_FAILED',
+            code: 'EX01',
+            phase: 'authority',
+          ),
+          (
+            path:
+                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
+            event: 'GROUP_ACTIVE_EXIT_PREWORK_FAILED',
+            code: 'EX03',
+            phase: 'notice',
+          ),
+          (
+            path:
+                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
+            event: 'GROUP_ACTIVE_EXIT_NATIVE_UNCERTAIN',
+            code: 'EX06',
+            phase: 'native',
+          ),
+          (
+            path:
+                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
+            event: 'GROUP_ACTIVE_EXIT_CLEANUP_INCOMPLETE',
+            code: 'EX07',
+            phase: 'cleanup',
+          ),
+          (
+            path:
+                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
+            event: 'GROUP_ACTIVE_EXIT_ROLLBACK_FAILED',
+            code: 'EX03',
+            phase: 'notice',
+          ),
+          (
+            path:
+                'lib/features/groups/application/group_exit_terminal_diagnostics.dart',
+            event: 'GROUP_EXIT_DIAGNOSTIC_WRITE_FAILED',
+            code: 'EX01',
+            phase: 'local_delete',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_info_wired.dart',
+            event: 'GROUP_INFO_FL_EXIT_CLASSIFY_ERROR',
+            code: 'EX01',
+            phase: 'authority',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_info_wired.dart',
+            event: 'GROUP_INFO_FL_LEAVE_ERROR',
+            code: 'EX99',
+            phase: 'authority',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_info_wired.dart',
+            event: 'GROUP_INFO_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+            code: 'EX10',
+            phase: 'local_delete',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_info_wired.dart',
+            event: 'GROUP_INFO_FL_DELETE_LOCAL_DISSOLVED_ERROR',
+            code: 'EX10',
+            phase: 'local_delete',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_list_wired.dart',
+            event: 'GROUP_LIST_FL_STUCK_EXIT_CLASSIFY_ERROR',
+            code: 'EX01',
+            phase: 'authority',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_list_wired.dart',
+            event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
+            code: 'EX99',
+            phase: 'authority',
+          ),
+          (
+            path:
+                'lib/features/groups/presentation/screens/group_list_wired.dart',
+            event: 'GROUP_LIST_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+            code: 'EX10',
+            phase: 'local_delete',
+          ),
+          (
+            path: 'lib/features/orbit/presentation/screens/orbit_wired.dart',
+            event: 'ORBIT_FL_GROUP_EXIT_CLASSIFY_ERROR',
+            code: 'EX01',
+            phase: 'authority',
+          ),
+          (
+            path: 'lib/features/orbit/presentation/screens/orbit_wired.dart',
+            event: 'ORBIT_FL_GROUP_EXIT_PROMOTION_ERROR',
+            code: 'EX02',
+            phase: 'role_sync',
+          ),
+          (
+            path: 'lib/features/orbit/presentation/screens/orbit_wired.dart',
+            event: 'ORBIT_FL_DELETE_GROUP_ERROR',
+            code: 'EX10',
+            phase: 'local_delete',
+          ),
+          (
+            path: 'lib/features/orbit/presentation/screens/orbit_wired.dart',
+            event: 'ORBIT_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
+            code: 'EX10',
+            phase: 'local_delete',
+          ),
+          (
+            path: 'lib/features/orbit/presentation/screens/orbit_wired.dart',
+            event: 'ORBIT_FL_STUCK_EXIT_CLASSIFY_ERROR',
+            code: 'EX01',
+            phase: 'authority',
+          ),
+        ];
+
+        for (final row in expected) {
+          final block = fixedEventBlock(
+            path: row.path,
+            event: row.event,
+            code: row.code,
+            phase: row.phase,
+          );
+          expect(block, contains("'severity':"), reason: row.event);
+          for (final forbidden in const [
+            "'groupId'",
+            "'peerId'",
+            "'error'",
+            'errorMessage',
+            'toString()',
+            'stackTrace',
+            'privateKey',
+          ]) {
+            expect(block, isNot(contains(forbidden)), reason: row.event);
+          }
         }
       },
     );

@@ -1,5 +1,12 @@
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 typedef RequestGroupExitIntent =
     Future<GroupExitIntentRequestResult> Function(String groupId);
@@ -10,6 +17,8 @@ typedef LoadAllGroupExitIntents = Future<List<GroupExitIntent>> Function();
 typedef LoadCurrentGroupExitIdentityPeerId = Future<String?> Function();
 typedef CanRejoinForExitIntent = Future<bool> Function(String groupId);
 typedef ProcessExistingGroupExitIntent = Future<void> Function(String groupId);
+typedef ResolveGroupExitActionSnapshot =
+    Future<GroupExitSnapshot> Function(String groupId);
 
 enum GroupExitIntentLookupStatus { available, unavailable }
 
@@ -53,20 +62,61 @@ LoadGroupExitIntent? _loadForGroup;
 LoadAllGroupExitIntents? _loadAll;
 CanRejoinForExitIntent? _canRejoin;
 ProcessExistingGroupExitIntent? _processExisting;
+ResolveGroupExitActionSnapshot? _resolveActionSnapshot;
 
 /// Installs the process-wide presentation triggers backed by the concrete
 /// [GroupExitIntentCoordinator]. Omitting any trigger keeps that action
 /// fail-closed with a typed `unavailable` result.
 void setGroupExitIntentActionSinks({
+  ResolveGroupExitActionSnapshot? resolveSnapshot,
   RequestGroupExitIntent? requestLeave,
   RequestGroupExitIntent? queueLeaveWhenSyncCompletes,
   RequestGroupExitIntent? retry,
   CancelQueuedGroupExitIntent? cancelQueued,
 }) {
+  _resolveActionSnapshot = resolveSnapshot;
   _requestLeave = requestLeave;
   _queueLeaveWhenSyncCompletes = queueLeaveWhenSyncCompletes;
   _retry = retry;
   _cancelQueued = cancelQueued;
+}
+
+Future<GroupExitSnapshot> resolveGroupExitActionSnapshot(String groupId) async {
+  final resolve = _resolveActionSnapshot;
+  if (resolve == null) {
+    throw StateError('Group exit snapshot action is unavailable.');
+  }
+  return resolve(groupId);
+}
+
+/// Compatibility adapter for isolated widget fixtures that do not install the
+/// process-wide production sink. Production always takes the installed action
+/// path; the fallback keeps identity/snapshot authority in this application
+/// layer instead of reconstructing it inside a widget.
+Future<GroupExitSnapshot> resolveGroupExitActionSnapshotForPresentation({
+  required String groupId,
+  required IdentityRepository identityRepository,
+  required GroupRepository groupRepository,
+  GroupMessageRepository? messageRepository,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+  Future<List<GroupPendingBroadcast>> Function(String groupId)?
+  loadPendingBroadcasts,
+}) async {
+  final resolve = _resolveActionSnapshot;
+  if (resolve != null) return resolve(groupId);
+  final identity = await identityRepository.loadIdentity();
+  final selfPeerId = identity?.peerId.trim();
+  if (selfPeerId == null || selfPeerId.isEmpty) {
+    throw StateError('Current group-exit identity is unavailable.');
+  }
+  return resolveGroupExitSnapshot(
+    groupRepo: groupRepository,
+    groupId: groupId,
+    selfPeerId: selfPeerId,
+    messageRepo: messageRepository,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepository,
+    loadPendingBroadcasts: loadPendingBroadcasts,
+  );
 }
 
 /// Installs read-only presentation projections backed by the concrete durable
@@ -212,17 +262,23 @@ Future<GroupExitIntentRequestResult> _runRequest(
   required String action,
 }) async {
   if (trigger == null) {
-    return GroupExitIntentRequestResult(
+    return GroupExitIntentRequestResult.withDiagnosticFacts(
       status: GroupExitIntentRequestStatus.unavailable,
       cause: StateError('Group exit action "$action" is unavailable.'),
+      diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.authorityUnavailable(),
+      ],
     );
   }
   try {
     return await trigger(groupId);
   } catch (error) {
-    return GroupExitIntentRequestResult(
+    return GroupExitIntentRequestResult.withDiagnosticFacts(
       status: GroupExitIntentRequestStatus.unavailable,
       cause: error,
+      diagnosticFacts: const <GroupExitProcessDiagnosticFact>[
+        GroupExitProcessDiagnosticFact.authorityUnavailable(),
+      ],
     );
   }
 }

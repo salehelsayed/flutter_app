@@ -51,6 +51,7 @@ class SettingsScreen extends StatelessWidget {
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
   final VoidCallback? onMoveAccountToNewPhone;
+  final Widget? groupExitDiagnosticsSection;
   final Widget? debugSection;
   final void Function(String) onSwitchView;
   final String activeTab;
@@ -81,6 +82,7 @@ class SettingsScreen extends StatelessWidget {
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
     this.onMoveAccountToNewPhone,
+    this.groupExitDiagnosticsSection,
     this.debugSection,
     required this.onSwitchView,
     required this.activeTab,
@@ -297,6 +299,7 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 14),
                         ],
+                        ?groupExitDiagnosticsSection,
                         ?debugSection,
                       ],
                     ),

@@ -51,6 +51,30 @@ val enablePictureInPictureInterruptionProof =
             "enablePictureInPictureInterruptionProof must be exactly true or false."
         )
     }
+val enableGroupExitReleaseDiagnosticsProof =
+    when (
+        val raw = providers.gradleProperty(
+            "enableGroupExitReleaseDiagnosticsProof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enableGroupExitReleaseDiagnosticsProof must be exactly true or false."
+        )
+    }
+if (
+    enableGroupExitReleaseDiagnosticsProof &&
+    (
+        androidApplicationId != "com.mknoon.app.pb266proof" ||
+            !disableGoogleServicesForDisposableProof
+    )
+) {
+    throw GradleException(
+        "The group-exit release diagnostics proof requires the exact disposable " +
+            "application ID com.mknoon.app.pb266proof with Google services disabled."
+    )
+}
 if (
     enablePictureInPictureEngineDetachProof &&
     androidApplicationId != "com.mknoon.app.pipproof"
@@ -137,6 +161,23 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (enableGroupExitReleaseDiagnosticsProof) {
+            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
+        buildConfigField(
+            "boolean",
+            "ENABLE_GROUP_EXIT_RELEASE_DIAGNOSTICS_PROOF",
+            enableGroupExitReleaseDiagnosticsProof.toString()
+        )
+    }
+
+    // Flutter Driver cannot attach to non-web release builds. The Android
+    // instrumentation runner is enabled only for the PB266 release proof and
+    // executes the same Dart integration target inside a true release APK.
+    testBuildType = if (enableGroupExitReleaseDiagnosticsProof) {
+        "release"
+    } else {
+        "debug"
     }
 
     sourceSets {
@@ -152,6 +193,11 @@ android {
                 manifest.srcFile(
                     "src/pipInterruptionProofAndroidTest/AndroidManifest.xml"
                 )
+            }
+        }
+        if (enableGroupExitReleaseDiagnosticsProof) {
+            getByName("androidTest") {
+                java.srcDir("src/groupExitReleaseDiagnosticsAndroidTest/java")
             }
         }
     }
@@ -176,6 +222,11 @@ android {
                 hasReleaseSigning -> signingConfig = signingConfigs.getByName("release")
                 allowDebugSigningInRelease -> signingConfig = signingConfigs.getByName("debug")
             }
+            if (enableGroupExitReleaseDiagnosticsProof) {
+                proguardFiles(
+                    "src/groupExitReleaseDiagnostics/proguard-rules.pro"
+                )
+            }
         }
     }
 }
@@ -189,6 +240,18 @@ dependencies {
     implementation("org.jmdns:jmdns:3.5.9")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
+    if (enableGroupExitReleaseDiagnosticsProof) {
+        // `integration_test` is a dev plugin and Flutter intentionally omits
+        // dev plugins from releaseApi. The proof property opts this one plugin
+        // into both the tested release app and its instrumentation classpath.
+        releaseImplementation(project(":integration_test"))
+        releaseImplementation("androidx.test:runner:1.6.2")
+        releaseImplementation("androidx.test:rules:1.6.1")
+        releaseImplementation("androidx.test.espresso:espresso-core:3.6.1")
+        androidTestImplementation("androidx.test:runner:1.6.2")
+        androidTestImplementation("androidx.test:rules:1.6.1")
+        androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    }
 }
 
 // A valid AAR is a non-empty zip; 1 KB threshold catches 0-byte stubs.
@@ -257,7 +320,10 @@ if (!hasReleaseSigning && !allowDebugSigningInRelease) {
     }
 }
 
-if (!hasGoogleServicesConfig || disableGoogleServicesForDisposableProof) {
+if (
+    (!hasGoogleServicesConfig || disableGoogleServicesForDisposableProof) &&
+    !enableGroupExitReleaseDiagnosticsProof
+) {
     tasks.matching {
         it.name in setOf("assembleRelease", "bundleRelease", "packageRelease")
     }.configureEach {

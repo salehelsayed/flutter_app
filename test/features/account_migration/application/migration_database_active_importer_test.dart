@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_schema_inventory.dart';
@@ -146,8 +148,96 @@ CREATE TABLE identity (
         {'id': 1, 'peer_id': 'still-here'},
       ]);
     });
+
+    test(
+      'PB266-05 same-v104 move transfers allowlisted diagnostics and v103 mismatch preserves target',
+      () async {
+        await runGroupExitDiagnosticsMigration(activeDb);
+        await runGroupExitDiagnosticsMigration(stagedDb);
+        await activeDb.insert('identity', {
+          'id': 1,
+          'peer_id': 'active-peer',
+          'public_key': 'active-public',
+        });
+        await activeDb.insert(
+          'group_exit_diagnostics',
+          _diagnosticRow(
+            groupRef: 'aaaaaaaaaaaa',
+            intentRef: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
+        );
+        await stagedDb.insert('identity', {
+          'id': 1,
+          'peer_id': 'transferred-peer',
+          'public_key': 'transferred-public',
+        });
+        final transferredDiagnostic = _diagnosticRow(
+          groupRef: 'bbbbbbbbbbbb',
+          intentRef: 'bbbbbbbbbbbbbbbbbbbbbbbb',
+        );
+        await stagedDb.insert('group_exit_diagnostics', transferredDiagnostic);
+
+        final manifest = await _manifestFor(stagedDb);
+        expect(currentIdentityDatabaseVersion, 104);
+        expect(manifest.databaseVersion, 104);
+        final result =
+            await MigrationDatabaseActiveImporter(
+              activeDatabase: activeDb,
+            ).importVerifiedStagedDatabase(
+              MigrationDatabaseImportStagingResult(
+                database: stagedDb,
+                manifest: manifest,
+                stagedDatabasePath: p.join(tempDir.path, 'staged.db'),
+              ),
+            );
+
+        expect(result.importedTables, contains('group_exit_diagnostics'));
+        expect(
+          await activeDb.query('group_exit_diagnostics'),
+          <Map<String, Object?>>[
+            {'id': 1, ...transferredDiagnostic},
+          ],
+        );
+
+        await activeDb.delete('group_exit_diagnostics');
+        final targetSentinel = _diagnosticRow(
+          groupRef: 'cccccccccccc',
+          intentRef: 'cccccccccccccccccccccccc',
+        );
+        await activeDb.insert('group_exit_diagnostics', targetSentinel);
+        final targetBefore = await activeDb.query('group_exit_diagnostics');
+
+        await expectLater(
+          MigrationDatabaseActiveImporter(
+            activeDatabase: activeDb,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: stagedDb,
+              manifest: manifest.copyWith(databaseVersion: 103),
+              stagedDatabasePath: p.join(tempDir.path, 'staged.db'),
+            ),
+          ),
+          throwsA(isA<MigrationDatabaseActiveImportException>()),
+        );
+        expect(await activeDb.query('group_exit_diagnostics'), targetBefore);
+      },
+    );
   });
 }
+
+Map<String, Object?> _diagnosticRow({
+  required String groupRef,
+  required String intentRef,
+}) => <String, Object?>{
+  'occurred_at': '2026-07-21T09:03:00.000Z',
+  'group_ref': groupRef,
+  'intent_ref': intentRef,
+  'exit_kind': 'voluntary',
+  'severity': 'failure',
+  'phase': 'native',
+  'public_code': 'EX04',
+  'reason_code': 'node_not_initialized',
+};
 
 Future<void> _createSchema(Database db) async {
   await db.execute('''

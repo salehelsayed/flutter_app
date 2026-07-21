@@ -22,6 +22,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -44,6 +45,7 @@ import 'package:flutter_app/features/groups/application/set_group_muted_use_case
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
@@ -58,6 +60,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
+import 'package:flutter_app/features/groups/presentation/group_exit_diagnostic_presenter.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -80,6 +83,10 @@ class GroupInfoWired extends StatefulWidget {
   final GroupMessageRepository? msgRepo;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell;
+
+  /// Explicit fixture-only override. Production resolves through the installed
+  /// diagnosing action adapter.
+  final ResolveGroupExitActionSnapshot? resolveGroupExitSnapshotForTest;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final UploadGroupAvatarFn uploadGroupAvatarFn;
@@ -98,6 +105,7 @@ class GroupInfoWired extends StatefulWidget {
     this.msgRepo,
     this.inviteDeliveryAttemptRepo,
     this.deleteSelfRemovedGroupShell,
+    this.resolveGroupExitSnapshotForTest,
     this.imageProcessor,
     this.mediaPicker,
     this.uploadGroupAvatarFn = uploadGroupAvatar,
@@ -452,26 +460,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _onLeave() async {
-    String? selfPeerId;
     GroupExitSnapshot? snapshot;
     try {
-      final identity = await widget.identityRepo.loadIdentity();
-      selfPeerId = identity?.peerId;
-      if (selfPeerId != null) {
-        snapshot = await resolveGroupExitSnapshot(
-          groupRepo: widget.groupRepo,
-          groupId: _group.id,
-          selfPeerId: selfPeerId,
-          messageRepo: widget.msgRepo,
-          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-          loadPendingBroadcasts: loadGroupPendingBroadcasts,
-        );
-      }
-    } catch (error) {
+      final fixtureResolve = widget.resolveGroupExitSnapshotForTest;
+      snapshot = fixtureResolve == null
+          ? await resolveGroupExitActionSnapshot(_group.id)
+          : await fixtureResolve(_group.id);
+    } catch (_) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INFO_FL_EXIT_CLASSIFY_ERROR',
-        details: {'groupId': _group.id, 'error': error.toString()},
+        details: const {
+          'code': 'EX01',
+          'phase': 'authority',
+          'severity': 'failure',
+        },
       );
     }
     if (!mounted) return;
@@ -495,10 +498,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       return;
     }
     if (snapshot.disposition == GroupExitDisposition.selfRemovedDeleteLocally) {
-      await _confirmDeleteSelfRemovedGroupShell(
-        groupId: _group.id,
-        selfPeerId: selfPeerId!,
-      );
+      await _confirmDeleteSelfRemovedGroupShell(groupId: _group.id);
       return;
     }
     if (snapshot.disposition == GroupExitDisposition.noOp) {
@@ -521,14 +521,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         Navigator.of(context).popUntil((route) => route.isFirst);
         return;
       case GroupExitIntentRequestStatus.pendingRoleSync:
-        await _showPendingRoleSyncExit();
+        await _showPendingRoleSyncExit(result);
         return;
       case GroupExitIntentRequestStatus.queued:
-        await _showQueuedExit();
+        await _showQueuedExit(result);
         return;
       case GroupExitIntentRequestStatus.blockedLastAdmin:
         if (result.intent != null) {
-          await _showQueuedExit();
+          await _showQueuedExit(result);
           return;
         }
         ScaffoldMessenger.of(context).showSnackBar(
@@ -537,42 +537,42 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         return;
       case GroupExitIntentRequestStatus.unavailable:
         if (result.intent != null) {
-          await _showQueuedExit();
+          await _showQueuedExit(result);
           return;
         }
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_INFO_FL_LEAVE_ERROR',
-          details: {'error': result.cause.toString()},
+          details: const {
+            'code': 'EX01',
+            'phase': 'authority',
+            'severity': 'failure',
+          },
         );
         await _loadGroupInfo();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.group_info_leave_failed,
-            ),
-          ),
+          SnackBar(content: Text(_presentExitResultFailure(result))),
         );
         return;
       case GroupExitIntentRequestStatus.failed:
         if (result.intent != null) {
-          await _showQueuedExit();
+          await _showQueuedExit(result);
           return;
         }
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_INFO_FL_LEAVE_ERROR',
-          details: {'error': result.cause.toString()},
+          details: const {
+            'code': 'EX99',
+            'phase': 'authority',
+            'severity': 'failure',
+          },
         );
         await _loadGroupInfo();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.group_info_leave_failed,
-            ),
-          ),
+          SnackBar(content: Text(_presentExitResultFailure(result))),
         );
         return;
     }
@@ -597,32 +597,53 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       case GroupExitIntentRequestStatus.unavailable:
       case GroupExitIntentRequestStatus.failed:
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.group_info_leave_failed,
-            ),
-          ),
+          SnackBar(content: Text(_presentExitResultFailure(result))),
         );
         return false;
     }
   }
 
-  Future<void> _showPendingRoleSyncExit() async {
+  String _presentExitResultFailure(GroupExitIntentRequestResult result) {
+    final l10n = AppLocalizations.of(context)!;
+    final code = primaryGroupExitPublicCode(result.diagnosticFacts);
+    return code == null
+        ? l10n.group_info_leave_failed
+        : presentGroupExitDiagnostic(
+            l10n,
+            code,
+            leading: l10n.group_info_leave_failed,
+          );
+  }
+
+  Future<void> _showPendingRoleSyncExit(
+    GroupExitIntentRequestResult initialResult,
+  ) async {
     var navigateAfterClose = false;
+    var currentIntentId = initialResult.intent?.intentId;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (_) => GroupExitRecoverySheet.pendingRoleSync(
         groupName: _group.name,
+        diagnosticGroupId: _group.id,
+        diagnosticIntentId: currentIntentId,
+        diagnosticActionRef: () => currentIntentId == null
+            ? null
+            : (groupId: _group.id, intentId: currentIntentId!),
+        initialDiagnosticCode: primaryGroupExitPublicCode(
+          initialResult.diagnosticFacts,
+        ),
         onLeaveWhenSyncCompletes: () async {
           final result = await queueGroupExitIntentLeaveWhenSyncCompletes(
             _group.id,
           );
+          currentIntentId = result.intent?.intentId ?? currentIntentId;
           navigateAfterClose = await _closeSheetForExitResult(result);
           return navigateAfterClose;
         },
         onTryAgain: () async {
           final result = await retryGroupExitIntentLeave(_group.id);
+          currentIntentId = result.intent?.intentId ?? currentIntentId;
           navigateAfterClose = await _closeSheetForExitResult(result);
           return navigateAfterClose;
         },
@@ -637,15 +658,27 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     await _loadGroupInfo();
   }
 
-  Future<void> _showQueuedExit() async {
+  Future<void> _showQueuedExit(
+    GroupExitIntentRequestResult initialResult,
+  ) async {
     var navigateAfterClose = false;
+    var currentIntentId = initialResult.intent?.intentId;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (_) => GroupExitRecoverySheet.queuedLeave(
         groupName: _group.name,
+        diagnosticGroupId: _group.id,
+        diagnosticIntentId: currentIntentId,
+        diagnosticActionRef: () => currentIntentId == null
+            ? null
+            : (groupId: _group.id, intentId: currentIntentId!),
+        initialDiagnosticCode: primaryGroupExitPublicCode(
+          initialResult.diagnosticFacts,
+        ),
         onTryAgain: () async {
           final result = await retryGroupExitIntentLeave(_group.id);
+          currentIntentId = result.intent?.intentId ?? currentIntentId;
           navigateAfterClose = await _closeSheetForExitResult(result);
           return navigateAfterClose;
         },
@@ -676,7 +709,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   Future<void> _confirmDeleteSelfRemovedGroupShell({
     required String groupId,
-    required String selfPeerId,
   }) async {
     if (!mounted || _isDeletingSelfRemovedShell) return;
     _isDeletingSelfRemovedShell = true;
@@ -706,33 +738,31 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       );
       if (shouldDelete != true || !mounted) return;
 
-      final deleteShell =
-          widget.deleteSelfRemovedGroupShell ??
-          defaultDeleteSelfRemovedGroupShell;
-      if (deleteShell == null) {
-        await _loadGroupInfo();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(l10n.group_removed_delete_failed)),
-          );
-        }
-        return;
-      }
-
-      DeleteSelfRemovedGroupShellResult result;
+      DeleteSelfRemovedGroupShellActionObservation observation;
       try {
-        result = await deleteShell(groupId: groupId, selfPeerId: selfPeerId);
-      } catch (error) {
+        observation = await runDeleteSelfRemovedGroupShellPresentationAction(
+          groupId: groupId,
+          identityRepository: widget.identityRepo,
+          legacyTestCallback: widget.deleteSelfRemovedGroupShell,
+        );
+      } catch (_) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_INFO_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
-          details: {'groupId': groupId, 'error': error.toString()},
+          details: const {
+            'code': 'EX10',
+            'phase': 'local_delete',
+            'severity': 'failure',
+          },
         );
-        result = DeleteSelfRemovedGroupShellResult.cleanupIncomplete;
+        observation = const DeleteSelfRemovedGroupShellActionObservation(
+          result: DeleteSelfRemovedGroupShellResult.cleanupIncomplete,
+          publicCode: GroupExitDiagnosticPublicCode.ex10,
+        );
       }
       if (!mounted) return;
 
-      switch (result) {
+      switch (observation.result) {
         case DeleteSelfRemovedGroupShellResult.deleted:
         case DeleteSelfRemovedGroupShellResult.alreadyAbsent:
           _didMutateGroup = true;
@@ -745,7 +775,17 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           await _loadGroupInfo();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.group_removed_delete_failed)),
+              SnackBar(
+                content: Text(
+                  observation.publicCode == null
+                      ? l10n.group_removed_delete_failed
+                      : presentGroupExitDiagnostic(
+                          l10n,
+                          observation.publicCode!,
+                          leading: l10n.group_removed_delete_failed,
+                        ),
+                ),
+              ),
             );
           }
           return;
@@ -1010,35 +1050,48 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _onDeleteGroupLocally() async {
-    if (_isDeletingLocally || widget.msgRepo == null) {
+    if (_isDeletingLocally) {
       return;
     }
 
     setState(() => _isDeletingLocally = true);
 
     try {
-      await deleteGroupAndMessages(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupMessageRepo: widget.msgRepo!,
+      final observation = await runDeleteDissolvedGroupShellPresentationAction(
         groupId: _group.id,
-        deleteLocallyIfDissolved: true,
+        legacyTestCallback: widget.msgRepo == null
+            ? null
+            : (groupId) => deleteGroupAndMessages(
+                bridge: widget.bridge,
+                groupRepo: widget.groupRepo,
+                groupMessageRepo: widget.msgRepo!,
+                groupId: groupId,
+                deleteLocallyIfDissolved: true,
+              ),
       );
+
+      if (observation.status ==
+          DeleteDissolvedGroupShellActionStatus.authorityUnavailable) {
+        if (!mounted) return;
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              presentGroupExitDiagnostic(
+                l10n,
+                observation.publicCode ?? GroupExitDiagnosticPublicCode.ex01,
+                leading: l10n.group_info_delete_local_failed,
+              ),
+            ),
+          ),
+        );
+        return;
+      }
 
       _didMutateGroup = true;
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_INFO_FL_DELETE_LOCAL_DISSOLVED_ERROR',
-        details: {
-          'groupId': _group.id.length > 8
-              ? _group.id.substring(0, 8)
-              : _group.id,
-          'error': e.toString(),
-        },
-      );
+    } on DissolvedGroupDeleteStateChangedException {
       if (!mounted) return;
       final message = AppLocalizations.of(
         context,
@@ -1046,6 +1099,29 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INFO_FL_DELETE_LOCAL_DISSOLVED_ERROR',
+        details: const {
+          'code': 'EX10',
+          'phase': 'local_delete',
+          'severity': 'failure',
+        },
+      );
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            presentGroupExitDiagnostic(
+              l10n,
+              GroupExitDiagnosticPublicCode.ex10,
+              leading: l10n.group_info_delete_local_failed,
+            ),
+          ),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isDeletingLocally = false);

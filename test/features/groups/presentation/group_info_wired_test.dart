@@ -20,6 +20,8 @@ import 'package:flutter_app/features/groups/application/group_dissolve_preflight
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
+import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -28,6 +30,7 @@ import 'package:flutter_app/features/groups/application/group_recovery_gate.dart
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -4745,6 +4748,19 @@ void main() {
         var roleInsertedAfterSnapshot = false;
         final calls = <String>[];
         setGroupExitIntentActionSinks(
+          resolveSnapshot: (groupId) async {
+            final identity = await identityRepo.loadIdentity();
+            final selfPeerId = identity?.peerId.trim();
+            if (selfPeerId == null || selfPeerId.isEmpty) {
+              throw StateError('Current group-exit identity is unavailable.');
+            }
+            return resolveGroupExitSnapshot(
+              groupRepo: groupRepo,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              loadPendingBroadcasts: loadGroupPendingBroadcasts,
+            );
+          },
           requestLeave: (groupId) async {
             calls.add('$activeCase:$groupId');
             if (activeCase == 'post-snapshot-role') {
@@ -4900,6 +4916,107 @@ void main() {
           'unavailable-known-intent:${group.id}',
           'ordinary:${group.id}',
         ]);
+      },
+    );
+
+    testWidgets(
+      'PB266-09 Group Info codes every applicable outcome in its accepted container',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        final selfMember = makeMember(
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+        );
+        await groupRepo.saveMember(selfMember);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-pb266-other-admin',
+            username: 'Other Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        final identityRepo = FakeIdentityRepository(identity: testIdentity);
+        final queuedIntent = GroupExitIntent(
+          groupId: group.id,
+          intentId: 'pb266-info-intent',
+          selfPeerId: testIdentity.peerId,
+          selfJoinedAt: selfMember.joinedAt,
+          state: GroupExitIntentState.queued,
+          pendingBroadcastId: 'pb266-info-notice',
+          createdAt: group.createdAt,
+          updatedAt: group.createdAt,
+        );
+        const facts = <GroupExitProcessDiagnosticFact>[
+          GroupExitProcessDiagnosticFact.authorityUnavailable(),
+          GroupExitProcessDiagnosticFact.nativeNodeUnavailable(),
+          GroupExitProcessDiagnosticFact.nativeRejected(),
+          GroupExitProcessDiagnosticFact.nativeUncertain(),
+          GroupExitProcessDiagnosticFact.cleanupIncomplete(),
+          GroupExitProcessDiagnosticFact.unexpected(
+            GroupExitDiagnosticPhase.native,
+          ),
+        ];
+        var activeFact = facts.first;
+        var requestCalls = 0;
+        setGroupExitIntentActionSinks(
+          resolveSnapshot: (groupId) => resolveGroupExitSnapshot(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            selfPeerId: testIdentity.peerId,
+          ),
+          requestLeave: (groupId) async {
+            requestCalls++;
+            return GroupExitIntentRequestResult.withDiagnosticFacts(
+              status:
+                  activeFact.outcome ==
+                      GroupExitProcessDiagnosticOutcome.authorityUnavailable
+                  ? GroupExitIntentRequestStatus.unavailable
+                  : GroupExitIntentRequestStatus.failed,
+              intent:
+                  activeFact.outcome ==
+                      GroupExitProcessDiagnosticOutcome.authorityUnavailable
+                  ? null
+                  : queuedIntent,
+              cause: StateError('fixture cause must never be presented'),
+              diagnosticFacts: [activeFact],
+            );
+          },
+        );
+
+        for (final fact in facts) {
+          activeFact = fact;
+          await tester.pumpWidget(
+            _localizedMaterialApp(
+              home: GroupInfoWired(
+                group: group,
+                groupRepo: groupRepo,
+                contactRepo: InMemoryContactRepository(),
+                bridge: FakeBridge(),
+                identityRepo: identityRepo,
+                p2pService: FakeP2PService(),
+              ),
+            ),
+          );
+          await pumpFrames(tester);
+          await tapLeaveGroupButton(tester);
+
+          final code = groupExitPublicCodeForFact(fact).databaseValue;
+          expect(find.textContaining(code), findsOneWidget, reason: code);
+          expect(
+            find.textContaining('fixture cause'),
+            findsNothing,
+            reason: '$code must use only the shared fixed presenter',
+          );
+          expect(await groupRepo.getGroup(group.id), isNotNull, reason: code);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        expect(requestCalls, facts.length);
       },
     );
 
@@ -5202,6 +5319,13 @@ void main() {
                             groupRepo: groupRepo,
                             msgRepo: msgRepo,
                             deleteSelfRemovedGroupShell: callback,
+                            resolveGroupExitSnapshotForTest: (groupId) =>
+                                resolveGroupExitSnapshot(
+                                  groupRepo: groupRepo,
+                                  groupId: groupId,
+                                  selfPeerId: testIdentity.peerId,
+                                  messageRepo: msgRepo,
+                                ),
                             contactRepo: InMemoryContactRepository(),
                             bridge: bridge,
                             identityRepo: FakeIdentityRepository(
@@ -5950,7 +6074,8 @@ void main() {
         await pumpFrames(tester, count: 5);
         await confirmDeleteLocalGroupDialog(tester);
 
-        expect(find.text('فشل حذف المجموعة محليًا'), findsOneWidget);
+        expect(find.textContaining('فشل حذف المجموعة محليًا'), findsOneWidget);
+        expect(find.textContaining('EX10'), findsOneWidget);
         expect(find.text('strict local delete diagnostic'), findsNothing);
         expect(await groupRepo.getGroup(group.id), isNotNull);
         expect(await groupRepo.getLatestKey(group.id), isNotNull);

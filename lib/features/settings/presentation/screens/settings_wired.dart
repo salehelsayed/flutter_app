@@ -23,6 +23,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -44,6 +45,7 @@ import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/group_exit_diagnostics_sheet.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -58,6 +60,7 @@ class SettingsWired extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
   final IntroductionRepository? introductionRepository;
   final NearbyLocationService? nearbyLocationService;
   final TransportMetrics? transportMetrics;
@@ -92,6 +95,7 @@ class SettingsWired extends StatefulWidget {
     required this.imageProcessor,
     required this.appShellController,
     required this.postsPrivacySettingsRepository,
+    this.groupExitDiagnosticRepository,
     this.introductionRepository,
     this.nearbyLocationService,
     this.transportMetrics,
@@ -916,6 +920,12 @@ class _SettingsWiredState extends State<SettingsWired> {
       onMoveAccountToNewPhone: identity == null
           ? null
           : _onMoveAccountToNewPhone,
+      groupExitDiagnosticsSection: widget.groupExitDiagnosticRepository == null
+          ? null
+          : GroupExitDiagnosticsSection(
+              repository: widget.groupExitDiagnosticRepository!,
+              backgroundPreference: _currentBackgroundPreference,
+            ),
       debugSection: _buildDebugSection(),
       onSwitchView: _onSwitchView,
       activeTab: widget.appShellController.activeTab,

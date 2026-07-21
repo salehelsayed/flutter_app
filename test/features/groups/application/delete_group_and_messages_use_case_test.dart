@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -795,6 +797,92 @@ void main() {
         throwsA(isA<Exception>()),
       );
     });
+
+    test(
+      'PB266-12 diagnosing dissolved local action preserves throw and records once',
+      () async {
+        final now = DateTime.utc(2026, 7, 21, 10);
+        final diagnostics = <GroupExitDiagnostic>[];
+        var deleteCalls = 0;
+
+        final missingAuthority = DiagnosingDeleteDissolvedGroupShellAction(
+          inner: null,
+          submit: (rows) async => diagnostics.addAll(rows),
+          now: () => now,
+        );
+        final unavailable = await missingAuthority(groupId);
+        expect(
+          unavailable.status,
+          DeleteDissolvedGroupShellActionStatus.authorityUnavailable,
+        );
+        expect(unavailable.publicCode, GroupExitDiagnosticPublicCode.ex01);
+        expect(deleteCalls, 0);
+        expect(diagnostics, hasLength(1));
+        expect(
+          diagnostics.single.publicCode,
+          GroupExitDiagnosticPublicCode.ex01,
+        );
+
+        diagnostics.clear();
+        final stateRace = DiagnosingDeleteDissolvedGroupShellAction(
+          inner: (id) async {
+            deleteCalls++;
+            throw DissolvedGroupDeleteStateChangedException();
+          },
+          submit: (rows) async => diagnostics.addAll(rows),
+          now: () => now,
+        );
+        await expectLater(
+          stateRace(groupId),
+          throwsA(isA<DissolvedGroupDeleteStateChangedException>()),
+        );
+        expect(deleteCalls, 1);
+        expect(diagnostics, isEmpty);
+
+        final thrown = StateError('hostile dissolved cleanup failure');
+        final originalStack = StackTrace.current;
+        final failing = DiagnosingDeleteDissolvedGroupShellAction(
+          inner: (id) async {
+            deleteCalls++;
+            Error.throwWithStackTrace(thrown, originalStack);
+          },
+          submit: (rows) async => diagnostics.addAll(rows),
+          now: () => now,
+        );
+        Object? caught;
+        StackTrace? caughtStack;
+        try {
+          await failing(groupId);
+        } catch (error, stackTrace) {
+          caught = error;
+          caughtStack = stackTrace;
+        }
+        expect(caught, same(thrown));
+        expect(caughtStack.toString(), originalStack.toString());
+        expect(deleteCalls, 2);
+        expect(diagnostics, hasLength(1));
+        expect(
+          diagnostics.single.publicCode,
+          GroupExitDiagnosticPublicCode.ex10,
+        );
+
+        diagnostics.clear();
+        final success = DiagnosingDeleteDissolvedGroupShellAction(
+          inner: (id) async {
+            deleteCalls++;
+          },
+          submit: (rows) async => diagnostics.addAll(rows),
+          now: () => now,
+        );
+        expect(
+          (await success(groupId)).status,
+          DeleteDissolvedGroupShellActionStatus.deleted,
+        );
+        expect(deleteCalls, 3);
+        expect(diagnostics, isEmpty);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
   });
 }
 

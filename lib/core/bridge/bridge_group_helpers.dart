@@ -251,9 +251,7 @@ Future<void> callGroupLeave(
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_FL_BRIDGE_LEAVE_REQUEST',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
+    details: const {'phase': 'native', 'severity': 'info'},
   );
 
   final request = {
@@ -282,13 +280,20 @@ Future<void> callGroupLeave(
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
-      details: {'ok': true},
+      details: const {'phase': 'native', 'severity': 'info'},
     );
+  } on BridgeCommandException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
+      details: const {'code': 'EX99', 'phase': 'native', 'severity': 'failure'},
+    );
+    rethrow;
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
-      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+      details: const {'code': 'EX06', 'phase': 'native', 'severity': 'failure'},
     );
     rethrow;
   }
