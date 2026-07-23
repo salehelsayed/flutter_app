@@ -23,11 +23,20 @@ IosXctestrunRelocation relocateIosXctestrun({
   required Directory cachedProducts,
   required Directory cachedApplication,
   required Map<String, String> uiEnvironment,
+  String uiTargetBundleIdentifier = 'com.mknoon.app',
 }) {
+  if (!RegExp(
+    r'^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$',
+  ).hasMatch(uiTargetBundleIdentifier)) {
+    throw FormatException(
+      'Unsafe UI target bundle identifier: $uiTargetBundleIdentifier',
+    );
+  }
   final patcher = _Relocator(
     products: cachedProducts,
     application: cachedApplication,
     environment: uiEnvironment,
+    targetBundleIdentifier: uiTargetBundleIdentifier,
   );
   final relocated = patcher.patch(plist);
   return IosXctestrunRelocation(
@@ -42,29 +51,53 @@ List<String> iosTestWithoutBuildingArguments({
   required String receiverDeviceId,
   required String selector,
   required Directory resultBundle,
-}) => <String>[
-  'test-without-building',
-  '-xctestrun',
-  xctestrun.path,
-  '-destination',
-  'platform=iOS,id=$receiverDeviceId',
-  '-parallel-testing-enabled',
-  'NO',
-  '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
-  '-resultBundlePath',
-  resultBundle.path,
-];
+}) {
+  final validatedSelector = validatedIosUiTestSelector(selector);
+  return <String>[
+    'test-without-building',
+    '-xctestrun',
+    xctestrun.path,
+    '-destination',
+    'platform=iOS,id=$receiverDeviceId',
+    '-parallel-testing-enabled',
+    'NO',
+    '-only-testing:$validatedSelector',
+    '-resultBundlePath',
+    resultBundle.path,
+  ];
+}
+
+/// Returns one safe Xcode UI-test selector.
+///
+/// Existing notification callers may continue to pass a bare method name; it
+/// is resolved against NotificationTapUITests. New callers use the explicit
+/// `RunnerUITests/Class/method` form so the shared prebuilt bundle can run a
+/// focused controller without rebuilding or widening the selected test suite.
+String validatedIosUiTestSelector(String selector) {
+  final value = selector.trim();
+  final fullSelector = value.contains('/')
+      ? value
+      : 'RunnerUITests/NotificationTapUITests/$value';
+  if (!RegExp(
+    r'^RunnerUITests/[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*$',
+  ).hasMatch(fullSelector)) {
+    throw FormatException('Unsafe RunnerUITests selector: $selector');
+  }
+  return fullSelector;
+}
 
 final class _Relocator {
   _Relocator({
     required this.products,
     required this.application,
     required this.environment,
+    required this.targetBundleIdentifier,
   });
 
   final Directory products;
   final Directory application;
   final Map<String, String> environment;
+  final String targetBundleIdentifier;
   int uiTargetsPatched = 0;
   int productPathsPatched = 0;
 
@@ -86,7 +119,7 @@ final class _Relocator {
     if (testBundle is String && testBundle.contains('RunnerUITests')) {
       uiTargetsPatched += 1;
       result['UITargetAppPath'] = application.path;
-      result['UITargetAppBundleIdentifier'] = 'com.mknoon.app';
+      result['UITargetAppBundleIdentifier'] = targetBundleIdentifier;
       result['EnvironmentVariables'] = <String, Object?>{
         if (result['EnvironmentVariables'] is Map)
           for (final entry in (result['EnvironmentVariables']! as Map).entries)

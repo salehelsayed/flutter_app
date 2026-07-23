@@ -186,6 +186,7 @@ expected_mutation_flutter_args="$(
     test/tool/sims/sims_checkpoint_test.dart \
     test/tool/sims/sims_device_binding_test.dart \
     test/tool/sims/sims_executor_test.dart \
+    test/tool/sims/sims_ios_group_media_269_profile_test.dart \
     test/tool/sims/sims_scheduler_test.dart
 )"
 [ "$mutation_flutter_args" = "$expected_mutation_flutter_args" ] ||

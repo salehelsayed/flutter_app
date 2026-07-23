@@ -1,7 +1,17 @@
 import Flutter
 import FirebaseMessaging
+import os.log
 import UIKit
 import UserNotifications
+
+private let groupMediaNativeProofLog = OSLog(
+  subsystem: "com.mknoon.group-media-269",
+  category: "native-proof"
+)
+
+func logGroupMediaNativeProof(_ message: String) {
+  os_log("%{public}@", log: groupMediaNativeProofLog, type: .default, message)
+}
 
 struct NotificationResponseDiagnostic: Equatable {
   static let redactedValue = "<redacted>"
@@ -52,6 +62,7 @@ struct NotificationResponseDiagnostic: Equatable {
     return string
   }
 }
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 #if canImport(GoMknoon)
@@ -103,6 +114,12 @@ struct NotificationResponseDiagnostic: Equatable {
   ) -> Bool {
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     iosReceiverBootstrapHandoff.prepareContainer()
+#endif
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP || MKNOON_SIMS_GROUP_MEDIA_269
+    logGroupMediaNativeProof(
+      "MKNOON_269_IOS_NATIVE event=process_launch "
+        + "pid=\(ProcessInfo.processInfo.processIdentifier)"
+    )
 #endif
     installNotificationCenterDelegate(context: "before_didFinishLaunching_super")
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -562,6 +579,16 @@ struct NotificationResponseDiagnostic: Equatable {
         result(FlutterMethodNotImplemented)
         return
       }
+#if MKNOON_SIMS_GROUP_MEDIA_269
+      // The disposable TC-269 app is signed without app-group entitlements.
+      // Fail before evaluating the production app-group identifier so this
+      // build cannot touch production shared state even if Dart calls through.
+      result(FlutterError(
+        code: "app_group_unavailable",
+        message: "shared app-group access is disabled for this build",
+        details: nil
+      ))
+#else
       // Must match mknoonSharedAppGroupIdentifier in the NotificationService
       // target (a different module, so the literal is repeated here).
       guard let path = FileManager.default.containerURL(
@@ -575,6 +602,7 @@ struct NotificationResponseDiagnostic: Equatable {
         return
       }
       result(path)
+#endif
     }
     appGroupPathChannel = channel
   }
@@ -683,6 +711,12 @@ struct NotificationResponseDiagnostic: Equatable {
 
   override func applicationDidEnterBackground(_ application: UIApplication) {
     super.applicationDidEnterBackground(application)
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP || MKNOON_SIMS_GROUP_MEDIA_269
+    logGroupMediaNativeProof(
+      "MKNOON_269_IOS_NATIVE event=app_did_enter_background "
+        + "pid=\(ProcessInfo.processInfo.processIdentifier)"
+    )
+#endif
     // Re-arm the assertion on every backgrounding while a transfer is live
     // (it is ended on foreground to avoid burning the background budget).
     beginMigrationBackgroundTaskIfNeeded(context: "did_enter_background")

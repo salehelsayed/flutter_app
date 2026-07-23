@@ -15,8 +15,11 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/foreground_group_media_upload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
+    show sameExactGroupPrivateMediaDispatchParent;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -117,6 +120,9 @@ MediaAttachment _pendingAttachment({
   String mime = 'image/jpeg',
   int size = 2048,
   int? uploadRetryCount,
+  int? downloadRetryCount,
+  String? createdAt,
+  String? thumbnailHash,
 }) {
   _writeRetryFixtureFile(localPath: localPath, mime: mime);
   return MediaAttachment(
@@ -127,8 +133,10 @@ MediaAttachment _pendingAttachment({
     mediaType: MediaAttachment.mediaTypeFromMime(mime),
     localPath: localPath,
     downloadStatus: 'upload_pending',
-    createdAt: DateTime.now().toUtc().toIso8601String(),
+    createdAt: createdAt ?? DateTime.now().toUtc().toIso8601String(),
     uploadRetryCount: uploadRetryCount,
+    downloadRetryCount: downloadRetryCount,
+    thumbnailHash: thumbnailHash,
   );
 }
 
@@ -184,6 +192,95 @@ class _RecordingGroupUploadRetryProjection
     this.failure = failure;
     return const UploadRetryProjectionResult(
       state: UploadRetryProjectionState.terminal,
+    );
+  }
+}
+
+class _CompletionFailureGroupMessageRepository
+    extends InMemoryGroupMessageRepository
+    implements
+        GroupUploadRetryCompletionRepository,
+        GroupUploadRetryProjectionRepository {
+  _CompletionFailureGroupMessageRepository({
+    required this.mediaRepo,
+    required this.throwOnCompletion,
+  });
+
+  final InMemoryMediaAttachmentRepository mediaRepo;
+  final bool throwOnCompletion;
+  Future<void> Function(
+    GroupMessage expectedParent,
+    MediaAttachment expectedAttachment,
+  )?
+  beforeFalseCompletion;
+
+  int completionCalls = 0;
+  int projectionCalls = 0;
+  int appliedProjectionCalls = 0;
+  final List<UploadMediaFailed> projectedFailures = <UploadMediaFailed>[];
+  final Map<String, GroupMessage> _expectedParents = <String, GroupMessage>{};
+  final Map<String, MediaAttachment> _expectedAttachments =
+      <String, MediaAttachment>{};
+
+  @override
+  Future<bool> completeUploadRetry({
+    required GroupMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
+  }) async {
+    completionCalls++;
+    _expectedParents[expectedAttachment.id] = expectedParent;
+    _expectedAttachments[expectedAttachment.id] = expectedAttachment;
+    if (throwOnCompletion) {
+      throw StateError('simulated group upload completion persistence failure');
+    }
+    await beforeFalseCompletion?.call(expectedParent, expectedAttachment);
+    return false;
+  }
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    projectionCalls++;
+    projectedFailures.add(failure);
+    final expectedParent = _expectedParents[attachmentId];
+    final expectedAttachment = _expectedAttachments[attachmentId];
+    final currentParent = await getMessage(messageId);
+    final currentAttachment = await mediaRepo.getAttachmentById(attachmentId);
+    if (expectedParent == null ||
+        expectedAttachment == null ||
+        currentParent == null ||
+        currentAttachment == null ||
+        !sameExactGroupPrivateMediaDispatchParent(
+          currentParent,
+          expectedParent,
+        ) ||
+        !sameExactGroupRetryAttachment(currentAttachment, expectedAttachment) ||
+        currentAttachment.downloadStatus != 'upload_pending') {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final nextRetryCount = (currentAttachment.uploadRetryCount ?? 0) + 1;
+    final terminal = nextRetryCount >= kMaxUploadRetries;
+    await mediaRepo.saveAttachment(
+      currentAttachment.copyWith(
+        downloadStatus: terminal ? 'upload_failed' : 'upload_pending',
+        uploadRetryCount: nextRetryCount,
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    await saveMessage(
+      currentParent.copyWith(status: terminal ? 'failed' : 'queued_offline'),
+    );
+    appliedProjectionCalls++;
+    return UploadRetryProjectionResult(
+      state: terminal
+          ? UploadRetryProjectionState.terminal
+          : UploadRetryProjectionState.retryPending,
+      uploadRetryCount: nextRetryCount,
     );
   }
 }
@@ -338,6 +435,193 @@ void main() {
 
   group('retryIncompleteGroupUploads', () {
     test(
+      'P269 foreground image and voice uploads lose authority when the group dissolves between durable prep and the shared leaf',
+      () async {
+        final activeGroup = await groupRepo.getGroup('group-1');
+        expect(activeGroup, isNotNull);
+
+        final plans = <({String id, String mime, String mediaType})>[
+          (
+            id: 'foreground-image-after-dissolve',
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+          (
+            id: 'foreground-voice-after-dissolve',
+            mime: 'audio/mp4',
+            mediaType: 'audio',
+          ),
+        ];
+        final parents = <GroupMessage>[];
+        final attachments = <MediaAttachment>[];
+        for (final plan in plans) {
+          final parent = GroupMessage(
+            id: 'msg-${plan.id}',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 18),
+            status: 'sending',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 7, 22, 18),
+          );
+          final attachment = MediaAttachment(
+            id: plan.id,
+            messageId: parent.id,
+            mime: plan.mime,
+            size: 2048,
+            mediaType: plan.mediaType,
+            durationMs: plan.mediaType == 'audio' ? 1200 : null,
+            localPath: 'pending_uploads/${parent.id}/${plan.id}',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-07-22T18:00:00.000Z',
+            uploadRetryCount: 0,
+            downloadRetryCount: 0,
+            ownerLane: MediaOwnerLane.group,
+          );
+          await groupMsgRepo.saveMessage(parent);
+          await mediaRepo.saveAttachment(
+            attachment,
+            owner: MediaOwnerLane.group,
+          );
+          parents.add(parent);
+          attachments.add(attachment);
+        }
+
+        // The durable rows were prepared while active. The authenticated
+        // dissolve wins before either foreground leaf acquires the membership
+        // phase, so neither image nor voice may reach encryption/relay upload.
+        await groupRepo.updateGroup(
+          activeGroup!.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 7, 22, 18, 1),
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+
+        var uploadCalls = 0;
+        var completionBuildCalls = 0;
+        for (var index = 0; index < plans.length; index++) {
+          final result = await runForegroundGroupUploadLeaf(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            mediaAttachmentRepository: mediaRepo,
+            expectedParent: parents[index],
+            expectedAttachment: attachments[index],
+            senderPeerId: 'peer-admin',
+            upload: (_) async {
+              uploadCalls++;
+              return UploadMediaSucceeded(
+                attachments[index].copyWith(downloadStatus: 'done'),
+              );
+            },
+            buildCompleted: (uploaded) async {
+              completionBuildCalls++;
+              return uploaded;
+            },
+          );
+
+          expect(result, isNull, reason: plans[index].mediaType);
+          final durable = await mediaRepo.getAttachmentById(plans[index].id);
+          expect(durable?.downloadStatus, 'upload_pending');
+          expect(durable?.localPath, attachments[index].localPath);
+        }
+        expect(uploadCalls, 0);
+        expect(completionBuildCalls, 0);
+      },
+    );
+
+    test(
+      'P269 sameExactGroupRetryAttachment treats null retry counters as database zero but remains strict for every other authority field',
+      () {
+        const expected = MediaAttachment(
+          id: 'blob-p269-authority',
+          messageId: 'msg-p269-authority',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          width: 640,
+          height: 480,
+          durationMs: 1200,
+          localPath: 'pending_uploads/msg-p269-authority/blob.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-07-22T08:00:00.000Z',
+          waveform: <double>[0.1, 0.5, 0.9],
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          thumbnailHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: 'local-key',
+          encryptionNonce: 'local-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+        final databaseDefaulted = expected.copyWith(
+          uploadRetryCount: 0,
+          downloadRetryCount: 0,
+        );
+
+        expect(
+          sameExactGroupRetryAttachment(databaseDefaulted, expected),
+          isTrue,
+          reason: 'SQLite reloads omitted NOT NULL counters as zero',
+        );
+
+        final nonCounterMutations = <MediaAttachment>[
+          databaseDefaulted.copyWith(id: 'different-blob'),
+          databaseDefaulted.copyWith(messageId: 'different-message'),
+          databaseDefaulted.copyWith(ownerLane: MediaOwnerLane.direct),
+          databaseDefaulted.copyWith(mime: 'image/png'),
+          databaseDefaulted.copyWith(size: 4096),
+          databaseDefaulted.copyWith(mediaType: 'video'),
+          databaseDefaulted.copyWith(width: 641),
+          databaseDefaulted.copyWith(height: 481),
+          databaseDefaulted.copyWith(durationMs: 1201),
+          databaseDefaulted.copyWith(
+            localPath: 'pending_uploads/msg-p269-authority/other.jpg',
+          ),
+          databaseDefaulted.copyWith(downloadStatus: 'done'),
+          databaseDefaulted.copyWith(createdAt: '2026-07-22T08:00:01.000Z'),
+          databaseDefaulted.copyWith(waveform: const <double>[0.1, 0.6, 0.9]),
+          databaseDefaulted.copyWith(
+            contentHash:
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          ),
+          databaseDefaulted.copyWith(
+            thumbnailHash:
+                'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          ),
+          databaseDefaulted.copyWith(encryptionKeyBase64: 'different-key'),
+          databaseDefaulted.copyWith(encryptionNonce: 'different-nonce'),
+          databaseDefaulted.copyWith(encryptionScheme: 'different-scheme'),
+        ];
+        for (final mutation in nonCounterMutations) {
+          expect(
+            sameExactGroupRetryAttachment(mutation, expected),
+            isFalse,
+            reason: 'Only database-default-equivalent counters may normalize',
+          );
+        }
+
+        expect(
+          sameExactGroupRetryAttachment(
+            databaseDefaulted.copyWith(uploadRetryCount: 1),
+            expected,
+          ),
+          isFalse,
+        );
+        expect(
+          sameExactGroupRetryAttachment(
+            databaseDefaulted.copyWith(downloadRetryCount: 1),
+            expected,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
       'automatic pass with no OS connectivity issues no upload and leaves queued rows untouched',
       () async {
         await groupMsgRepo.saveMessage(
@@ -404,6 +688,85 @@ void main() {
 
       expect(count, 0);
     });
+
+    test(
+      'P269 successful incomplete-group recovery carries both persisted counters into completion and settles only once',
+      () async {
+        const messageId = 'msg-p269-retry-completion';
+        const attachmentId = 'blob-p269-retry-completion';
+        const createdAt = '2026-07-22T09:15:00.000Z';
+        const thumbnailHash =
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Durable retry completion',
+            timestamp: DateTime.utc(2026, 7, 22, 9, 15),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 7, 22, 9, 15),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/photo.jpg',
+            uploadRetryCount: 2,
+            downloadRetryCount: 1,
+            createdAt: createdAt,
+            thumbnailHash: thumbnailHash,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        uploadFn.willReturn(
+          _doneAttachment(id: attachmentId, messageId: messageId).copyWith(
+            size: 8192,
+            localPath: 'media/group-1/$attachmentId.jpg',
+            createdAt: '2036-01-02T03:04:05.000Z',
+          ),
+        );
+
+        final first = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+        final callsAfterFirstPass = uploadFn.callCount;
+        final second = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(first, 1);
+        expect(second, 0);
+        expect(callsAfterFirstPass, 1);
+        expect(uploadFn.callCount, callsAfterFirstPass);
+        expect(_publishedGroupPayloads(bridge), hasLength(1));
+        final persisted = await mediaRepo.getAttachmentById(attachmentId);
+        expect(persisted?.downloadStatus, 'done');
+        expect(persisted?.uploadRetryCount, 2);
+        expect(persisted?.downloadRetryCount, 1);
+        expect(persisted?.createdAt, createdAt);
+        expect(persisted?.thumbnailHash, thumbnailHash);
+        expect(persisted?.size, 8192);
+        expect(persisted?.localPath, 'media/group-1/$attachmentId.jpg');
+      },
+    );
 
     test(
       'manual Retry claims the complete unfinished set and rearms only at-ceiling rows',
@@ -2927,6 +3290,235 @@ void main() {
               'RETRY_INCOMPLETE_GROUP_UPLOAD_ABORT_FINAL_SEND',
         );
         expect(abort['details']['reason'], 'message_status_sent');
+      },
+    );
+
+    test(
+      'P269 completion persistence failures advance exact bounded sequence and discriminate lost authority',
+      () async {
+        Future<MediaAttachment> seedPending({
+          required _CompletionFailureGroupMessageRepository messages,
+          required InMemoryMediaAttachmentRepository attachments,
+          required String suffix,
+        }) async {
+          final messageId = 'msg-p269-completion-$suffix';
+          final attachmentId = 'blob-p269-completion-$suffix';
+          await messages.saveMessage(
+            GroupMessage(
+              id: messageId,
+              groupId: 'group-1',
+              senderPeerId: 'peer-admin',
+              senderUsername: 'Admin',
+              text: 'Completion $suffix',
+              timestamp: DateTime.utc(2026, 7, 22, 10),
+              status: 'failed',
+              isIncoming: false,
+              createdAt: DateTime.utc(2026, 7, 22, 10),
+            ),
+          );
+          final attachment = _pendingAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            localPath: 'pending_uploads/$messageId/photo.jpg',
+            uploadRetryCount: 0,
+            downloadRetryCount: 0,
+          );
+          await attachments.saveAttachment(
+            attachment,
+            owner: MediaOwnerLane.group,
+          );
+          return (await attachments.getAttachmentById(attachmentId))!;
+        }
+
+        Future<int> runPass({
+          required _CompletionFailureGroupMessageRepository messages,
+          required InMemoryMediaAttachmentRepository attachments,
+          required FakeUploadMediaFn uploader,
+        }) {
+          return retryIncompleteGroupUploads(
+            groupRepo: groupRepo,
+            groupMsgRepo: messages,
+            mediaAttachmentRepo: attachments,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            uploadMediaFn: uploader.call,
+            mediaFileManager: mediaFileManager,
+            requireOsConnectivity: true,
+            connectivityProbe: () async => true,
+          );
+        }
+
+        final boundedMedia = InMemoryMediaAttachmentRepository();
+        final boundedMessages = _CompletionFailureGroupMessageRepository(
+          mediaRepo: boundedMedia,
+          throwOnCompletion: true,
+        );
+        final boundedPending = await seedPending(
+          messages: boundedMessages,
+          attachments: boundedMedia,
+          suffix: 'throwing',
+        );
+        final boundedUpload = FakeUploadMediaFn()
+          ..willReturn(
+            _doneAttachment(
+              id: boundedPending.id,
+              messageId: boundedPending.messageId,
+            ),
+          );
+        final durableSource = File(
+          _retryFixturePath(boundedPending.localPath!),
+        );
+        final durableSourceBytes = durableSource.readAsBytesSync();
+        final siblingFiles = <File, List<int>>{};
+        for (final lane in const <String>['direct', 'group', 'private']) {
+          final path = 'pending_uploads/p269-completion-sibling-$lane/blob.bin';
+          final bytes = <int>[lane.length, 0x26, 0x09, 0x06];
+          _writeRetryFixtureFile(
+            localPath: path,
+            mime: 'application/octet-stream',
+            bytes: bytes,
+          );
+          siblingFiles[File(_retryFixturePath(path))] = bytes;
+        }
+
+        for (var attempt = 1; attempt <= kMaxUploadRetries; attempt++) {
+          expect(
+            await runPass(
+              messages: boundedMessages,
+              attachments: boundedMedia,
+              uploader: boundedUpload,
+            ),
+            0,
+          );
+          final persisted = (await boundedMedia.getAttachmentById(
+            boundedPending.id,
+          ))!;
+          expect(persisted.uploadRetryCount, attempt);
+          expect(
+            persisted.downloadStatus,
+            attempt == kMaxUploadRetries ? 'upload_failed' : 'upload_pending',
+          );
+          expect(durableSource.readAsBytesSync(), durableSourceBytes);
+          for (final sibling in siblingFiles.entries) {
+            expect(sibling.key.readAsBytesSync(), sibling.value);
+          }
+        }
+
+        expect(boundedUpload.callCount, kMaxUploadRetries);
+        expect(boundedMessages.completionCalls, kMaxUploadRetries);
+        expect(boundedMessages.projectionCalls, kMaxUploadRetries);
+        expect(boundedMessages.appliedProjectionCalls, kMaxUploadRetries);
+        expect(
+          boundedMessages.projectedFailures,
+          everyElement(
+            isA<UploadMediaFailed>()
+                .having(
+                  (failure) => failure.stage,
+                  'stage',
+                  UploadMediaStage.consumerBoundary,
+                )
+                .having(
+                  (failure) => failure.disposition,
+                  'disposition',
+                  UploadMediaDisposition.boundedRetryable,
+                ),
+          ),
+        );
+
+        expect(
+          await runPass(
+            messages: boundedMessages,
+            attachments: boundedMedia,
+            uploader: boundedUpload,
+          ),
+          0,
+        );
+        expect(boundedUpload.callCount, kMaxUploadRetries);
+        expect(boundedMessages.completionCalls, kMaxUploadRetries);
+        expect(boundedMessages.projectionCalls, kMaxUploadRetries);
+        expect(durableSource.readAsBytesSync(), durableSourceBytes);
+
+        final unchangedMedia = InMemoryMediaAttachmentRepository();
+        final unchangedMessages = _CompletionFailureGroupMessageRepository(
+          mediaRepo: unchangedMedia,
+          throwOnCompletion: false,
+        );
+        final unchangedPending = await seedPending(
+          messages: unchangedMessages,
+          attachments: unchangedMedia,
+          suffix: 'unchanged-false',
+        );
+        final unchangedUpload = FakeUploadMediaFn()
+          ..willReturn(
+            _doneAttachment(
+              id: unchangedPending.id,
+              messageId: unchangedPending.messageId,
+            ),
+          );
+
+        expect(
+          await runPass(
+            messages: unchangedMessages,
+            attachments: unchangedMedia,
+            uploader: unchangedUpload,
+          ),
+          0,
+        );
+        final unchangedPersisted = (await unchangedMedia.getAttachmentById(
+          unchangedPending.id,
+        ))!;
+        expect(unchangedPersisted.uploadRetryCount, 1);
+        expect(unchangedPersisted.downloadStatus, 'upload_pending');
+        expect(unchangedMessages.completionCalls, 1);
+        expect(unchangedMessages.projectionCalls, 1);
+        expect(unchangedMessages.appliedProjectionCalls, 1);
+
+        final changedMedia = InMemoryMediaAttachmentRepository();
+        final changedMessages = _CompletionFailureGroupMessageRepository(
+          mediaRepo: changedMedia,
+          throwOnCompletion: false,
+        );
+        final changedPending = await seedPending(
+          messages: changedMessages,
+          attachments: changedMedia,
+          suffix: 'lost-authority',
+        );
+        changedMessages.beforeFalseCompletion =
+            (expectedParent, expectedAttachment) async {
+              await changedMessages.saveMessage(
+                expectedParent.copyWith(text: 'Competing parent mutation'),
+              );
+            };
+        final changedUpload = FakeUploadMediaFn()
+          ..willReturn(
+            _doneAttachment(
+              id: changedPending.id,
+              messageId: changedPending.messageId,
+            ),
+          );
+
+        expect(
+          await runPass(
+            messages: changedMessages,
+            attachments: changedMedia,
+            uploader: changedUpload,
+          ),
+          0,
+        );
+        final changedPersisted = (await changedMedia.getAttachmentById(
+          changedPending.id,
+        ))!;
+        expect(changedUpload.callCount, 1);
+        expect(changedMessages.completionCalls, 1);
+        expect(changedMessages.projectionCalls, 0);
+        expect(changedMessages.appliedProjectionCalls, 0);
+        expect(changedPersisted.uploadRetryCount, 0);
+        expect(changedPersisted.downloadStatus, 'upload_pending');
+        expect(
+          (await changedMessages.getMessage(changedPending.messageId))?.text,
+          'Competing parent mutation',
+        );
       },
     );
   });

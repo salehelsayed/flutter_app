@@ -13,61 +13,58 @@ import 'package:flutter_app/main.dart' as app;
 // app.MyApp.navigatorKey first to force the import, then read lib/main.dart as a
 // string and assert index-delimited substrings.
 void main() {
-  test(
-    'TC-164-01 main wires startLiveServices as unconditional '
-    'deferredRuntimeStartup and drops both eager pre-runApp awaits',
-    () async {
-      expect(app.MyApp.navigatorKey, isNotNull);
+  test('TC-164-01 main wires startLiveServices as unconditional '
+      'deferredRuntimeStartup and drops both eager pre-runApp awaits', () async {
+    expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
+    final mainSource = await File('lib/main.dart').readAsString();
 
-      // (i) deferredRuntimeStartup is unconditional, not isShareLaunch-gated.
-      expect(
-        mainSource,
-        contains('deferredRuntimeStartup: startLiveServices,'),
-        reason:
-            'normal launch must take the same deferred startup path share '
-            'launch already used',
-      );
-      expect(
-        mainSource,
-        isNot(
-          contains('deferredRuntimeStartup: isShareLaunch ? startLiveServices'),
-        ),
-        reason: 'the isShareLaunch ternary on deferredRuntimeStartup is removed',
-      );
+    // (i) deferredRuntimeStartup is unconditional, not isShareLaunch-gated.
+    expect(
+      mainSource,
+      contains('deferredRuntimeStartup: startLiveServices,'),
+      reason:
+          'normal launch must take the same deferred startup path share '
+          'launch already used',
+    );
+    expect(
+      mainSource,
+      isNot(
+        contains('deferredRuntimeStartup: isShareLaunch ? startLiveServices'),
+      ),
+      reason: 'the isShareLaunch ternary on deferredRuntimeStartup is removed',
+    );
 
-      // (ii) the eager normal-launch startLiveServices await is gone.
-      expect(
-        mainSource,
-        isNot(contains('if (!isShareLaunch) {\n    await startLiveServices();')),
-        reason:
-            'startLiveServices must not be awaited on the pre-runApp critical '
-            'path on a normal launch',
-      );
+    // (ii) the eager normal-launch startLiveServices await is gone.
+    expect(
+      mainSource,
+      isNot(contains('if (!isShareLaunch) {\n    await startLiveServices();')),
+      reason:
+          'startLiveServices must not be awaited on the pre-runApp critical '
+          'path on a normal launch',
+    );
 
-      // (iii) the eager top-level ensureFirebaseReady await is gone (the in-
-      // startLiveServices await ensureFirebaseReady() at :3043 has no
-      // `if (!isShareLaunch) {` prefix, so it is NOT matched).
-      expect(
-        mainSource,
-        isNot(
-          contains('if (!isShareLaunch) {\n    await ensureFirebaseReady();'),
-        ),
-        reason: 'Firebase must leave the pre-runApp critical path',
-      );
+    // (iii) the eager top-level ensureFirebaseReady await is gone (the in-
+    // startLiveServices await ensureFirebaseReady() at :3043 has no
+    // `if (!isShareLaunch) {` prefix, so it is NOT matched).
+    expect(
+      mainSource,
+      isNot(
+        contains('if (!isShareLaunch) {\n    await ensureFirebaseReady();'),
+      ),
+      reason: 'Firebase must leave the pre-runApp critical path',
+    );
 
-      // (iv) INV-8: the deferred-startup trigger survives — it is the sole
-      // driver of the deferred startup on an idle no-notification launch.
-      expect(
-        mainSource,
-        contains('unawaited(_handleInitialLocalNotificationLaunchWhenReady())'),
-        reason:
-            'removing this trigger would mean the node/listeners never start on '
-            'a passive launch (INV-8)',
-      );
-    },
-  );
+    // (iv) INV-8: the deferred-startup trigger survives — it is the sole
+    // driver of the deferred startup on an idle no-notification launch.
+    expect(
+      mainSource,
+      contains('unawaited(_handleInitialLocalNotificationLaunchWhenReady())'),
+      reason:
+          'removing this trigger would mean the node/listeners never start on '
+          'a passive launch (INV-8)',
+    );
+  });
 
   test(
     'TC-164-06 the keychain mirror runs OFF the critical path but is guaranteed '
@@ -76,7 +73,10 @@ void main() {
       expect(app.MyApp.navigatorKey, isNotNull);
 
       final mainSource = await File('lib/main.dart').readAsString();
-      final runAppIndex = mainSource.indexOf('runApp(');
+      // A compile-gated disposable reset profile may render an inert app and
+      // return before normal startup. Anchor this preservation sentinel to the
+      // production app launch, which remains the final runApp invocation.
+      final runAppIndex = mainSource.lastIndexOf('runApp(');
       expect(runAppIndex, isNonNegative);
       final preRunApp = mainSource.substring(0, runAppIndex);
 
@@ -86,7 +86,9 @@ void main() {
       // eager form.
       expect(
         preRunApp,
-        isNot(contains('\n  await groupRepository.mirrorAllKeysToSecureStore();')),
+        isNot(
+          contains('\n  await groupRepository.mirrorAllKeysToSecureStore();'),
+        ),
         reason:
             'the unbounded keychain backfill must not block the pre-runApp '
             'critical path',

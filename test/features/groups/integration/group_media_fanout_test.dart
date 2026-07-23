@@ -11,6 +11,7 @@ import 'package:flutter_app/features/groups/application/group_media_allowed_peer
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -1510,6 +1511,151 @@ void main() {
             .toList(growable: false);
         expect(deliveryRecords, hasLength(1));
         expect(deliveryRecords.single['receiverPeerId'], bob.peerId);
+      },
+    );
+
+    test(
+      'P269 group media fanout ACL never emits account or device IDs when transport IDs differ',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'account-alice-p269',
+          username: 'Alice',
+          network: network,
+        );
+        final tempDir = await Directory.systemTemp.createTemp(
+          'p269_group_media_transport_acl_',
+        );
+        addTearDown(() async {
+          alice.dispose();
+          if (await tempDir.exists()) {
+            await tempDir.delete(recursive: true);
+          }
+        });
+
+        const groupId = 'group-p269-transport-acl';
+        final joinedAt = DateTime.utc(2026, 7, 22, 11);
+        await alice.createGroup(groupId: groupId, name: 'P269 Transport ACL');
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: alice.peerId,
+            username: alice.username,
+            role: MemberRole.admin,
+            publicKey: 'account-key-alice-p269',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-alice-primary-p269',
+                transportPeerId: 'transport-alice-primary-p269',
+                deviceSigningPublicKey: 'signing-alice-primary-p269',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-alice-duplicate-p269',
+                transportPeerId: 'transport-shared-p269',
+                deviceSigningPublicKey: 'signing-alice-duplicate-p269',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-alice-revoked-p269',
+                transportPeerId: 'transport-alice-revoked-p269',
+                deviceSigningPublicKey: 'signing-alice-revoked-p269',
+                status: GroupMemberDeviceStatus.revoked,
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-alice-blank-p269',
+                transportPeerId: '   ',
+                deviceSigningPublicKey: 'signing-alice-blank-p269',
+              ),
+            ],
+            joinedAt: joinedAt,
+          ),
+        );
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'account-bob-p269',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'account-key-bob-p269',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-bob-primary-p269',
+                transportPeerId: 'transport-bob-primary-p269',
+                deviceSigningPublicKey: 'signing-bob-primary-p269',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-bob-shared-p269',
+                transportPeerId: 'transport-shared-p269',
+                deviceSigningPublicKey: 'signing-bob-shared-p269',
+              ),
+            ],
+            joinedAt: joinedAt.add(const Duration(seconds: 1)),
+          ),
+        );
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'account-revoked-p269',
+            username: 'Revoked',
+            role: MemberRole.reader,
+            publicKey: 'account-key-revoked-p269',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-only-revoked-p269',
+                transportPeerId: 'transport-only-revoked-p269',
+                deviceSigningPublicKey: 'signing-only-revoked-p269',
+                status: GroupMemberDeviceStatus.revoked,
+              ),
+            ],
+            joinedAt: joinedAt.add(const Duration(seconds: 2)),
+          ),
+        );
+
+        final members = await alice.groupRepo.getMembers(groupId);
+        final allowedPeers = groupMediaAllowedPeersForMembers(members);
+        final source = File(p.join(tempDir.path, 'p269.jpg'));
+        await source.writeAsBytes(validJpegFixtureBytes);
+        final outcome = await uploadMedia(
+          bridge: alice.bridge,
+          localFilePath: source.path,
+          mime: 'image/jpeg',
+          recipientPeerId: groupId,
+          allowedPeers: allowedPeers,
+          blobId: 'blob-p269-transport-acl',
+        );
+        expect(outcome.attachmentOrNull, isNotNull);
+
+        final uploadPayload = alice.bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'media:upload')
+            .map((message) => message['payload'] as Map<String, dynamic>)
+            .single;
+        final serializedAcl = (uploadPayload['allowedPeers'] as List<dynamic>)
+            .cast<String>();
+        expect(
+          serializedAcl,
+          unorderedEquals(const <String>[
+            'transport-alice-primary-p269',
+            'transport-shared-p269',
+            'transport-bob-primary-p269',
+          ]),
+        );
+        expect(serializedAcl.toSet(), hasLength(serializedAcl.length));
+        expect(serializedAcl, isNot(contains('')));
+        for (final forbidden in const <String>[
+          'account-alice-p269',
+          'account-bob-p269',
+          'account-revoked-p269',
+          'device-alice-primary-p269',
+          'device-alice-duplicate-p269',
+          'device-alice-revoked-p269',
+          'device-alice-blank-p269',
+          'device-bob-primary-p269',
+          'device-bob-shared-p269',
+          'device-only-revoked-p269',
+          'transport-alice-revoked-p269',
+          'transport-only-revoked-p269',
+        ]) {
+          expect(serializedAcl, isNot(contains(forbidden)));
+        }
       },
     );
 

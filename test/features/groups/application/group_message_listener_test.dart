@@ -29,6 +29,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -41,6 +42,7 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_reaction
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -52,6 +54,7 @@ import '../../../shared/fakes/in_memory_group_pending_key_repair_repository.dart
 import '../../../shared/fakes/in_memory_group_pending_membership_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
@@ -241,17 +244,39 @@ class GateableMediaAttachmentRepository
   int downloadingUpdateCalls = 0;
   bool _gatedFirstDownloadingUpdate = false;
 
+  Future<void> _gateFirstDownloadingTransition() async {
+    downloadingUpdateCalls++;
+    if (!_gatedFirstDownloadingUpdate) {
+      _gatedFirstDownloadingUpdate = true;
+      firstDownloadingUpdateStarted.complete();
+      await firstDownloadingGate.future;
+    }
+  }
+
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {
     if (downloadStatus == 'downloading') {
-      downloadingUpdateCalls++;
-      if (!_gatedFirstDownloadingUpdate) {
-        _gatedFirstDownloadingUpdate = true;
-        firstDownloadingUpdateStarted.complete();
-        await firstDownloadingGate.future;
-      }
+      await _gateFirstDownloadingTransition();
     }
     await super.updateDownloadStatus(id, downloadStatus);
+  }
+
+  @override
+  Future<bool> beginOrdinaryGroupAutomaticMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) async {
+    await _gateFirstDownloadingTransition();
+    return super.beginOrdinaryGroupAutomaticMediaDownload(
+      id,
+      groupId: groupId,
+      messageId: messageId,
+      expectedDownloadStatus: expectedDownloadStatus,
+      expectedLocalPath: expectedLocalPath,
+    );
   }
 }
 
@@ -12488,6 +12513,433 @@ void main() {
       mediaListener.dispose();
       await mediaSource.close();
     });
+
+    test(
+      'P269 duplicate replay media enrichment starts exactly one canonical download without a second delivery side effect',
+      () async {
+        await saveSelfMember();
+        final jpegBytes = <int>[
+          0xff,
+          0xd8,
+          0xff,
+          0xe0,
+          ...List.filled(31, 0xff),
+        ];
+        final delayedBridge = _DelayedMediaDownloadBridge()
+          ..downloadBytes = jpegBytes;
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final notificationService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: delayedBridge,
+          getSelfPeerId: () async => 'peer-self',
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          notificationService: notificationService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        final emitted = <GroupMessage>[];
+        final emittedSub = mediaListener.groupMessageStream.listen(emitted.add);
+        addTearDown(() async {
+          if (!delayedBridge.downloadGate.isCompleted) {
+            delayedBridge.downloadGate.complete();
+          }
+          await mediaListener.stop();
+          await emittedSub.cancel();
+        });
+        mediaListener.start(sourceController.stream);
+
+        const messageId = 'p269-duplicate-enrichment-listener';
+        const attachmentId = 'p269-duplicate-enrichment-blob';
+        final sentAt = DateTime.utc(2026, 7, 22, 12, 30);
+        final baseEvent = <String, dynamic>{
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': messageId,
+          'text': 'P269 duplicate enrichment',
+          'timestamp': sentAt.toIso8601String(),
+        };
+
+        sourceController.add(baseEvent);
+        final firstDeliveryDeadline = DateTime.now().add(
+          const Duration(seconds: 2),
+        );
+        while (emitted.isEmpty &&
+            DateTime.now().isBefore(firstDeliveryDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(emitted, hasLength(1));
+        await expectNotificationCount(notificationService, 1);
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+
+        await mediaListener.handleReplayEnvelope({
+          ...baseEvent,
+          'media': <Map<String, dynamic>>[
+            {
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': jpegBytes.length,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': sha256.convert(jpegBytes).toString(),
+              'encryptionKeyBase64': 'p269-key-fixture',
+              'encryptionNonce': 'p269-nonce-fixture',
+              'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              'createdAt': sentAt.toIso8601String(),
+            },
+          ],
+        });
+
+        final downloadDeadline = DateTime.now().add(
+          const Duration(milliseconds: 500),
+        );
+        while (delayedBridge.commandLog
+                .where((command) => command == 'media:download')
+                .isEmpty &&
+            DateTime.now().isBefore(downloadDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(
+          delayedBridge.commandLog.where(
+            (command) => command == 'media:download',
+          ),
+          hasLength(1),
+        );
+        expect(emitted, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+        expect(msgRepo.count, 1);
+
+        delayedBridge.downloadGate.complete();
+        await mediaListener.stop();
+        final canonicalAttachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(canonicalAttachments, hasLength(1));
+        expect(canonicalAttachments.single.id, attachmentId);
+        expect(canonicalAttachments.single.messageId, messageId);
+        expect(canonicalAttachments.single.downloadStatus, 'done');
+
+        await mediaListener.handleReplayEnvelope({
+          ...baseEvent,
+          'media': <Map<String, dynamic>>[
+            {
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': jpegBytes.length,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': sha256.convert(jpegBytes).toString(),
+              'encryptionKeyBase64': 'p269-key-fixture',
+              'encryptionNonce': 'p269-nonce-fixture',
+              'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              'createdAt': sentAt.toIso8601String(),
+            },
+          ],
+        });
+        expect(
+          delayedBridge.commandLog.where(
+            (command) => command == 'media:download',
+          ),
+          hasLength(1),
+        );
+        expect(emitted, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+      },
+    );
+
+    test(
+      'P269 overlapping listener route and recovery sweep share one transfer and stop awaits tracked recovery',
+      () async {
+        await saveSelfMember();
+        const messageId = 'p269-shared-coordinator-message';
+        const attachmentId = 'p269-shared-coordinator-blob';
+        final sentAt = DateTime.utc(2026, 7, 22, 13);
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final decider = RecordingMediaAutoDownloadDecider();
+        final transferStarted = Completer<void>();
+        final releaseTransfer = Completer<void>();
+        var transferCalls = 0;
+
+        final coordinator = RetryIncompleteGroupDownloadsUseCase(
+          loadPage: ({required after, required limit}) async {
+            if (after != null) {
+              return const <RecoverableGroupDownloadCandidate>[];
+            }
+            final attachment = await mediaRepo.getAttachmentById(attachmentId);
+            if (attachment == null) {
+              return const <RecoverableGroupDownloadCandidate>[];
+            }
+            return <RecoverableGroupDownloadCandidate>[
+              RecoverableGroupDownloadCandidate(
+                attachment: attachment,
+                groupId: 'group-1',
+              ),
+            ];
+          },
+          loadCurrentAttachment: mediaRepo.getAttachmentById,
+          loadCurrentParent: msgRepo.getMessage,
+          loadCurrentGroup: groupRepo.getGroup,
+          autoDownloadDecider: decider,
+          transfer:
+              ({required attachment, required parent, required group}) async {
+                transferCalls++;
+                if (!transferStarted.isCompleted) {
+                  transferStarted.complete();
+                }
+                await releaseTransfer.future;
+                await mediaRepo.updateLocalPath(
+                  attachment.id,
+                  '/downloads/${attachment.id}',
+                );
+                return mediaRepo.getAttachmentById(attachment.id);
+              },
+        );
+        final notificationService = FakeNotificationService();
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          getSelfPeerId: () async => 'peer-self',
+          mediaAttachmentRepo: mediaRepo,
+          notificationService: notificationService,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          groupMediaDownloadCoordinator: coordinator,
+        );
+        final emitted = <GroupMessage>[];
+        final emittedSub = mediaListener.groupMessageStream.listen(emitted.add);
+        addTearDown(() async {
+          if (!releaseTransfer.isCompleted) releaseTransfer.complete();
+          await mediaListener.stop();
+          await emittedSub.cancel();
+          mediaListener.dispose();
+        });
+
+        final baseEvent = <String, dynamic>{
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': messageId,
+          'text': 'Shared coordinator replay',
+          'timestamp': sentAt.toIso8601String(),
+        };
+        await mediaListener.handleReplayEnvelope(baseEvent);
+        expect(emitted, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+
+        await mediaListener.handleReplayEnvelope({
+          ...baseEvent,
+          'media': <Map<String, dynamic>>[
+            {
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': 35,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'p269-shared-key',
+              'encryptionNonce': 'p269-shared-nonce',
+              'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              'createdAt': sentAt.toIso8601String(),
+            },
+          ],
+        });
+
+        final routeRecovery = coordinator.recoverAttachments(
+          groupId: 'group-1',
+          attachmentIds: const <String>{attachmentId},
+        );
+        final sweepRecovery = coordinator.sweep();
+        expect(identical(routeRecovery, sweepRecovery), isTrue);
+        await transferStarted.future.timeout(const Duration(seconds: 2));
+
+        // The replay handler itself has returned. Only the listener's tracked
+        // coordinator future can keep shutdown open while route and sweep join
+        // the same transfer.
+        var stopCompleted = false;
+        final stopFuture = mediaListener.stop().then<void>((_) {
+          stopCompleted = true;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(stopCompleted, isFalse);
+
+        releaseTransfer.complete();
+        final results = await Future.wait(
+          <Future<GroupMediaDownloadRecoveryResult>>[
+            routeRecovery,
+            sweepRecovery,
+          ],
+        );
+        await stopFuture;
+
+        expect(transferCalls, 1);
+        expect(results.first.successfulTransferCount, 1);
+        expect(results.first.downloadedAttachmentIds, <String>{attachmentId});
+        expect(emitted, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+        expect(msgRepo.count, 1);
+        final attachment = await mediaRepo.getAttachmentById(attachmentId);
+        expect(attachment?.downloadStatus, 'done');
+      },
+    );
+
+    test(
+      'P269 discussion and announcement media consult shared auto download policy immediately before transfer',
+      () async {
+        const discussionAttachmentId = 'p269-policy-discussion-blob';
+        const announcementAttachmentId = 'p269-policy-announcement-blob';
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final decider = RecordingMediaAutoDownloadDecider();
+        final transferredAttachmentIds = <String>[];
+        final transferredGroupTypes = <GroupType>[];
+        final discussionAuthoritySelected = Completer<void>();
+        final releaseDiscussionPolicy = Completer<void>();
+        var gateFirstCurrentGroupRead = true;
+        final coordinator = RetryIncompleteGroupDownloadsUseCase(
+          loadPage: ({required after, required limit}) async =>
+              const <RecoverableGroupDownloadCandidate>[],
+          loadCurrentAttachment: mediaRepo.getAttachmentById,
+          loadCurrentParent: msgRepo.getMessage,
+          loadCurrentGroup: (groupId) async {
+            final current = await groupRepo.getGroup(groupId);
+            if (gateFirstCurrentGroupRead) {
+              gateFirstCurrentGroupRead = false;
+              discussionAuthoritySelected.complete();
+              await releaseDiscussionPolicy.future;
+            }
+            return current;
+          },
+          autoDownloadDecider: decider,
+          transfer:
+              ({required attachment, required parent, required group}) async {
+                transferredAttachmentIds.add(attachment.id);
+                transferredGroupTypes.add(group.type);
+                await mediaRepo.updateLocalPath(
+                  attachment.id,
+                  '/downloads/${attachment.id}',
+                );
+                return mediaRepo.getAttachmentById(attachment.id);
+              },
+        );
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          groupMediaDownloadCoordinator: coordinator,
+        );
+        addTearDown(() async {
+          if (!releaseDiscussionPolicy.isCompleted) {
+            releaseDiscussionPolicy.complete();
+          }
+          await mediaListener.stop();
+          mediaListener.dispose();
+        });
+
+        Map<String, dynamic> event({
+          required String messageId,
+          required String attachmentId,
+          required DateTime sentAt,
+          String senderId = 'peer-sender',
+          String senderUsername = 'Sender',
+        }) => <String, dynamic>{
+          'groupId': 'group-1',
+          'senderId': senderId,
+          'senderUsername': senderUsername,
+          'keyEpoch': 0,
+          'messageId': messageId,
+          'text': 'Policy probe',
+          'timestamp': sentAt.toIso8601String(),
+          'media': <Map<String, dynamic>>[
+            {
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': 35,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'p269-policy-key-$attachmentId',
+              'encryptionNonce': 'p269-policy-nonce-$attachmentId',
+              'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              'createdAt': sentAt.toIso8601String(),
+            },
+          ],
+        };
+
+        await mediaListener.handleReplayEnvelope(
+          event(
+            messageId: 'p269-policy-discussion-message',
+            attachmentId: discussionAttachmentId,
+            sentAt: DateTime.utc(2026, 7, 22, 13, 10),
+          ),
+        );
+        await discussionAuthoritySelected.future.timeout(
+          const Duration(seconds: 2),
+        );
+        // The durable attachment and current parent/group authority have been
+        // selected, but the shared decider has not run. A just-in-time user
+        // preference change must still deny the adjacent transfer.
+        decider.allow = false;
+        releaseDiscussionPolicy.complete();
+        await coordinator.waitForIdle();
+
+        expect(
+          decider.requests.map((request) => request.conversationKind),
+          <MediaConversationKind>[MediaConversationKind.discussion],
+        );
+        expect(transferredAttachmentIds, isEmpty);
+        final denied = await mediaRepo.getAttachmentById(
+          discussionAttachmentId,
+        );
+        expect(denied?.downloadStatus, 'pending');
+        expect(denied?.localPath, isNull);
+
+        await groupRepo.updateGroup(
+          testGroup.copyWith(type: GroupType.announcement),
+        );
+        decider.allow = true;
+        await mediaListener.handleReplayEnvelope(
+          event(
+            messageId: 'p269-policy-announcement-message',
+            attachmentId: announcementAttachmentId,
+            sentAt: DateTime.utc(2026, 7, 22, 13, 11),
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+          ),
+        );
+        await coordinator.waitForIdle();
+
+        expect(
+          decider.requests.map((request) => request.conversationKind),
+          <MediaConversationKind>[
+            MediaConversationKind.discussion,
+            MediaConversationKind.announcement,
+          ],
+        );
+        expect(transferredAttachmentIds, <String>[announcementAttachmentId]);
+        expect(transferredGroupTypes, <GroupType>[GroupType.announcement]);
+        expect(
+          (await mediaRepo.getAttachmentById(
+            discussionAttachmentId,
+          ))?.downloadStatus,
+          'pending',
+        );
+        final allowed = await mediaRepo.getAttachmentById(
+          announcementAttachmentId,
+        );
+        expect(allowed?.downloadStatus, 'done');
+        expect(allowed?.localPath, '/downloads/$announcementAttachmentId');
+      },
+    );
 
     test(
       'joins an in-flight shared media download for the same incoming attachment',

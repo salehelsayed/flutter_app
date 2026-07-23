@@ -34,6 +34,14 @@
       "declaredException": false
     },
     {
+      "id": "android.e2e.group_media_269",
+      "platform": "android",
+      "artifactKind": "universal-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {"E2E_TEST_MODE": "true", "SIMS_ANDROID_DISPOSABLE_PACKAGE_ID": "com.mknoon.sims.groupmedia269"},
+      "declaredException": false
+    },
+    {
       "id": "android.production_fcm",
       "platform": "android",
       "artifactKind": "provider-configured-debug-apk",
@@ -63,6 +71,14 @@
       "artifactKind": "signed-physical-app-xctest-bundle",
       "buildRequired": true,
       "compileDefines": {"PRODUCTION_APNS": "true"},
+      "declaredException": false
+    },
+    {
+      "id": "ios.device.group_media_269",
+      "platform": "ios",
+      "artifactKind": "signed-physical-app-xctest-bundle",
+      "buildRequired": true,
+      "compileDefines": {"E2E_TEST_MODE": "true", "PRODUCTION_APNS": "true", "SIMS_IOS_DISPOSABLE_BUNDLE_ID": "com.mknoon.sims.groupmedia269"},
       "declaredException": false
     }
   ],
@@ -310,6 +326,26 @@
       "declaredBuildException": false
     },
     {
+      "id": "build.android.e2e.group_media_269",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.e2e.group-media-269.attested",
+      "assertions": ["build.input_and_artifact_hash_attested", "build.disposable_application_id_attested"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["group", "media", "transport"],
+      "required": true,
+      "command": ["@prepare-build", "android.e2e.group_media_269"],
+      "buildProfile": "android.e2e.group_media_269",
+      "dependencies": [],
+      "resources": [{"name": "build:android.e2e.group_media_269", "access": "write"}],
+      "targetCapabilities": ["host.android-sdk"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
       "id": "build.android.production_fcm",
       "owner": "sims-build-cache",
       "proofBoundary": "build.android.production-fcm.attested",
@@ -383,6 +419,26 @@
       "dependencies": [],
       "resources": [{"name": "build:ios.device.production", "access": "write"}],
       "targetCapabilities": ["host.xcode", "credentials.apns-signing"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-ios-physical-companion-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "build.ios.device.group_media_269",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.ios.device-group-media-269.attested",
+      "assertions": ["build.ios_signed_group_media_269_app_xctest_bundle_attested"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["group", "media", "transport"],
+      "required": true,
+      "command": ["@prepare-build", "ios.device.group_media_269"],
+      "buildProfile": "ios.device.group_media_269",
+      "dependencies": [],
+      "resources": [{"name": "build:ios.device.group_media_269", "access": "write"}],
+      "targetCapabilities": ["host.xcode"],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "sha256-ios-physical-companion-attestation",
@@ -612,6 +668,27 @@
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "integration_test/scripts/validate_group_reaction_notification_artifacts.dart",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "groups.media_send_reliability",
+      "owner": "groups",
+      "proofBoundary": "android.group-media.real-relay-process-recovery",
+      "assertions": ["groups.media_three_kinds_exactly_once", "groups.media_transport_acl_matches_active_device", "groups.media_process_death_recovers_from_durable_claim", "groups.media_second_retry_pass_zero", "groups.media_role_sqlcipher_reopen_v104"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["group", "media", "transport"],
+      "required": true,
+      "command": ["dart", "run", "integration_test/scripts/run_group_media_send_reliability.dart", "--scenario", "group_media_foreground_retry_acl_roundtrip"],
+      "buildProfile": "android.e2e.group_media_269",
+      "dependencies": ["build.android.e2e.group_media_269"],
+      "resources": [{"name": "build:android.e2e.group_media_269", "access": "read"}, {"name": "device:android-physical", "access": "exclusive"}, {"name": "device:android-emulator", "access": "exclusive"}, {"name": "relay-mutation:staging", "access": "exclusive"}, {"name": "artifact:group-media-reliability", "access": "write"}],
+      "targetCapabilities": ["android.physical", "android.emulator", "relay.staging"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateGroupMediaReliabilityArtifact",
       "automationReady": true,
       "active": true,
       "declaredBuildException": false

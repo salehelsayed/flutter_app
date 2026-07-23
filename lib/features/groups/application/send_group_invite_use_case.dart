@@ -120,6 +120,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
   required String senderPrivateKey,
   required String senderUsername,
   String? senderDeviceId,
+  String? senderTransportPeerId,
   required String groupId,
   required String groupKey,
   required int keyEpoch,
@@ -180,6 +181,27 @@ Future<SendGroupInviteResult> sendGroupInvite({
     return SendGroupInviteResult.invalidPayload;
   }
   final effectiveGroupConfig = currentFreshnessState.groupConfig;
+  final senderDeviceResolution = _resolveSenderDeviceBinding(
+    groupConfig: effectiveGroupConfig,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    requestedDeviceId: senderDeviceId,
+    requestedTransportPeerId: senderTransportPeerId,
+  );
+  if (!senderDeviceResolution.isValid) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
+      details: {'reason': senderDeviceResolution.failureReason},
+    );
+    latencyTrace?.endPreFanout(
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      outcome: 'invalid_payload',
+    );
+    return SendGroupInviteResult.invalidPayload;
+  }
+  final senderDevice = senderDeviceResolution.device;
   final latestKey = await groupRepo.getLatestKey(groupId);
   if (!_matchesLatestGroupKey(
     latestKey: latestKey,
@@ -237,12 +259,6 @@ Future<SendGroupInviteResult> sendGroupInvite({
     );
     return SendGroupInviteResult.invalidPayload;
   }
-  final senderDevice = _resolveSenderDeviceBinding(
-    groupConfig: effectiveGroupConfig,
-    senderPeerId: senderPeerId,
-    senderPublicKey: senderPublicKey,
-    requestedDeviceId: senderDeviceId,
-  );
   final inviteId = inviteIdOverride ?? _uuid.v4();
   final invitePolicy = _deriveInvitePolicy(
     recipientPeerId: recipientPeerId,
@@ -698,6 +714,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
   required String senderPrivateKey,
   required String senderUsername,
   String? senderDeviceId,
+  String? senderTransportPeerId,
   required String groupId,
   required String groupKey,
   required int keyEpoch,
@@ -745,6 +762,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
           senderPrivateKey: senderPrivateKey,
           senderUsername: senderUsername,
           senderDeviceId: senderDeviceId,
+          senderTransportPeerId: senderTransportPeerId,
           groupId: groupId,
           groupKey: groupKey,
           keyEpoch: keyEpoch,
@@ -956,32 +974,94 @@ GroupMemberDeviceIdentity? _resolveRecipientDeviceBinding({
   return null;
 }
 
-GroupMemberDeviceIdentity? _resolveSenderDeviceBinding({
+class _SenderDeviceBindingResolution {
+  const _SenderDeviceBindingResolution._({
+    required this.isValid,
+    this.device,
+    this.failureReason,
+  });
+
+  const _SenderDeviceBindingResolution.legacy() : this._(isValid: true);
+
+  const _SenderDeviceBindingResolution.bound(GroupMemberDeviceIdentity device)
+    : this._(isValid: true, device: device);
+
+  const _SenderDeviceBindingResolution.invalid(String failureReason)
+    : this._(isValid: false, failureReason: failureReason);
+
+  final bool isValid;
+  final GroupMemberDeviceIdentity? device;
+  final String? failureReason;
+}
+
+_SenderDeviceBindingResolution _resolveSenderDeviceBinding({
   required Map<String, dynamic> groupConfig,
   required String senderPeerId,
   required String senderPublicKey,
   required String? requestedDeviceId,
+  required String? requestedTransportPeerId,
 }) {
   final member = _recipientMember(groupConfig, senderPeerId);
-  if (member == null) {
-    return null;
+  final rawRoster = member?['devices'];
+  final hasRoster =
+      rawRoster != null &&
+      (rawRoster is! List<dynamic> || rawRoster.isNotEmpty);
+  final activeDevices = GroupMemberDeviceIdentity.listFromJson(
+    rawRoster,
+  ).where((device) => device.isActive).toList(growable: false);
+  final hasExplicitDeviceId = requestedDeviceId != null;
+  final hasExplicitTransportPeerId = requestedTransportPeerId != null;
+
+  if (hasExplicitDeviceId || hasExplicitTransportPeerId) {
+    final normalizedDeviceId = requestedDeviceId?.trim() ?? '';
+    final normalizedTransportPeerId = requestedTransportPeerId?.trim() ?? '';
+    if (!hasExplicitDeviceId ||
+        !hasExplicitTransportPeerId ||
+        normalizedDeviceId.isEmpty ||
+        normalizedTransportPeerId.isEmpty) {
+      return const _SenderDeviceBindingResolution.invalid(
+        'sender_device_binding_partial',
+      );
+    }
+
+    final identifierMatches = activeDevices
+        .where(
+          (device) =>
+              device.deviceId == normalizedDeviceId ||
+              device.transportPeerId == normalizedTransportPeerId,
+        )
+        .toList(growable: false);
+    if (identifierMatches.length != 1) {
+      return const _SenderDeviceBindingResolution.invalid(
+        'sender_device_binding_ambiguous_or_stale',
+      );
+    }
+    final device = identifierMatches.single;
+    if (device.deviceId != normalizedDeviceId ||
+        device.transportPeerId != normalizedTransportPeerId ||
+        device.deviceSigningPublicKey != senderPublicKey.trim()) {
+      return const _SenderDeviceBindingResolution.invalid(
+        'sender_device_binding_mismatch',
+      );
+    }
+    return _SenderDeviceBindingResolution.bound(device);
   }
-  final normalizedDeviceId = requestedDeviceId?.trim();
-  final devices = GroupMemberDeviceIdentity.listFromJson(member['devices']);
-  for (final device in devices) {
-    if (!device.isActive) {
-      continue;
-    }
-    if (normalizedDeviceId != null &&
-        normalizedDeviceId.isNotEmpty &&
-        device.deviceId != normalizedDeviceId) {
-      continue;
-    }
-    if (device.deviceSigningPublicKey == senderPublicKey) {
-      return device;
-    }
+
+  if (!hasRoster) {
+    return const _SenderDeviceBindingResolution.legacy();
   }
-  return null;
+
+  final matchingSigningDevices = activeDevices
+      .where(
+        (device) => device.deviceSigningPublicKey == senderPublicKey.trim(),
+      )
+      .toList(growable: false);
+  if (matchingSigningDevices.length != 1) {
+    return const _SenderDeviceBindingResolution.invalid(
+      'sender_device_binding_unresolved',
+    );
+  }
+  return _SenderDeviceBindingResolution.bound(matchingSigningDevices.single);
 }
 
 Map<String, dynamic>? _recipientMember(

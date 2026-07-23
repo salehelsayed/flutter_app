@@ -148,7 +148,29 @@ _resolveIncomingGroupInvite({
     return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
   }
 
-  if (payload.senderPeerId != message.from) {
+  final outerTransportPeerId = message.from.trim();
+  final signedDeviceId = payload.senderDeviceId?.trim();
+  final signedTransportPeerId = payload.senderTransportPeerId?.trim();
+  final signedDevicePublicKey = payload.senderDeviceSigningPublicKey?.trim();
+  final signedKeyPackageId = payload.senderKeyPackageId?.trim();
+  final hasAnySignedDeviceBinding = <String?>[
+    signedDeviceId,
+    signedTransportPeerId,
+    signedDevicePublicKey,
+    signedKeyPackageId,
+  ].any((value) => value != null && value.isNotEmpty);
+  final hasCompleteSignedDeviceBinding =
+      signedDeviceId != null &&
+      signedDeviceId.isNotEmpty &&
+      signedTransportPeerId != null &&
+      signedTransportPeerId.isNotEmpty &&
+      signedDevicePublicKey != null &&
+      signedDevicePublicKey.isNotEmpty;
+  final senderMatchesOuterTransport = hasAnySignedDeviceBinding
+      ? hasCompleteSignedDeviceBinding &&
+            signedTransportPeerId == outerTransportPeerId
+      : payload.senderPeerId == outerTransportPeerId;
+  if (!senderMatchesOuterTransport) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_HANDLE_SENDER_MISMATCH',

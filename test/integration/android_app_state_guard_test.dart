@@ -7,6 +7,163 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/support/android_app_state_guard.dart';
 
 void main() {
+  test('system host runner concurrently drains both large pipes', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-runner-pipes-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final script = File('${root.path}/large_pipes.dart')
+      ..writeAsStringSync(r'''
+import 'dart:io';
+
+Future<void> main() async {
+  final stdoutChunk = List<int>.filled(8192, 0x4f);
+  final stderrChunk = List<int>.filled(8192, 0x45);
+  for (var index = 0; index < 128; index += 1) {
+    stdout.add(stdoutChunk);
+    stderr.add(stderrChunk);
+  }
+  await stdout.flush();
+  await stderr.flush();
+}
+''', flush: true);
+    final runner = SystemAndroidHostProcessRunner(
+      commandTimeout: const Duration(seconds: 20),
+      terminationGrace: const Duration(seconds: 2),
+    );
+
+    final result = await runner.run(_fixtureDartExecutable(), <String>[
+      script.path,
+    ]);
+
+    expect(result.exitCode, 0);
+    expect((result.stdout as String).length, 128 * 8192);
+    expect((result.stderr as String).length, 128 * 8192);
+  });
+
+  test('system host runner deadline includes inherited pipe closure', () async {
+    if (Platform.isWindows) return;
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-runner-retained-pipe-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final childPidFile = File('${root.path}/child-pid');
+    final childScript = File('${root.path}/pipe_child.dart')
+      ..writeAsStringSync(r'''
+import 'dart:async';
+
+Future<void> main() => Future<void>.delayed(const Duration(seconds: 30));
+''', flush: true);
+    final parentScript = File('${root.path}/pipe_parent.dart')
+      ..writeAsStringSync(r'''
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  final child = await Process.start(
+    arguments[1],
+    <String>[arguments[2]],
+    mode: ProcessStartMode.inheritStdio,
+    runInShell: false,
+  );
+  File(arguments.first).writeAsStringSync('${child.pid}\n', flush: true);
+}
+''', flush: true);
+    final runner = SystemAndroidHostProcessRunner(
+      commandTimeout: const Duration(seconds: 1),
+      terminationGrace: const Duration(milliseconds: 300),
+    );
+    final stopwatch = Stopwatch()..start();
+    ProcessException? failure;
+    int? childPid;
+    try {
+      await runner.run(_fixtureDartExecutable(), <String>[
+        parentScript.path,
+        childPidFile.path,
+        _fixtureDartExecutable(),
+        childScript.path,
+      ]);
+    } on ProcessException catch (error) {
+      failure = error;
+    } finally {
+      childPid = await _waitForFixturePid(childPidFile);
+      Process.killPid(childPid, ProcessSignal.sigkill);
+      await _waitForProcessToDisappear(childPid);
+    }
+    stopwatch.stop();
+
+    expect(failure, isNotNull);
+    expect(failure!.errorCode, 124);
+    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+  });
+
+  test('system host runner times out kills reaps and redacts', () async {
+    if (Platform.isWindows) return;
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-runner-timeout-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final pidFile = File('${root.path}/pid');
+    final script = File('${root.path}/hang.dart')
+      ..writeAsStringSync(r'''
+import 'dart:async';
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  ProcessSignal.sigterm.watch().listen((_) {});
+  File(arguments.first).writeAsStringSync('$pid\n', flush: true);
+  stdout.write('private-timeout-stdout');
+  stderr.write('private-timeout-stderr');
+  await stdout.flush();
+  await stderr.flush();
+  await Completer<void>().future;
+}
+''', flush: true);
+    final runner = SystemAndroidHostProcessRunner(
+      commandTimeout: const Duration(seconds: 1),
+      terminationGrace: const Duration(milliseconds: 300),
+    );
+    final stopwatch = Stopwatch()..start();
+    late final ProcessException failure;
+
+    try {
+      await runner.run(_fixtureDartExecutable(), <String>[
+        script.path,
+        pidFile.path,
+        'private-timeout-argument',
+      ]);
+      fail('hanging command unexpectedly completed');
+    } on ProcessException catch (error) {
+      failure = error;
+    }
+    stopwatch.stop();
+
+    expect(failure.errorCode, 124);
+    expect(failure.arguments, isEmpty);
+    expect('$failure', isNot(contains('private-timeout-argument')));
+    expect('$failure', isNot(contains('private-timeout-stdout')));
+    expect('$failure', isNot(contains('private-timeout-stderr')));
+    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+    final childPid = await _waitForFixturePid(pidFile);
+    expect(await _waitForProcessToDisappear(childPid), isTrue);
+  });
+
+  test('system host runner rejects a nonpositive timeout', () async {
+    const runner = SystemAndroidHostProcessRunner(
+      commandTimeout: Duration.zero,
+    );
+
+    await expectLater(
+      runner.run(_fixtureDartExecutable(), const <String>['--version']),
+      throwsArgumentError,
+    );
+  });
+
   test('pure restore policy protects installed-app Keystore state', () {
     expect(
       androidPackageRestoreAction(
@@ -30,6 +187,123 @@ void main() {
       AndroidPackageRestoreAction.failKeystoreAlreadyLost,
     );
   });
+
+  test(
+    'prepared APK identity is proven before capture mutates process',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-capture-preflight-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 8, 7, 6], flush: true);
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+        running: true,
+        foreground: true,
+        preparedArtifactPackageName: 'org.example.unexpected',
+      );
+
+      await expectLater(
+        AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: 'capture-preflight-test',
+          preparedArtifact: artifact,
+          expectedArtifactSha256: sha256
+              .convert(artifact.readAsBytesSync())
+              .toString(),
+          runner: adb,
+        ),
+        throwsA(isA<AndroidAppStateFailure>()),
+      );
+
+      expect(adb.commands, hasLength(1));
+      expect(adb.commands.single, contains('apkanalyzer'));
+      expect(adb.commands.single, isNot(contains('adb ')));
+      expect(adb.running, isTrue);
+      expect(adb.foreground, isTrue);
+    },
+  );
+
+  test(
+    'private archive stream timeout kills child and removes partial backup',
+    () async {
+      if (Platform.isWindows) return;
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-archive-timeout-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final pidFile = File('${root.path}/pid');
+      final script = File('${root.path}/archive_hang.dart')
+        ..writeAsStringSync(r'''
+import 'dart:async';
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  ProcessSignal.sigterm.watch().listen((_) {});
+  File(arguments.first).writeAsStringSync('$pid\n', flush: true);
+  stdout.add(List<int>.filled(16384, 0x50));
+  stderr.write('private-archive-stderr');
+  await stdout.flush();
+  await stderr.flush();
+  await Completer<void>().future;
+}
+''', flush: true);
+      final label = 'archive-timeout-${DateTime.now().microsecondsSinceEpoch}';
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'files'},
+      );
+      late final AndroidAppStateBlocked failure;
+
+      try {
+        await AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: label,
+          runner: adb,
+          privateArchiveProcessStarter: (_, _) => Process.start(
+            _fixtureDartExecutable(),
+            <String>[script.path, pidFile.path],
+            runInShell: false,
+          ),
+          privateArchiveTimeout: const Duration(seconds: 1),
+          processTerminationGrace: const Duration(milliseconds: 300),
+        );
+        fail('hanging archive stream unexpectedly completed');
+      } on AndroidAppStateBlocked catch (error) {
+        failure = error;
+      }
+
+      expect('$failure', contains('timed out'));
+      expect('$failure', isNot(contains('private-archive-stderr')));
+      expect('$failure', isNot(contains(script.path)));
+      final childPid = await _waitForFixturePid(pidFile);
+      expect(await _waitForProcessToDisappear(childPid), isTrue);
+      final backupPrefix = 'mknoon-$label-state-';
+      final survivors = Directory.systemTemp
+          .listSync(followLinks: false)
+          .where(
+            (entity) => entity.path
+                .split(Platform.pathSeparator)
+                .last
+                .startsWith(backupPrefix),
+          )
+          .toList(growable: false);
+      expect(survivors, isEmpty);
+    },
+  );
 
   test(
     'originally absent package may uninstall only its test install',
@@ -107,6 +381,194 @@ void main() {
       expect(adb.installed, isFalse);
     },
   );
+
+  test(
+    'prepared APK package mismatch is red before install mutation',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-package-mismatch-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 8, 7, 6], flush: true);
+      final original = <List<int>>[
+        <int>[1, 2, 3, 4],
+      ];
+      final adb = _FakeAdbState.installed(
+        apkBytes: original,
+        permissions: const <String, bool>{},
+        preparedArtifactPackageName: 'org.example.unexpected',
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'package-mismatch-test',
+        runner: adb,
+      );
+      final commandCountBeforePreparation = adb.commands.length;
+
+      await expectLater(
+        guard.prepareFreshInstall(
+          device: 'physical-1',
+          artifact: artifact,
+          expectedArtifactSha256: sha256
+              .convert(artifact.readAsBytesSync())
+              .toString(),
+        ),
+        throwsA(isA<AndroidAppStateFailure>()),
+      );
+
+      final preparationCommands = adb.commands.skip(
+        commandCountBeforePreparation,
+      );
+      expect(preparationCommands, hasLength(1));
+      expect(preparationCommands.single, contains('apkanalyzer'));
+      expect(preparationCommands.join('\n'), isNot(contains(' install ')));
+      expect(preparationCommands.join('\n'), isNot(contains('force-stop')));
+      expect(adb.apkBytes, original);
+      expect(adb.additionalInstalledPackages, isEmpty);
+
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
+    },
+  );
+
+  test(
+    'matching base plus stale split is replaced by the single prepared APK',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-stale-split-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final preparedBytes = <int>[9, 8, 7, 6];
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(preparedBytes, flush: true);
+      final original = <List<int>>[
+        List<int>.from(preparedBytes),
+        <int>[4, 3, 2, 1],
+      ];
+      final adb = _FakeAdbState.installed(
+        apkBytes: original,
+        permissions: const <String, bool>{},
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'stale-split-test',
+        runner: adb,
+      );
+
+      await guard.prepareFreshInstall(
+        device: 'physical-1',
+        artifact: artifact,
+        expectedArtifactSha256: sha256.convert(preparedBytes).toString(),
+      );
+
+      expect(adb.apkBytes, <List<int>>[preparedBytes]);
+      expect(
+        adb.commands.where(
+          (command) =>
+              command.contains(' install -r -d -t ') &&
+              command.contains(artifact.path),
+        ),
+        hasLength(1),
+      );
+
+      await guard.restoreAll();
+      expect(adb.apkBytes, original);
+    },
+  );
+
+  test(
+    'old expected app cannot false-green and introduced package is restored',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-old-app-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 8, 7, 6], flush: true);
+      final original = <List<int>>[
+        <int>[1, 2, 3, 4],
+      ];
+      final adb = _FakeAdbState.installed(
+        apkBytes: original,
+        permissions: const <String, bool>{},
+        centralInstallLeavesExpectedBytes: true,
+        centralInstallExtraPackage: 'org.example.unexpected',
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'old-app-test',
+        runner: adb,
+      );
+
+      await expectLater(
+        guard.prepareFreshInstall(
+          device: 'physical-1',
+          artifact: artifact,
+          expectedArtifactSha256: sha256
+              .convert(artifact.readAsBytesSync())
+              .toString(),
+        ),
+        throwsA(isA<AndroidAppStateFailure>()),
+      );
+      expect(adb.apkBytes, original);
+      expect(
+        adb.additionalInstalledPackages,
+        contains('org.example.unexpected'),
+      );
+
+      await guard.restoreAll();
+
+      expect(guard.restored, isTrue);
+      expect(adb.apkBytes, original);
+      expect(adb.additionalInstalledPackages, isEmpty);
+      expect(
+        adb.commands,
+        contains(contains('uninstall org.example.unexpected')),
+      );
+    },
+  );
+
+  test('prepared artifact expected SHA drift is red before mutation', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-sha-drift-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final artifact = File('${root.path}/candidate.apk')
+      ..writeAsBytesSync(<int>[9, 8, 7, 6], flush: true);
+    final adb = _FakeAdbState.absent();
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'sha-drift-test',
+      runner: adb,
+    );
+    final commandCountBeforePreparation = adb.commands.length;
+
+    await expectLater(
+      guard.prepareFreshInstall(
+        device: 'physical-1',
+        artifact: artifact,
+        expectedArtifactSha256: List<String>.filled(64, 'a').join(),
+      ),
+      throwsA(isA<AndroidAppStateFailure>()),
+    );
+
+    expect(adb.commands, hasLength(commandCountBeforePreparation));
+    expect(adb.installed, isFalse);
+    await guard.restoreAll();
+  });
 
   test(
     'installed split APKs, permissions, and background process restore in place',
@@ -646,6 +1108,64 @@ void main() {
   });
 }
 
+Future<int> _waitForFixturePid(File file) async {
+  for (var attempt = 0; attempt < 100; attempt += 1) {
+    if (file.existsSync()) {
+      final value = int.tryParse(file.readAsStringSync().trim());
+      if (value != null && value > 0) return value;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  throw StateError('fixture subprocess did not publish its PID');
+}
+
+String _fixtureDartExecutable() {
+  final binary = Platform.isWindows ? 'dart.exe' : 'dart';
+  final candidates = <String>[
+    if ((Platform.environment['DART_SDK'] ?? '').isNotEmpty)
+      '${Platform.environment['DART_SDK']}${Platform.pathSeparator}bin'
+          '${Platform.pathSeparator}$binary',
+    if ((Platform.environment['FLUTTER_ROOT'] ?? '').isNotEmpty)
+      '${Platform.environment['FLUTTER_ROOT']}${Platform.pathSeparator}bin'
+          '${Platform.pathSeparator}cache${Platform.pathSeparator}dart-sdk'
+          '${Platform.pathSeparator}bin${Platform.pathSeparator}$binary',
+  ];
+  var ancestor = File(Platform.resolvedExecutable).parent;
+  for (var depth = 0; depth < 10; depth += 1) {
+    candidates
+      ..add(
+        '${ancestor.path}${Platform.pathSeparator}dart-sdk'
+        '${Platform.pathSeparator}bin${Platform.pathSeparator}$binary',
+      )
+      ..add(
+        '${ancestor.path}${Platform.pathSeparator}cache'
+        '${Platform.pathSeparator}dart-sdk${Platform.pathSeparator}bin'
+        '${Platform.pathSeparator}$binary',
+      );
+    final parent = ancestor.parent;
+    if (parent.path == ancestor.path) break;
+    ancestor = parent;
+  }
+  for (final candidate in candidates) {
+    if (File(candidate).existsSync()) return candidate;
+  }
+  return binary;
+}
+
+Future<bool> _waitForProcessToDisappear(int processId) async {
+  for (var attempt = 0; attempt < 100; attempt += 1) {
+    final probe = await Process.run('ps', <String>[
+      '-p',
+      '$processId',
+      '-o',
+      'pid=',
+    ], runInShell: false);
+    if (probe.exitCode != 0 || '${probe.stdout}'.trim().isEmpty) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  return false;
+}
+
 const String _packageName = 'com.mknoon.app';
 
 void _writePrivateTarFixture(
@@ -841,6 +1361,9 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       apkBytes = <List<int>>[],
       permissions = <String, bool>{},
       privateEntries = <String>{},
+      preparedArtifactPackageName = _packageName,
+      centralInstallLeavesExpectedBytes = false,
+      centralInstallExtraPackage = null,
       directPrivateRestoreExact = false,
       forcePrivateRestoreMismatch = false,
       privateRestoreMismatchesRemaining = 0,
@@ -858,6 +1381,9 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     this.codeCacheNonEmpty = false,
     this.running = false,
     this.foreground = false,
+    this.preparedArtifactPackageName = _packageName,
+    this.centralInstallLeavesExpectedBytes = false,
+    this.centralInstallExtraPackage,
   }) : installed = true,
        apkBytes = apkBytes.map(List<int>.from).toList(),
        permissions = Map<String, bool>.from(permissions),
@@ -871,6 +1397,10 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   bool running = false;
   bool foreground = false;
   bool failOriginalInstall = false;
+  final String preparedArtifactPackageName;
+  final bool centralInstallLeavesExpectedBytes;
+  final String? centralInstallExtraPackage;
+  final Set<String> additionalInstalledPackages = <String>{};
   final bool directPrivateRestoreExact;
   final bool forcePrivateRestoreMismatch;
   int privateRestoreMismatchesRemaining;
@@ -888,6 +1418,14 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   @override
   Future<ProcessResult> run(String executable, List<String> arguments) async {
     commands.add('$executable ${arguments.join(' ')}');
+    if (executable.split(Platform.pathSeparator).last == 'apkanalyzer') {
+      if (arguments.length == 3 &&
+          arguments[0] == 'manifest' &&
+          arguments[1] == 'application-id') {
+        return _result(0, '$preparedArtifactPackageName\n', '');
+      }
+      return _result(1, '', 'unsupported apkanalyzer command');
+    }
     final args = arguments.length >= 2 && arguments.first == '-s'
         ? arguments.sublist(2)
         : arguments;
@@ -896,9 +1434,9 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     if (args.first == 'install') {
       final source = File(args.last);
       if (!source.existsSync()) return _result(1, '', 'missing apk');
-      installed = true;
-      apkBytes = <List<int>>[source.readAsBytesSync()];
       if (source.path.endsWith('installed-0.apk')) {
+        installed = true;
+        apkBytes = <List<int>>[source.readAsBytesSync()];
         originalInstallCount += 1;
         cacheMetadataExact = true;
         codeCacheNonEmpty = false;
@@ -908,6 +1446,12 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
           ),
         );
       } else {
+        if (!centralInstallLeavesExpectedBytes) {
+          installed = true;
+          apkBytes = <List<int>>[source.readAsBytesSync()];
+        }
+        final extra = centralInstallExtraPackage;
+        if (extra != null) additionalInstalledPackages.add(extra);
         // Campaign permissions intentionally drift; the guard must restore
         // them.
         permissions.updateAll((_, value) => !value);
@@ -928,6 +1472,10 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       return _result(0, 'Success', '');
     }
     if (args.first == 'uninstall') {
+      if (args.last != _packageName) {
+        final removed = additionalInstalledPackages.remove(args.last);
+        return _result(removed ? 0 : 1, removed ? 'Success' : '', '');
+      }
       installed = false;
       apkBytes = <List<int>>[];
       running = false;
@@ -951,6 +1499,17 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     if (args.first != 'shell') return _result(1, '', 'unsupported');
 
     final shell = args.sublist(1);
+    if (_starts(shell, const <String>['pm', 'list', 'packages', '-3'])) {
+      final packages = <String>{
+        if (installed) _packageName,
+        ...additionalInstalledPackages,
+      }.toList()..sort();
+      return _result(
+        0,
+        packages.map((value) => 'package:$value').join('\n'),
+        '',
+      );
+    }
     if (_starts(shell, <String>['pm', 'path', _packageName])) {
       if (!installed) return _result(0, '', '');
       return _result(

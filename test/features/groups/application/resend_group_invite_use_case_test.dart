@@ -1,5 +1,6 @@
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -187,7 +188,10 @@ void main() {
     updatedAt: DateTime.utc(2026, 5, 7).toIso8601String(),
   );
 
-  Future<InMemoryGroupRepository> seededGroupRepo() async {
+  Future<InMemoryGroupRepository> seededGroupRepo({
+    List<GroupMemberDeviceIdentity> senderDevices =
+        const <GroupMemberDeviceIdentity>[],
+  }) async {
     final repo = InMemoryGroupRepository();
     final createdAt = DateTime.utc(2026, 5, 7);
     await repo.saveGroup(
@@ -209,6 +213,7 @@ void main() {
         role: MemberRole.admin,
         publicKey: 'pk-admin',
         mlKemPublicKey: 'mlkem-pk-admin',
+        devices: senderDevices,
         joinedAt: createdAt,
       ),
     );
@@ -267,6 +272,96 @@ void main() {
       GroupInviteDeliveryStatus.sent,
     );
   });
+
+  test(
+    'resend binds the current P2P transport to the exact active sender device',
+    () async {
+      final groupRepo = await seededGroupRepo(
+        senderDevices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'admin-device',
+            transportPeerId: 'admin-transport',
+            deviceSigningPublicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ),
+        ],
+      );
+      final inviteStatusRepo = _InMemoryInviteDeliveryAttemptRepository();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'admin-transport',
+        ),
+      );
+      addTearDown(p2pService.dispose);
+      final bridge = PassthroughCryptoBridge();
+
+      final result = await resendGroupInvite(
+        p2pService: p2pService,
+        bridge: bridge,
+        groupRepo: groupRepo,
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+        identity: identity,
+        groupId: 'group-1',
+        memberPeerId: 'peer-alice',
+      );
+
+      expect(result.status, GroupInviteDeliveryStatus.sent);
+      final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+        p2pService.lastSendMessageContent!,
+      )!;
+      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+      final payload = GroupInvitePayload.fromInnerJson(
+        encrypted['ciphertext'] as String,
+      )!;
+      expect(payload.senderPeerId, identity.peerId);
+      expect(payload.senderDeviceId, 'admin-device');
+      expect(payload.senderTransportPeerId, 'admin-transport');
+      expect(payload.senderDeviceSigningPublicKey, identity.publicKey);
+    },
+  );
+
+  test(
+    'resend rejects a stale current P2P transport before crypto or delivery',
+    () async {
+      final groupRepo = await seededGroupRepo(
+        senderDevices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'admin-device',
+            transportPeerId: 'admin-transport',
+            deviceSigningPublicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ),
+        ],
+      );
+      final inviteStatusRepo = _InMemoryInviteDeliveryAttemptRepository();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'stale-transport',
+        ),
+      );
+      addTearDown(p2pService.dispose);
+      final bridge = PassthroughCryptoBridge();
+
+      final result = await resendGroupInvite(
+        p2pService: p2pService,
+        bridge: bridge,
+        groupRepo: groupRepo,
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+        identity: identity,
+        groupId: 'group-1',
+        memberPeerId: 'peer-alice',
+      );
+
+      expect(result.status, GroupInviteDeliveryStatus.cannotSend);
+      expect(result.reason, ResendGroupInviteReason.sendFailed);
+      expect(bridge.commandLog, isNot(contains('payload.sign')));
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+      expect(p2pService.sendMessageCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+    },
+  );
 
   test(
     'resend records needs_resend when direct and inbox delivery fail',

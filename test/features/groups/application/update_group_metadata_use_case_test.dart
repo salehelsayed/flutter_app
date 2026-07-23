@@ -204,6 +204,48 @@ void main() {
       },
     );
 
+    test(
+      'P269 final commit preserves dissolve that lands during beforePersist',
+      () async {
+        final original = makeAdminGroup();
+        await groupRepo.saveGroup(original);
+
+        await expectLater(
+          updateGroupMetadata(
+            groupRepo: groupRepo,
+            groupId: original.id,
+            name: 'Must Not Commit',
+            description: 'Must not commit either',
+            eventAt: DateTime.utc(2026, 7, 22, 15),
+            beforePersist: (_) async {
+              final current = await groupRepo.getGroup(original.id);
+              await groupRepo.updateGroup(
+                current!.copyWith(
+                  isDissolved: true,
+                  dissolvedAt: DateTime.utc(2026, 7, 22, 14, 59),
+                  dissolvedBy: 'peer-remote-admin',
+                ),
+              );
+            },
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'Group is no longer active',
+            ),
+          ),
+        );
+
+        final persisted = await groupRepo.getGroup(original.id);
+        expect(persisted?.isDissolved, isTrue);
+        expect(persisted?.dissolvedBy, 'peer-remote-admin');
+        expect(persisted?.name, original.name);
+        expect(persisted?.description, original.description);
+        expect(persisted?.lastMetadataEventAt, original.lastMetadataEventAt);
+      },
+    );
+
     test('rejects empty names', () async {
       await groupRepo.saveGroup(makeAdminGroup());
 

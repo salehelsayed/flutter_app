@@ -28,6 +28,7 @@ class MediaGridCell extends StatelessWidget {
   final VoidCallback? onRetryUnavailableMedia;
   final bool requireVerifiedContentHash;
   final VideoThumbnailResolver? videoThumbnailResolver;
+  final String? renderedSemanticsLabel;
 
   /// 128 (round 5): the conversation dir id (1:1 contact peerId, or groupId) the
   /// durable owned media copy is keyed under (`media/<id>/<blob>.<ext>`). When
@@ -49,6 +50,7 @@ class MediaGridCell extends StatelessWidget {
     this.requireVerifiedContentHash = false,
     this.videoThumbnailResolver,
     this.ownedMediaPeerId,
+    this.renderedSemanticsLabel,
   });
 
   @override
@@ -240,6 +242,7 @@ class MediaGridCell extends StatelessWidget {
             : _buildLoadingPlaceholder(),
         error: Builder(builder: _buildUnavailablePlaceholder),
         videoThumbnailResolver: videoThumbnailResolver,
+        renderedSemanticsLabel: renderedSemanticsLabel,
       );
     }
 

@@ -349,6 +349,56 @@ class _FailOnceActiveContactsRepository extends InMemoryContactRepository {
   }
 }
 
+class _DissolveAfterSelectedMemberAddRepository
+    extends InMemoryGroupRepository {
+  bool _dissolveOnNextGroupRead = false;
+
+  @override
+  Future<void> saveMember(GroupMember member) async {
+    await super.saveMember(member);
+    if (member.peerId == contactAlice.peerId) {
+      _dissolveOnNextGroupRead = true;
+    }
+  }
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    if (_dissolveOnNextGroupRead) {
+      _dissolveOnNextGroupRead = false;
+      final current = await super.getGroup(id);
+      if (current != null) {
+        await super.updateGroup(
+          current.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 7, 22, 14, 30),
+            dissolvedBy: 'peer-remote-admin',
+          ),
+        );
+      }
+    }
+    return super.getGroup(id);
+  }
+}
+
+class _MutateAfterBridgeCommand extends PassthroughCryptoBridge {
+  _MutateAfterBridgeCommand({required this.command, required this.onCommand});
+
+  final String command;
+  final Future<void> Function() onCommand;
+  var _didMutate = false;
+
+  @override
+  Future<String> send(String message) async {
+    final decoded = jsonDecode(message) as Map<String, dynamic>;
+    final response = await super.send(message);
+    if (!_didMutate && decoded['cmd'] == command) {
+      _didMutate = true;
+      await onCommand();
+    }
+    return response;
+  }
+}
+
 // --- Test helpers ---
 
 /// Pump enough frames for async operations to complete.
@@ -507,6 +557,64 @@ void main() {
       // Bob is a member -- should NOT appear
       expect(find.text('Bob'), findsNothing);
     });
+
+    testWidgets(
+      'P269 self-removed snapshot rejects before member write avatar config or publish',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        final removedAt = DateTime.utc(2026, 7, 22, 14, 15);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          testGroup.copyWith(
+            selfRemovedAt: removedAt,
+            lastMembershipEventAt: removedAt,
+          ),
+        );
+        await groupRepo.saveMember(memberAdmin);
+        final bridge = PassthroughCryptoBridge();
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            uploadGroupAvatarFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required groupId,
+                  required allowedPeers,
+                  blobId,
+                  mime = 'image/jpeg',
+                }) async {
+                  uploadCalls += 1;
+                  return const GroupAvatarUpload(
+                    id: 'must-not-upload',
+                    mime: 'image/jpeg',
+                    size: 4,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        final members = await groupRepo.getMembers(testGroup.id);
+        expect(
+          members.where((member) => member.peerId == contactAlice.peerId),
+          isEmpty,
+        );
+        expect(uploadCalls, 0);
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
 
     testWidgets(
       'stale duplicate selection fails without config sync or members_added publish',
@@ -1005,6 +1113,217 @@ void main() {
     );
 
     testWidgets(
+      'P269 dissolve after member add wins before avatar regrant with zero upload config or publish',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        final avatarDir = Directory.systemTemp.createTempSync(
+          'p269-avatar-regrant-dissolve-',
+        );
+        addTearDown(() => avatarDir.deleteSync(recursive: true));
+        final avatarFile = File('${avatarDir.path}/avatar.jpg')
+          ..writeAsBytesSync(<int>[0xFF, 0xD8, 0xFF, 0xD9]);
+        final groupRepo = _DissolveAfterSelectedMemberAddRepository();
+        await groupRepo.saveGroup(
+          testGroup.copyWith(
+            avatarBlobId: 'blob-before-dissolve',
+            avatarMime: 'image/jpeg',
+            avatarPath: avatarFile.path,
+          ),
+        );
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: testGroup.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        final bridge = PassthroughCryptoBridge();
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            uploadGroupAvatarFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required groupId,
+                  required allowedPeers,
+                  blobId,
+                  mime = 'image/jpeg',
+                }) async {
+                  uploadCalls += 1;
+                  return const GroupAvatarUpload(
+                    id: 'must-not-regrant',
+                    mime: 'image/jpeg',
+                    size: 4,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup(testGroup.id);
+        expect(uploadCalls, 0);
+        expect(persisted?.isDissolved, isTrue);
+        expect(persisted?.avatarBlobId, 'blob-before-dissolve');
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'P269 config metadata drift after config sync blocks stale publish and fanout',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: testGroup.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        final bridge = _MutateAfterBridgeCommand(
+          command: 'group:updateConfig',
+          onCommand: () async {
+            final current = await groupRepo.getGroup(testGroup.id);
+            await groupRepo.updateGroup(
+              current!.copyWith(
+                name: 'Remote rename after config sync',
+                lastMetadataEventAt: DateTime.utc(2026, 7, 22, 15, 45),
+              ),
+            );
+          },
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          (await groupRepo.getGroup(testGroup.id))?.name,
+          'Remote rename after config sync',
+        );
+      },
+    );
+
+    testWidgets(
+      'P269 soft publish followed by dissolve blocks retry watermark replay and invites',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((broadcast) async {
+          enqueued.add(broadcast);
+        });
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: testGroup.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        final bridge = _MutateAfterBridgeCommand(
+          command: 'group:publish',
+          onCommand: () async {
+            final current = await groupRepo.getGroup(testGroup.id);
+            await groupRepo.updateGroup(
+              current!.copyWith(
+                isDissolved: true,
+                dissolvedAt: DateTime.utc(2026, 7, 22, 16),
+                dissolvedBy: 'peer-remote-admin',
+              ),
+            );
+          },
+        );
+        bridge.responses['group:publish'] = {
+          'ok': false,
+          'errorMessage': 'simulated soft publish failure',
+        };
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        final msgRepo = InMemoryGroupMessageRepository();
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+            msgRepo: msgRepo,
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup(testGroup.id);
+        expect(persisted?.isDissolved, isTrue);
+        expect(persisted?.dissolvedBy, 'peer-remote-admin');
+        expect(persisted?.lastMembershipEventId, isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          hasLength(1),
+        );
+        expect(enqueued, isEmpty);
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    testWidgets(
       'batch invite reuploads existing avatar for expanded member ACL before signing invites',
       (tester) async {
         final contactRepo = InMemoryContactRepository();
@@ -1242,8 +1561,8 @@ void main() {
         await pumpFrames(tester, count: 30);
 
         expect(uploadedAllowedPeers, [
-          contactAlice.peerId,
-          contactBob.peerId,
+          'peer-alice-device',
+          'peer-bob-device',
           contactCharlie.peerId,
         ]);
 

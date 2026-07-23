@@ -1,0 +1,71 @@
+{
+  "schema": "mknoon.plan-269.sanitized-device-evidence.v1",
+  "capability": "groups.media_send_reliability",
+  "scenario": "group_media_foreground_retry_acl_roundtrip",
+  "status": "PASS",
+  "sourceDigest": "2ff0aa860c0427ac10f62245191096b35c4a64e34f761a9e5c3c816f40ddcb53",
+  "proofSha256": "0d7e43159d3057d55c6e4428ab0068196b5c4078b2f9c854bcb7cd573be8d904",
+  "reportSha256": "0c65b4b026fd59d8ea926749b8079a5a3106d5c38f47eec0ddfbac7654343dc5",
+  "preparedArtifact": {
+    "profile": "android.e2e.group_media_269",
+    "sha256": "335399705700dbfd59dfdbd2816552351b1aab1522609180743fa543c7dcca8f",
+    "actualBuilds": 0,
+    "cacheHits": 1,
+    "childBuilds": 0
+  },
+  "identityDiscriminator": {
+    "senderAccountDiffersFromTransport": true,
+    "receiverAccountDiffersFromTransport": true
+  },
+  "media": {
+    "uploadsPerBlob": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    },
+    "publicationsPerMessage": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    },
+    "downloadAttempts": {
+      "jpeg": 2,
+      "mp4": 1,
+      "voice": 1
+    },
+    "renderedSurfaces": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    }
+  },
+  "settlement": {
+    "secondUploadPassWork": 0,
+    "secondDownloadPassWork": 0,
+    "senderDatabaseReopened": true,
+    "receiverDatabaseReopened": true,
+    "databaseUserVersion": 104,
+    "senderCipherVersionPresent": true,
+    "receiverCipherVersionPresent": true
+  },
+  "cleanup": {
+    "receiptsDistinct": true,
+    "productionPackageCommands": 0,
+    "uninstallCommands": 0,
+    "pmClearCommands": 0,
+    "broadDeleteCommands": 0
+  },
+  "validator": {
+    "strictVersionOneSchema": true,
+    "validatedArtifactCount": 1,
+    "validatorId": "validateGroupMediaReliabilityArtifact"
+  },
+  "redaction": {
+    "rawArtifactPathIncluded": false,
+    "rawDeviceIdsIncluded": false,
+    "rawPeerIdsIncluded": false,
+    "relayAddressesIncluded": false,
+    "tokensOrKeysIncluded": false,
+    "databasePathsIncluded": false
+  }
+}

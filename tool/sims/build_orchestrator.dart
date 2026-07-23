@@ -9,6 +9,415 @@ import 'manifest.dart';
 import 'planner.dart';
 import 'report.dart';
 
+const String _iosDeviceProductionProfileId = 'ios.device.production';
+const String _iosDeviceGroupMedia269ProfileId = 'ios.device.group_media_269';
+const String _iosDeviceGroupMedia269BundleId = 'com.mknoon.sims.groupmedia269';
+const String _androidGroupMedia269ProfileId = 'android.e2e.group_media_269';
+const String _androidGroupMedia269ApplicationId =
+    'com.mknoon.sims.groupmedia269';
+const String simsIosDeviceProductValidatorInputName =
+    'ios-device-product-validator.schema';
+const String simsIosDeviceProductValidatorSchema =
+    'mknoon.sims.ios-device-product-validator.v1';
+
+final class _IosDeviceBuildConfiguration {
+  const _IosDeviceBuildConfiguration({
+    required this.derivedDataEnvironment,
+    required this.defaultDerivedDataPath,
+    required this.bundlePathEnvironment,
+    required this.defaultBundlePath,
+    required this.bundleManifestSchema,
+    required this.cachedBundleName,
+    required this.swiftCompilationConditions,
+    this.allowProvisioningUpdates = false,
+    this.buildSettings = const <String>[],
+  });
+
+  final String derivedDataEnvironment;
+  final String defaultDerivedDataPath;
+  final String bundlePathEnvironment;
+  final String defaultBundlePath;
+  final String bundleManifestSchema;
+  final String cachedBundleName;
+  final String swiftCompilationConditions;
+  final bool allowProvisioningUpdates;
+  final List<String> buildSettings;
+}
+
+const _iosDeviceProductionBuild = _IosDeviceBuildConfiguration(
+  derivedDataEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_DERIVED_DATA',
+  defaultDerivedDataPath: 'build/sims/ios-device-production-derived',
+  bundlePathEnvironment: 'SIMS_IOS_DEVICE_PRODUCTION_BUNDLE_PATH',
+  defaultBundlePath: 'build/sims/prepared/ios.device.production.bundle',
+  bundleManifestSchema: 'mknoon.sims.ios-device-production-bundle.v1',
+  cachedBundleName: 'ios.device.production.bundle',
+  swiftCompilationConditions:
+      r'$(inherited) MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP',
+);
+
+const _iosDeviceGroupMedia269Build = _IosDeviceBuildConfiguration(
+  derivedDataEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_DERIVED_DATA',
+  defaultDerivedDataPath: 'build/sims/ios-device-group-media-269-derived',
+  bundlePathEnvironment: 'SIMS_IOS_DEVICE_GROUP_MEDIA_269_BUNDLE_PATH',
+  defaultBundlePath: 'build/sims/prepared/ios.device.group_media_269.bundle',
+  bundleManifestSchema: 'mknoon.sims.ios-device-group-media-269-bundle.v1',
+  cachedBundleName: 'ios.device.group_media_269.bundle',
+  swiftCompilationConditions: r'$(inherited) MKNOON_SIMS_GROUP_MEDIA_269',
+  allowProvisioningUpdates: true,
+  buildSettings: <String>[
+    'CODE_SIGN_STYLE=Automatic',
+    'PROVISIONING_PROFILE=',
+    'PROVISIONING_PROFILE_SPECIFIER=',
+    'MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS='
+        'Runner/GroupMedia269.empty.entitlements',
+    'MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS='
+        'Runner/GroupMedia269.empty.entitlements',
+    'MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS='
+        'Runner/GroupMedia269.empty.entitlements',
+    'MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS='
+        'Runner/GroupMedia269.empty.entitlements',
+    'CUSTOM_GROUP_ID=group.com.mknoon.sims.groupmedia269.share',
+    'MKNOON_RUNNER_BUNDLE_IDENTIFIER=com.mknoon.sims.groupmedia269',
+    'MKNOON_RUNNER_TESTS_BUNDLE_IDENTIFIER='
+        'com.mknoon.sims.groupmedia269.RunnerTests',
+    'MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER='
+        'com.mknoon.sims.groupmedia269.RunnerUITests',
+    'MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER='
+        'com.mknoon.sims.groupmedia269.ShareExtension',
+    'MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER='
+        'com.mknoon.sims.groupmedia269.NotificationService',
+  ],
+);
+
+_IosDeviceBuildConfiguration? _iosDeviceBuildConfiguration(String profileId) =>
+    switch (profileId) {
+      _iosDeviceProductionProfileId => _iosDeviceProductionBuild,
+      _iosDeviceGroupMedia269ProfileId => _iosDeviceGroupMedia269Build,
+      _ => null,
+    };
+
+/// Deterministically invalidates physical-iOS cache entries whenever the
+/// central product graph/signature contract changes.
+Map<String, List<int>> simsIosDeviceProductValidatorInputFiles(
+  String profileId,
+) => _iosDeviceBuildConfiguration(profileId) == null
+    ? const <String, List<int>>{}
+    : <String, List<int>>{
+        simsIosDeviceProductValidatorInputName: utf8.encode(
+          simsIosDeviceProductValidatorSchema,
+        ),
+      };
+
+typedef SimsIosCodesignRunner =
+    Future<ProcessResult> Function(
+      String executable,
+      List<String> arguments,
+      Map<String, String> environment,
+    );
+
+/// Result of validating the exact physical-iOS app/XCTest product graph that
+/// the prepared-bundle consumer resolves later.
+final class SimsIosDeviceBuildProductsValidation {
+  const SimsIosDeviceBuildProductsValidation._({
+    required this.ok,
+    required this.detail,
+    required this.application,
+    required this.xctestrun,
+    required this.relativeApplication,
+    required this.uiTestHost,
+    required this.uiTestBundle,
+    required this.verifiedCodePaths,
+  });
+
+  factory SimsIosDeviceBuildProductsValidation.failure(String detail) =>
+      SimsIosDeviceBuildProductsValidation._(
+        ok: false,
+        detail: detail,
+        application: null,
+        xctestrun: null,
+        relativeApplication: null,
+        uiTestHost: null,
+        uiTestBundle: null,
+        verifiedCodePaths: const <String>[],
+      );
+
+  factory SimsIosDeviceBuildProductsValidation.success({
+    required Directory application,
+    required File xctestrun,
+    required String relativeApplication,
+    required Directory uiTestHost,
+    required Directory uiTestBundle,
+    required List<String> verifiedCodePaths,
+  }) => SimsIosDeviceBuildProductsValidation._(
+    ok: true,
+    detail: '',
+    application: application,
+    xctestrun: xctestrun,
+    relativeApplication: relativeApplication,
+    uiTestHost: uiTestHost,
+    uiTestBundle: uiTestBundle,
+    verifiedCodePaths: List<String>.unmodifiable(verifiedCodePaths),
+  );
+
+  final bool ok;
+  final String detail;
+  final Directory? application;
+  final File? xctestrun;
+  final String? relativeApplication;
+  final Directory? uiTestHost;
+  final Directory? uiTestBundle;
+  final List<String> verifiedCodePaths;
+}
+
+/// Fails closed unless [products] contains the complete signed app/UI-test
+/// graph consumed by `_PreparedIosBundle.resolve`.
+///
+/// The validation is intentionally public so the central-builder contract can
+/// exercise real filesystem negatives without invoking a second Xcode build.
+Future<SimsIosDeviceBuildProductsValidation>
+validateSimsIosDeviceBuildProducts({
+  required Directory products,
+  Map<String, String>? environment,
+  SimsIosCodesignRunner? codesignRunner,
+}) async {
+  final productRoot = products.absolute;
+  if (!_realDirectory(productRoot)) {
+    return SimsIosDeviceBuildProductsValidation.failure(
+      'Central iOS UI-rig build did not materialize a real Build/Products '
+      'directory.',
+    );
+  }
+  final entries = productRoot.listSync(recursive: true, followLinks: false);
+  final xctestruns =
+      entries
+          .whereType<File>()
+          .where(
+            (file) =>
+                file.path.endsWith('.xctestrun') && _nonEmptyRegularFile(file),
+          )
+          .toList(growable: false)
+        ..sort((left, right) => left.path.compareTo(right.path));
+  if (xctestruns.length != 1) {
+    return SimsIosDeviceBuildProductsValidation.failure(
+      'Central iOS UI-rig build requires exactly one non-empty .xctestrun; '
+      'found ${xctestruns.length}.',
+    );
+  }
+  final applications =
+      entries
+          .whereType<Directory>()
+          .where(
+            (directory) =>
+                _realDirectory(directory) &&
+                _lastPathComponent(directory.path) == 'Runner.app',
+          )
+          .toList(growable: false)
+        ..sort((left, right) => left.path.compareTo(right.path));
+  if (applications.length != 1) {
+    return SimsIosDeviceBuildProductsValidation.failure(
+      'Central iOS build-for-testing requires exactly one real Runner.app; '
+      'found ${applications.length}.',
+    );
+  }
+
+  final application = applications.single;
+  final uiTestHost = Directory(
+    '${productRoot.path}${Platform.pathSeparator}Release-iphoneos'
+    '${Platform.pathSeparator}RunnerUITests-Runner.app',
+  );
+  final uiTestBundle = Directory(
+    '${uiTestHost.path}${Platform.pathSeparator}PlugIns'
+    '${Platform.pathSeparator}RunnerUITests.xctest',
+  );
+  final shareExtension = Directory(
+    '${application.path}${Platform.pathSeparator}PlugIns'
+    '${Platform.pathSeparator}Share Extension.appex',
+  );
+  final notificationService = Directory(
+    '${application.path}${Platform.pathSeparator}PlugIns'
+    '${Platform.pathSeparator}NotificationService.appex',
+  );
+  for (final requiredDirectory in <(String, Directory)>[
+    ('RunnerUITests host app', uiTestHost),
+    ('RunnerUITests bundle', uiTestBundle),
+    ('Share Extension', shareExtension),
+    ('NotificationService', notificationService),
+  ]) {
+    if (!_realDirectory(requiredDirectory.$2)) {
+      return SimsIosDeviceBuildProductsValidation.failure(
+        'Central iOS build products are missing the required '
+        '${requiredDirectory.$1} directory.',
+      );
+    }
+  }
+
+  for (final requiredFile in <(String, File, bool)>[
+    (
+      'Runner.app/Info.plist',
+      File('${application.path}${Platform.pathSeparator}Info.plist'),
+      false,
+    ),
+    (
+      'Runner.app/Runner executable',
+      File('${application.path}${Platform.pathSeparator}Runner'),
+      true,
+    ),
+    (
+      'RunnerUITests host Info.plist',
+      File('${uiTestHost.path}${Platform.pathSeparator}Info.plist'),
+      false,
+    ),
+    (
+      'RunnerUITests host executable',
+      File('${uiTestHost.path}${Platform.pathSeparator}RunnerUITests-Runner'),
+      true,
+    ),
+    (
+      'RunnerUITests bundle Info.plist',
+      File('${uiTestBundle.path}${Platform.pathSeparator}Info.plist'),
+      false,
+    ),
+    (
+      'RunnerUITests bundle executable',
+      File('${uiTestBundle.path}${Platform.pathSeparator}RunnerUITests'),
+      true,
+    ),
+    (
+      'Share Extension Info.plist',
+      File('${shareExtension.path}${Platform.pathSeparator}Info.plist'),
+      false,
+    ),
+    (
+      'Share Extension executable',
+      File('${shareExtension.path}${Platform.pathSeparator}Share Extension'),
+      true,
+    ),
+    (
+      'NotificationService Info.plist',
+      File('${notificationService.path}${Platform.pathSeparator}Info.plist'),
+      false,
+    ),
+    (
+      'NotificationService executable',
+      File(
+        '${notificationService.path}${Platform.pathSeparator}'
+        'NotificationService',
+      ),
+      true,
+    ),
+  ]) {
+    final file = requiredFile.$2;
+    if (!_nonEmptyRegularFile(file)) {
+      return SimsIosDeviceBuildProductsValidation.failure(
+        'Central iOS build products are missing non-empty '
+        '${requiredFile.$1}.',
+      );
+    }
+    if (requiredFile.$3 && !_executableFile(file)) {
+      return SimsIosDeviceBuildProductsValidation.failure(
+        'Central iOS build products contain a non-executable '
+        '${requiredFile.$1}.',
+      );
+    }
+  }
+
+  final signedBundles = <String, Directory>{};
+  void addSignedBundle(Directory directory) {
+    signedBundles[directory.absolute.path] = directory.absolute;
+  }
+
+  for (final required in <Directory>[
+    application,
+    shareExtension,
+    notificationService,
+    uiTestHost,
+    uiTestBundle,
+  ]) {
+    addSignedBundle(required);
+  }
+  for (final root in <Directory>[application, uiTestHost]) {
+    for (final entity in root.listSync(recursive: true, followLinks: false)) {
+      if (entity is! Directory || !_realDirectory(entity)) continue;
+      if (const <String>{
+        '.app',
+        '.appex',
+        '.framework',
+        '.xctest',
+      }.any(entity.path.endsWith)) {
+        addSignedBundle(entity);
+      }
+    }
+  }
+  final orderedSignedBundles = signedBundles.values.toList(growable: false)
+    ..sort((left, right) {
+      final depth = right.path.length.compareTo(left.path.length);
+      return depth != 0 ? depth : left.path.compareTo(right.path);
+    });
+  final effectiveEnvironment = environment ?? Platform.environment;
+  final runner = codesignRunner ?? _runSimsIosCodesign;
+  final verified = <String>[];
+  for (final signedBundle in orderedSignedBundles) {
+    late final ProcessResult result;
+    try {
+      result = await runner('codesign', <String>[
+        '--verify',
+        '--deep',
+        '--strict',
+        signedBundle.path,
+      ], effectiveEnvironment);
+    } on Object catch (error) {
+      return SimsIosDeviceBuildProductsValidation.failure(
+        'Unable to run codesign verification for '
+        '${_lastPathComponent(signedBundle.path)}: ${error.runtimeType}.',
+      );
+    }
+    if (result.exitCode != 0) {
+      final output = '${result.stderr}'.trim().isNotEmpty
+          ? '${result.stderr}'
+          : '${result.stdout}';
+      return SimsIosDeviceBuildProductsValidation.failure(
+        'codesign verification failed for '
+        '${_lastPathComponent(signedBundle.path)} '
+        '(exit ${result.exitCode}): ${_bounded(output)}',
+      );
+    }
+    verified.add(signedBundle.path);
+  }
+
+  final relativeApplication = application.path.substring(
+    productRoot.path.length + 1,
+  );
+  return SimsIosDeviceBuildProductsValidation.success(
+    application: application,
+    xctestrun: xctestruns.single,
+    relativeApplication: relativeApplication,
+    uiTestHost: uiTestHost,
+    uiTestBundle: uiTestBundle,
+    verifiedCodePaths: verified,
+  );
+}
+
+Future<ProcessResult> _runSimsIosCodesign(
+  String executable,
+  List<String> arguments,
+  Map<String, String> environment,
+) => Process.run(executable, arguments, environment: environment);
+
+bool _realDirectory(Directory directory) =>
+    FileSystemEntity.typeSync(directory.path, followLinks: false) ==
+    FileSystemEntityType.directory;
+
+bool _nonEmptyRegularFile(File file) =>
+    FileSystemEntity.typeSync(file.path, followLinks: false) ==
+        FileSystemEntityType.file &&
+    file.lengthSync() > 0;
+
+bool _executableFile(File file) =>
+    Platform.isWindows || (file.statSync().mode & 0x49) != 0;
+
+String _lastPathComponent(String path) =>
+    Uri.file(path).pathSegments.where((part) => part.isNotEmpty).last;
+
 final class SimsBuildPreparation {
   const SimsBuildPreparation({
     required this.report,
@@ -209,6 +618,7 @@ final class SimsBuildOrchestrator {
       if (File('pubspec.lock').existsSync())
         'pubspec.lock': File('pubspec.lock').readAsBytesSync(),
       ..._profileAttestedInputFiles(profile),
+      ...simsIosDeviceProductValidatorInputFiles(profile.id),
     };
     return BuildProfileInput(
       profileId: profile.id,
@@ -216,7 +626,7 @@ final class SimsBuildOrchestrator {
       architecture: _architectureFor(profile),
       entrypoint:
           environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile),
-      mode: profile.platform == 'ios' && profile.id.contains('production')
+      mode: _iosDeviceBuildConfiguration(profile.id) != null
           ? 'release'
           : 'debug',
       flavor: environment['SIMS_BUILD_FLAVOR'] ?? 'default',
@@ -280,7 +690,7 @@ final class SimsBuildOrchestrator {
   }
 
   Map<String, List<int>> _profileAttestedInputFiles(BuildProfileSpec profile) {
-    if (profile.id != 'ios.device.production') {
+    if (profile.id != _iosDeviceProductionProfileId) {
       return const <String, List<int>>{};
     }
     final result = <String, List<int>>{};
@@ -327,7 +737,7 @@ final class SimsBuildOrchestrator {
     BuildProfileSpec profile,
     Map<String, List<int>> inputFiles,
   ) {
-    if (profile.id != 'ios.device.production') {
+    if (_iosDeviceBuildConfiguration(profile.id) == null) {
       return const <String, String>{};
     }
     final result = <String, String>{
@@ -498,8 +908,9 @@ final class SimsBuildOrchestrator {
   }
 
   Future<_BuildInvocation> _build(BuildProfileSpec profile) async {
-    if (profile.id == 'ios.device.production') {
-      return _buildIosDeviceProduction(profile);
+    final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
+    if (iosDeviceConfiguration != null) {
+      return _buildIosDevice(profile, iosDeviceConfiguration);
     }
     final arguments = _buildArguments(profile);
     final command = <String>['flutter', ...arguments];
@@ -545,8 +956,9 @@ final class SimsBuildOrchestrator {
     );
   }
 
-  Future<_BuildInvocation> _buildIosDeviceProduction(
+  Future<_BuildInvocation> _buildIosDevice(
     BuildProfileSpec profile,
+    _IosDeviceBuildConfiguration configuration,
   ) async {
     final encodedDefines = _effectiveCompileDefines(profile).entries
         .map(
@@ -554,12 +966,10 @@ final class SimsBuildOrchestrator {
         )
         .join(',');
     final derivedData = Directory(
-      environment['SIMS_IOS_DEVICE_PRODUCTION_DERIVED_DATA']
-                  ?.trim()
-                  .isNotEmpty ==
+      environment[configuration.derivedDataEnvironment]?.trim().isNotEmpty ==
               true
-          ? environment['SIMS_IOS_DEVICE_PRODUCTION_DERIVED_DATA']!.trim()
-          : 'build/sims/ios-device-production-derived',
+          ? environment[configuration.derivedDataEnvironment]!.trim()
+          : configuration.defaultDerivedDataPath,
     ).absolute;
     if (derivedData.existsSync()) derivedData.deleteSync(recursive: true);
     derivedData.createSync(recursive: true);
@@ -571,12 +981,15 @@ final class SimsBuildOrchestrator {
       'Runner',
       '-configuration',
       'Release',
+      if (configuration.allowProvisioningUpdates) '-allowProvisioningUpdates',
       'ENABLE_TESTABILITY=YES',
       '-destination',
       'generic/platform=iOS',
       '-derivedDataPath',
       derivedData.path,
-      r'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP',
+      'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
+          '${configuration.swiftCompilationConditions}',
+      ...configuration.buildSettings,
       'FLUTTER_TARGET=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
       if (encodedDefines.isNotEmpty) 'DART_DEFINES=$encodedDefines',
     ];
@@ -605,72 +1018,58 @@ final class SimsBuildOrchestrator {
       '${derivedData.path}${Platform.pathSeparator}Build'
       '${Platform.pathSeparator}Products',
     );
-    if (!products.existsSync()) {
-      return _BuildInvocation.failure(
-        'Central iOS UI-rig build did not materialize Build/Products.',
-      );
-    }
-    final xctestruns =
-        products
-            .listSync(recursive: true, followLinks: false)
-            .whereType<File>()
-            .where((file) => file.path.endsWith('.xctestrun'))
-            .toList()
-          ..sort((left, right) => left.path.compareTo(right.path));
-    if (xctestruns.length != 1) {
-      return _BuildInvocation.failure(
-        'Central iOS UI-rig build requires exactly one .xctestrun; found '
-        '${xctestruns.length}.',
-      );
-    }
-    final applications =
-        products
-            .listSync(recursive: true, followLinks: false)
-            .whereType<Directory>()
-            .where(
-              (directory) =>
-                  directory.uri.pathSegments
-                      .where((part) => part.isNotEmpty)
-                      .last ==
-                  'Runner.app',
-            )
-            .toList()
-          ..sort((left, right) => left.path.compareTo(right.path));
-    if (applications.length != 1) {
-      return _BuildInvocation.failure(
-        'Central iOS build-for-testing requires exactly one signed '
-        'Runner.app; found ${applications.length}.',
-      );
-    }
-    final relativeApplication = applications.single.path.substring(
-      products.path.length + 1,
+    final sourceValidation = await validateSimsIosDeviceBuildProducts(
+      products: products,
+      environment: environment,
     );
+    if (!sourceValidation.ok) {
+      return _BuildInvocation.failure(sourceValidation.detail);
+    }
+    final sourceXctestrun = sourceValidation.xctestrun!;
+    final relativeApplication = sourceValidation.relativeApplication!;
 
     final bundle = Directory(
-      environment['SIMS_IOS_DEVICE_PRODUCTION_BUNDLE_PATH']
-                  ?.trim()
-                  .isNotEmpty ==
+      environment[configuration.bundlePathEnvironment]?.trim().isNotEmpty ==
               true
-          ? environment['SIMS_IOS_DEVICE_PRODUCTION_BUNDLE_PATH']!.trim()
-          : 'build/sims/prepared/ios.device.production.bundle',
+          ? environment[configuration.bundlePathEnvironment]!.trim()
+          : configuration.defaultBundlePath,
     ).absolute;
     if (bundle.existsSync()) bundle.deleteSync(recursive: true);
     bundle.createSync(recursive: true);
     final bundledXctestrun = File(
       '${bundle.path}${Platform.pathSeparator}RunnerUITests.xctestrun',
     );
-    xctestruns.single.copySync(bundledXctestrun.path);
-    _preserveMode(xctestruns.single, bundledXctestrun.path);
+    sourceXctestrun.copySync(bundledXctestrun.path);
+    _preserveMode(sourceXctestrun, bundledXctestrun.path);
     final bundledProducts = Directory(
       '${bundle.path}${Platform.pathSeparator}TestProducts',
     )..createSync(recursive: true);
     _copyDirectory(products, bundledProducts);
-    File(
-      '${bundle.path}${Platform.pathSeparator}bundle_manifest.json',
-    ).writeAsStringSync(
-      '${jsonEncode(<String, Object?>{'schema': 'mknoon.sims.ios-device-production-bundle.v1', 'profileId': profile.id, 'applicationApp': 'TestProducts/$relativeApplication', 'xctestrun': 'RunnerUITests.xctestrun', 'testProducts': 'TestProducts', 'centralCompileCommands': 1, 'logicalBuildCount': 1, 'childBuildCount': 0})}\n',
-      flush: true,
+    final bundleManifest =
+        File(
+          '${bundle.path}${Platform.pathSeparator}bundle_manifest.json',
+        )..writeAsStringSync(
+          '${jsonEncode(<String, Object?>{'schema': configuration.bundleManifestSchema, 'profileId': profile.id, 'applicationApp': 'TestProducts/$relativeApplication', 'xctestrun': 'RunnerUITests.xctestrun', 'testProducts': 'TestProducts', 'centralCompileCommands': 1, 'logicalBuildCount': 1, 'childBuildCount': 0})}\n',
+          flush: true,
+        );
+    final packagedValidation = await validateSimsIosDeviceBuildProducts(
+      products: bundledProducts,
+      environment: environment,
     );
+    if (!packagedValidation.ok ||
+        packagedValidation.relativeApplication != relativeApplication ||
+        !_nonEmptyRegularFile(bundledXctestrun) ||
+        !_nonEmptyRegularFile(bundleManifest)) {
+      final detail = !packagedValidation.ok
+          ? packagedValidation.detail
+          : packagedValidation.relativeApplication != relativeApplication
+          ? 'Packaged iOS Runner.app moved from its validated product path.'
+          : 'Packaged iOS bundle is missing its xctestrun or member manifest.';
+      bundle.deleteSync(recursive: true);
+      return _BuildInvocation.failure(
+        'Packaged iOS UI-rig validation failed: $detail',
+      );
+    }
     return _BuildInvocation.success(
       bundle.path,
       redactSimsBuildCommandForAttestation(<String>[
@@ -686,7 +1085,8 @@ final class SimsBuildOrchestrator {
     final defineArgs = <String>[
       for (final entry in defines) '--dart-define=${entry.key}=${entry.value}',
     ];
-    if (profile.id == 'ios.device.production') {
+    final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
+    if (iosDeviceConfiguration != null) {
       final encodedDefines = defines
           .map(
             (entry) =>
@@ -698,8 +1098,15 @@ final class SimsBuildOrchestrator {
         '-workspace=ios/Runner.xcworkspace',
         '-scheme=Runner',
         '-configuration=Release',
+        if (iosDeviceConfiguration.allowProvisioningUpdates)
+          '-allowProvisioningUpdates',
         'ENABLE_TESTABILITY=YES',
         '-destination=generic/platform=iOS',
+        if (profile.id == _iosDeviceGroupMedia269ProfileId) ...<String>[
+          'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
+              '${iosDeviceConfiguration.swiftCompilationConditions}',
+          ...iosDeviceConfiguration.buildSettings,
+        ],
         'FLUTTER_TARGET=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
         if (encodedDefines.isNotEmpty) 'DART_DEFINES=$encodedDefines',
       ];
@@ -711,6 +1118,10 @@ final class SimsBuildOrchestrator {
         '--debug',
         '--target-platform=android-arm64',
         '--android-project-arg=simsAndroidAbi=arm64-v8a',
+        if (profile.id == _androidGroupMedia269ProfileId) ...const <String>[
+          '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+          '--android-project-arg=enableGroupMedia269DisposableProof=true',
+        ],
         '--target=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
         ...defineArgs,
       ];
@@ -745,7 +1156,7 @@ final class SimsBuildOrchestrator {
     if (profile.id == 'ios.simulator.e2e') {
       return 'build/ios/iphonesimulator/Runner.app';
     }
-    if (profile.id == 'ios.device.production') {
+    if (profile.id == _iosDeviceProductionProfileId) {
       final ipaDirectory = Directory('build/ios/ipa');
       if (!ipaDirectory.existsSync()) return null;
       final candidates =
@@ -763,6 +1174,7 @@ final class SimsBuildOrchestrator {
   String _entrypointFor(BuildProfileSpec profile) => switch (profile.id) {
     'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
     'android.e2e.main' => 'lib/main.dart',
+    _androidGroupMedia269ProfileId => 'lib/main.dart',
     'ios.simulator.e2e' =>
       'integration_test/group_multi_party_device_real_harness.dart',
     _ => 'lib/main.dart',
@@ -796,7 +1208,9 @@ Map<String, String> effectiveSimsCompileDefines(
   } else {
     defines.remove('SIMS_BUILD_PROFILE_ID');
   }
-  if (profile.platform == 'android' || profile.id == 'ios.simulator.e2e') {
+  if (profile.platform == 'android' ||
+      profile.id == 'ios.simulator.e2e' ||
+      _iosDeviceBuildConfiguration(profile.id) != null) {
     final relayAddresses = effectiveEnvironment['MKNOON_RELAY_ADDRESSES']
         ?.trim();
     if (relayAddresses != null && relayAddresses.isNotEmpty) {
@@ -817,6 +1231,12 @@ String effectiveSimsApplicationId(
   Directory? projectDirectory,
 }) {
   final effectiveEnvironment = environment ?? Platform.environment;
+  if (profile.id == _iosDeviceGroupMedia269ProfileId) {
+    return _iosDeviceGroupMedia269BundleId;
+  }
+  if (profile.id == _androidGroupMedia269ProfileId) {
+    return _androidGroupMedia269ApplicationId;
+  }
   if (profile.platform != 'android') {
     final explicit = effectiveEnvironment['SIMS_APP_ID']?.trim();
     return explicit == null || explicit.isEmpty
@@ -890,8 +1310,11 @@ FileSystemEntity _cachedArtifact(
   Directory entryRoot,
   BuildProfileSpec profile,
 ) {
-  if (profile.id == 'ios.device.production') {
-    return Directory('${entryRoot.path}/ios.device.production.bundle');
+  final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
+  if (iosDeviceConfiguration != null) {
+    return Directory(
+      '${entryRoot.path}/${iosDeviceConfiguration.cachedBundleName}',
+    );
   }
   if (profile.id == 'ios.simulator.e2e') {
     return Directory('${entryRoot.path}/Runner.app');

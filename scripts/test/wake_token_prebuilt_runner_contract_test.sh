@@ -71,6 +71,8 @@ case "$*" in
     ;;
   '-s pixel-usb shell pm path com.mknoon.app'|\
   '-s emulator-5554 shell pm path com.mknoon.app'|\
+  '-s pixel-usb shell pm list packages -3'|\
+  '-s emulator-5554 shell pm list packages -3'|\
   '-s pixel-usb shell pidof com.mknoon.app'|\
   '-s emulator-5554 shell pidof com.mknoon.app'|\
   '-s pixel-usb shell dumpsys activity activities'|\
@@ -87,6 +89,16 @@ case "$*" in
 esac
 EOF
 chmod +x "$shim_dir/adb"
+
+cat >"$shim_dir/apkanalyzer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = manifest ]
+[ "${2:-}" = application-id ]
+[ -f "${3:-}" ]
+printf 'com.mknoon.app\n'
+EOF
+chmod +x "$shim_dir/apkanalyzer"
 
 preflight_output="$tmp_dir/preflight.out"
 : >"$command_log"

@@ -85,12 +85,27 @@ void main() {
         );
         expect(
           project,
-          contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app;'),
+          contains('MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;'),
         );
         expect(
           project,
           contains(
-            'PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;',
+            'PRODUCT_BUNDLE_IDENTIFIER = '
+            '"\$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";',
+          ),
+        );
+        expect(
+          project,
+          contains(
+            'MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = '
+            'com.mknoon.app.ShareExtension;',
+          ),
+        );
+        expect(
+          project,
+          contains(
+            'PRODUCT_BUNDLE_IDENTIFIER = '
+            '"\$(MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER)";',
           ),
         );
         expect(project, isNot(contains('com.example.makerGenerated')));

@@ -33,6 +33,11 @@ _inFlightMediaDownloads =
 
 enum MediaDownloadIntent { automatic, explicitUser }
 
+typedef GroupMediaPostClaimPreCommit =
+    Future<void> Function(MediaAttachment attachment);
+typedef GroupMediaAutomaticDownloadAttemptStarted =
+    Future<void> Function(MediaAttachment attachment);
+
 class _GroupPrivateDownloadStateAdapter
     implements DirectPrivateMediaDownloadStateRepository {
   _GroupPrivateDownloadStateAdapter({
@@ -525,6 +530,17 @@ Future<MediaAttachment?> downloadMedia({
   // scrub retains the transfer watchdog's existing maximum-delay authority.
   Duration? latePrivateTransferScrubDelay,
   int Function()? nowMs,
+  // Compile-gated attempt observer used only by the main-app Android proof.
+  // It counts an eligible ordinary automatic-group invocation before local
+  // encrypted-companion recovery, so a fresh-process recovery is still an
+  // honest second attempt even when it avoids a redundant relay transfer.
+  GroupMediaAutomaticDownloadAttemptStarted?
+  groupMediaAutomaticDownloadAttemptStarted,
+  // Compile-gated main-app E2E seam. Production leaves this null. It is
+  // reached only by an ordinary automatic group download after the exact
+  // durable claim and one successful relay attempt, before validation,
+  // promotion, or commit.
+  GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
 }) async {
   int currentNowMs() =>
       nowMs?.call() ?? DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -533,6 +549,14 @@ Future<MediaAttachment?> downloadMedia({
   var requiresDirectPrivateCommit = false;
   DirectPrivateMediaDownloadStateRepository? directPrivateDownloadRepo;
   DirectPrivateMediaCleanupRuntime? directPrivateRuntime;
+  OrdinaryGroupMediaDownloadFailureRepository? ordinaryGroupDownloadFailureRepo;
+  OrdinaryGroupAutomaticMediaDownloadStateRepository?
+  ordinaryGroupAutomaticDownloadStateRepo;
+  OrdinaryGroupExplicitMediaDownloadStateRepository?
+  ordinaryGroupExplicitDownloadStateRepo;
+  var ordinaryGroupDownloadClaimed = false;
+  var ordinaryGroupExpectedDownloadStatus = attachment.downloadStatus;
+  String? ordinaryGroupExpectedLocalPath = attachment.localPath;
   if (owner == MediaOwnerLane.direct && !enforceGroupMediaPolicy) {
     if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
       contactPeerId: contactPeerId,
@@ -673,6 +697,30 @@ Future<MediaAttachment?> downloadMedia({
         groupId: contactPeerId,
       );
       directPrivateRuntime = _GroupPrivateCleanupRuntimeAdapter(groupRuntime);
+    } else {
+      if (!currentParent.isIncoming ||
+          mediaAttachmentRepo is! OrdinaryGroupMediaDownloadFailureRepository) {
+        return null;
+      }
+      ordinaryGroupDownloadFailureRepo =
+          mediaAttachmentRepo as OrdinaryGroupMediaDownloadFailureRepository;
+      if (effectiveIntent == MediaDownloadIntent.automatic) {
+        if (mediaAttachmentRepo
+            is! OrdinaryGroupAutomaticMediaDownloadStateRepository) {
+          return null;
+        }
+        ordinaryGroupAutomaticDownloadStateRepo =
+            mediaAttachmentRepo
+                as OrdinaryGroupAutomaticMediaDownloadStateRepository;
+      } else {
+        if (mediaAttachmentRepo
+            is! OrdinaryGroupExplicitMediaDownloadStateRepository) {
+          return null;
+        }
+        ordinaryGroupExplicitDownloadStateRepo =
+            mediaAttachmentRepo
+                as OrdinaryGroupExplicitMediaDownloadStateRepository;
+      }
     }
   }
   final inFlightKey = _MediaDownloadInFlightKey(
@@ -705,10 +753,20 @@ Future<MediaAttachment?> downloadMedia({
 
   late final Future<MediaAttachment?> downloadFuture;
   Future<MediaAttachment?> runDownload() async {
+    if (ordinaryGroupAutomaticDownloadStateRepo != null &&
+        groupMediaAutomaticDownloadAttemptStarted != null) {
+      await groupMediaAutomaticDownloadAttemptStarted(attachment);
+    }
     final downloadStopwatch = Stopwatch()..start();
     final idPrefix = attachment.id.length > 8
         ? attachment.id.substring(0, 8)
         : attachment.id;
+    final ordinaryGroupDownloadAuthorityKind =
+        ordinaryGroupAutomaticDownloadStateRepo != null
+        ? 'automatic'
+        : ordinaryGroupExplicitDownloadStateRepo != null
+        ? 'explicit'
+        : null;
     void emitDownloadTiming({
       required String outcome,
       Map<String, dynamic> details = const {},
@@ -725,6 +783,119 @@ Future<MediaAttachment?> downloadMedia({
           ...details,
         },
       );
+    }
+
+    Future<bool> claimOrdinaryGroupDownloadIfNeeded({
+      required bool companion,
+    }) async {
+      final authorityKind = ordinaryGroupDownloadAuthorityKind;
+      if (authorityKind == null || ordinaryGroupDownloadClaimed) {
+        return true;
+      }
+      final claimed = ordinaryGroupAutomaticDownloadStateRepo != null
+          ? await ordinaryGroupAutomaticDownloadStateRepo
+                .beginOrdinaryGroupAutomaticMediaDownload(
+                  attachment.id,
+                  groupId: contactPeerId,
+                  messageId: attachment.messageId,
+                  expectedDownloadStatus: ordinaryGroupExpectedDownloadStatus,
+                  expectedLocalPath: ordinaryGroupExpectedLocalPath,
+                )
+          : await ordinaryGroupExplicitDownloadStateRepo!
+                .beginOrdinaryGroupExplicitMediaDownload(
+                  attachment.id,
+                  groupId: contactPeerId,
+                  messageId: attachment.messageId,
+                  expectedDownloadStatus: ordinaryGroupExpectedDownloadStatus,
+                  expectedLocalPath: ordinaryGroupExpectedLocalPath,
+                );
+      if (!claimed) {
+        final phase = companion
+            ? 'group_${authorityKind}_companion_begin'
+            : 'group_${authorityKind}_begin';
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
+          details: {'blobId': idPrefix, 'phase': phase},
+        );
+        emitDownloadTiming(
+          outcome: 'failed',
+          details: {
+            'error': companion
+                ? 'group_${authorityKind}_companion_claim_lost'
+                : 'group_${authorityKind}_download_claim_lost',
+          },
+        );
+        return false;
+      }
+      ordinaryGroupDownloadClaimed = true;
+      return true;
+    }
+
+    Future<bool> commitOrdinaryGroupDownloadLocalPath(String localPath) {
+      final automaticRepository = ordinaryGroupAutomaticDownloadStateRepo;
+      if (automaticRepository != null) {
+        return automaticRepository
+            .commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+              attachment.id,
+              groupId: contactPeerId,
+              messageId: attachment.messageId,
+              expectedLocalPath: ordinaryGroupExpectedLocalPath,
+              localPath: localPath,
+            );
+      }
+      return ordinaryGroupExplicitDownloadStateRepo!
+          .commitOrdinaryGroupExplicitMediaDownloadLocalPath(
+            attachment.id,
+            groupId: contactPeerId,
+            messageId: attachment.messageId,
+            expectedLocalPath: ordinaryGroupExpectedLocalPath,
+            localPath: localPath,
+          );
+    }
+
+    Future<bool> recordOrdinaryGroupDownloadFailure({
+      required bool incrementRetryCount,
+      required String failureStatus,
+      required String expectedDownloadStatus,
+      required String? expectedLocalPath,
+      required bool clearLocalPath,
+    }) async {
+      final repository = ordinaryGroupDownloadFailureRepo;
+      if (repository == null) return false;
+      try {
+        final changed = await repository
+            .recordOrdinaryGroupMediaDownloadFailure(
+              attachment.id,
+              groupId: contactPeerId,
+              messageId: attachment.messageId,
+              incrementRetryCount: incrementRetryCount,
+              failureStatus: failureStatus,
+              expectedDownloadStatus: expectedDownloadStatus,
+              expectedLocalPath: expectedLocalPath,
+              clearLocalPath: clearLocalPath,
+            );
+        if (changed && clearLocalPath) {
+          ordinaryGroupExpectedLocalPath = null;
+        }
+        return changed;
+      } catch (e) {
+        // Failure persistence is already the terminal consumer boundary for
+        // this attempt. Swallowing here prevents the outer transport catch
+        // from issuing a second, potentially different failure projection.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_GROUP_DOWNLOAD_FAILURE_PERSISTENCE_ERROR',
+          details: {
+            'blobId': idPrefix,
+            'attachmentId': attachment.id,
+            'messageId': attachment.messageId,
+            'failureStatus': failureStatus,
+            'error': e.toString(),
+          },
+        );
+        return false;
+      }
     }
 
     // Bounded download retry budget (Finding 09 Phase 3, INV-DL-1/2/5).
@@ -771,6 +942,17 @@ Future<MediaAttachment?> downloadMedia({
         }
         return status;
       }
+      if (ordinaryGroupDownloadFailureRepo != null) {
+        await recordOrdinaryGroupDownloadFailure(
+          incrementRetryCount: true,
+          failureStatus: kMediaDownloadStatusFailed,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath:
+              expectedLocalPath ?? ordinaryGroupExpectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        );
+        return status;
+      }
       try {
         await mediaAttachmentRepo.updateDownloadStatus(attachment.id, status);
       } catch (_) {}
@@ -801,6 +983,16 @@ Future<MediaAttachment?> downloadMedia({
               failureStatus: kMediaDownloadStatusDownloadFailed,
               expectedDownloadStatus: kMediaDownloadStatusDownloading,
             );
+        return;
+      }
+      if (ordinaryGroupDownloadFailureRepo != null) {
+        await recordOrdinaryGroupDownloadFailure(
+          incrementRetryCount: false,
+          failureStatus: kMediaDownloadStatusDownloadFailed,
+          expectedDownloadStatus: kMediaDownloadStatusDownloading,
+          expectedLocalPath: ordinaryGroupExpectedLocalPath,
+          clearLocalPath: false,
+        );
         return;
       }
       try {
@@ -1058,10 +1250,16 @@ Future<MediaAttachment?> downloadMedia({
       // clear the now-dangling local path.
       await persistTransientDownloadFailure(
         clearLocalPath: true,
-        expectedDownloadStatus: requiresDirectPrivateCommit
+        expectedDownloadStatus:
+            requiresDirectPrivateCommit ||
+                ordinaryGroupDownloadFailureRepo != null
             ? kMediaDownloadStatusDone
             : kMediaDownloadStatusDownloading,
-        expectedLocalPath: requiresDirectPrivateCommit ? relativePath : null,
+        expectedLocalPath:
+            requiresDirectPrivateCommit ||
+                ordinaryGroupDownloadFailureRepo != null
+            ? relativePath
+            : null,
       );
       return false;
     }
@@ -1071,6 +1269,7 @@ Future<MediaAttachment?> downloadMedia({
     String? groupPrivateDecryptedPath;
     Object? privateTransferToken;
     var retainPrivateTransferForLateScrub = false;
+    var ordinaryGroupCompanionRecoveryTerminated = false;
 
     Future<void> quarantineUnsafeGroupMedia({
       required String event,
@@ -1090,6 +1289,16 @@ Future<MediaAttachment?> downloadMedia({
                   : kMediaDownloadStatusDownloading,
               clearLocalPath: true,
             );
+      } else if (ordinaryGroupDownloadFailureRepo != null) {
+        await recordOrdinaryGroupDownloadFailure(
+          incrementRetryCount: false,
+          failureStatus: kMediaDownloadStatusIntegrityFailed,
+          expectedDownloadStatus: ordinaryGroupDownloadClaimed
+              ? kMediaDownloadStatusDownloading
+              : attachment.downloadStatus,
+          expectedLocalPath: ordinaryGroupExpectedLocalPath,
+          clearLocalPath: true,
+        );
       } else {
         await mediaAttachmentRepo.updateDownloadStatus(
           attachment.id,
@@ -1598,7 +1807,9 @@ Future<MediaAttachment?> downloadMedia({
       Future<MediaAttachment?> adoptCanonicalFileIfAvailable({
         required String source,
       }) async {
-        if (enforceGroupMediaPolicy || requiresDirectPrivateCommit) {
+        if (owner != MediaOwnerLane.direct ||
+            enforceGroupMediaPolicy ||
+            requiresDirectPrivateCommit) {
           return null;
         }
         final canonicalFile = File(absolutePath);
@@ -1670,7 +1881,9 @@ Future<MediaAttachment?> downloadMedia({
       Future<MediaAttachment?> adoptCompletePartFileIfAvailable({
         required String source,
       }) async {
-        if (enforceGroupMediaPolicy || requiresDirectPrivateCommit) {
+        if (owner != MediaOwnerLane.direct ||
+            enforceGroupMediaPolicy ||
+            requiresDirectPrivateCommit) {
           return null;
         }
         final partFile = File(downloadPath);
@@ -1820,6 +2033,18 @@ Future<MediaAttachment?> downloadMedia({
           return null;
         }
 
+        // Ordinary-group companion adoption is a real recovery attempt, not a
+        // local-path repair shortcut. Acquire the exact
+        // attachment + live incoming parent + active group + local-visibility
+        // + deletion-journal authority before the first decrypt side effect.
+        // Automatic and explicit-user retries use distinct admission status
+        // sets, but both production repositories evaluate the whole authority
+        // tuple in one CAS.
+        if (!await claimOrdinaryGroupDownloadIfNeeded(companion: true)) {
+          ordinaryGroupCompanionRecoveryTerminated = true;
+          return null;
+        }
+
         late final String decryptedPath;
         try {
           decryptedPath = await callBlobDecrypt(
@@ -1895,6 +2120,9 @@ Future<MediaAttachment?> downloadMedia({
             },
             files: [plaintextFile],
           );
+          if (ordinaryGroupDownloadAuthorityKind != null) {
+            ordinaryGroupCompanionRecoveryTerminated = true;
+          }
           return null;
         }
 
@@ -1915,16 +2143,66 @@ Future<MediaAttachment?> downloadMedia({
             },
             files: [plaintextFile],
           );
+          if (ordinaryGroupDownloadAuthorityKind != null) {
+            ordinaryGroupCompanionRecoveryTerminated = true;
+          }
           return null;
         }
 
-        await deleteIfExists(
-          encryptedCompanion,
-          caller: 'downloadMedia.restoreEncryptedCompanionIfAvailable',
-          reason: 'local_encrypted_companion_cleanup_after_restore',
-          details: {'source': 'local_encrypted_companion'},
-        );
-        await mediaAttachmentRepo.updateLocalPath(attachment.id, relativePath);
+        final groupAuthorityKind = ordinaryGroupDownloadAuthorityKind;
+        if (groupAuthorityKind != null) {
+          final committed = await commitOrdinaryGroupDownloadLocalPath(
+            relativePath,
+          );
+          if (!committed) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
+              details: {
+                'blobId': idPrefix,
+                'phase': 'group_${groupAuthorityKind}_companion_commit',
+              },
+            );
+            // The encrypted companion is pre-existing recovery input and may
+            // also be journal-owned now. Discard only the plaintext output
+            // promoted by this losing attempt; never delete the companion or
+            // publish a completed attachment.
+            await deleteIfExists(
+              plaintextFile,
+              caller: 'downloadMedia.groupCompanionLateCommitClaimLost',
+              reason: 'discard_companion_plaintext_after_lost_group_authority',
+              details: {'source': 'local_encrypted_companion'},
+            );
+            ordinaryGroupCompanionRecoveryTerminated = true;
+            emitDownloadTiming(
+              outcome: 'failed',
+              details: {
+                'error': 'group_${groupAuthorityKind}_companion_commit_lost',
+              },
+            );
+            return null;
+          }
+          ordinaryGroupExpectedLocalPath = relativePath;
+          ordinaryGroupDownloadClaimed = false;
+        } else {
+          // Compatibility path for direct-owner callers that opt into the
+          // group integrity policy but do not participate in ordinary-group
+          // recovery authority. Generic ID-only mutation is direct-only.
+          if (owner != MediaOwnerLane.direct) {
+            ordinaryGroupCompanionRecoveryTerminated = true;
+            await deleteIfExists(
+              plaintextFile,
+              caller: 'downloadMedia.groupCompanionMissingExactAuthority',
+              reason: 'discard_companion_plaintext_without_group_authority',
+              details: {'source': 'local_encrypted_companion'},
+            );
+            return null;
+          }
+          await mediaAttachmentRepo.updateLocalPath(
+            attachment.id,
+            relativePath,
+          );
+        }
         final committed = await verifyCommittedLocalPath(
           absolutePath: absolutePath,
           relativePath: relativePath,
@@ -1933,6 +2211,12 @@ Future<MediaAttachment?> downloadMedia({
         if (!committed) {
           return null;
         }
+        await deleteIfExists(
+          encryptedCompanion,
+          caller: 'downloadMedia.restoreEncryptedCompanionIfAvailable',
+          reason: 'local_encrypted_companion_cleanup_after_restore',
+          details: {'source': 'local_encrypted_companion'},
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'MEDIA_DOWNLOAD_REPAIRED_FROM_LOCAL_ENCRYPTED_COMPANION',
@@ -1952,6 +2236,9 @@ Future<MediaAttachment?> downloadMedia({
           await restoreEncryptedCompanionIfAvailable();
       if (restoredEncryptedCompanion != null) {
         return restoredEncryptedCompanion;
+      }
+      if (ordinaryGroupCompanionRecoveryTerminated) {
+        return null;
       }
       final encryptedCompanionFoundAfterRestore = enforceGroupMediaPolicy
           ? await File(downloadPath).exists()
@@ -2024,16 +2311,16 @@ Future<MediaAttachment?> downloadMedia({
             'candidateDiagnostics': localDiagnostics.take(4).toList(),
           },
         );
+        final missingDonePath = localDiagnostics
+            .where(
+              (diagnostic) =>
+                  diagnostic['downloadStatus'] == kMediaDownloadStatusDone &&
+                  diagnostic['reason'] == 'local_file_missing',
+            )
+            .map((diagnostic) => diagnostic['localPath'])
+            .whereType<String>()
+            .firstOrNull;
         if (requiresDirectPrivateCommit) {
-          final missingDonePath = localDiagnostics
-              .where(
-                (diagnostic) =>
-                    diagnostic['downloadStatus'] == kMediaDownloadStatusDone &&
-                    diagnostic['reason'] == 'local_file_missing',
-              )
-              .map((diagnostic) => diagnostic['localPath'])
-              .whereType<String>()
-              .firstOrNull;
           if (missingDonePath != null) {
             await directPrivateDownloadRepo!
                 .recordDirectPrivateMediaDownloadFailure(
@@ -2046,6 +2333,19 @@ Future<MediaAttachment?> downloadMedia({
                   expectedLocalPath: missingDonePath,
                   clearLocalPath: true,
                 );
+          }
+        } else if (ordinaryGroupDownloadFailureRepo != null) {
+          if (missingDonePath != null) {
+            final cleared = await recordOrdinaryGroupDownloadFailure(
+              incrementRetryCount: false,
+              failureStatus: kMediaDownloadStatusFailed,
+              expectedDownloadStatus: kMediaDownloadStatusDone,
+              expectedLocalPath: missingDonePath,
+              clearLocalPath: true,
+            );
+            if (cleared) {
+              ordinaryGroupExpectedDownloadStatus = kMediaDownloadStatusFailed;
+            }
           }
         } else {
           try {
@@ -2097,6 +2397,10 @@ Future<MediaAttachment?> downloadMedia({
           );
           return null;
         }
+      } else if (ordinaryGroupDownloadAuthorityKind != null) {
+        if (!await claimOrdinaryGroupDownloadIfNeeded(companion: false)) {
+          return null;
+        }
       } else if (mediaAttachmentRepo is MediaDownloadStateRepository) {
         final claimed =
             await (mediaAttachmentRepo as MediaDownloadStateRepository)
@@ -2118,6 +2422,9 @@ Future<MediaAttachment?> downloadMedia({
           attachment.id,
           kMediaDownloadStatusDownloading,
         );
+      }
+      if (ordinaryGroupDownloadFailureRepo != null) {
+        ordinaryGroupDownloadClaimed = true;
       }
 
       // 3. Download from relay
@@ -2210,6 +2517,11 @@ Future<MediaAttachment?> downloadMedia({
           details: {'error': result['errorMessage']},
         );
         return null;
+      }
+
+      if (ordinaryGroupAutomaticDownloadStateRepo != null &&
+          groupMediaPostClaimPreCommit != null) {
+        await groupMediaPostClaimPreCommit(attachment);
       }
 
       final downloadedFile = File(downloadPath);
@@ -2668,6 +2980,34 @@ Future<MediaAttachment?> downloadMedia({
       if (requiresDirectPrivateCommit) {
         // Direct-private promotion + commit already completed atomically
         // with respect to lifecycle cleanup in the finalization lock.
+      } else if (ordinaryGroupDownloadAuthorityKind != null) {
+        final committedRow = await commitOrdinaryGroupDownloadLocalPath(
+          relativePath,
+        );
+        if (!committedRow) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
+            details: {
+              'blobId': idPrefix,
+              'phase': 'group_${ordinaryGroupDownloadAuthorityKind}_commit',
+            },
+          );
+          await deleteIfExists(
+            File(absolutePath),
+            caller: 'downloadMedia.groupLateCommitClaimLost',
+            reason: 'discard_promoted_artifact_after_lost_group_authority',
+            details: {'blobId': idPrefix},
+          );
+          emitDownloadTiming(
+            outcome: 'failed',
+            details: {
+              'error':
+                  'group_${ordinaryGroupDownloadAuthorityKind}_download_commit_lost',
+            },
+          );
+          return null;
+        }
       } else if (mediaAttachmentRepo is MediaDownloadStateRepository) {
         final committedRow =
             await (mediaAttachmentRepo as MediaDownloadStateRepository)
@@ -2694,8 +3034,20 @@ Future<MediaAttachment?> downloadMedia({
           );
           return null;
         }
-      } else {
+      } else if (owner == MediaOwnerLane.direct) {
         await mediaAttachmentRepo.updateLocalPath(attachment.id, relativePath);
+      } else {
+        await deleteIfExists(
+          File(absolutePath),
+          caller: 'downloadMedia.groupCommitMissingExactAuthority',
+          reason: 'discard_promoted_artifact_without_group_authority',
+          details: {'blobId': idPrefix},
+        );
+        return null;
+      }
+      if (ordinaryGroupDownloadFailureRepo != null) {
+        ordinaryGroupExpectedLocalPath = relativePath;
+        ordinaryGroupDownloadClaimed = false;
       }
       final committed = await verifyCommittedLocalPath(
         absolutePath: absolutePath,

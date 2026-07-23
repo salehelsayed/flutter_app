@@ -140,6 +140,17 @@ class MediaRepositoryRealDbFixture {
             messageId,
           ),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+      dbLoadRecoverableGroupMediaDownloadPage:
+          ({
+            required int limit,
+            String? afterCreatedAt,
+            String? afterAttachmentId,
+          }) => dbLoadRecoverableGroupMediaDownloadPage(
+            db,
+            limit: limit,
+            afterCreatedAt: afterCreatedAt,
+            afterAttachmentId: afterAttachmentId,
+          ),
       dbLoadUploadPendingAttachments:
           ({int limit = 50, required String ownerLane}) =>
               dbLoadUploadPendingAttachments(
@@ -224,6 +235,87 @@ class MediaRepositoryRealDbFixture {
                 ownerLane: ownerLane,
                 localPath: localPath,
               ),
+      dbBeginOrdinaryGroupAutomaticMediaDownloadExact:
+          (
+            id, {
+            required groupId,
+            required messageId,
+            required expectedDownloadStatus,
+            required expectedLocalPath,
+          }) => dbBeginOrdinaryGroupAutomaticMediaDownloadExact(
+            db,
+            id,
+            groupId: groupId,
+            messageId: messageId,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+          ),
+      dbBeginOrdinaryGroupExplicitMediaDownloadExact:
+          (
+            id, {
+            required groupId,
+            required messageId,
+            required expectedDownloadStatus,
+            required expectedLocalPath,
+          }) => dbBeginOrdinaryGroupExplicitMediaDownloadExact(
+            db,
+            id,
+            groupId: groupId,
+            messageId: messageId,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+          ),
+      dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact:
+          (
+            id, {
+            required groupId,
+            required messageId,
+            required expectedLocalPath,
+            required localPath,
+          }) => dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact(
+            db,
+            id,
+            groupId: groupId,
+            messageId: messageId,
+            expectedLocalPath: expectedLocalPath,
+            localPath: localPath,
+          ),
+      dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact:
+          (
+            id, {
+            required groupId,
+            required messageId,
+            required expectedLocalPath,
+            required localPath,
+          }) => dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact(
+            db,
+            id,
+            groupId: groupId,
+            messageId: messageId,
+            expectedLocalPath: expectedLocalPath,
+            localPath: localPath,
+          ),
+      dbRecordOrdinaryGroupMediaDownloadFailureExact:
+          (
+            id, {
+            required groupId,
+            required messageId,
+            required incrementRetryCount,
+            required failureStatus,
+            required expectedDownloadStatus,
+            required expectedLocalPath,
+            required clearLocalPath,
+          }) => dbRecordOrdinaryGroupMediaDownloadFailureExact(
+            db,
+            id,
+            groupId: groupId,
+            messageId: messageId,
+            incrementRetryCount: incrementRetryCount,
+            failureStatus: failureStatus,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+            clearLocalPath: clearLocalPath,
+          ),
       dbClaimMediaEvicted:
           (
             id, {

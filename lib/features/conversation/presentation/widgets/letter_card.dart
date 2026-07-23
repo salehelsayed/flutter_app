@@ -84,6 +84,7 @@ class LetterCard extends StatelessWidget {
   /// 128 (round 5): owned-media dir id (the conversation contact peerId, or
   /// groupId) for the render-boundary fallback to the durable owned copy.
   final String? ownedMediaPeerId;
+  final Map<String, String> mediaRenderedSemanticsLabels;
 
   /// 136 Phase 2: render as a side-aligned chat balloon instead of the legacy
   /// full-width card. Defaults to false → exact legacy render preserved.
@@ -167,6 +168,7 @@ class LetterCard extends StatelessWidget {
     this.failedMediaActionKeySuffix,
     this.requireVerifiedContentHash = false,
     this.ownedMediaPeerId,
+    this.mediaRenderedSemanticsLabels = const <String, String>{},
     this.bubbleLayout = false,
     this.isFirstInGroup = true,
     this.isLastInGroup = true,
@@ -439,6 +441,7 @@ class LetterCard extends StatelessWidget {
                 : null,
             requireVerifiedContentHash: requireVerifiedContentHash,
             ownedMediaPeerId: ownedMediaPeerId,
+            renderedSemanticsLabels: mediaRenderedSemanticsLabels,
           ),
         ),
       // Audio players
@@ -455,6 +458,7 @@ class LetterCard extends StatelessWidget {
                 ? () => onRetryUnavailableMedia!(audio.id)
                 : null,
             requireVerifiedContentHash: requireVerifiedContentHash,
+            renderedSemanticsLabel: mediaRenderedSemanticsLabels[audio.id],
           ),
         ),
       // Body text (only if non-empty)

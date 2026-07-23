@@ -19,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -444,6 +445,14 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('Media stable-ID simulator smoke', () {
+    setUp(() {
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const [],
+      );
+    });
+    tearDown(setGroupExitIntentAccessSinks);
+
     testWidgets(
       '1:1 image send preserves the optimistic attachment id on simulator',
       (tester) async {
@@ -1240,6 +1249,10 @@ void main() {
           ),
         );
         await _pumpFrames(tester);
+        await _pumpUntilAsync(
+          tester,
+          () async => find.byType(TextField).evaluate().length == 1,
+        );
 
         await tester.enterText(find.byType(TextField), 'Announcement photo');
         await tester.pump();

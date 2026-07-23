@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -16,10 +17,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -43,6 +46,7 @@ import 'package:flutter_app/features/groups/application/group_media_forward_inte
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
@@ -192,6 +196,29 @@ const _tinyMp4Bytes = <int>[
   0x00,
 ];
 
+const _validHeifBytes = <int>[
+  0x00,
+  0x00,
+  0x00,
+  0x18,
+  0x66,
+  0x74,
+  0x79,
+  0x70,
+  0x6d,
+  0x69,
+  0x66,
+  0x31,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x6d,
+  0x69,
+  0x66,
+  0x31,
+];
+
 List<int> _md012EncryptedBytes(
   List<int> plaintext, {
   String key = _md012MediaKey,
@@ -291,6 +318,28 @@ class _GatedPublishBridge extends FakeBridge {
       await publishGate.future;
     }
 
+    return super.send(message);
+  }
+}
+
+class _GatedBackgroundTaskBridge extends FakeBridge {
+  final Completer<void> beginStarted = Completer<void>();
+  final Completer<void> beginGate = Completer<void>();
+  int endCalls = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'bg:begin') {
+      if (!beginStarted.isCompleted) beginStarted.complete();
+      await beginGate.future;
+      return 'test-background-task';
+    }
+    if (cmd == 'bg:end') {
+      endCalls++;
+      return jsonEncode({'ok': true});
+    }
     return super.send(message);
   }
 }
@@ -615,6 +664,17 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository
   }
 }
 
+class _WriteCountingGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  int saveMessageCalls = 0;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) {
+    saveMessageCalls++;
+    return super.saveMessage(message);
+  }
+}
+
 class _TerminalProjectionGroupMessageRepository
     extends CountingGroupMessageRepository
     implements GroupUploadRetryProjectionRepository {
@@ -760,6 +820,182 @@ class CountingMediaAttachmentRepository
   }) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds, owner: owner);
+  }
+}
+
+/// Models the production-schema SQLite round trip for the two NOT NULL retry
+/// counters: omitted model values are stored and reloaded as database zero.
+/// No other attachment field is normalized by this fixture.
+class _SqlDefaultingMediaAttachmentRepository
+    extends CountingMediaAttachmentRepository {
+  @override
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) {
+    return super.saveAttachment(
+      attachment.copyWith(
+        uploadRetryCount: attachment.uploadRetryCount ?? 0,
+        downloadRetryCount: attachment.downloadRetryCount ?? 0,
+      ),
+      owner: owner,
+    );
+  }
+}
+
+bool _sameAttachmentAuthorityWithSqlCounterDefaults(
+  MediaAttachment current,
+  MediaAttachment expected,
+) {
+  final currentMap = current.toMap()
+    ..remove('upload_retry_count')
+    ..remove('download_retry_count');
+  final expectedMap = expected.toMap()
+    ..remove('upload_retry_count')
+    ..remove('download_retry_count');
+  return jsonEncode(currentMap) == jsonEncode(expectedMap) &&
+      (current.uploadRetryCount ?? 0) == (expected.uploadRetryCount ?? 0) &&
+      (current.downloadRetryCount ?? 0) == (expected.downloadRetryCount ?? 0);
+}
+
+/// Completion/projection fixture for the foreground group-media leaf. It
+/// records the exact CAS arguments, applies the Plan 269 local-vs-upload field
+/// ownership matrix on success, and consumes retry budget only while the
+/// expected pending attachment still owns authority.
+class _CompletionAwareGroupMessageRepository
+    extends CountingGroupMessageRepository
+    implements
+        GroupUploadRetryCompletionRepository,
+        GroupUploadRetryProjectionRepository {
+  _CompletionAwareGroupMessageRepository({required this.mediaRepo});
+
+  final CountingMediaAttachmentRepository mediaRepo;
+  Object? completionError;
+  bool completionResult = true;
+  Future<void> Function(MediaAttachment expectedAttachment)?
+  beforeFalseCompletion;
+
+  int completionCalls = 0;
+  int projectionCalls = 0;
+  int appliedProjectionCalls = 0;
+  final List<MediaAttachment> expectedCompletionAttachments = [];
+  final List<MediaAttachment> completedCompletionAttachments = [];
+  final List<UploadMediaFailed> projectedFailures = [];
+  final Map<String, MediaAttachment> _expectedByAttachmentId = {};
+
+  MediaAttachment? expectedFor(String attachmentId) =>
+      _expectedByAttachmentId[attachmentId];
+
+  MediaAttachment? completedFor(String attachmentId) {
+    for (final attachment in completedCompletionAttachments) {
+      if (attachment.id == attachmentId) return attachment;
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> completeUploadRetry({
+    required GroupMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment completedAttachment,
+  }) async {
+    completionCalls++;
+    expectedCompletionAttachments.add(expectedAttachment);
+    completedCompletionAttachments.add(completedAttachment);
+    _expectedByAttachmentId[expectedAttachment.id] = expectedAttachment;
+
+    final error = completionError;
+    if (error != null) throw error;
+    if (!completionResult) {
+      await beforeFalseCompletion?.call(expectedAttachment);
+      return false;
+    }
+
+    final currentParent = await getMessage(expectedParent.id);
+    final currentAttachment = await mediaRepo.getAttachmentById(
+      expectedAttachment.id,
+    );
+    if (currentParent == null ||
+        currentParent.id != expectedParent.id ||
+        currentParent.groupId != expectedParent.groupId ||
+        currentParent.status != expectedParent.status ||
+        currentAttachment == null ||
+        !_sameAttachmentAuthorityWithSqlCounterDefaults(
+          currentAttachment,
+          expectedAttachment,
+        )) {
+      return false;
+    }
+
+    await mediaRepo.saveAttachment(
+      MediaAttachment(
+        id: currentAttachment.id,
+        messageId: currentAttachment.messageId,
+        mime: completedAttachment.mime,
+        size: completedAttachment.size,
+        mediaType: completedAttachment.mediaType,
+        width: completedAttachment.width,
+        height: completedAttachment.height,
+        durationMs: completedAttachment.durationMs,
+        localPath: completedAttachment.localPath,
+        downloadStatus: completedAttachment.downloadStatus,
+        createdAt: currentAttachment.createdAt,
+        waveform: completedAttachment.waveform,
+        uploadRetryCount: currentAttachment.uploadRetryCount ?? 0,
+        downloadRetryCount: currentAttachment.downloadRetryCount ?? 0,
+        contentHash: completedAttachment.contentHash,
+        thumbnailHash: currentAttachment.thumbnailHash,
+        encryptionKeyBase64: completedAttachment.encryptionKeyBase64,
+        encryptionNonce: completedAttachment.encryptionNonce,
+        encryptionScheme: completedAttachment.encryptionScheme,
+        ownerLane: currentAttachment.ownerLane,
+        isBookmarked: currentAttachment.isBookmarked,
+        lastPlaybackPositionMs: currentAttachment.lastPlaybackPositionMs,
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    return true;
+  }
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    projectionCalls++;
+    projectedFailures.add(failure);
+    final expected = _expectedByAttachmentId[attachmentId];
+    final current = await mediaRepo.getAttachmentById(attachmentId);
+    final parent = await getMessage(messageId);
+    if (expected == null ||
+        current == null ||
+        parent == null ||
+        current.downloadStatus != 'upload_pending' ||
+        !_sameAttachmentAuthorityWithSqlCounterDefaults(current, expected)) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final nextRetryCount = (current.uploadRetryCount ?? 0) + 1;
+    final terminal = nextRetryCount >= kMaxUploadRetries;
+    await mediaRepo.saveAttachment(
+      current.copyWith(
+        downloadStatus: terminal ? 'upload_failed' : 'upload_pending',
+        uploadRetryCount: nextRetryCount,
+        ownerLane: MediaOwnerLane.group,
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    await saveMessage(
+      parent.copyWith(status: terminal ? 'failed' : 'queued_offline'),
+    );
+    appliedProjectionCalls++;
+    return UploadRetryProjectionResult(
+      state: terminal
+          ? UploadRetryProjectionState.terminal
+          : UploadRetryProjectionState.retryPending,
+      uploadRetryCount: nextRetryCount,
+    );
   }
 }
 
@@ -1534,6 +1770,7 @@ void main() {
       CountingGroupMessageRepository? messageRepo,
       GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
       MediaAutoDownloadDecider? autoDownloadDecider,
+      GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
       GroupReceivedMediaActionsController? mediaActionsController,
       GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator,
       Future<void> Function(BuildContext, GroupMediaForwardRequest)?
@@ -1586,6 +1823,7 @@ void main() {
           groupConversationTracker: groupConversationTracker,
           inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
           autoDownloadDecider: autoDownloadDecider,
+          groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
           mediaActionsController: mediaActionsController,
           mediaDeleteForMeCoordinator: mediaDeleteForMeCoordinator,
           groupMediaForwardLauncher: groupMediaForwardLauncher,
@@ -1596,6 +1834,827 @@ void main() {
         ),
       );
     }
+
+    testWidgets(
+      'P269 ordinary and voice empty ACL preflight preserves sources with zero durable or crypto effects',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final revokedAt = DateTime.utc(2026, 7, 22, 10);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            devices: <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-admin-revoked',
+                transportPeerId: 'transport-admin-revoked',
+                deviceSigningPublicKey: 'signing-admin-revoked',
+                status: GroupMemberDeviceStatus.revoked,
+                revokedAt: revokedAt,
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            devices: <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-bob-revoked',
+                transportPeerId: 'transport-bob-revoked',
+                deviceSigningPublicKey: 'signing-bob-revoked',
+                status: GroupMemberDeviceStatus.revoked,
+                revokedAt: revokedAt,
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+          ),
+        );
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p269-empty-group-media-acl-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+
+        final ordinarySource = File(p.join(tempDir.path, 'ordinary.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final ordinarySourceBytes = ordinarySource.readAsBytesSync();
+        final ordinaryMessageRepo = _WriteCountingGroupMessageRepository();
+        final ordinaryMediaRepo = CountingMediaAttachmentRepository();
+        var ordinaryAttachmentSaveCalls = 0;
+        ordinaryMediaRepo.onSaveAttachment = (_) {
+          ordinaryAttachmentSaveCalls++;
+        };
+        final ordinaryFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: ordinaryMessageRepo,
+            mediaRepo: ordinaryMediaRepo,
+            mediaFileManager: ordinaryFileManager,
+            initialAttachments: <File>[ordinarySource],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final ordinarySend = await startScreenSend(tester, '');
+        await tester.runAsync(() => ordinarySend.future);
+        await pumpFrames(tester, count: 20);
+
+        final ordinarySourceRetained = ordinarySource.existsSync();
+        final ordinarySourceUnchanged =
+            ordinarySourceRetained &&
+            base64Encode(ordinarySource.readAsBytesSync()) ==
+                base64Encode(ordinarySourceBytes);
+        final ordinaryPendingComposerMedia = tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .composerStateListenable!
+            .value
+            .pendingAttachments
+            .length;
+        final ordinaryCryptoOrUploadCommands = bridge.commandLog
+            .where(
+              const <String>{
+                'blob:keygen',
+                'blob:encrypt',
+                'media:upload',
+              }.contains,
+            )
+            .toList(growable: false);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester, count: 5);
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'msg-published'},
+          },
+        );
+        final voiceSource = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('p269 empty ACL voice bytes');
+        final voiceSourceBytes = voiceSource.readAsBytesSync();
+        final voiceRecorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3200
+          ..fakeSizeBytes = voiceSource.lengthSync()
+          ..fakeOutputPath = voiceSource.path;
+        final voiceMessageRepo = _WriteCountingGroupMessageRepository();
+        final voiceMediaRepo = CountingMediaAttachmentRepository();
+        var voiceAttachmentSaveCalls = 0;
+        voiceMediaRepo.onSaveAttachment = (_) {
+          voiceAttachmentSaveCalls++;
+        };
+        final voiceFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: voiceMessageRepo,
+            mediaRepo: voiceMediaRepo,
+            mediaFileManager: voiceFileManager,
+            audioRecorderService: voiceRecorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final voiceScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (voiceScreen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        voiceRecorder.emitAmplitude(0.2);
+        voiceRecorder.emitAmplitude(0.6);
+        voiceRecorder.emitAmplitude(0.3);
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await tester.runAsync(
+          () => (recordingScreen.onRecordStop! as Future<void> Function())(),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final voiceSourceRetained = voiceSource.existsSync();
+        final voiceSourceUnchanged =
+            voiceSourceRetained &&
+            base64Encode(voiceSource.readAsBytesSync()) ==
+                base64Encode(voiceSourceBytes);
+        final voiceCryptoOrUploadCommands = bridge.commandLog
+            .where(
+              const <String>{
+                'blob:keygen',
+                'blob:encrypt',
+                'media:upload',
+              }.contains,
+            )
+            .toList(growable: false);
+        final typedAclFailures = flowEvents
+            .where(
+              (event) =>
+                  event['event'] ==
+                  'GROUP_CONV_FL_MEDIA_ACL_PREFLIGHT_REJECTED',
+            )
+            .map((event) {
+              final details = event['details'] as Map<String, dynamic>;
+              return <String, Object?>{
+                'surface': details['surface'],
+                'stage': details['stage'],
+                'disposition': details['disposition'],
+                'errorCode': details['errorCode'],
+              };
+            })
+            .toList(growable: false);
+
+        expect(
+          <String, Object>{
+            'ordinary source retained': ordinarySourceRetained,
+            'ordinary source unchanged': ordinarySourceUnchanged,
+            'ordinary durable copies': ordinaryFileManager.copyCalls,
+            'ordinary durable cleanup calls':
+                ordinaryFileManager.deletedPendingUploadDirs.length,
+            'ordinary parent saves': ordinaryMessageRepo.saveMessageCalls,
+            'ordinary attachment saves': ordinaryAttachmentSaveCalls,
+            'ordinary pending composer media': ordinaryPendingComposerMedia,
+            'ordinary crypto/upload commands': ordinaryCryptoOrUploadCommands,
+            'voice source retained': voiceSourceRetained,
+            'voice source unchanged': voiceSourceUnchanged,
+            'voice durable copies': voiceFileManager.copyCalls,
+            'voice durable cleanup calls':
+                voiceFileManager.deletedPendingUploadDirs.length,
+            'voice parent saves': voiceMessageRepo.saveMessageCalls,
+            'voice attachment saves': voiceAttachmentSaveCalls,
+            'voice crypto/upload commands': voiceCryptoOrUploadCommands,
+            'typed ACL failures': typedAclFailures,
+          },
+          equals(<String, Object>{
+            'ordinary source retained': true,
+            'ordinary source unchanged': true,
+            'ordinary durable copies': 0,
+            'ordinary durable cleanup calls': 0,
+            'ordinary parent saves': 0,
+            'ordinary attachment saves': 0,
+            'ordinary pending composer media': 1,
+            'ordinary crypto/upload commands': const <String>[],
+            'voice source retained': true,
+            'voice source unchanged': true,
+            'voice durable copies': 0,
+            'voice durable cleanup calls': 0,
+            'voice parent saves': 0,
+            'voice attachment saves': 0,
+            'voice crypto/upload commands': const <String>[],
+            'typed ACL failures': const <Map<String, Object?>>[
+              <String, Object?>{
+                'surface': 'ordinary',
+                'stage': 'validation',
+                'disposition': 'terminal',
+                'errorCode': 'EMPTY_GROUP_MEDIA_ACL',
+              },
+              <String, Object?>{
+                'surface': 'voice',
+                'stage': 'validation',
+                'disposition': 'terminal',
+                'errorCode': 'EMPTY_GROUP_MEDIA_ACL',
+              },
+            ],
+          }),
+        );
+      },
+    );
+
+    testWidgets(
+      'P269 ordinary foreground media survives database-defaulted retry counters and reaches exact completion once',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p269-ordinary-sql-defaults-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final jpeg = File(p.join(tempDir.path, 'ordinary.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final video = File(p.join(tempDir.path, 'ordinary.mp4'))
+          ..writeAsBytesSync(_tinyMp4Bytes);
+        final sqlDefaultMediaRepo = _SqlDefaultingMediaAttachmentRepository();
+        final completionRepo = _CompletionAwareGroupMessageRepository(
+          mediaRepo: sqlDefaultMediaRepo,
+        );
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadedBlobIds = <String>[];
+        final uploadedMimes = <String>[];
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: completionRepo,
+            mediaRepo: sqlDefaultMediaRepo,
+            mediaFileManager: fileManager,
+            initialPendingMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: jpeg,
+                budgetBytes: jpeg.lengthSync(),
+                width: 640,
+                height: 480,
+              ),
+              PendingComposerMedia(
+                file: video,
+                budgetBytes: video.lengthSync(),
+                width: 1280,
+                height: 720,
+                durationMs: 4200,
+              ),
+            ],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  uploadedBlobIds.add(blobId!);
+                  uploadedMimes.add(mime);
+                  return MediaAttachment(
+                    id: blobId,
+                    messageId: '',
+                    mime: mime,
+                    size: 10000 + uploadCalls,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    width: width,
+                    height: height,
+                    durationMs: durationMs,
+                    localPath: 'relay-owned/$blobId',
+                    downloadStatus: 'done',
+                    createdAt: '2099-01-0${uploadCalls}T00:00:00.000Z',
+                    contentHash: _validContentHash,
+                    thumbnailHash: 'upload-thumbnail-$uploadCalls',
+                    encryptionKeyBase64: 'upload-key-$uploadCalls',
+                    encryptionNonce: 'upload-nonce-$uploadCalls',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final send = await startScreenSend(tester, 'P269 ordinary media');
+        await tester.runAsync(() => send.future);
+        await pumpFrames(tester, count: 20);
+
+        expect(uploadCalls, 2);
+        expect(uploadedMimes, <String>['image/jpeg', 'video/mp4']);
+        expect(uploadedBlobIds.toSet(), hasLength(2));
+        expect(completionRepo.completionCalls, 2);
+        expect(completionRepo.projectionCalls, 0);
+        expect(groupPublishPayloads(bridge), hasLength(1));
+
+        final parents = await completionRepo.getMessagesPage(group.id);
+        expect(parents, hasLength(1));
+        final parent = parents.length == 1 ? parents.single : null;
+        expect(parent?.status, 'sent');
+        final rows = parent == null
+            ? <MediaAttachment>[]
+            : await sqlDefaultMediaRepo.getAttachmentsForMessage(
+                parent.id,
+                owner: MediaOwnerLane.group,
+              );
+        expect(rows, hasLength(2));
+        for (final row in rows) {
+          final expected = completionRepo.expectedFor(row.id);
+          final completed = completionRepo.completedFor(row.id);
+          expect(expected, isNotNull, reason: 'missing exact-CAS expectation');
+          expect(completed, isNotNull, reason: 'missing completion result');
+          expect(
+            expected?.uploadRetryCount,
+            0,
+            reason: 'new foreground rows must carry the upload counter',
+          );
+          expect(
+            expected?.downloadRetryCount,
+            0,
+            reason: 'new foreground rows must carry the download counter',
+          );
+          expect(row.downloadStatus, 'done');
+          expect(row.uploadRetryCount, 0);
+          expect(row.downloadRetryCount, 0);
+          expect(row.createdAt, expected?.createdAt);
+          expect(row.thumbnailHash, expected?.thumbnailHash);
+          expect(row.size, completed?.size);
+          expect(row.localPath, completed?.localPath);
+          expect(row.contentHash, completed?.contentHash);
+          expect(row.encryptionKeyBase64, completed?.encryptionKeyBase64);
+          expect(row.encryptionNonce, completed?.encryptionNonce);
+          expect(row.encryptionScheme, completed?.encryptionScheme);
+        }
+      },
+    );
+
+    testWidgets(
+      'P269 voice foreground media survives database-defaulted retry counters and reaches exact completion once',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p269-voice-sql-defaults-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final voiceSource = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('p269 voice bytes');
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3200
+          ..fakeSizeBytes = voiceSource.lengthSync()
+          ..fakeOutputPath = voiceSource.path;
+        final sqlDefaultMediaRepo = _SqlDefaultingMediaAttachmentRepository();
+        final completionRepo = _CompletionAwareGroupMessageRepository(
+          mediaRepo: sqlDefaultMediaRepo,
+        );
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        String? uploadedBlobId;
+        String? uploadedMime;
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: completionRepo,
+            mediaRepo: sqlDefaultMediaRepo,
+            mediaFileManager: fileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  uploadedBlobId = blobId;
+                  uploadedMime = mime;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 64000,
+                    mediaType: 'audio',
+                    localPath: 'relay-owned/$blobId',
+                    downloadStatus: 'done',
+                    createdAt: '2099-02-01T00:00:00.000Z',
+                    contentHash: _validContentHash,
+                    thumbnailHash: 'upload-voice-thumbnail',
+                    encryptionKeyBase64: 'upload-voice-key',
+                    encryptionNonce: 'upload-voice-nonce',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        recorder.emitAmplitude(0.15);
+        recorder.emitAmplitude(0.60);
+        recorder.emitAmplitude(0.30);
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await tester.runAsync(
+          () => (recordingScreen.onRecordStop! as Future<void> Function())(),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(uploadCalls, 1);
+        expect(uploadedMime, 'audio/mp4');
+        expect(uploadedBlobId, isNotNull);
+        expect(completionRepo.completionCalls, 1);
+        expect(completionRepo.projectionCalls, 0);
+        expect(groupPublishPayloads(bridge), hasLength(1));
+
+        final parents = await completionRepo.getMessagesPage(group.id);
+        expect(parents, hasLength(1));
+        final parent = parents.length == 1 ? parents.single : null;
+        expect(parent?.status, 'sent');
+        final rows = parent == null
+            ? <MediaAttachment>[]
+            : await sqlDefaultMediaRepo.getAttachmentsForMessage(
+                parent.id,
+                owner: MediaOwnerLane.group,
+              );
+        expect(rows, hasLength(1));
+        final row = rows.length == 1 ? rows.single : null;
+        final expected = row == null
+            ? null
+            : completionRepo.expectedFor(row.id);
+        final completed = row == null
+            ? null
+            : completionRepo.completedFor(row.id);
+        expect(row?.id, uploadedBlobId);
+        expect(expected?.id, uploadedBlobId);
+        expect(expected?.uploadRetryCount, 0);
+        expect(expected?.downloadRetryCount, 0);
+        expect(row?.downloadStatus, 'done');
+        expect(row?.uploadRetryCount, 0);
+        expect(row?.downloadRetryCount, 0);
+        expect(row?.durationMs, 3200);
+        expect(row?.durationMs, expected?.durationMs);
+        expect(row?.waveform, expected?.waveform);
+        expect(row?.waveform, isNotEmpty);
+        expect(row?.createdAt, expected?.createdAt);
+        expect(row?.thumbnailHash, expected?.thumbnailHash);
+        expect(row?.size, completed?.size);
+        expect(row?.contentHash, completed?.contentHash);
+      },
+    );
+
+    testWidgets(
+      'P269 foreground completion failure projects bounded only while exact pending authority survives',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p269-foreground-completion-failure-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final source = File(p.join(tempDir.path, 'completion.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final completionMediaRepo = CountingMediaAttachmentRepository();
+        final completionRepo = _CompletionAwareGroupMessageRepository(
+          mediaRepo: completionMediaRepo,
+        )..completionError = StateError('simulated completion persistence');
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: completionRepo,
+            mediaRepo: completionMediaRepo,
+            mediaFileManager: fileManager,
+            initialAttachments: <File>[source],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  return successfulGroupUploadFixture(
+                    blobId: blobId!,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final send = await startScreenSend(tester, 'completion failure');
+        await tester.runAsync(() => send.future);
+        await pumpFrames(tester, count: 20);
+
+        expect(uploadCalls, 1);
+        expect(completionRepo.completionCalls, 1);
+        expect(completionRepo.projectionCalls, 1);
+        expect(completionRepo.appliedProjectionCalls, 1);
+        expect(completionRepo.projectedFailures, hasLength(1));
+        final projectedFailure = completionRepo.projectedFailures.isEmpty
+            ? null
+            : completionRepo.projectedFailures.single;
+        expect(projectedFailure?.stage, UploadMediaStage.consumerBoundary);
+        expect(
+          projectedFailure?.disposition,
+          UploadMediaDisposition.boundedRetryable,
+        );
+        expect(groupPublishPayloads(bridge), isEmpty);
+
+        final pending = await completionMediaRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
+        expect(pending, hasLength(1));
+        final pendingRow = pending.length == 1 ? pending.single : null;
+        expect(pendingRow?.uploadRetryCount, 1);
+        final durablePath = pendingRow?.localPath == null
+            ? null
+            : await fileManager.resolveStoredPath(pendingRow!.localPath!);
+        expect(durablePath, isNotNull);
+        expect(
+          durablePath == null ? false : File(durablePath).existsSync(),
+          isTrue,
+        );
+        expect(source.readAsBytesSync(), validJpegFixtureBytes);
+      },
+    );
+
+    testWidgets(
+      'P269 ordinary multi-media foreground lease owns every durable persisted blob ID until settlement',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'p269-ordinary-durable-lease-',
+        );
+        final first = File(p.join(tempDir.path, 'first.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final second = File(p.join(tempDir.path, 'second.png'))
+          ..writeAsBytesSync(_tinyPngBytes);
+        final leaseMediaRepo = CountingMediaAttachmentRepository();
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadStarted = <Completer<void>>[
+          Completer<void>(),
+          Completer<void>(),
+        ];
+        final uploadGates = <Completer<void>>[
+          Completer<void>(),
+          Completer<void>(),
+        ];
+        final observedDurableIds = <String>[];
+        final ownedAtFirstVisibility = <bool>[];
+        final competitorWon = <bool>[];
+        final competitorLeases = <MediaUploadLease>[];
+        final uploadedIds = <String>[];
+        var uploadCalls = 0;
+
+        leaseMediaRepo.onSaveAttachment = (attachment) {
+          if (attachment.downloadStatus != 'upload_pending' ||
+              observedDurableIds.contains(attachment.id)) {
+            return;
+          }
+          observedDurableIds.add(attachment.id);
+          ownedAtFirstVisibility.add(
+            mediaUploadInFlightTracker.isInFlight(attachment.id),
+          );
+          final competingLease = mediaUploadInFlightTracker.tryClaimAll(
+            <String>[attachment.id],
+            source: MediaUploadTriggerSource.periodic,
+          );
+          competitorWon.add(competingLease != null);
+          if (competingLease != null) competitorLeases.add(competingLease);
+        };
+        addTearDown(() {
+          for (final gate in uploadGates) {
+            if (!gate.isCompleted) gate.complete();
+          }
+          for (final lease in competitorLeases) {
+            mediaUploadInFlightTracker.release(lease);
+          }
+          mediaUploadInFlightTracker.clearAll();
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: leaseMediaRepo,
+            mediaFileManager: fileManager,
+            initialAttachments: <File>[first, second],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  final index = uploadCalls++;
+                  uploadedIds.add(blobId!);
+                  if (!uploadStarted[index].isCompleted) {
+                    uploadStarted[index].complete();
+                  }
+                  await uploadGates[index].future;
+                  return successfulGroupUploadFixture(
+                    blobId: blobId,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final send = await startScreenSend(tester, 'leased media');
+        await tester.runAsync(
+          () => uploadStarted[0].future.timeout(const Duration(seconds: 10)),
+        );
+        uploadGates[0].complete();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted[1].isCompleted,
+        );
+        expect(uploadStarted[1].isCompleted, isTrue);
+        uploadGates[1].complete();
+        await tester.runAsync(() => send.future);
+        await pumpFrames(tester, count: 20);
+
+        expect(observedDurableIds, hasLength(2));
+        expect(observedDurableIds.toSet(), uploadedIds.toSet());
+        expect(ownedAtFirstVisibility, <bool>[true, true]);
+        expect(competitorWon, <bool>[false, false]);
+        expect(groupPublishPayloads(bridge), hasLength(1));
+
+        for (final lease in competitorLeases) {
+          mediaUploadInFlightTracker.release(lease);
+        }
+        competitorLeases.clear();
+        expect(mediaUploadInFlightTracker.inFlightCount, 0);
+      },
+    );
+
+    testWidgets(
+      'P269 group composer canonicalizes heif to image heic and uploads and publishes once',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final tempDir = Directory.systemTemp.createTempSync('p269-group-heif-');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final heif = File(p.join(tempDir.path, 'camera.heif'))
+          ..writeAsBytesSync(_validHeifBytes);
+        final heifMediaRepo = CountingMediaAttachmentRepository();
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadedMimes = <String>[];
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: heifMediaRepo,
+            mediaFileManager: fileManager,
+            initialAttachments: <File>[heif],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  uploadedMimes.add(mime);
+                  return successfulGroupUploadFixture(
+                    blobId: blobId!,
+                    mime: mime,
+                    localFilePath: localFilePath,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final send = await startScreenSend(tester, 'HEIF media');
+        await tester.runAsync(() => send.future);
+        await pumpFrames(tester, count: 20);
+
+        expect(uploadCalls, 1);
+        expect(uploadedMimes, <String>['image/heic']);
+        expect(groupPublishPayloads(bridge), hasLength(1));
+        final parents = await msgRepo.getMessagesPage(group.id);
+        expect(parents, hasLength(1));
+        final parent = parents.length == 1 ? parents.single : null;
+        expect(parent?.status, 'sent');
+        final rows = parent == null
+            ? <MediaAttachment>[]
+            : await heifMediaRepo.getAttachmentsForMessage(
+                parent.id,
+                owner: MediaOwnerLane.group,
+              );
+        expect(rows, hasLength(1));
+        expect(rows.isEmpty ? null : rows.single.mime, 'image/heic');
+        expect(rows.isEmpty ? null : rows.single.downloadStatus, 'done');
+      },
+    );
 
     testWidgets(
       'PB264-17 queued exit is restart-visible, read-only, and cancel-refreshable',
@@ -10964,6 +12023,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
       await msgRepo.saveMessage(
         makeMessage(
           id: 'msg-parent-upload',
@@ -11428,6 +12488,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
 
       final tempDir = Directory.systemTemp.createTempSync(
         'group_upload_progress_',
@@ -13657,6 +14718,7 @@ void main() {
     testWidgets(
       'voice stop pre-persists a durable pending attachment and threads a stable blob ID',
       (tester) async {
+        mediaUploadInFlightTracker.clearAll();
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
         await saveActiveGroupMembers(groupRepo, group);
@@ -13680,6 +14742,25 @@ void main() {
         final uploadStarted = Completer<void>();
         String? receivedBlobId;
         String? receivedLocalPath;
+        bool? ownedAtFirstDurableVisibility;
+        MediaUploadLease? competingLease;
+        mediaAttachmentRepo.onSaveAttachment = (attachment) {
+          if (attachment.downloadStatus != 'upload_pending' ||
+              ownedAtFirstDurableVisibility != null) {
+            return;
+          }
+          ownedAtFirstDurableVisibility = mediaUploadInFlightTracker.isInFlight(
+            attachment.id,
+          );
+          competingLease = mediaUploadInFlightTracker.tryClaimAll(<String>[
+            attachment.id,
+          ], source: MediaUploadTriggerSource.periodic);
+        };
+        addTearDown(() {
+          final lease = competingLease;
+          if (lease != null) mediaUploadInFlightTracker.release(lease);
+          mediaUploadInFlightTracker.clearAll();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -13778,6 +14859,8 @@ void main() {
         expect(pending.single.downloadStatus, 'upload_pending');
         expect(pending.single.localPath, isNotNull);
         expect(pending.single.localPath, startsWith('pending_uploads/'));
+        expect(ownedAtFirstDurableVisibility, isTrue);
+        expect(competingLease, isNull);
 
         final refreshedScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -13799,6 +14882,7 @@ void main() {
           await stopFuture;
         });
         await pumpFrames(tester, count: 20);
+        expect(mediaUploadInFlightTracker.inFlightCount, 0);
       },
     );
 
@@ -14586,6 +15670,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 10));
+        });
         await pumpUntilAsync(tester, () async {
           final messages = await msgRepo.getMessagesPage(group.id);
           return messages.length == 1 && messages.single.status == 'sending';
@@ -15013,6 +16100,76 @@ void main() {
         final persisted = await msgRepo.getMessage(messageId);
         expect(persisted, isNotNull);
         expect(persisted!.status, GroupMessage.statusSendFailed);
+      },
+    );
+
+    testWidgets(
+      'voice stop unmounted during background-task begin never updates a disposed composer',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-bg-begin-unmount-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 48000
+          ..fakeOutputPath = tempVoice.path;
+        final gatedBridge = _GatedBackgroundTaskBridge();
+        bridge = gatedBridge;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        late Future<void> stopFuture;
+        await tester.runAsync(() async {
+          stopFuture =
+              (recordingScreen.onRecordStop! as Future<void> Function())();
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpUntil(
+          tester,
+          () => gatedBridge.beginStarted.isCompleted,
+          maxPumps: 240,
+        );
+        expect(gatedBridge.beginStarted.isCompleted, isTrue);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        gatedBridge.beginGate.complete();
+        await tester.runAsync(() async {
+          await stopFuture.timeout(const Duration(seconds: 10));
+        });
+
+        expect(gatedBridge.endCalls, 1);
       },
     );
 
@@ -16278,6 +17435,127 @@ void main() {
       int downloadCommandCount() => bridge.commandLog
           .where((command) => command == 'media:download')
           .length;
+
+      testWidgets(
+        'P269 automatic route media recovery delegates to shared coordinator while explicit retry stays user owned',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+
+          const initialMessageId = 'msg-269-route-initial';
+          const initialAttachmentId = 'att-269-route-initial';
+          await msgRepo.saveMessage(
+            makeMessage(id: initialMessageId, text: 'initial route recovery'),
+          );
+          await mediaAttachmentRepo.saveAttachment(
+            makePolicyAttachment(initialAttachmentId, initialMessageId),
+            owner: MediaOwnerLane.group,
+          );
+
+          final policy = RecordingMediaAutoDownloadDecider();
+          final transferredAttachmentIds = <String>[];
+          final coordinator = RetryIncompleteGroupDownloadsUseCase(
+            loadPage: ({required after, required limit}) async => const [],
+            loadCurrentAttachment: mediaAttachmentRepo.getAttachmentById,
+            loadCurrentParent: msgRepo.getMessage,
+            loadCurrentGroup: groupRepo.getGroup,
+            autoDownloadDecider: policy,
+            transfer:
+                ({required attachment, required parent, required group}) async {
+                  transferredAttachmentIds.add(attachment.id);
+                  // A non-done status is deliberate: it is visible without a
+                  // local-file fixture, so the assertion below proves the
+                  // route awaited the shared result and rehydrated its map.
+                  final persisted = attachment.copyWith(
+                    downloadStatus: kMediaDownloadStatusFailed,
+                  );
+                  await mediaAttachmentRepo.saveAttachment(
+                    persisted,
+                    owner: MediaOwnerLane.group,
+                  );
+                  return persisted;
+                },
+          );
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              groupMediaDownloadCoordinator: coordinator,
+            ),
+          );
+          await pumpUntil(
+            tester,
+            () => transferredAttachmentIds.contains(initialAttachmentId),
+          );
+          await pumpFrames(tester, count: 8);
+
+          var screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(transferredAttachmentIds, [initialAttachmentId]);
+          expect(
+            screen.mediaMap[initialMessageId]!.single.downloadStatus,
+            kMediaDownloadStatusFailed,
+            reason: 'the initial visible row is rehydrated after recovery',
+          );
+          expect(downloadCommandCount(), 0);
+
+          const liveMessageId = 'msg-269-route-live';
+          const liveAttachmentId = 'att-269-route-live';
+          final liveMessage = makeMessage(
+            id: liveMessageId,
+            text: 'live route recovery',
+          );
+          await msgRepo.saveMessage(liveMessage);
+          await mediaAttachmentRepo.saveAttachment(
+            makePolicyAttachment(liveAttachmentId, liveMessageId),
+            owner: MediaOwnerLane.group,
+          );
+          messageStreamController.add(liveMessage);
+          await pumpUntil(
+            tester,
+            () => transferredAttachmentIds.contains(liveAttachmentId),
+          );
+          await pumpFrames(tester, count: 8);
+
+          screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(transferredAttachmentIds, [
+            initialAttachmentId,
+            liveAttachmentId,
+          ]);
+          expect(
+            screen.mediaMap[liveMessageId]!.single.downloadStatus,
+            kMediaDownloadStatusFailed,
+            reason: 'the live visible row is rehydrated after recovery',
+          );
+          expect(downloadCommandCount(), 0);
+
+          final coordinatorTransfersBeforeRetry =
+              transferredAttachmentIds.length;
+          final policyConsultsBeforeRetry = policy.requests.length;
+          screen.onRetryUnavailableMedia!(liveMessageId, liveAttachmentId);
+          for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            );
+            await tester.pump(const Duration(milliseconds: 25));
+          }
+          await pumpFrames(tester, count: 4);
+
+          expect(
+            transferredAttachmentIds,
+            hasLength(coordinatorTransfersBeforeRetry),
+            reason: 'explicit retry must stay outside automatic coordination',
+          );
+          expect(policy.requests, hasLength(policyConsultsBeforeRetry));
+          expect(downloadCommandCount(), 1);
+        },
+      );
 
       testWidgets(
         'discussion denial makes zero transfers and consults the discussion '

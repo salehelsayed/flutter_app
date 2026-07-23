@@ -20,11 +20,13 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -39,6 +41,69 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
+
+class _DissolveOnForwardSnapshotRepository extends InMemoryGroupRepository {
+  _DissolveOnForwardSnapshotRepository({required this.snapshotCall});
+
+  final int snapshotCall;
+  var _snapshotCalls = 0;
+
+  @override
+  Future<GroupForwardAuthorizationSnapshot?>
+  loadGroupForwardAuthorizationSnapshot(String groupId) async {
+    _snapshotCalls += 1;
+    if (_snapshotCalls == snapshotCall) {
+      final current = await super.getGroup(groupId);
+      if (current != null) {
+        await super.updateGroup(
+          current.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 7, 22, 13),
+            dissolvedBy: 'peer-remote-admin',
+          ),
+        );
+      }
+    }
+    return super.loadGroupForwardAuthorizationSnapshot(groupId);
+  }
+}
+
+class _DissolveAfterFirstGroupUploadBridge extends PassthroughCryptoBridge {
+  _DissolveAfterFirstGroupUploadBridge({
+    required this.groupRepo,
+    required this.groupId,
+  });
+
+  final InMemoryGroupRepository groupRepo;
+  final String groupId;
+  var _uploadCalls = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final decoded = jsonDecode(message) as Map<String, dynamic>;
+    final response = await super.send(message);
+    if (decoded['cmd'] == 'media:upload' && ++_uploadCalls == 1) {
+      unawaited(
+        runGroupMembershipMutationLocked<void>(
+          groupId: groupId,
+          action: () async {
+            final current = await groupRepo.getGroup(groupId);
+            if (current != null) {
+              await groupRepo.updateGroup(
+                current.copyWith(
+                  isDissolved: true,
+                  dissolvedAt: DateTime.utc(2026, 7, 22, 13, 5),
+                  dissolvedBy: 'peer-remote-admin',
+                ),
+              );
+            }
+          },
+        ),
+      );
+    }
+    return response;
+  }
+}
 
 void main() {
   test('does nothing when no targets are selected', () async {
@@ -1844,6 +1909,332 @@ void main() {
         expect(mediaMap.containsKey('ownerLane'), isFalse);
         expect(mediaMap.containsKey('owner'), isFalse);
         expect(mediaMap.containsKey('localPath'), isFalse);
+      }
+    },
+  );
+
+  test(
+    'P269 external group share rejects dissolve between snapshot and first upload with zero external effects',
+    () async {
+      final groups = _DissolveOnForwardSnapshotRepository(snapshotCall: 2);
+      final group = _makeGroup(
+        'group-p269-share-before-first-dissolve',
+        'Before first',
+      );
+      await groups.saveGroup(group);
+      await _seedGroupMembers(groups, group.id);
+      await _saveLatestGroupKey(groups, group.id);
+      final groupMessages = InMemoryGroupMessageRepository();
+      final dir = Directory.systemTemp.createTempSync(
+        'p269_share_before_first_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final source = File('${dir.path}/one.jpg');
+      File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).copySync(source.path);
+      final bridge = PassthroughCryptoBridge();
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: source,
+              budgetBytes: source.lengthSync(),
+            ),
+          ],
+        ),
+      );
+
+      final progressEvents = <ShareBatchDeliveryProgress>[];
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: <String>[source.path],
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.group(group)],
+        onProgress: progressEvents.add,
+      );
+
+      expect(result.failureCount, 1);
+      expect(
+        bridge.commandLog.where(
+          (command) => const <String>{
+            'blob:keygen',
+            'blob:encrypt',
+            'media:upload',
+          }.contains(command),
+        ),
+        isEmpty,
+      );
+      expect(progressEvents, isEmpty);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        isEmpty,
+      );
+      expect(await groupMessages.getMessagesPage(group.id), isEmpty);
+      expect((await groups.getGroup(group.id))?.isDissolved, isTrue);
+    },
+  );
+
+  test(
+    'P269 external group share yields between upload leaves so dissolve blocks later upload and publish',
+    () async {
+      final groups = InMemoryGroupRepository();
+      final group = _makeGroup(
+        'group-p269-share-between-items-dissolve',
+        'Between items',
+      );
+      await groups.saveGroup(group);
+      await _seedGroupMembers(groups, group.id);
+      await _saveLatestGroupKey(groups, group.id);
+      final groupMessages = InMemoryGroupMessageRepository();
+      final dir = Directory.systemTemp.createTempSync(
+        'p269_share_between_items_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final first = File('${dir.path}/one.jpg');
+      final second = File('${dir.path}/two.jpg');
+      final fixture = File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      );
+      fixture.copySync(first.path);
+      fixture.copySync(second.path);
+      final bridge = _DissolveAfterFirstGroupUploadBridge(
+        groupRepo: groups,
+        groupId: group.id,
+      );
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: <PendingComposerMedia>[
+            PendingComposerMedia(file: first, budgetBytes: first.lengthSync()),
+            PendingComposerMedia(
+              file: second,
+              budgetBytes: second.lengthSync(),
+            ),
+          ],
+        ),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: <String>[first.path, second.path],
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.group(group)],
+      );
+
+      expect(result.failureCount, 1);
+      expect(
+        bridge.commandLog.where((command) => command == 'media:upload'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'blob:keygen'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'blob:encrypt'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        isEmpty,
+      );
+      expect(await groupMessages.getMessagesPage(group.id), isEmpty);
+      expect((await groups.getGroup(group.id))?.isDissolved, isTrue);
+    },
+  );
+
+  test(
+    'P269 external group media share uses active transport ACL and never account or device IDs',
+    () async {
+      final identities = FakeIdentityRepository()..seed(_makeIdentity());
+      final groups = InMemoryGroupRepository();
+      final groupMessages = InMemoryGroupMessageRepository();
+      final media = InMemoryMediaAttachmentRepository();
+      final group = _makeGroup('group-p269-external-share', 'P269 Share');
+      await groups.saveGroup(group);
+      await _saveLatestGroupKey(groups, group.id);
+      final joinedAt = DateTime.utc(2026, 7, 22, 11, 30);
+      await groups.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'my-peer-id-12345',
+          username: 'Me',
+          role: MemberRole.admin,
+          publicKey: 'my-public-key',
+          mlKemPublicKey: 'mlkem-public',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'transport-share-me-primary-p269',
+              transportPeerId: 'transport-share-me-primary-p269',
+              deviceSigningPublicKey: 'my-public-key',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-me-shared-p269',
+              transportPeerId: 'transport-share-shared-p269',
+              deviceSigningPublicKey: 'signing-share-me-shared-p269',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-me-revoked-p269',
+              transportPeerId: 'transport-share-me-revoked-p269',
+              deviceSigningPublicKey: 'signing-share-me-revoked-p269',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-me-blank-p269',
+              transportPeerId: ' ',
+              deviceSigningPublicKey: 'signing-share-me-blank-p269',
+            ),
+          ],
+          joinedAt: joinedAt,
+        ),
+      );
+      await groups.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'account-share-writer-p269',
+          username: 'Writer',
+          role: MemberRole.writer,
+          publicKey: 'account-key-share-writer-p269',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-writer-primary-p269',
+              transportPeerId: 'transport-share-writer-primary-p269',
+              deviceSigningPublicKey: 'signing-share-writer-primary-p269',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-writer-shared-p269',
+              transportPeerId: 'transport-share-shared-p269',
+              deviceSigningPublicKey: 'signing-share-writer-shared-p269',
+            ),
+          ],
+          joinedAt: joinedAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      await groups.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'account-share-revoked-p269',
+          username: 'Revoked',
+          role: MemberRole.reader,
+          publicKey: 'account-key-share-revoked-p269',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-share-only-revoked-p269',
+              transportPeerId: 'transport-share-only-revoked-p269',
+              deviceSigningPublicKey: 'signing-share-only-revoked-p269',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+          ],
+          joinedAt: joinedAt.add(const Duration(seconds: 2)),
+        ),
+      );
+
+      final dir = Directory.systemTemp.createTempSync(
+        'p269_external_group_share_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final source = File('${dir.path}/source.jpg');
+      File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).copySync(source.path);
+      final bridge = _GroupShareBgBridge(
+        publishMessageId: 'msg-p269-external-share',
+        publishTopicPeers: 1,
+        inboxStoreOk: true,
+      );
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identities,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: media,
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: bridge,
+        p2pService: FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'transport-share-me-primary-p269',
+          ),
+        ),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: source,
+              budgetBytes: source.lengthSync(),
+            ),
+          ],
+        ),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.mixed,
+          text: 'P269 external group share',
+          filePaths: <String>[source.path],
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.group(group)],
+      );
+      expect(
+        result.failureCount,
+        0,
+        reason: result.results.map((entry) => entry.detail).join('; '),
+      );
+
+      final uploadPayload = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'media:upload')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .last;
+      final serializedAcl = (uploadPayload['allowedPeers'] as List<dynamic>)
+          .cast<String>();
+      expect(
+        serializedAcl,
+        unorderedEquals(const <String>[
+          'transport-share-me-primary-p269',
+          'transport-share-shared-p269',
+          'transport-share-writer-primary-p269',
+        ]),
+      );
+      expect(serializedAcl.toSet(), hasLength(serializedAcl.length));
+      expect(serializedAcl, isNot(contains('')));
+      for (final forbidden in const <String>[
+        'my-peer-id-12345',
+        'account-share-writer-p269',
+        'account-share-revoked-p269',
+        'device-share-me-shared-p269',
+        'device-share-me-revoked-p269',
+        'device-share-me-blank-p269',
+        'device-share-writer-primary-p269',
+        'device-share-writer-shared-p269',
+        'device-share-only-revoked-p269',
+        'transport-share-me-revoked-p269',
+        'transport-share-only-revoked-p269',
+      ]) {
+        expect(serializedAcl, isNot(contains(forbidden)));
       }
     },
   );

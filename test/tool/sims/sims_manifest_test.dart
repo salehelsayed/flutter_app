@@ -322,6 +322,94 @@ void main() {
     });
   });
 
+  test('physical iOS production profile keeps its APNs-only compile seam', () {
+    final profile = manifest.buildProfileById('ios.device.production')!;
+    expect(profile.compileDefines, <String, String>{'PRODUCTION_APNS': 'true'});
+  });
+
+  test('TC-269 Android proof owns only its disposable build profile', () {
+    final profile = manifest.buildProfileById('android.e2e.group_media_269')!;
+    expect(profile.platform, 'android');
+    expect(profile.artifactKind, 'universal-debug-apk');
+    expect(profile.buildRequired, isTrue);
+    expect(profile.compileDefines, <String, String>{
+      'E2E_TEST_MODE': 'true',
+      'SIMS_ANDROID_DISPOSABLE_PACKAGE_ID': 'com.mknoon.sims.groupmedia269',
+    });
+
+    final build = manifest.capabilityById('build.android.e2e.group_media_269')!;
+    expect(build.buildProfileId, profile.id);
+    expect(build.command, <String>[
+      '@prepare-build',
+      'android.e2e.group_media_269',
+    ]);
+    expect(build.families, <String>['group', 'media', 'transport']);
+    expect(build.assertionIds, <String>[
+      'build.input_and_artifact_hash_attested',
+      'build.disposable_application_id_attested',
+    ]);
+    expect(build.dependencies, isEmpty);
+    expect(
+      build.resources.any(
+        (resource) =>
+            resource.name == 'build:android.e2e.group_media_269' &&
+            resource.access == ResourceAccess.write,
+      ),
+      isTrue,
+    );
+
+    final scenario = manifest.capabilityById('groups.media_send_reliability')!;
+    expect(scenario.buildProfileId, profile.id);
+    expect(scenario.dependencies, <String>[
+      'build.android.e2e.group_media_269',
+    ]);
+    expect(
+      scenario.resources.any(
+        (resource) =>
+            resource.name == 'build:android.e2e.group_media_269' &&
+            resource.access == ResourceAccess.read,
+      ),
+      isTrue,
+    );
+    expect(
+      manifest.capabilityById('build.android.e2e.main')!.families,
+      isNot(contains('group')),
+      reason: 'the production package must not be selected for Plan 269',
+    );
+  });
+
+  test(
+    'TC-269 physical iOS profile owns a distinct capability without APNs credentials',
+    () {
+      final profile = manifest.buildProfileById('ios.device.group_media_269')!;
+      expect(profile.platform, 'ios');
+      expect(profile.artifactKind, 'signed-physical-app-xctest-bundle');
+      expect(profile.buildRequired, isTrue);
+      expect(profile.compileDefines, <String, String>{
+        'E2E_TEST_MODE': 'true',
+        'PRODUCTION_APNS': 'true',
+        'SIMS_IOS_DISPOSABLE_BUNDLE_ID': 'com.mknoon.sims.groupmedia269',
+      });
+
+      final capability = manifest.capabilityById(
+        'build.ios.device.group_media_269',
+      )!;
+      expect(capability.buildProfileId, profile.id);
+      expect(capability.command, <String>[
+        '@prepare-build',
+        'ios.device.group_media_269',
+      ]);
+      expect(capability.families, <String>['group', 'media', 'transport']);
+      expect(capability.targetCapabilities, <String>['host.xcode']);
+      expect(
+        capability.targetCapabilities,
+        isNot(contains('credentials.apns-signing')),
+      );
+      expect(capability.dependencies, isEmpty);
+      expect(capability.declaredBuildException, isFalse);
+    },
+  );
+
   test('Android notification campaign reuses the central production APK', () {
     final capability = manifest.capabilityById(
       'notifications.android_payload_campaign',

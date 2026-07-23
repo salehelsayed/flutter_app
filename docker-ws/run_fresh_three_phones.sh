@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fresh-identity build + install + launch of the real (non-E2E) mknoon app on
-# EXACTLY three phones: iPhone 11, iPhone 12 (explicit UDID allowlist — never
+# EXACTLY three phones: iPhone 11, iPhone 13 (explicit UDID allowlist — never
 # touches other paired iPhones) and the Pixel. Fresh identity = uninstall first.
 # Derived from run_fresh_all_phones.sh (provenance stamp, freshness gate,
 # binary gate, post-install verify). Run on the Mac (or via host-run).
@@ -14,8 +14,8 @@ RESULT_FILE="docker-ws/run_fresh_three_phones_result.txt"
 note() { echo "$*" | tee -a "$RESULT_FILE"; }
 FAILED=0
 
-# Explicit targets (chip-prefix map: 00008030=iPhone 11, 00008101=iPhone 12)
-IPHONE_UDIDS="00008030-001A6D2801BB802E 00008101-000E2C263EA1001E"
+# Explicit targets (chip-prefix map: 00008030=iPhone 11, 00008110=iPhone 13)
+IPHONE_UDIDS="00008030-001A6D2801BB802E 00008110-00184D622289801E"
 PIXEL_SERIAL=21071FDF600CSC
 
 # Wrap devicectl in timeout when available (zombie-tunnel hangs must not

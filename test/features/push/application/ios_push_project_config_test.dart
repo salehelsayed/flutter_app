@@ -20,7 +20,14 @@ void main() {
         expect(googleServiceInfo, contains('<string>com.mknoon.app</string>'));
         expect(
           pbxproj,
-          contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app;'),
+          contains('MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;'),
+        );
+        expect(
+          pbxproj,
+          contains(
+            'PRODUCT_BUNDLE_IDENTIFIER = '
+            '"\$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";',
+          ),
         );
       },
     );

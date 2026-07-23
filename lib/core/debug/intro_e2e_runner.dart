@@ -11,6 +11,8 @@ import 'package:flutter_app/core/debug/android_voice_message_e2e.dart';
 import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/debug/group_reaction_e2e_probe.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
+import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
@@ -266,6 +268,14 @@ Future<Map<String, Object?>> evaluateDirectTextRelayTokenProof({
 
 typedef OpenConversationForIntroE2EFn = Future<bool> Function(String peerId);
 typedef ResolveWakeTokenForIntroE2EFn = Future<String?> Function(String peerId);
+typedef RunGroupMediaReliabilityE2EFn =
+    Future<Map<String, Object?>> Function(Map<String, dynamic> config);
+typedef RunGroupMediaIosBackgroundE2EFn =
+    Future<Map<String, Object?>> Function(
+      Map<String, dynamic> config, {
+      GroupMediaIosReceiverObservationAccepted? onReceiverObservationAccepted,
+      GroupMediaIosReceiverObservationComplete? onReceiverObservationComplete,
+    });
 
 Timer? _introE2EPoller;
 bool _introE2ERunInFlight = false;
@@ -792,12 +802,20 @@ void startIntroE2EPoller({
   required DetailedInboxStore detailedInboxStore,
   required WakeTokenAcceptedAttachmentObserver wakeTokenAttachmentObserver,
   PrivateMediaOutboxE2EController? privateMediaOutboxE2EController,
+  RunGroupMediaReliabilityE2EFn? runGroupMediaReliabilityE2E,
+  RunGroupMediaIosBackgroundE2EFn? runGroupMediaIosBackgroundE2E,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
   Duration pollInterval = const Duration(seconds: 3),
 }) {
-  if (!kDebugMode || (!kE2ETestMode && !directTextRelayTokenProofMode)) {
+  final allowsIosReleaseFileChannel = allowsGroupMediaIosIntroFileChannel(
+    isDebugMode: kDebugMode,
+    e2eTestMode: kE2ETestMode,
+    installedProfileId: const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
+  );
+  if (!(kDebugMode && (kE2ETestMode || directTextRelayTokenProofMode)) &&
+      !allowsIosReleaseFileChannel) {
     return;
   }
   if (_introE2EPoller != null) return;
@@ -812,6 +830,76 @@ void startIntroE2EPoller({
       }
       final config = await _loadConfig();
       if (config == null) return;
+
+      if (config['transport_action'] == groupMediaIosBackgroundE2EAction) {
+        await _deleteConfigIfPresent();
+        try {
+          final run = runGroupMediaIosBackgroundE2E;
+          if (run == null) {
+            throw StateError('physical-iOS group-media endpoint is not wired');
+          }
+          final receiverObservation =
+              config['phase'] == groupMediaIosReceiverObservePhase;
+          final result = await run(
+            config,
+            onReceiverObservationAccepted: receiverObservation
+                ? () => _writeIntroE2EResult(
+                    Map<String, dynamic>.from(
+                      groupMediaIosBackgroundE2EAcceptedReceipt(config: config),
+                    ),
+                  )
+                : null,
+            onReceiverObservationComplete: receiverObservation
+                ? (result) =>
+                      _writeIntroE2EResult(Map<String, dynamic>.from(result))
+                : null,
+          );
+          if (!receiverObservation) {
+            await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+          }
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              groupMediaIosBackgroundE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // The signed physical-iOS production profile exposes only the exact
+      // group-media action above. Never route a generic intro command through
+      // the release file channel.
+      if (!kDebugMode) {
+        await _deleteConfigIfPresent();
+        return;
+      }
+
+      if (config['transport_action'] == groupMediaReliabilityE2EAction) {
+        await _deleteConfigIfPresent();
+        try {
+          final run = runGroupMediaReliabilityE2E;
+          if (run == null) {
+            throw StateError('group-media reliability endpoint is not wired');
+          }
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(await run(config)),
+          );
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              groupMediaReliabilityE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
+            ),
+          );
+        }
+        return;
+      }
 
       // This action must execute before runIntroE2EActions: the generic path
       // performs a health check and an inbox drain, which would invalidate a

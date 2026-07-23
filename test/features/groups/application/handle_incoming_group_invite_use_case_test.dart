@@ -101,6 +101,11 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
   String? recipientMlKemPublicKey,
   String? recipientKeyPackageId,
   String? recipientKeyPackagePublicMaterial,
+  String? inviterDeviceId,
+  String? inviterTransportPeerId,
+  String? inviterDeviceSigningPublicKey,
+  String? inviterKeyPackageId,
+  Map<String, dynamic>? inviterMemberSnapshot,
   DateTime? issuedAt,
   DateTime? expiresAt,
   String? membershipWatermark,
@@ -120,19 +125,25 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
     recipientKeyPackageId: recipientKeyPackageId,
     recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
     inviterPeerId: '12D3KooWAlice',
+    inviterDeviceId: inviterDeviceId,
+    inviterTransportPeerId: inviterTransportPeerId,
+    inviterDeviceSigningPublicKey: inviterDeviceSigningPublicKey,
+    inviterKeyPackageId: inviterKeyPackageId,
     inviterPublicKey: 'alicePubKey64',
     keyEpoch: keyEpoch,
     groupConfigStateHash: stateHash,
     membershipWatermark: membershipWatermark ?? stateHash,
     issuedAt: issuedAtUtc,
     expiresAt: expiresAt ?? issuedAtUtc.add(groupInviteMembershipFreshnessTtl),
-    inviterMemberSnapshot: {
-      'peerId': '12D3KooWAlice',
-      'username': 'Alice',
-      'role': 'admin',
-      'publicKey': 'alicePubKey64',
-      'mlKemPublicKey': 'aliceMlKem64',
-    },
+    inviterMemberSnapshot:
+        inviterMemberSnapshot ??
+        {
+          'peerId': '12D3KooWAlice',
+          'username': 'Alice',
+          'role': 'admin',
+          'publicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+        },
   );
 }
 
@@ -148,6 +159,11 @@ GroupInvitePayload _makePayload({
   String? recipientMlKemPublicKey,
   String? recipientKeyPackageId,
   String? recipientKeyPackagePublicMaterial,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderDeviceSigningPublicKey,
+  String? senderKeyPackageId,
+  Map<String, dynamic>? inviterMemberSnapshot,
   DateTime? membershipProofIssuedAt,
   DateTime? membershipProofExpiresAt,
   DateTime? invitePolicyExpiresAt,
@@ -198,6 +214,10 @@ GroupInvitePayload _makePayload({
     recipientKeyPackageId: recipientKeyPackageId,
     recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
     welcomeKeyPackage: welcomeKeyPackage,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    senderDeviceSigningPublicKey: senderDeviceSigningPublicKey,
+    senderKeyPackageId: senderKeyPackageId,
     invitePolicy: GroupInvitePolicy(
       expiresAt: policyExpiresAt,
       allowedDevices: allowedDevices,
@@ -219,6 +239,11 @@ GroupInvitePayload _makePayload({
       recipientMlKemPublicKey: recipientMlKemPublicKey,
       recipientKeyPackageId: recipientKeyPackageId,
       recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+      inviterDeviceId: senderDeviceId,
+      inviterTransportPeerId: senderTransportPeerId,
+      inviterDeviceSigningPublicKey: senderDeviceSigningPublicKey,
+      inviterKeyPackageId: senderKeyPackageId,
+      inviterMemberSnapshot: inviterMemberSnapshot,
       groupConfig: groupConfig,
       keyEpoch: keyEpoch,
       issuedAt: issuedAtUtc,
@@ -1721,6 +1746,187 @@ void main() {
         expect(result, equals(HandleGroupInviteResult.invalidPayload));
         expect(groupId, isNull);
         expect(groupRepo.groupCount, equals(0));
+      },
+    );
+
+    test(
+      'P269 accepts signed config-bound sender transport distinct from account identity',
+      () async {
+        const senderAccountPeerId = '12D3KooWAlice';
+        const senderTransportPeerId = 'alice-device-1';
+        final payload = _makePayload(
+          groupId: 'grp-p269-split-identity',
+          groupConfig: _deviceBoundGroupConfig,
+          recipientDeviceId: 'bob-device-1',
+          recipientTransportPeerId: 'bob-device-1',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientKeyPackageId: 'bob-kp-1',
+          recipientKeyPackagePublicMaterial: 'bob-kpm-1',
+          senderDeviceId: senderTransportPeerId,
+          senderTransportPeerId: senderTransportPeerId,
+          senderDeviceSigningPublicKey: 'alicePubKey64',
+          senderKeyPackageId: 'alice-kp-1',
+          inviterMemberSnapshot: {
+            'peerId': senderAccountPeerId,
+            'username': 'Alice',
+            'role': 'admin',
+            'publicKey': 'alicePubKey64',
+            'mlKemPublicKey': 'aliceMlKem64',
+            'devices': [
+              {
+                'deviceId': senderTransportPeerId,
+                'transportPeerId': senderTransportPeerId,
+                'deviceSigningPublicKey': 'alicePubKey64',
+                'mlKemPublicKey': 'aliceMlKem64',
+                'keyPackageId': 'alice-kp-1',
+                'keyPackagePublicMaterial': 'alice-kpm-1',
+                'status': 'active',
+              },
+            ],
+          },
+        );
+        final message = ChatMessage(
+          from: senderTransportPeerId,
+          to: 'bob-device-1',
+          content: _makeSignedV1Message(payload: payload).content,
+          timestamp: payload.timestamp,
+          isIncoming: true,
+        );
+
+        expect(payload.senderPeerId, senderAccountPeerId);
+        expect(payload.senderTransportPeerId, senderTransportPeerId);
+        expect(payload.senderPeerId, isNot(payload.senderTransportPeerId));
+
+        final attackerRepo = InMemoryGroupRepository();
+        final (
+          attackerResult,
+          attackerGroupId,
+        ) = await handleIncomingGroupInvite(
+          message: ChatMessage(
+            from: 'peer-attacker-X',
+            to: 'bob-device-1',
+            content: message.content,
+            timestamp: payload.timestamp,
+            isIncoming: true,
+          ),
+          groupRepo: attackerRepo,
+          contactRepo: contactRepo,
+          bridge: FakeBridge(),
+          ownPeerId: '12D3KooWBob',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-1',
+          ownMlKemPublicKey: 'bobMlKem64',
+          ownKeyPackageId: 'bob-kp-1',
+          ownKeyPackagePublicMaterial: 'bob-kpm-1',
+        );
+        expect(attackerResult, HandleGroupInviteResult.invalidPayload);
+        expect(attackerGroupId, isNull);
+        expect(attackerRepo.groupCount, 0);
+
+        final accountTransportRepo = InMemoryGroupRepository();
+        final accountTransportBridge = FakeBridge();
+        final (
+          accountTransportResult,
+          accountTransportGroupId,
+        ) = await handleIncomingGroupInvite(
+          message: ChatMessage(
+            from: senderAccountPeerId,
+            to: 'bob-device-1',
+            content: message.content,
+            timestamp: payload.timestamp,
+            isIncoming: true,
+          ),
+          groupRepo: accountTransportRepo,
+          contactRepo: contactRepo,
+          bridge: accountTransportBridge,
+          ownPeerId: '12D3KooWBob',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-1',
+          ownMlKemPublicKey: 'bobMlKem64',
+          ownKeyPackageId: 'bob-kp-1',
+          ownKeyPackagePublicMaterial: 'bob-kpm-1',
+        );
+        expect(accountTransportResult, HandleGroupInviteResult.invalidPayload);
+        expect(accountTransportGroupId, isNull);
+        expect(accountTransportRepo.groupCount, 0);
+        expect(
+          await accountTransportRepo.getLatestKey('grp-p269-split-identity'),
+          isNull,
+        );
+        expect(
+          accountTransportBridge.commandLog,
+          isNot(contains('group:join')),
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: message,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-1',
+          ownMlKemPublicKey: 'bobMlKem64',
+          ownKeyPackageId: 'bob-kp-1',
+          ownKeyPackagePublicMaterial: 'bob-kpm-1',
+        );
+
+        expect(result, HandleGroupInviteResult.success);
+        expect(groupId, 'grp-p269-split-identity');
+        final senderMember = await groupRepo.getMember(
+          'grp-p269-split-identity',
+          senderAccountPeerId,
+        );
+        expect(senderMember, isNotNull);
+        expect(
+          senderMember!.devices.single.transportPeerId,
+          senderTransportPeerId,
+        );
+      },
+    );
+
+    test(
+      'P269 rejects partial signed sender device tuple before side effects',
+      () async {
+        const senderTransportPeerId = 'alice-device-1';
+        final payload = _makePayload(
+          groupId: 'grp-p269-partial-sender',
+          groupConfig: _deviceBoundGroupConfig,
+          recipientDeviceId: 'bob-device-1',
+          recipientTransportPeerId: 'bob-device-1',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientKeyPackageId: 'bob-kp-1',
+          recipientKeyPackagePublicMaterial: 'bob-kpm-1',
+          senderDeviceId: senderTransportPeerId,
+          senderTransportPeerId: senderTransportPeerId,
+          senderKeyPackageId: 'alice-kp-1',
+        );
+        final partialTupleMessage = ChatMessage(
+          from: senderTransportPeerId,
+          to: 'bob-device-1',
+          content: _makeSignedV1Message(payload: payload).content,
+          timestamp: payload.timestamp,
+          isIncoming: true,
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: partialTupleMessage,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-1',
+          ownMlKemPublicKey: 'bobMlKem64',
+          ownKeyPackageId: 'bob-kp-1',
+          ownKeyPackagePublicMaterial: 'bob-kpm-1',
+        );
+
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, 0);
+        expect(await groupRepo.getLatestKey('grp-p269-partial-sender'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
       },
     );
 

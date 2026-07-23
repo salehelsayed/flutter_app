@@ -115,6 +115,35 @@ void main() {
     );
   });
 
+  test('transport fixture persists current messages on current schema', () {
+    final transport = File(
+      'integration_test/transport_e2e_test.dart',
+    ).readAsStringSync();
+    final messageModel = File(
+      'lib/features/conversation/domain/models/conversation_message.dart',
+    ).readAsStringSync();
+
+    expect(messageModel, contains("'is_forwarded': isForwarded ? 1 : 0"));
+    expect(messageModel, contains("'private_media_policy_version'"));
+    expect(transport, contains('openCurrentProductionE2EDatabase('));
+    expect(transport, isNot(contains('openEncryptedDatabase(')));
+    expect(
+      RegExp(r'version:\s*79\b').hasMatch(transport),
+      isFalse,
+      reason:
+          'the current ConversationMessage map writes v97/v100 columns and '
+          'may not be persisted through the historical v79 fixture schema',
+    );
+    expect(
+      RegExp(
+        r'await deleteTestDatabase\(dbName\);',
+      ).allMatches(transport).length,
+      2,
+      reason: 'the transport fixture must delete its exact DB before and after',
+    );
+    expect(transport, contains('await db.close();'));
+  });
+
   test('group harness wires guarded save and download CAS helpers', () {
     final source = File(
       'integration_test/group_multi_device_real_harness.dart',

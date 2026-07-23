@@ -1,12 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 typedef BeforePersistGroupMetadataUpdate =
     FutureOr<void> Function(GroupModel updated);
+
+typedef CurrentGroupMetadataAuthorityCheck =
+    Future<bool> Function(GroupModel current);
 
 Future<GroupModel> updateGroupMetadata({
   required GroupRepository groupRepo,
@@ -18,6 +22,7 @@ Future<GroupModel> updateGroupMetadata({
   String? avatarPath,
   DateTime? eventAt,
   BeforePersistGroupMetadataUpdate? beforePersist,
+  CurrentGroupMetadataAuthorityCheck? currentAuthorityCheck,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -43,6 +48,10 @@ Future<GroupModel> updateGroupMetadata({
   final group = await groupRepo.getGroup(groupId);
   if (group == null) {
     throw StateError('Group not found: $groupId');
+  }
+
+  if (group.isDissolved || group.selfRemovedAt != null) {
+    throw StateError('Group is no longer active');
   }
 
   if (group.myRole != GroupRole.admin) {
@@ -75,7 +84,35 @@ Future<GroupModel> updateGroupMetadata({
     lastMetadataEventAt: resolvedEventAt,
   );
   await beforePersist?.call(updated);
-  await groupRepo.updateGroup(updated);
+
+  final committed = await runGroupMembershipMutationLocked<GroupModel>(
+    groupId: groupId,
+    action: () async {
+      final current = await groupRepo.getGroup(groupId);
+      if (current == null ||
+          current.isDissolved ||
+          current.selfRemovedAt != null) {
+        throw StateError('Group is no longer active');
+      }
+      if (current.myRole != GroupRole.admin) {
+        throw StateError('Only admins can edit group details');
+      }
+      if (currentAuthorityCheck != null &&
+          !await currentAuthorityCheck(current)) {
+        throw StateError('Group metadata authority changed');
+      }
+      final exactUpdate = current.copyWith(
+        name: resolvedName,
+        description: resolvedDescription,
+        avatarBlobId: avatarBlobId,
+        avatarMime: avatarMime,
+        avatarPath: avatarPath,
+        lastMetadataEventAt: resolvedEventAt,
+      );
+      await groupRepo.updateGroup(exactUpdate);
+      return exactUpdate;
+    },
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -86,5 +123,5 @@ Future<GroupModel> updateGroupMetadata({
     },
   );
 
-  return updated;
+  return committed;
 }

@@ -17,6 +17,12 @@ class MediaThumbnailImage extends StatefulWidget {
   final Widget? error;
   final VideoThumbnailResolver? videoThumbnailResolver;
 
+  /// Optional device-proof label exposed only after this renderer has a real
+  /// decoded frame (image or derived video thumbnail).
+  /// Ordinary callers leave this null, so production accessibility output is
+  /// unchanged outside the explicitly wired proof route.
+  final String? renderedSemanticsLabel;
+
   const MediaThumbnailImage({
     super.key,
     required this.mediaPath,
@@ -28,6 +34,7 @@ class MediaThumbnailImage extends StatefulWidget {
     this.placeholder,
     this.error,
     this.videoThumbnailResolver,
+    this.renderedSemanticsLabel,
   });
 
   @override
@@ -49,9 +56,16 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
     if (oldWidget.mediaPath != widget.mediaPath ||
         oldWidget.mediaType != widget.mediaType ||
         oldWidget.thumbnailPath != widget.thumbnailPath ||
-        oldWidget.videoThumbnailResolver != widget.videoThumbnailResolver) {
+        oldWidget.videoThumbnailResolver != widget.videoThumbnailResolver ||
+        oldWidget.renderedSemanticsLabel != widget.renderedSemanticsLabel) {
       _configureThumbnailFuture();
     }
+  }
+
+  Widget _withRenderedSemantics(Widget child) {
+    final label = widget.renderedSemanticsLabel;
+    if (label == null) return child;
+    return Semantics(container: true, label: label, child: child);
   }
 
   void _configureThumbnailFuture() {
@@ -91,6 +105,9 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
           return widget.placeholder ?? const SizedBox.shrink();
         }
         if (File(_resolvedMediaPath).existsSync()) {
+          // A present source keeps the normal benign video fallback, but the
+          // device-proof label is intentionally absent until an actual
+          // thumbnail frame decodes. File existence alone is not render proof.
           return widget.placeholder ?? const SizedBox.shrink();
         }
         return widget.error ?? widget.placeholder ?? const SizedBox.shrink();
@@ -119,10 +136,12 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
       // placeholder during decode instead of an empty box; the decoded child
       // appears the moment a frame is available (or if it loaded synchronously,
       // e.g. an already-cached image — no placeholder flash).
-      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
-          (wasSynchronouslyLoaded || frame != null)
-          ? child
-          : (widget.placeholder ?? const SizedBox.shrink()),
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded || frame != null) {
+          return _withRenderedSemantics(child);
+        }
+        return widget.placeholder ?? const SizedBox.shrink();
+      },
       errorBuilder: (context, error, stackTrace) {
         // 117 Session 1: a video whose derived thumbnail JPG fails to decode
         // is NOT unavailable — the underlying video source is still present

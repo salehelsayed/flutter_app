@@ -229,6 +229,116 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
     expect(execution.verdict.detail, contains('flutter build apk'));
   });
 
+  test(
+    'nested xcodebuild guard rejects build-for-testing test and default actions',
+    () async {
+      final bin = Directory('${temporaryDirectory.path}/bin')..createSync();
+      final xcodebuild = File('${bin.path}/xcodebuild')
+        ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', <String>['700', xcodebuild.path]);
+      final guardedEnvironment = <String, String>{
+        ...Platform.environment,
+        'PATH': '${bin.path}:${Platform.environment['PATH'] ?? ''}',
+      };
+
+      for (final invocation in <String>[
+        'xcodebuild build-for-testing',
+        'xcodebuild test',
+        'xcodebuild',
+      ]) {
+        final row = _processRow(declaredBuildException: false).copyWith(
+          command: <String>[
+            'bash',
+            '-c',
+            '$invocation || true; '
+                'printf \'SIMS_RESULT_JSON={"status":"PASS",'
+                '"assertionsAttempted":1,"artifactPresent":false,'
+                '"printOnly":false}\\n\'',
+          ],
+        );
+        final execution = await SimsProcessExecutor(
+          logDirectory: Directory('${temporaryDirectory.path}/logs'),
+          environment: guardedEnvironment,
+        ).execute(row);
+
+        expect(
+          execution.verdict.status,
+          SimsVerdictStatus.fail,
+          reason: invocation,
+        );
+        expect(execution.verdict.exitCode, 91, reason: invocation);
+        expect(execution.verdict.detail, contains('xcodebuild'));
+      }
+    },
+  );
+
+  test(
+    'nested xcodebuild guard permits only the exact prebuilt selector',
+    () async {
+      final bin = Directory('${temporaryDirectory.path}/bin')..createSync();
+      final xcodebuild = File('${bin.path}/xcodebuild')
+        ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', <String>['700', xcodebuild.path]);
+      final xctestrun = File(
+        '${temporaryDirectory.path}/RunnerUITests.xctestrun',
+      )..writeAsStringSync('prebuilt');
+      final resultBundle = '${temporaryDirectory.path}/result.xcresult';
+      final row = _processRow(declaredBuildException: false).copyWith(
+        command: <String>[
+          'bash',
+          '-c',
+          'SIMS_CHILD_BUILDS_FORBIDDEN=1 xcodebuild '
+              'test-without-building -xctestrun ${xctestrun.path} '
+              '-destination platform=iOS,id=physical-device '
+              '-parallel-testing-enabled NO '
+              '-only-testing:RunnerUITests/FixtureTests/testProof '
+              '-resultBundlePath $resultBundle; '
+              'printf \'SIMS_RESULT_JSON={"status":"PASS",'
+              '"assertionsAttempted":1,"artifactPresent":false,'
+              '"printOnly":false}\\n\'',
+        ],
+      );
+      final execution = await SimsProcessExecutor(
+        logDirectory: Directory('${temporaryDirectory.path}/logs'),
+        environment: <String, String>{
+          ...Platform.environment,
+          'PATH': '${bin.path}:${Platform.environment['PATH'] ?? ''}',
+        },
+      ).execute(row);
+
+      expect(execution.verdict.status, SimsVerdictStatus.pass);
+    },
+  );
+
+  test('absolute xcodebuild path cannot bypass the nested guard', () async {
+    final bin = Directory('${temporaryDirectory.path}/bin')..createSync();
+    final xcodebuild = File('${bin.path}/xcodebuild')
+      ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+    Process.runSync('chmod', <String>['700', xcodebuild.path]);
+    final row = _processRow(declaredBuildException: false).copyWith(
+      command: <String>[
+        'bash',
+        '-c',
+        '${xcodebuild.absolute.path} build-for-testing || true; '
+            'printf \'SIMS_RESULT_JSON={"status":"PASS",'
+            '"assertionsAttempted":1,"artifactPresent":false,'
+            '"printOnly":false}\\n\'',
+      ],
+    );
+
+    final execution = await SimsProcessExecutor(
+      logDirectory: Directory('${temporaryDirectory.path}/logs'),
+      environment: <String, String>{
+        ...Platform.environment,
+        'PATH': '${bin.path}:${Platform.environment['PATH'] ?? ''}',
+      },
+    ).execute(row);
+
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.verdict.exitCode, 91);
+    expect(execution.verdict.detail, contains('absolute xcodebuild'));
+  });
+
   test('declared child build exception bypasses the guard', () async {
     final bin = Directory('${temporaryDirectory.path}/bin')..createSync();
     final flutter = File('${bin.path}/flutter')

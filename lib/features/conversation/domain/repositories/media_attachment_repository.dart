@@ -261,6 +261,128 @@ abstract class MediaDownloadStateRepository {
   });
 }
 
+/// Exact UPDATE-only failure persistence for an incoming ordinary GROUP
+/// download.
+///
+/// Implementations atomically qualify the attachment's exact owner/message/
+/// status/path tuple, its live ordinary incoming parent, and the absence of an
+/// active group deletion journal. A false result is lost authority and must
+/// never fall back to an insert-capable preserving save.
+abstract class OrdinaryGroupMediaDownloadFailureRepository {
+  Future<bool> recordOrdinaryGroupMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+    required bool clearLocalPath,
+  });
+}
+
+/// Authority-complete CAS transitions for automatic ordinary GROUP recovery.
+///
+/// Unlike [MediaDownloadStateRepository], this capability deliberately never
+/// claims terminal `download_failed` or user-only `evicted` rows. Both writes
+/// requalify the exact attachment tuple, current ordinary incoming parent,
+/// active group, local visibility, and deletion-journal authority in the same
+/// database statement. Explicit user retry uses the dedicated exact capability
+/// below so it can retain its broader status admission without weakening this
+/// authority tuple.
+abstract class OrdinaryGroupAutomaticMediaDownloadStateRepository {
+  Future<bool> beginOrdinaryGroupAutomaticMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  });
+
+  Future<bool> commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  });
+}
+
+/// Authority-complete CAS transitions for explicit ordinary GROUP retries.
+///
+/// These writes use the same exact attachment, live-parent, active-group,
+/// local-visibility, and deletion-journal qualification as automatic recovery,
+/// while deliberately retaining the broader explicit-user retry surface:
+/// terminal `download_failed` and user-only `evicted` rows remain claimable and
+/// the automatic retry ceiling does not apply.
+abstract class OrdinaryGroupExplicitMediaDownloadStateRepository {
+  Future<bool> beginOrdinaryGroupExplicitMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  });
+
+  Future<bool> commitOrdinaryGroupExplicitMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  });
+}
+
+/// Stable durable cursor for automatic ordinary GROUP download recovery.
+///
+/// Rows are ordered by this exact `(created_at ASC, attachment_id ASC)` pair.
+/// Callers advance from the last row they inspected, independently of whether
+/// policy allowed that row to transfer.
+class DurableGroupMediaDownloadCursor {
+  const DurableGroupMediaDownloadCursor({
+    required this.createdAt,
+    required this.attachmentId,
+  });
+
+  final String createdAt;
+  final String attachmentId;
+}
+
+/// Query-time snapshot of one recoverable ordinary incoming GROUP attachment.
+///
+/// Automatic recovery must reload current attachment, message, and group
+/// authority before network access; this snapshot exists only to provide a
+/// bounded, forward-progressing durable scan.
+class DurableGroupMediaDownloadCandidate {
+  const DurableGroupMediaDownloadCandidate({
+    required this.attachment,
+    required this.groupId,
+  });
+
+  final MediaAttachment attachment;
+  final String groupId;
+
+  DurableGroupMediaDownloadCursor get cursor => DurableGroupMediaDownloadCursor(
+    createdAt: attachment.createdAt,
+    attachmentId: attachment.id,
+  );
+}
+
+/// Optional read-only capability for cursor-paged automatic GROUP recovery.
+///
+/// Implementations return only group-owned attachments whose current parent
+/// is incoming, live, locally visible, canonically ordinary, and outside any
+/// active deletion journal. Recoverable states are `pending`, `downloading`,
+/// and under-budget `failed`; `downloading` deliberately survives process
+/// death as durable retry work.
+abstract class RecoverableGroupMediaDownloadRepository {
+  Future<List<DurableGroupMediaDownloadCandidate>>
+  loadRecoverableGroupDownloadPage({
+    DurableGroupMediaDownloadCursor? after,
+    int limit = 25,
+  });
+}
+
 /// Session 03 capability: the direct-private final download commit checks the
 /// current parent and attachment claim in one database transaction while the
 /// process-wide attachment lock is held.

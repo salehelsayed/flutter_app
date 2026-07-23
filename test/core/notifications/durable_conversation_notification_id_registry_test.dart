@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +19,40 @@ void main() {
   tearDown(() {
     if (directory.existsSync()) directory.deleteSync(recursive: true);
   });
+
+  test(
+    'P269 dedicated iOS profile forces reset-owned local id storage',
+    () async {
+      final support = Directory('${directory.path}/support')..createSync();
+      var appGroupCalls = 0;
+
+      final registry =
+          await DurableConversationNotificationIdRegistry.openDefault(
+            useIosAppGroup: true,
+            installedProfileId: groupMediaIosDisposableBuildProfile,
+            appGroupPathChannel: AppGroupPathChannel(
+              invoker: (_, _) async {
+                appGroupCalls += 1;
+                return '/forbidden-production-app-group';
+              },
+            ),
+            supportDirectory: () async => support,
+          );
+
+      expect(appGroupCalls, 0);
+      expect(
+        registry.directory.path,
+        '${support.path}/NotificationConversationIds',
+      );
+      expect(
+        await registry.resolve(
+          'p269-local-conversation',
+          activeNotificationIds: () async => const <Object?>[],
+        ),
+        isNonNegative,
+      );
+    },
+  );
 
   test(
     'keeps the existing deterministic id as the primary candidate',

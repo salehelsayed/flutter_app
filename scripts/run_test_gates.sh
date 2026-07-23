@@ -526,6 +526,44 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/group_message_listener_test.dart"
   "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
   "test/features/groups/integration/group_forwarding_transport_boundary_test.dart"
+  # 269 W2: transport-identity media ACLs and fail-closed empty group ACLs
+  # across the helper, composer fanout, invite/avatar, shared leaf, and raw
+  # avatar boundaries. Upload remains in ONE_TO_ONE_TESTS for direct-mode
+  # preservation while also participating in the group-media gate.
+  "test/features/groups/application/group_media_allowed_peers_test.dart"
+  "test/features/groups/integration/group_media_fanout_test.dart"
+  "test/features/groups/application/update_group_metadata_use_case_test.dart"
+  "test/features/groups/presentation/contact_picker_wired_test.dart"
+  "test/features/conversation/application/upload_media_use_case_test.dart"
+  "test/features/groups/application/group_avatar_storage_test.dart"
+  # 269 W3: durable ordinary-group media failure transitions, recoverable
+  # paging/coalesced retry, resume/ready recovery, and production wiring.
+  "test/features/conversation/application/download_media_use_case_test.dart"
+  "test/features/groups/application/retry_incomplete_group_downloads_use_case_test.dart"
+  "test/core/lifecycle/handle_app_resumed_group_download_recovery_test.dart"
+  "test/core/services/pending_message_retrier_group_download_recovery_test.dart"
+  "test/features/groups/integration/group_media_reliability_wiring_test.dart"
+  # 269 W4: background receive-task ownership, exact v1 device artifact and
+  # prepared-runner contracts, plus the reusable prebuilt XCUITest selector.
+  "test/features/groups/application/group_message_listener_media_background_task_test.dart"
+  "test/core/debug/group_media_disposable_transport_start_test.dart"
+  "test/features/groups/application/group_invite_identity_callbacks_test.dart"
+  "test/features/groups/application/create_group_with_members_use_case_test.dart"
+  "test/features/groups/application/send_group_invite_use_case_test.dart"
+  "test/features/groups/application/resend_group_invite_use_case_test.dart"
+  "test/features/groups/application/group_invite_listener_test.dart"
+  "test/core/debug/group_media_reliability_e2e_test.dart"
+  "test/core/debug/group_media_ios_background_e2e_test.dart"
+  "test/features/groups/integration/group_media_reliability_criteria_test.dart"
+  "test/integration/android_group_media_reliability_controller_test.dart"
+  "test/integration/group_media_ios_background_recovery_test.dart"
+  "test/integration/group_media_reliability_runner_contract_test.dart"
+  "test/integration/ios_xctestrun_relocator_test.dart"
+  "test/tool/sims/sims_ios_group_media_269_profile_test.dart"
+  "test/core/notifications/durable_conversation_notification_id_registry_test.dart"
+  "test/core/notifications/durable_notification_tone_lease_test.dart"
+  "test/shared/widgets/media/audio_player_widget_test.dart"
+  "test/shared/widgets/media/media_thumbnail_image_test.dart"
   # 240 announcement received-media forwarding: announcement source adapter,
   # caption modes, target policy/revalidation, per-target provenance, marker,
   # owner boundary, and failed-only retry discrimination.
@@ -1350,6 +1388,7 @@ run_sims_contracts() {
       test/tool/sims/sims_checkpoint_test.dart \
       test/tool/sims/sims_device_binding_test.dart \
       test/tool/sims/sims_executor_test.dart \
+      test/tool/sims/sims_ios_group_media_269_profile_test.dart \
       test/tool/sims/sims_scheduler_test.dart
     printf '%s\n' \
       'PASS: mutation matrix caught analyzer/Dart/Go command failures, mandatory skip, print-only proof, exit 78, missing artifact, stale cache, undeclared build, mid-sweep failure, device loss, and dependency/resource conflicts.'

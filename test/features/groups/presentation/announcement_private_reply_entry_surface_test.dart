@@ -40,12 +40,40 @@ void main() {
           sources[path]!,
           'GroupConversationWired',
         );
+        final renderProbeBlocks = blocks
+            .where((block) => block.contains('mediaRenderedSemanticsLabels:'))
+            .toList(growable: false);
+        final entryBlocks = blocks
+            .where((block) => !block.contains('mediaRenderedSemanticsLabels:'))
+            .toList(growable: false);
         expect(
-          blocks,
+          entryBlocks,
           hasLength(1),
           reason: '$path must own exactly one current group constructor',
         );
-        constructors[path] = blocks.single;
+        if (path == mainPath) {
+          expect(
+            renderProbeBlocks,
+            hasLength(1),
+            reason:
+                'main.dart may additionally own the compile-gated P269 '
+                'receiver render probe only',
+          );
+          expect(
+            renderProbeBlocks.single,
+            contains('openAnnouncementSenderConversation: null'),
+            reason:
+                'the render-only probe must make its absent announcement '
+                'navigation contract explicit',
+          );
+        } else {
+          expect(
+            renderProbeBlocks,
+            isEmpty,
+            reason: '$path must not acquire an E2E-only render constructor',
+          );
+        }
+        constructors[path] = entryBlocks.single;
       }
       expect(constructors, hasLength(5));
 

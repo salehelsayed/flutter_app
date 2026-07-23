@@ -64,6 +64,8 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryIncompleteGroupUploadsFn;
   final Future<int> Function()? retryIncompleteGroupUploadsNetworkRestoredFn;
   final Future<int> Function()? retryIncompleteGroupUploadsPeriodicFn;
+  final Future<int> Function()? retryIncompleteGroupDownloadsFn;
+  final Future<int> Function()? retryIncompleteGroupDownloadsPeriodicFn;
   final Future<int> Function()? retryFailedGroupMessagesFn;
   final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
@@ -133,6 +135,8 @@ class PendingMessageRetrier {
     this.retryIncompleteGroupUploadsFn,
     this.retryIncompleteGroupUploadsNetworkRestoredFn,
     this.retryIncompleteGroupUploadsPeriodicFn,
+    this.retryIncompleteGroupDownloadsFn,
+    this.retryIncompleteGroupDownloadsPeriodicFn,
     this.retryFailedGroupMessagesFn,
     this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
@@ -562,16 +566,17 @@ class PendingMessageRetrier {
       //   1. group rejoin topics
       //   2. group drain offline inbox
       //   3. group acknowledge recovery when rejoin and drain both succeeded
-      //   4. group recover stuck
-      //   5. group retry incomplete uploads
-      //   6. group retry failed inbox stores (publish-free custody confirm)
-      //   7. group retry failed messages (re-publish)
-      //   8. 1:1 recover stuck
-      //   9. 1:1 retry incomplete uploads
-      //  10. 1:1 retry failed messages
-      //  11. 1:1 retry unacked messages
-      //  12. intro retry pending deliveries
-      // Confirm (6) runs before re-publish (7): both touch 'pending' rows, and
+      //   4. group retry incomplete downloads
+      //   5. group recover stuck outgoing messages
+      //   6. group retry incomplete uploads
+      //   7. group retry failed inbox stores (publish-free custody confirm)
+      //   8. group retry failed messages (re-publish)
+      //   9. 1:1 recover stuck
+      //  10. 1:1 retry incomplete uploads
+      //  11. 1:1 retry failed messages
+      //  12. 1:1 retry unacked messages
+      //  13. intro retry pending deliveries
+      // Confirm (7) runs before re-publish (8): both touch 'pending' rows, and
       // confirm-first prevents re-publishing a pending row custody resolved.
 
       if (groupRecoveryEnabled && groupRecoveryReady) {
@@ -612,6 +617,34 @@ class PendingMessageRetrier {
           await _acknowledgeGroupRecoveryIfEligible(
             shouldAcknowledgeRecovery && drainSucceeded,
           );
+
+          // Ordinary incoming group media recovery intentionally belongs only
+          // to the node/relay-ready group pass. The early OS-restored flush
+          // above never invokes it. Production supplies callbacks wrapped by
+          // the account-migration network gate, which remains the final
+          // authority before the shared coordinator does any work.
+          final retryIncompleteGroupDownloadsForPass = periodic
+              ? retryIncompleteGroupDownloadsPeriodicFn ??
+                    retryIncompleteGroupDownloadsFn
+              : retryIncompleteGroupDownloadsFn;
+          if (retryIncompleteGroupDownloadsForPass != null) {
+            try {
+              final count = await retryIncompleteGroupDownloadsForPass();
+              if (count > 0) {
+                emitFlowEvent(
+                  layer: 'FL',
+                  event: 'PENDING_RETRIER_GROUP_INCOMPLETE_DOWNLOADS_RETRIED',
+                  details: {'count': count},
+                );
+              }
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_INCOMPLETE_DOWNLOAD_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
+          }
 
           if (recoverStuckSendingGroupMessagesFn != null) {
             try {

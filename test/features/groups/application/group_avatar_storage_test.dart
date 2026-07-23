@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -184,6 +185,74 @@ void main() {
       expect(payload['filePath'], localFile.path);
       expect(payload['filePath'] as String, isNot(endsWith('.enc')));
       expect(payload['allowedPeers'], ['peer-a', 'peer-b']);
+    },
+  );
+
+  test(
+    'P269 group avatar empty ACL fails before file access or bridge upload',
+    () async {
+      final validAvatar = File(p.join(tempDir.path, 'valid-avatar.jpg'));
+      await validAvatar.writeAsBytes(const <int>[
+        0xFF,
+        0xD8,
+        0xFF,
+        0xE0,
+      ], flush: true);
+      final validSourceBridge = _AvatarDownloadBridge(Uint8List(0));
+      final missingSourceBridge = _AvatarDownloadBridge(Uint8List(0));
+      final flowEvents = <Map<String, dynamic>>[];
+      final flowLease = installScopedE2EFlowEventSink(flowEvents.add);
+
+      GroupAvatarUpload? validSourceResult;
+      GroupAvatarUpload? missingSourceResult;
+      try {
+        validSourceResult = await uploadGroupAvatar(
+          bridge: validSourceBridge,
+          localFilePath: validAvatar.path,
+          groupId: 'group-1',
+          allowedPeers: const <String>[],
+          blobId: 'p269-empty-avatar-acl',
+        );
+        missingSourceResult = await uploadGroupAvatar(
+          bridge: missingSourceBridge,
+          localFilePath: p.join(tempDir.path, 'missing-avatar.jpg'),
+          groupId: 'group-1',
+          allowedPeers: const <String>[' ', '\t', '\n'],
+          blobId: 'p269-blank-avatar-acl',
+        );
+      } finally {
+        flowLease.release();
+      }
+
+      expect(validSourceResult, isNull);
+      expect(missingSourceResult, isNull);
+      expect(
+        validSourceBridge.commandLog,
+        isEmpty,
+        reason: 'empty group ACL must stop before media:upload',
+      );
+      expect(validSourceBridge.sentMessages, isEmpty);
+      expect(missingSourceBridge.commandLog, isEmpty);
+      expect(missingSourceBridge.sentMessages, isEmpty);
+
+      final rejections = flowEvents
+          .where((event) => event['event'] == 'GROUP_AVATAR_UPLOAD_REJECTED')
+          .toList(growable: false);
+      expect(rejections, hasLength(2));
+      expect(
+        rejections.map(
+          (event) => (event['details'] as Map<String, dynamic>)['reason'],
+        ),
+        everyElement('EMPTY_GROUP_MEDIA_ACL'),
+        reason:
+            'ACL validation must win even when the supplied source is missing',
+      );
+      expect(
+        flowEvents.where(
+          (event) => event['event'] == 'GROUP_AVATAR_UPLOAD_START',
+        ),
+        isEmpty,
+      );
     },
   );
 

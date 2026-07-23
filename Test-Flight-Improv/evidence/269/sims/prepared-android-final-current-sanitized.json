@@ -1,0 +1,29 @@
+{
+  "schema": "mknoon.plan-269.sanitized-prepared-artifact.v1",
+  "sourceDigest": "2ff0aa860c0427ac10f62245191096b35c4a64e34f761a9e5c3c816f40ddcb53",
+  "artifact": {
+    "profile": "android.e2e.group_media_269",
+    "artifactSha256": "335399705700dbfd59dfdbd2816552351b1aab1522609180743fa543c7dcca8f",
+    "actualBuilds": 1,
+    "cacheHits": 0,
+    "cacheMisses": 1,
+    "failedProfiles": 0,
+    "buildReportSha256": "f0a6952be5adaaf82fe91235ee1a1a3dc991c32788cbef25d12192d465be5f6f",
+    "attestationSha256": "64db4a19e3d00dfa2e9ac241567a56268c1a1d2bd23a8d8da58aebb0312bb079"
+  },
+  "registeredReuse": {
+    "actualBuilds": 0,
+    "cacheHits": 1,
+    "cacheMisses": 0,
+    "reportSha256": "0c65b4b026fd59d8ea926749b8079a5a3106d5c38f47eec0ddfbac7654343dc5"
+  },
+  "note": "The filtered preparation report is custody evidence for the current frozen source tree; releaseEligible is intentionally false because this was not a release-wide Sims run.",
+  "redaction": {
+    "artifactPathsIncluded": false,
+    "rawDeviceIdsIncluded": false,
+    "rawPeerIdsIncluded": false,
+    "relayAddressesIncluded": false,
+    "tokensOrKeysIncluded": false,
+    "environmentValuesIncluded": false
+  }
+}

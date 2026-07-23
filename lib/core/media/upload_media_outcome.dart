@@ -1,5 +1,7 @@
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
+const String kEmptyGroupMediaAclErrorCode = 'EMPTY_GROUP_MEDIA_ACL';
+
 /// The boundary at which an outgoing conversation-media upload failed.
 enum UploadMediaStage {
   validation,

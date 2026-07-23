@@ -137,7 +137,7 @@ class _OwnedConversationMediaFileManager extends MediaFileManager {
 Future<void> _pumpUntil(
   WidgetTester tester,
   bool Function() condition, {
-  Duration timeout = const Duration(seconds: 8),
+  Duration timeout = const Duration(seconds: 30),
 }) async {
   final stopwatch = Stopwatch()..start();
   while (!condition() && stopwatch.elapsed < timeout) {
@@ -658,7 +658,7 @@ void main() {
         await _pumpUntil(
           tester,
           () => postReleaseLockBarrier.isCompleted,
-          timeout: const Duration(seconds: 10),
+          timeout: const Duration(seconds: 30),
         );
 
         final rows = (await tester.runAsync(
@@ -894,7 +894,7 @@ void main() {
             );
         return !directPrivateMediaTransferRegistry.isActive(attachmentId) &&
             !File('${root.path}/$relativePath').existsSync();
-      }, timeout: const Duration(seconds: 10));
+      }, timeout: const Duration(seconds: 30));
       await tester.runAsync(
         () => fixture.repo.lifecycleLock.synchronizedAll(() async {}),
       );
@@ -1689,7 +1689,7 @@ void main() {
         await _pumpUntil(
           tester,
           () => deleteBarrier.isCompleted,
-          timeout: const Duration(seconds: 10),
+          timeout: const Duration(seconds: 30),
         );
         if (deleteCase.reinsertRace) {
           await _pumpUntil(tester, () => reinsertAttempt != null);

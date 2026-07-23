@@ -30,6 +30,14 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 typedef GroupMessageIdFactory = String Function();
 
+/// Final read-only authority check run inside the same per-group membership
+/// phase as message persistence and native delivery.
+///
+/// Callers that perform an external precursor (for example, a media upload)
+/// can bind dispatch to the exact authority used by that precursor without
+/// trying to nest another membership lock around [sendGroupMessage].
+typedef CurrentGroupSendAuthorityCheck = Future<bool> Function();
+
 String _diagnosticPrefix(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
 
@@ -1174,6 +1182,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   bool includeSenderPeerIdInDurableRecipients = false,
   int Function()? privateMediaNowMs,
   GroupMessage? expectedRetryParentBeforeDispatch,
+  CurrentGroupSendAuthorityCheck? currentAuthorityCheck,
 }) {
   return runGroupMembershipMutationLocked(
     groupId: groupId,
@@ -1206,6 +1215,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       includeSenderPeerIdInDurableRecipients:
           includeSenderPeerIdInDurableRecipients,
       privateMediaNowMs: privateMediaNowMs,
+      currentAuthorityCheck: currentAuthorityCheck,
     ),
   );
 }
@@ -1241,6 +1251,7 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
   bool includeSenderPeerIdInDurableRecipients = false,
   int Function()? privateMediaNowMs,
   GroupMessage? expectedRetryParentBeforeDispatch,
+  CurrentGroupSendAuthorityCheck? currentAuthorityCheck,
 }) async {
   int currentPrivateMediaNowMs() =>
       privateMediaNowMs?.call() ??
@@ -1343,6 +1354,14 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
         'groupType': group.type.toValue(),
         'role': group.myRole.toValue(),
       },
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+
+  if (currentAuthorityCheck != null && !await currentAuthorityCheck()) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'expected_authority_drifted'},
     );
     return (SendGroupMessageResult.unauthorized, null);
   }

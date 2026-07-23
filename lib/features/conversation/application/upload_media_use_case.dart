@@ -456,6 +456,18 @@ Future<UploadMediaOutcome> uploadMedia({
   var stage = UploadMediaStage.validation;
   var transportRequestIssued = false;
   try {
+    if (allowedPeers != null &&
+        !allowedPeers.any((peerId) => peerId.trim().isNotEmpty)) {
+      emitUploadTiming(
+        outcome: 'rejected',
+        details: {'reason': kEmptyGroupMediaAclErrorCode},
+      );
+      return const UploadMediaFailed(
+        stage: UploadMediaStage.validation,
+        disposition: UploadMediaDisposition.terminal,
+        errorCode: kEmptyGroupMediaAclErrorCode,
+      );
+    }
     if (localFilePath.trim().isEmpty ||
         effectiveMime.trim().isEmpty ||
         !_isSyntacticallyValidMime(effectiveMime) ||

@@ -24,6 +24,7 @@ class MediaGrid extends StatelessWidget {
   /// 128 (round 5): owned-media dir id (1:1 contact peerId / groupId) for the
   /// render-boundary fallback to the durable `media/<id>/<blob>` copy.
   final String? ownedMediaPeerId;
+  final Map<String, String> renderedSemanticsLabels;
 
   const MediaGrid({
     super.key,
@@ -33,6 +34,7 @@ class MediaGrid extends StatelessWidget {
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
     this.ownedMediaPeerId,
+    this.renderedSemanticsLabels = const <String, String>{},
   });
 
   @override
@@ -115,6 +117,7 @@ class MediaGrid extends StatelessWidget {
                       : null,
                   requireVerifiedContentHash: requireVerifiedContentHash,
                   ownedMediaPeerId: ownedMediaPeerId,
+                  renderedSemanticsLabel: renderedSemanticsLabels[media[3].id],
                 ),
               ),
             ),
@@ -136,6 +139,7 @@ class MediaGrid extends StatelessWidget {
           : null,
       requireVerifiedContentHash: requireVerifiedContentHash,
       ownedMediaPeerId: ownedMediaPeerId,
+      renderedSemanticsLabel: renderedSemanticsLabels[media[index].id],
     );
   }
 }

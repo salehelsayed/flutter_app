@@ -75,6 +75,7 @@ import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -167,6 +168,7 @@ class OrbitWired extends StatefulWidget {
   /// conversation this shell opens. Null keeps the action hidden.
   final GroupMediaDeleteForMeCoordinator? groupMediaDeleteForMeCoordinator;
   final GroupMessageListener? groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteListener? groupInviteListener;
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
@@ -239,6 +241,7 @@ class OrbitWired extends StatefulWidget {
     this.resolveGroupExitSnapshotForTest,
     this.groupMediaDeleteForMeCoordinator,
     this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.groupInviteListener,
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
@@ -2711,6 +2714,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
               groupMessageListener: widget.groupMessageListener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               groupInviteListener: widget.groupInviteListener,
               waitForGroupMembershipUpdateIdle:
                   widget.waitForGroupMembershipUpdateIdle,
@@ -3688,6 +3693,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
@@ -3740,6 +3747,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,

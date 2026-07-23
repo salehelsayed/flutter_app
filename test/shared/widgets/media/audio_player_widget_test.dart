@@ -19,6 +19,7 @@ void main() {
     MediaAttachment attachment, {
     bool requireVerifiedContentHash = false,
     VoidCallback? onRetryUnavailableMedia,
+    String? renderedSemanticsLabel,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -29,6 +30,7 @@ void main() {
           attachment: attachment,
           requireVerifiedContentHash: requireVerifiedContentHash,
           onRetryUnavailableMedia: onRetryUnavailableMedia,
+          renderedSemanticsLabel: renderedSemanticsLabel,
         ),
       ),
     );
@@ -236,6 +238,50 @@ void main() {
 
         expect(find.text('0:06'), findsOneWidget);
         expect(find.text('0:05'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'P269 voice render semantics appears only after the real player load settles',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        final load = fakePlatform.enqueueLoad(
+          reportedDuration: const Duration(seconds: 2),
+        );
+        final attachment = availableAttachment(
+          id: 'p269-voice',
+          localPath: '/tmp/p269_voice.m4a',
+          durationMs: 1700,
+        );
+
+        await tester.pumpWidget(
+          buildApp(
+            attachment,
+            renderedSemanticsLabel: 'P269 receiver voice rendered',
+          ),
+        );
+        await tester.pump();
+        await load.started;
+        expect(
+          find.bySemanticsLabel(RegExp('P269 receiver voice rendered')),
+          findsNothing,
+        );
+
+        load.complete();
+        await settleCompletedLoad(tester);
+        expect(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                widget.properties.label == 'P269 receiver voice rendered',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('P269 receiver voice rendered')),
+          findsOneWidget,
+        );
+        semantics.dispose();
       },
     );
 

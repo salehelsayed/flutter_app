@@ -1,6 +1,146 @@
 #if canImport(GoMknoon)
 import Flutter
 import GoMknoon
+import UIKit
+
+/// Small UIApplication seam used by the process-wide critical-task registry.
+/// Tests inject a deterministic manager instead of asking the simulator OS for
+/// background execution time.
+protocol BackgroundTaskManaging: AnyObject {
+    func beginBackgroundTask(
+        withName taskName: String?,
+        expirationHandler handler: (() -> Void)?
+    ) -> UIBackgroundTaskIdentifier
+
+    func endBackgroundTask(_ identifier: UIBackgroundTaskIdentifier)
+
+    var backgroundTimeRemaining: TimeInterval { get }
+}
+
+extension UIApplication: BackgroundTaskManaging {}
+
+/// Owns every live Dart-initiated iOS background task in this process.
+///
+/// A task ID is removed while holding `lock` before the underlying manager is
+/// asked to end it. Consequently, native expiration and a concurrent/late Dart
+/// `bgEnd` have exactly one winner. Tests inject an isolated registry; the
+/// default bridge initializer uses the UIApplication-backed shared registry.
+final class CriticalTaskRegistry {
+    static let shared = CriticalTaskRegistry(
+        backgroundTaskManager: UIApplication.shared
+    )
+
+    private final class PendingTask {
+        var identifier: UIBackgroundTaskIdentifier?
+        var expirationRequested = false
+        var completed = false
+    }
+
+    private let backgroundTaskManager: BackgroundTaskManaging
+    private let processIdentifier: () -> Int32
+    private let eventLogger: (String) -> Void
+    private let lock = NSLock()
+    private var liveTasks: [Int: PendingTask] = [:]
+
+    init(
+        backgroundTaskManager: BackgroundTaskManaging,
+        processIdentifier: @escaping () -> Int32 = {
+            ProcessInfo.processInfo.processIdentifier
+        },
+        eventLogger: @escaping (String) -> Void = { message in
+            logGroupMediaNativeProof(message)
+        }
+    ) {
+        self.backgroundTaskManager = backgroundTaskManager
+        self.processIdentifier = processIdentifier
+        self.eventLogger = eventLogger
+    }
+
+    var backgroundTimeRemaining: TimeInterval {
+        backgroundTaskManager.backgroundTimeRemaining
+    }
+
+    @discardableResult
+    func begin(withName taskName: String) -> UIBackgroundTaskIdentifier {
+        let pendingTask = PendingTask()
+        let taskId = backgroundTaskManager.beginBackgroundTask(
+            withName: taskName
+        ) { [weak self, pendingTask] in
+            self?.expire(pendingTask)
+        }
+
+        var expirationWonBeforeRegistration = false
+        lock.lock()
+        pendingTask.identifier = taskId
+        if taskId == .invalid {
+            pendingTask.completed = true
+        } else if pendingTask.expirationRequested {
+            pendingTask.completed = true
+            expirationWonBeforeRegistration = true
+        } else {
+            liveTasks[taskId.rawValue] = pendingTask
+        }
+        lock.unlock()
+
+        if expirationWonBeforeRegistration {
+            eventLogger(
+                "[GoBridge] BG_TASK_EXPIRED — ending task before suspension " +
+                    "pid=\(processIdentifier())"
+            )
+            backgroundTaskManager.endBackgroundTask(taskId)
+        }
+        return taskId
+    }
+
+    func end(_ taskId: UIBackgroundTaskIdentifier) {
+        guard taskId != .invalid else { return }
+
+        var ownsTerminalEnd = false
+        lock.lock()
+        if let pendingTask = liveTasks.removeValue(forKey: taskId.rawValue),
+           !pendingTask.completed {
+            pendingTask.completed = true
+            ownsTerminalEnd = true
+        }
+        lock.unlock()
+
+        if ownsTerminalEnd {
+            backgroundTaskManager.endBackgroundTask(taskId)
+            eventLogger(
+                "[GoBridge] BG_TASK_ENDED taskId=\(taskId.rawValue) " +
+                    "terminal=normal pid=\(processIdentifier())"
+            )
+        }
+    }
+
+    private func expire(_ pendingTask: PendingTask) {
+        var taskIdToEnd: UIBackgroundTaskIdentifier?
+        lock.lock()
+        if !pendingTask.completed {
+            if let taskId = pendingTask.identifier {
+                if taskId != .invalid,
+                   liveTasks[taskId.rawValue] === pendingTask {
+                    liveTasks.removeValue(forKey: taskId.rawValue)
+                    pendingTask.completed = true
+                    taskIdToEnd = taskId
+                }
+            } else {
+                // Defend against a manager invoking expiration before its begin
+                // call returns the task ID. `begin` completes the terminal end.
+                pendingTask.expirationRequested = true
+            }
+        }
+        lock.unlock()
+
+        if let taskIdToEnd {
+            eventLogger(
+                "[GoBridge] BG_TASK_EXPIRED — ending task before suspension " +
+                    "pid=\(processIdentifier())"
+            )
+            backgroundTaskManager.endBackgroundTask(taskIdToEnd)
+        }
+    }
+}
 
 /// Bridges Flutter MethodChannel/EventChannel to the Go native library.
 ///
@@ -13,8 +153,13 @@ class GoBridge: NSObject {
     private var pendingEvents: [String] = []
     private let pendingEventsLock = NSLock()
     private let maxPendingEvents = 256
+    private let criticalTaskRegistry: CriticalTaskRegistry
 
-    init(messenger: FlutterBinaryMessenger) {
+    init(
+        messenger: FlutterBinaryMessenger,
+        criticalTaskRegistry: CriticalTaskRegistry = .shared
+    ) {
+        self.criticalTaskRegistry = criticalTaskRegistry
         methodChannel = FlutterMethodChannel(
             name: "com.mknoon/go_bridge",
             binaryMessenger: messenger
@@ -231,17 +376,12 @@ class GoBridge: NSObject {
             // Called synchronously on main thread — do NOT use runOnBackground.
             // UIApplication.beginBackgroundTask must run on main thread and return before
             // the app finishes transitioning to background.
-            var taskId = UIBackgroundTaskIdentifier.invalid
-            taskId = UIApplication.shared.beginBackgroundTask(withName: "mknoon.sendMessage") {
-                // Expiration handler: iOS is about to force-suspend.
-                NSLog("[GoBridge] BG_TASK_EXPIRED — ending task before suspension")
-                if taskId != .invalid {
-                    UIApplication.shared.endBackgroundTask(taskId)
-                    taskId = .invalid
-                }
-            }
+            let taskId = criticalTaskRegistry.begin(withName: "mknoon.sendMessage")
             if taskId == .invalid {
-                NSLog("[GoBridge] BG_TASK_REFUSED — OS would not grant background time")
+                logGroupMediaNativeProof(
+                    "[GoBridge] BG_TASK_REFUSED — OS would not grant background time " +
+                        "pid=\(ProcessInfo.processInfo.processIdentifier)"
+                )
                 result("")  // empty string signals Dart that no task was granted
             } else {
                 // FDC-S4 (Method step 1): log the ACTUAL OS-granted background
@@ -251,9 +391,12 @@ class GoBridge: NSObject {
                 // main thread (this case already runs on main); the OS may
                 // report .greatestFiniteMagnitude until the app is fully
                 // backgrounded, which the parser treats as "unbounded".
-                let remainingSec = UIApplication.shared.backgroundTimeRemaining
-                NSLog("[GoBridge] BG_TASK_GRANTED taskId=%@ backgroundTimeRemainingSec=%.1f",
-                      String(taskId.rawValue), remainingSec)
+                let remainingSec = criticalTaskRegistry.backgroundTimeRemaining
+                logGroupMediaNativeProof(
+                    "[GoBridge] BG_TASK_GRANTED taskId=\(taskId.rawValue) " +
+                        "backgroundTimeRemainingSec=\(String(format: "%.1f", remainingSec)) " +
+                        "pid=\(ProcessInfo.processInfo.processIdentifier)"
+                )
                 result(String(taskId.rawValue))  // return raw handle as string
             }
 
@@ -268,7 +411,7 @@ class GoBridge: NSObject {
                let rawVal = Int(taskIdStr),
                rawVal != UIBackgroundTaskIdentifier.invalid.rawValue {
                 let taskId = UIBackgroundTaskIdentifier(rawValue: rawVal)
-                UIApplication.shared.endBackgroundTask(taskId)
+                criticalTaskRegistry.end(taskId)
             }
             result(nil)
 

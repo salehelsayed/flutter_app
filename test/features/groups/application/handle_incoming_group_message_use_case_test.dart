@@ -13,6 +13,8 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -104,6 +106,47 @@ class _FakeEventLog {
       entries.add(entry);
     }
     return entry;
+  }
+}
+
+class _GuardedRecordingMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository
+    implements GroupGuardedMediaAttachmentSave {
+  bool allowGuardedSave = true;
+  int guardedSaveCalls = 0;
+
+  @override
+  Future<bool> saveGroupAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String groupId,
+  }) async {
+    guardedSaveCalls++;
+    if (!allowGuardedSave) return false;
+    await saveAttachment(attachment, owner: MediaOwnerLane.group);
+    return true;
+  }
+}
+
+class _LogicalMediaRetryRaceRepository
+    extends _GuardedRecordingMediaAttachmentRepository {
+  bool removeCanonicalMediaAfterNextBatchLookup = false;
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
+    final result = await super.getAttachmentsForMessages(
+      messageIds,
+      owner: owner,
+    );
+    if (removeCanonicalMediaAfterNextBatchLookup) {
+      removeCanonicalMediaAfterNextBatchLookup = false;
+      for (final messageId in messageIds) {
+        await super.deleteAttachmentsForMessage(messageId, owner: owner);
+      }
+    }
+    return result;
   }
 }
 
@@ -2398,6 +2441,378 @@ void main() {
     expect(result2, isNull);
     expect(mediaRepo.count, 1, reason: 'Media should not be saved again');
   });
+
+  test(
+    'P269 detailed duplicate outcome reports exact persisted media across every dedupe branch',
+    () async {
+      final sentAt = DateTime.utc(2026, 7, 20, 12);
+
+      Future<(InMemoryGroupRepository, InMemoryGroupMessageRepository)>
+      createFixture() async {
+        final groups = InMemoryGroupRepository();
+        final messages = InMemoryGroupMessageRepository();
+        await groups.saveGroup(
+          GroupModel(
+            id: 'group-1',
+            name: 'P269 group',
+            type: GroupType.chat,
+            topicName: 'p269-topic',
+            createdAt: sentAt.subtract(const Duration(hours: 2)),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        for (final peerId in const ['peer-sender', 'peer-self']) {
+          await groups.saveMember(
+            GroupMember(
+              groupId: 'group-1',
+              peerId: peerId,
+              username: peerId == 'peer-self' ? 'Self' : 'Sender',
+              role: MemberRole.writer,
+              joinedAt: sentAt.subtract(const Duration(hours: 1)),
+            ),
+          );
+        }
+        return (groups, messages);
+      }
+
+      GroupMessage canonicalMessage(
+        String id, {
+        String senderId = 'peer-sender',
+        String text = 'P269 duplicate',
+        String status = 'delivered',
+        bool isIncoming = true,
+        String? logicalDeliveryId,
+      }) {
+        return GroupMessage(
+          id: id,
+          groupId: 'group-1',
+          senderPeerId: senderId,
+          transportPeerId: senderId,
+          senderUsername: senderId == 'peer-self' ? 'Self' : 'Sender',
+          text: text,
+          timestamp: sentAt,
+          logicalDeliveryId: logicalDeliveryId,
+          keyGeneration: 0,
+          status: status,
+          isIncoming: isIncoming,
+          createdAt: sentAt,
+        );
+      }
+
+      Future<IncomingGroupMessageDetailedOutcome> handleDetailed({
+        required InMemoryGroupRepository groups,
+        required InMemoryGroupMessageRepository messages,
+        required String text,
+        String senderId = 'peer-sender',
+        String? selfPeerId,
+        String? messageId,
+        String? logicalDeliveryId,
+        String? quotedMessageId,
+        List<Map<String, dynamic>>? media,
+        MediaAttachmentRepository? mediaRepository,
+        AppendGroupEventLogEntry? appendEvent,
+      }) {
+        return handleIncomingGroupMessageDetailed(
+          groupRepo: groups,
+          msgRepo: messages,
+          groupId: 'group-1',
+          senderId: senderId,
+          senderUsername: senderId == 'peer-self' ? 'Self' : 'Sender',
+          keyEpoch: 0,
+          text: text,
+          timestamp: sentAt.toIso8601String(),
+          selfPeerId: selfPeerId,
+          transportPeerId: senderId,
+          messageId: messageId,
+          logicalDeliveryId: logicalDeliveryId,
+          quotedMessageId: quotedMessageId,
+          media: media,
+          mediaAttachmentRepo: mediaRepository,
+          appendGroupEventLogEntry: appendEvent,
+          nowUtc: () => sentAt.add(const Duration(minutes: 1)),
+        );
+      }
+
+      // New rows and reconciled self echoes remain deliveries, preserving the
+      // nullable wrapper's two non-null behaviors.
+      final (newGroups, newMessages) = await createFixture();
+      final newDelivery = await handleDetailed(
+        groups: newGroups,
+        messages: newMessages,
+        text: 'P269 new delivery',
+        messageId: 'p269-new-delivery',
+      );
+      expect(newDelivery, isA<IncomingGroupMessageDelivered>());
+      expect(
+        (newDelivery as IncomingGroupMessageDelivered).message.id,
+        'p269-new-delivery',
+      );
+
+      final (selfGroups, selfMessages) = await createFixture();
+      await selfMessages.saveMessage(
+        canonicalMessage(
+          'p269-self-echo',
+          senderId: 'peer-self',
+          text: 'P269 self echo',
+          status: 'pending',
+          isIncoming: false,
+        ),
+      );
+      final selfEcho = await handleDetailed(
+        groups: selfGroups,
+        messages: selfMessages,
+        senderId: 'peer-self',
+        selfPeerId: 'peer-self',
+        text: 'P269 self echo',
+        messageId: 'p269-self-echo',
+      );
+      expect(selfEcho, isA<IncomingGroupMessageDelivered>());
+      expect(
+        (selfEcho as IncomingGroupMessageDelivered).message.status,
+        'sent',
+      );
+      expect(selfEcho.message.isIncoming, isFalse);
+
+      // Exit 1: the no-event-log same-ID fast path reports only the newly
+      // committed blob, never an ID that was already attached.
+      final (fastGroups, fastMessages) = await createFixture();
+      const fastCanonicalId = 'p269-fast-canonical';
+      await fastMessages.saveMessage(
+        canonicalMessage(fastCanonicalId, text: 'P269 fast duplicate'),
+      );
+      final fastMedia = _GuardedRecordingMediaAttachmentRepository();
+      final existingFastWire = _gird003Media(
+        id: 'p269-fast-existing',
+        createdAt: sentAt.toIso8601String(),
+      );
+      final newFastWire = _gird003Media(
+        id: 'p269-fast-new',
+        createdAt: sentAt.add(const Duration(seconds: 1)).toIso8601String(),
+      );
+      await fastMedia.saveAttachment(
+        MediaAttachment.fromJson(
+          existingFastWire.single,
+        ).copyWith(messageId: fastCanonicalId),
+        owner: MediaOwnerLane.group,
+      );
+      final fastOutcome = await handleDetailed(
+        groups: fastGroups,
+        messages: fastMessages,
+        text: 'P269 fast duplicate',
+        messageId: fastCanonicalId,
+        quotedMessageId: 'p269-fast-quote',
+        media: [...existingFastWire, ...newFastWire],
+        mediaRepository: fastMedia,
+      );
+      expect(fastOutcome, isA<IncomingGroupMessageDuplicateEnriched>());
+      final fastEnriched = fastOutcome as IncomingGroupMessageDuplicateEnriched;
+      expect(fastEnriched.canonicalMessage.id, fastCanonicalId);
+      expect(fastEnriched.persistedAttachmentIds, {'p269-fast-new'});
+      expect(fastMedia.guardedSaveCalls, 1);
+      expect(
+        (await fastMedia.getAttachmentsForMessage(
+          fastCanonicalId,
+          owner: MediaOwnerLane.group,
+        )).map((attachment) => attachment.id).toSet(),
+        {'p269-fast-existing', 'p269-fast-new'},
+      );
+      expect(
+        (await fastMessages.getMessage(fastCanonicalId))?.quotedMessageId,
+        'p269-fast-quote',
+      );
+
+      final identicalThirdReplay = await handleDetailed(
+        groups: fastGroups,
+        messages: fastMessages,
+        text: 'P269 fast duplicate',
+        messageId: fastCanonicalId,
+        quotedMessageId: 'p269-fast-quote',
+        media: [...existingFastWire, ...newFastWire],
+        mediaRepository: fastMedia,
+      );
+      expect(identicalThirdReplay, isA<IncomingGroupMessageIgnored>());
+      expect(fastMedia.guardedSaveCalls, 1);
+
+      // Exit 2: installing event-log tamper gating moves the same stable-ID
+      // replay to the post-log branch, which reports its committed media.
+      final (eventGroups, eventMessages) = await createFixture();
+      const eventCanonicalId = 'p269-event-canonical';
+      await eventMessages.saveMessage(
+        canonicalMessage(eventCanonicalId, text: 'P269 event duplicate'),
+      );
+      final eventMedia = _GuardedRecordingMediaAttachmentRepository();
+      final eventLog = _FakeEventLog();
+      final eventOutcome = await handleDetailed(
+        groups: eventGroups,
+        messages: eventMessages,
+        text: 'P269 event duplicate',
+        messageId: eventCanonicalId,
+        media: _gird003Media(
+          id: 'p269-event-new',
+          createdAt: sentAt.toIso8601String(),
+        ),
+        mediaRepository: eventMedia,
+        appendEvent: eventLog.append,
+      );
+      expect(eventOutcome, isA<IncomingGroupMessageDuplicateEnriched>());
+      final eventEnriched =
+          eventOutcome as IncomingGroupMessageDuplicateEnriched;
+      expect(eventEnriched.canonicalMessage.id, eventCanonicalId);
+      expect(eventEnriched.persistedAttachmentIds, {'p269-event-new'});
+      expect(eventLog.entries, hasLength(1));
+
+      // Exit 3: a reminted wire message ID with a stable logical-delivery ID
+      // persists media under the original canonical parent.
+      final (logicalGroups, logicalMessages) = await createFixture();
+      const logicalCanonicalId = 'p269-logical-canonical';
+      await logicalMessages.saveMessage(
+        canonicalMessage(
+          logicalCanonicalId,
+          text: 'P269 logical duplicate',
+          logicalDeliveryId: 'p269-logical-delivery',
+        ),
+      );
+      final logicalMedia = _GuardedRecordingMediaAttachmentRepository();
+      final logicalOutcome = await handleDetailed(
+        groups: logicalGroups,
+        messages: logicalMessages,
+        text: 'P269 logical duplicate',
+        messageId: 'p269-logical-reminted',
+        logicalDeliveryId: 'p269-logical-delivery',
+        media: _gird003Media(
+          id: 'p269-logical-new',
+          createdAt: sentAt.toIso8601String(),
+        ),
+        mediaRepository: logicalMedia,
+      );
+      expect(logicalOutcome, isA<IncomingGroupMessageDuplicateEnriched>());
+      final logicalEnriched =
+          logicalOutcome as IncomingGroupMessageDuplicateEnriched;
+      expect(logicalEnriched.canonicalMessage.id, logicalCanonicalId);
+      expect(logicalEnriched.persistedAttachmentIds, {'p269-logical-new'});
+      expect(await logicalMessages.getMessage('p269-logical-reminted'), isNull);
+      expect(
+        (await logicalMedia.getAttachmentsForMessage(
+          logicalCanonicalId,
+          owner: MediaOwnerLane.group,
+        )).single.messageId,
+        logicalCanonicalId,
+      );
+
+      // Exit 4: strict media-identity discovery can race local deletion. The
+      // batch result authorizes the canonical parent, then the exact missing
+      // attachment is restored and reported rather than the reminted row.
+      final (retryGroups, retryMessages) = await createFixture();
+      final retryMedia = _LogicalMediaRetryRaceRepository();
+      final retryWire = _gird003Media(
+        id: 'p269-media-retry-blob',
+        createdAt: sentAt.toIso8601String(),
+      );
+      final seededRetry = await handleIncomingGroupMessage(
+        groupRepo: retryGroups,
+        msgRepo: retryMessages,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'P269 media retry duplicate',
+        timestamp: sentAt.toIso8601String(),
+        transportPeerId: 'peer-sender',
+        messageId: 'p269-media-retry-canonical',
+        media: retryWire,
+        mediaAttachmentRepo: retryMedia,
+        nowUtc: () => sentAt.add(const Duration(minutes: 1)),
+      );
+      expect(seededRetry, isNotNull);
+      retryMedia.guardedSaveCalls = 0;
+      retryMedia.removeCanonicalMediaAfterNextBatchLookup = true;
+      final retryOutcome = await handleDetailed(
+        groups: retryGroups,
+        messages: retryMessages,
+        text: 'P269 media retry duplicate',
+        messageId: 'p269-media-retry-reminted',
+        media: retryWire,
+        mediaRepository: retryMedia,
+      );
+      expect(retryOutcome, isA<IncomingGroupMessageDuplicateEnriched>());
+      final retryEnriched =
+          retryOutcome as IncomingGroupMessageDuplicateEnriched;
+      expect(retryEnriched.canonicalMessage.id, 'p269-media-retry-canonical');
+      expect(retryEnriched.persistedAttachmentIds, {'p269-media-retry-blob'});
+      expect(retryMedia.guardedSaveCalls, 1);
+      expect(
+        (await retryMedia.getAttachmentsForMessage(
+          'p269-media-retry-canonical',
+          owner: MediaOwnerLane.group,
+        )).single.messageId,
+        'p269-media-retry-canonical',
+      );
+
+      // A guarded refusal made no durable change and therefore cannot be
+      // presented to the listener as enrichment.
+      final (guardGroups, guardMessages) = await createFixture();
+      const guardCanonicalId = 'p269-guard-canonical';
+      await guardMessages.saveMessage(
+        canonicalMessage(guardCanonicalId, text: 'P269 guard duplicate'),
+      );
+      guardMessages.failSaveMessageIds.add(guardCanonicalId);
+      final refusedMedia = _GuardedRecordingMediaAttachmentRepository()
+        ..allowGuardedSave = false;
+      final guardOutcome = await handleDetailed(
+        groups: guardGroups,
+        messages: guardMessages,
+        text: 'P269 guard duplicate',
+        messageId: guardCanonicalId,
+        quotedMessageId: 'p269-guard-refused-quote',
+        media: _gird003Media(
+          id: 'p269-guard-refused',
+          createdAt: sentAt.toIso8601String(),
+        ),
+        mediaRepository: refusedMedia,
+      );
+      expect(guardOutcome, isA<IncomingGroupMessageIgnored>());
+      expect(refusedMedia.guardedSaveCalls, 1);
+      expect(refusedMedia.count, 0);
+      expect(guardMessages.count, 1);
+      expect(
+        (await guardMessages.getMessage(guardCanonicalId))?.quotedMessageId,
+        isNull,
+        reason: 'a refused attachment guard cannot leave a quote-only write',
+      );
+
+      // Exit 5: id-less content matching is deliberately too weak to
+      // authorize media attachment writes, even when a heuristic row exists.
+      final (contentGroups, contentMessages) = await createFixture();
+      final contentParent = await handleIncomingGroupMessage(
+        groupRepo: contentGroups,
+        msgRepo: contentMessages,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'P269 content duplicate',
+        timestamp: sentAt.toIso8601String(),
+        nowUtc: () => sentAt.add(const Duration(minutes: 1)),
+      );
+      expect(contentParent, isNotNull);
+      final contentMedia = _GuardedRecordingMediaAttachmentRepository();
+      final contentOutcome = await handleDetailed(
+        groups: contentGroups,
+        messages: contentMessages,
+        text: 'P269 content duplicate',
+        media: _gird003Media(
+          id: 'p269-content-must-not-save',
+          createdAt: sentAt.toIso8601String(),
+        ),
+        mediaRepository: contentMedia,
+      );
+      expect(contentOutcome, isA<IncomingGroupMessageIgnored>());
+      expect(contentMedia.guardedSaveCalls, 0);
+      expect(contentMedia.count, 0);
+      expect(contentMessages.count, 1);
+    },
+  );
 
   test(
     'replayed removed-sender message after cutoff does not overwrite the accepted pre-cutoff row',

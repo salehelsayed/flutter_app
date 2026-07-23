@@ -1,0 +1,505 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_mime_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/application/foreground_group_media_upload.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
+
+Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
+  required String receiverAccountPeerId,
+  required String receiverTransportPeerId,
+  required Bridge bridge,
+  required P2PService p2pService,
+  required IdentityRepository identityRepository,
+  required ContactRepository contactRepository,
+  required GroupRepository groupRepository,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+}) async {
+  final identity = await identityRepository.loadIdentity();
+  final receiver = await contactRepository.getContact(receiverAccountPeerId);
+  final transport = p2pService.currentState.peerId?.trim();
+  if (identity == null ||
+      receiver == null ||
+      receiver.mlKemPublicKey == null ||
+      receiver.mlKemPublicKey!.trim().isEmpty ||
+      transport == null ||
+      transport.isEmpty ||
+      identity.peerId == transport ||
+      receiverAccountPeerId == receiverTransportPeerId) {
+    throw StateError(
+      'group-media sender lacks distinct account/transport authority',
+    );
+  }
+  final result = await createGroupWithMembers(
+    bridge: bridge,
+    groupRepo: groupRepository,
+    p2pService: p2pService,
+    identity: identity,
+    selectedContacts: [receiver],
+    type: GroupType.chat,
+    name: 'P269 ${DateTime.now().toUtc().microsecondsSinceEpoch}',
+    selectedContactDeviceBindings: <String, GroupMemberDeviceIdentity>{
+      receiverAccountPeerId: GroupMemberDeviceIdentity(
+        deviceId: receiverTransportPeerId,
+        transportPeerId: receiverTransportPeerId,
+        deviceSigningPublicKey: receiver.publicKey,
+        mlKemPublicKey: receiver.mlKemPublicKey,
+        keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+          receiverTransportPeerId,
+        ),
+        keyPackagePublicMaterial: receiver.mlKemPublicKey,
+      ),
+    },
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepository,
+  );
+  if (result.membersAdded != 1 ||
+      result.invitesSent != 1 ||
+      result.membershipSyncRolledBack) {
+    throw StateError('group-media sender group/invite setup did not settle');
+  }
+  return <String, Object?>{
+    'groupId': result.group.id,
+    'accountPeerId': identity.peerId,
+    'transportPeerId': transport,
+  };
+}
+
+Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
+  required String runId,
+  required String groupId,
+  required Map<String, String> messageIds,
+  required Map<String, String> attachmentIds,
+  required String receiverAccountPeerId,
+  required String receiverTransportPeerId,
+  required Directory fixtureDirectory,
+  required Bridge bridge,
+  required P2PService p2pService,
+  required IdentityRepository identityRepository,
+  required GroupRepository groupRepository,
+  required GroupMessageRepository groupMessageRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+  required MediaFileManager mediaFileManager,
+  required AudioRecorderService audioRecorderService,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+}) async {
+  final identity = await identityRepository.loadIdentity();
+  final senderTransport = p2pService.currentState.peerId?.trim();
+  if (identity == null ||
+      senderTransport == null ||
+      senderTransport.isEmpty ||
+      identity.peerId == senderTransport ||
+      receiverAccountPeerId == receiverTransportPeerId) {
+    throw StateError('group-media send identity discriminator failed');
+  }
+
+  final members = await _waitForReceiverTransportRoster(
+    groupRepository: groupRepository,
+    p2pService: p2pService,
+    groupId: groupId,
+    receiverAccountPeerId: receiverAccountPeerId,
+    receiverTransportPeerId: receiverTransportPeerId,
+  );
+  final allowedPeers = groupMediaAllowedPeersForMembers(members);
+  if (allowedPeers.length != 2 ||
+      allowedPeers.toSet().length != 2 ||
+      !allowedPeers.toSet().containsAll(<String>{
+        senderTransport,
+        receiverTransportPeerId,
+      }) ||
+      allowedPeers.contains(identity.peerId) ||
+      allowedPeers.contains(receiverAccountPeerId)) {
+    throw StateError('group-media ACL did not select receiver transport');
+  }
+
+  await fixtureDirectory.create(recursive: true);
+  final specs = <({String kind, String mime, String? asset})>[
+    (
+      kind: 'mp4',
+      mime: 'video/mp4',
+      asset: 'integration_test/fixtures/received_media_egress_fixture.mp4',
+    ),
+    (kind: 'voice', mime: 'audio/mp4', asset: null),
+    // The process-death target is intentionally last. The sender endpoint can
+    // therefore prove every upload/publication settled before the host starts
+    // observing the receiver's JPEG post-claim/pre-commit barrier.
+    (
+      kind: 'jpeg',
+      mime: 'image/jpeg',
+      asset: 'integration_test/fixtures/received_media_egress_fixture.jpg',
+    ),
+  ];
+  if (messageIds.keys.toSet().length != 3 ||
+      attachmentIds.keys.toSet().length != 3 ||
+      !messageIds.keys.toSet().containsAll(const <String>{
+        'jpeg',
+        'mp4',
+        'voice',
+      }) ||
+      !attachmentIds.keys.toSet().containsAll(const <String>{
+        'jpeg',
+        'mp4',
+        'voice',
+      }) ||
+      messageIds.values.toSet().length != 3 ||
+      attachmentIds.values.toSet().length != 3) {
+    throw StateError('group-media fixture IDs are incomplete or reused');
+  }
+
+  final uploads = <String, int>{};
+  final publications = <String, int>{};
+  final transientSources = <File>[];
+  final uploadLease = mediaUploadInFlightTracker.tryClaimAll(
+    attachmentIds.values,
+    source: MediaUploadTriggerSource.foreground,
+  );
+  if (uploadLease == null) {
+    throw StateError('group-media fixture attachment lease was denied');
+  }
+  try {
+    for (final spec in specs) {
+      final messageId = messageIds[spec.kind]!;
+      final attachmentId = attachmentIds[spec.kind]!;
+      late final File source;
+      int? durationMs;
+      List<double>? waveform;
+      if (spec.asset case final asset?) {
+        final bytes = await rootBundle.load(asset);
+        source = File('${fixtureDirectory.path}/$runId-${spec.kind}.bin');
+        await source.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
+      } else {
+        if (!await audioRecorderService.hasPermission()) {
+          throw StateError('group-media voice fixture lacks RECORD_AUDIO');
+        }
+        await audioRecorderService.start(outputPath: '');
+        await Future<void>.delayed(const Duration(milliseconds: 1700));
+        final recording = await audioRecorderService.stop();
+        if (recording == null ||
+            recording.mime != 'audio/mp4' ||
+            recording.durationMs < 1500 ||
+            recording.sizeBytes <= 12) {
+          throw StateError('group-media voice fixture recording is invalid');
+        }
+        source = File(recording.filePath);
+        final header = await source
+            .openRead(0, 12)
+            .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
+        if (header.length < 12 ||
+            String.fromCharCodes(header.sublist(4, 8)) != 'ftyp') {
+          throw StateError('group-media voice fixture is not AAC/M4A');
+        }
+        durationMs = recording.durationMs;
+        waveform = const <double>[0.15, 0.5, 0.85, 0.35];
+      }
+      transientSources.add(source);
+      final sourceSize = await source.length();
+      final mimeValidation = await GroupMediaMimePolicy.validateFile(
+        path: source.path,
+        mime: spec.mime,
+        mediaType: GroupMediaMimePolicy.mediaTypeForMime(spec.mime),
+      );
+      final sizeValidation = GroupMediaSizePolicy.validateSize(
+        sizeBytes: sourceSize,
+        mime: spec.mime,
+      );
+      if (!mimeValidation.isValid || !sizeValidation.isValid) {
+        throw StateError('group-media ${spec.kind} fixture policy rejected');
+      }
+
+      final durableRelativePath = await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: source.path,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: spec.mime,
+      );
+      final durableAbsolutePath = await mediaFileManager.resolveStoredPath(
+        durableRelativePath,
+      );
+      final contentHash = await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+        durableAbsolutePath,
+      );
+      final now = DateTime.now().toUtc();
+      final expectedParent = GroupMessage(
+        id: messageId,
+        groupId: groupId,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        text: '',
+        timestamp: now,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: now,
+      );
+      final expectedAttachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: spec.mime,
+        size: sourceSize,
+        mediaType: MediaAttachment.mediaTypeFromMime(spec.mime),
+        durationMs: durationMs,
+        localPath: durableRelativePath,
+        waveform: waveform,
+        downloadStatus: 'upload_pending',
+        createdAt: now.toIso8601String(),
+        uploadRetryCount: 0,
+        downloadRetryCount: 0,
+        contentHash: contentHash,
+        ownerLane: MediaOwnerLane.group,
+      );
+
+      // The exact parent exists before the shared production leaf persists and
+      // SQL-default-reloads the attachment. The process-wide lease above owns
+      // every supplied blob ID before either row becomes visible.
+      await groupMessageRepository.saveMessage(expectedParent);
+      final completed = await runForegroundGroupUploadLeaf(
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        expectedParent: expectedParent,
+        expectedAttachment: expectedAttachment,
+        senderPeerId: identity.peerId,
+        inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
+        upload: (currentAllowedPeers) {
+          if (currentAllowedPeers.length != 2 ||
+              currentAllowedPeers.toSet().length != 2 ||
+              !currentAllowedPeers.toSet().containsAll(<String>{
+                senderTransport,
+                receiverTransportPeerId,
+              }) ||
+              currentAllowedPeers.contains(identity.peerId) ||
+              currentAllowedPeers.contains(receiverAccountPeerId)) {
+            throw StateError(
+              'group-media foreground leaf ACL lost transport authority',
+            );
+          }
+          return uploadMedia(
+            bridge: bridge,
+            localFilePath: durableAbsolutePath,
+            mime: spec.mime,
+            recipientPeerId: groupId,
+            mediaFileManager: mediaFileManager,
+            durationMs: durationMs,
+            waveform: waveform,
+            allowedPeers: currentAllowedPeers,
+            blobId: attachmentId,
+          );
+        },
+        buildCompleted: (uploaded) async {
+          final absoluteOwnedPath = await mediaFileManager
+              .localPathForAttachment(
+                contactPeerId: groupId,
+                blobId: attachmentId,
+                mime: spec.mime,
+              );
+          if (absoluteOwnedPath != durableAbsolutePath) {
+            final target = File(absoluteOwnedPath);
+            await target.parent.create(recursive: true);
+            await File(durableAbsolutePath).copy(absoluteOwnedPath);
+          }
+          return uploaded.copyWith(
+            id: attachmentId,
+            messageId: messageId,
+            mime: spec.mime,
+            size: uploaded.size > 0 ? uploaded.size : sourceSize,
+            mediaType: MediaAttachment.mediaTypeFromMime(spec.mime),
+            durationMs: durationMs ?? uploaded.durationMs,
+            localPath: mediaFileManager.relativePathForAttachment(
+              contactPeerId: groupId,
+              blobId: attachmentId,
+              mime: spec.mime,
+            ),
+            waveform: waveform ?? uploaded.waveform,
+            downloadStatus: 'done',
+            uploadRetryCount: expectedAttachment.uploadRetryCount,
+            downloadRetryCount: expectedAttachment.downloadRetryCount,
+            contentHash: uploaded.contentHash ?? contentHash,
+            ownerLane: MediaOwnerLane.group,
+          );
+        },
+      );
+      final attachment = completed?.completedAttachment;
+      if (attachment == null ||
+          completed!.outcome is! UploadMediaSucceeded ||
+          attachment.id != attachmentId ||
+          attachment.messageId != messageId ||
+          attachment.downloadStatus != 'done') {
+        throw StateError(
+          'group-media ${spec.kind} foreground completion failed',
+        );
+      }
+      uploads[spec.kind] = (uploads[spec.kind] ?? 0) + 1;
+
+      final result = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        groupId: groupId,
+        text: '',
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        senderDeviceId: senderTransport,
+        senderTransportPeerId: senderTransport,
+        messageId: messageId,
+        logicalDeliveryId: messageId,
+        timestamp: now,
+        mediaAttachments: <MediaAttachment>[attachment],
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepository,
+      );
+      if (result.$2?.id != messageId ||
+          !const <SendGroupMessageResult>{
+            SendGroupMessageResult.success,
+            SendGroupMessageResult.successNoPeers,
+          }.contains(result.$1)) {
+        throw StateError('group-media ${spec.kind} publication failed');
+      }
+      publications[spec.kind] = (publications[spec.kind] ?? 0) + 1;
+      try {
+        await mediaFileManager.deletePendingUploadDir(messageId);
+      } catch (_) {}
+    }
+  } finally {
+    if (audioRecorderService.isRecording) {
+      await audioRecorderService.cancel();
+    }
+    for (final source in transientSources) {
+      if (await source.exists()) await source.delete();
+    }
+    if (await fixtureDirectory.exists()) {
+      for (final entry in fixtureDirectory.listSync().whereType<File>()) {
+        if (entry.path.contains('$runId-')) await entry.delete();
+      }
+    }
+    mediaUploadInFlightTracker.release(uploadLease);
+  }
+  return <String, Object?>{
+    'accountPeerId': identity.peerId,
+    'transportPeerId': senderTransport,
+    'receiverAccountPeerId': receiverAccountPeerId,
+    'receiverTransportPeerId': receiverTransportPeerId,
+    'allowedPeers': allowedPeers,
+    'uploadsPerBlob': uploads,
+    'publicationsPerMessage': publications,
+  };
+}
+
+Future<Map<String, Object?>> probeGroupMediaReliabilityRoleDatabase({
+  required String role,
+  required String runId,
+  required String transportPeerId,
+  required Map<String, String> messageIds,
+  required Map<String, String> attachmentIds,
+  required Database database,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+}) async {
+  final cipherRows = await database.rawQuery('PRAGMA cipher_version');
+  final userVersionRows = await database.rawQuery('PRAGMA user_version');
+  final cipherVersion = cipherRows.single.values.single;
+  final userVersion = userVersionRows.single.values.single;
+  if (cipherVersion is! String ||
+      cipherVersion.trim().isEmpty ||
+      transportPeerId.trim().isEmpty ||
+      userVersion != 104) {
+    throw StateError('group-media role SQLCipher facts rejected');
+  }
+  final rows = <Map<String, Object?>>[];
+  if (messageIds.isEmpty && attachmentIds.isEmpty) {
+    return <String, Object?>{
+      'role_db_path': '$role/group-media.sqlite',
+      'database_path_sha256': groupMediaReliabilityDatabasePathFingerprint(
+        runId: runId,
+        transportPeerId: transportPeerId,
+        databasePath: database.path,
+      ),
+      'cipher_version': cipherVersion,
+      'user_version': userVersion,
+      'rows': rows,
+    };
+  }
+  if (messageIds.keys.toSet().length != 3 ||
+      attachmentIds.keys.toSet().length != 3) {
+    throw StateError('group-media role SQLCipher tuple is incomplete');
+  }
+  for (final kind in const <String>['jpeg', 'mp4', 'voice']) {
+    final messageId = messageIds[kind]!;
+    final exact = (await mediaAttachmentRepository.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    )).where((attachment) => attachment.id == attachmentIds[kind]).toList();
+    if (exact.length != 1 || exact.single.downloadStatus != 'done') {
+      throw StateError('group-media $role $kind row did not settle exactly');
+    }
+    final attachment = exact.single;
+    rows.add(<String, Object?>{
+      'run_id': runId,
+      'media_kind': kind,
+      'message_id': attachment.messageId,
+      'blob_id': attachment.id,
+      'status': attachment.downloadStatus,
+      'upload_retry_count': attachment.uploadRetryCount ?? 0,
+      'download_retry_count': attachment.downloadRetryCount ?? 0,
+    });
+  }
+  return <String, Object?>{
+    'role_db_path': '$role/group-media.sqlite',
+    'database_path_sha256': groupMediaReliabilityDatabasePathFingerprint(
+      runId: runId,
+      transportPeerId: transportPeerId,
+      databasePath: database.path,
+    ),
+    'cipher_version': cipherVersion,
+    'user_version': userVersion,
+    'rows': rows,
+  };
+}
+
+Future<List<GroupMember>> _waitForReceiverTransportRoster({
+  required GroupRepository groupRepository,
+  required P2PService p2pService,
+  required String groupId,
+  required String receiverAccountPeerId,
+  required String receiverTransportPeerId,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 60));
+  while (DateTime.now().isBefore(deadline)) {
+    final members = await groupRepository.getMembers(groupId);
+    final receiver = members
+        .where((member) => member.peerId == receiverAccountPeerId)
+        .toList();
+    if (receiver.length == 1 &&
+        receiver.single.activeDevicesWithLegacyFallback().any(
+          (device) => device.transportPeerId == receiverTransportPeerId,
+        )) {
+      return members;
+    }
+    await p2pService.performImmediateHealthCheck();
+    await p2pService.drainOfflineInbox();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  throw StateError('receiver active transport roster did not converge');
+}

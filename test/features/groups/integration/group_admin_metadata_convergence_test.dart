@@ -658,7 +658,7 @@ Future<InMemoryPendingGroupInviteRepository> _inviteAndAcceptViaPendingFlow({
   final latestKey = await inviter.groupRepo.getLatestKey(groupId);
   expect(latestKey, isNotNull, reason: '${inviter.username} has group key');
   final inviteP2P = FakeP2PService(
-    initialState: NodeState(isStarted: true, peerId: inviter.peerId),
+    initialState: NodeState(isStarted: true, peerId: inviter.deviceId),
   );
   final sendResult = await sendGroupInvite(
     p2pService: inviteP2P,
@@ -672,6 +672,7 @@ Future<InMemoryPendingGroupInviteRepository> _inviteAndAcceptViaPendingFlow({
     senderPrivateKey: inviter.privateKey,
     senderUsername: inviter.username,
     senderDeviceId: inviter.deviceId,
+    senderTransportPeerId: inviter.deviceId,
     groupId: groupId,
     groupKey: latestKey!.encryptedKey,
     keyEpoch: latestKey.keyGeneration,
@@ -688,7 +689,7 @@ Future<InMemoryPendingGroupInviteRepository> _inviteAndAcceptViaPendingFlow({
     ..seed([_contactFor(inviter, inviteReceivedAt)]);
   final (storeResult, pendingInvite) = await storeIncomingPendingGroupInvite(
     message: ChatMessage(
-      from: inviter.peerId,
+      from: inviter.deviceId,
       to: deliveredInvite.peerId,
       content: deliveredInvite.content,
       timestamp: inviteReceivedAt.toUtc().toIso8601String(),

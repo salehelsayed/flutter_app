@@ -142,6 +142,22 @@ support_paths=(
   integration_test/scripts/notification_ios_payload_campaign.dart
   integration_test/scripts/ios_notification_payload_xcui_driver.dart
   integration_test/scripts/run_ios_notification_payload_sims.dart
+  integration_test/scripts/android_group_media_reliability_controller.dart
+  integration_test/scripts/group_media_ios_background_recovery.dart
+  integration_test/scripts/group_media_ios_background_recovery_evidence.dart
+  integration_test/scripts/group_media_ios_fixture_driver.dart
+  integration_test/scripts/group_media_prepared_artifact_custody.dart
+  integration_test/scripts/group_media_reliability_criteria.dart
+  integration_test/scripts/group_media_reliability_runner_contract.dart
+  integration_test/support/group_media_android_disposable_app.dart
+  lib/core/debug/group_media_ios_background_e2e.dart
+  lib/core/debug/group_media_ios_background_e2e_contract.dart
+  lib/core/debug/group_media_ios_background_e2e_main_actions.dart
+  lib/core/debug/group_media_ios_background_e2e_overlay.dart
+  lib/core/debug/group_media_ios_disposable_profile.dart
+  lib/core/debug/group_media_ios_disposable_reset.dart
+  lib/core/debug/group_media_reliability_e2e.dart
+  lib/core/debug/group_media_reliability_e2e_main_actions.dart
   integration_test/scripts/validate_group_reaction_notification_artifacts.dart
   integration_test/inbox_replay_before_ack_custody_harness.dart
   integration_test/intro_accept_notification_android_proof_test.dart
@@ -152,6 +168,74 @@ for path in "${support_paths[@]}"; do
   assert_record_once support support "$path"
   assert_not_executable "$path"
 done
+
+# Plan 269 keeps one discoverable prepared-artifact runner with exactly two
+# independently listable target-bounded scenarios. The manifest owns only the
+# Android production-critical row; discovery must not create a second PASS
+# owner for either criteria/support helper.
+group_media_runner=integration_test/scripts/run_group_media_send_reliability.dart
+assert_record_once group runner "$group_media_runner"
+for scenario in \
+  group_media_foreground_retry_acl_roundtrip \
+  group_media_ios_receiver_background_recovery; do
+  count="$(awk -F '\t' -v path="$group_media_runner" -v scenario="$scenario" '
+    $1 == "group" && $2 == path && $3 == scenario { count++ }
+    END { print count + 0 }
+  ' "$checks")"
+  [ "$count" -eq 1 ] ||
+    fail "$group_media_runner:$scenario expected one discovery check, found $count"
+done
+
+group_media_list="$tmp_dir/group-media-scenarios.list"
+dart "$group_media_runner" --list-scenarios | awk 'NF { print }' >"$group_media_list" ||
+  fail 'Plan 269 runner metadata listing failed'
+printf '%s\n' \
+  group_media_foreground_retry_acl_roundtrip \
+  group_media_ios_receiver_background_recovery \
+  >"$tmp_dir/group-media-scenarios.expected"
+cmp -s "$tmp_dir/group-media-scenarios.expected" "$group_media_list" ||
+  fail 'Plan 269 runner did not list exactly the two declared scenarios'
+
+assert_group_media_scenario_selectable() {
+  local scenario="$1"
+  local devices="$2"
+  local output="$tmp_dir/group-media-$scenario.list"
+  RELIABILITY_MULTI_DEVICE_IDS="$devices" \
+    ./scripts/run_test_gates.sh reliability-sim group --list \
+      --only "$group_media_runner:$scenario" >"$output" ||
+    fail "$group_media_runner:$scenario was not independently selectable"
+  grep -Fq \
+    "dart run $group_media_runner --scenario '$scenario' -d '$devices'" \
+    "$output" ||
+    fail "$group_media_runner:$scenario lost exact scenario/device arguments"
+  count="$(grep -Ec '^[[:space:]]+[0-9]+\. ' "$output" || true)"
+  [ "$count" -eq 1 ] ||
+    fail "$group_media_runner:$scenario selected $count commands instead of one"
+}
+
+assert_group_media_scenario_selectable \
+  group_media_foreground_retry_acl_roundtrip \
+  pixel-usb,emulator-5554
+assert_group_media_scenario_selectable \
+  group_media_ios_receiver_background_recovery \
+  pixel-usb,00008030-001A6D2801BB802E
+
+jq -e '
+  [.capabilities[] | select(.id == "groups.media_send_reliability")] |
+  length == 1 and
+  .[0].automationReady == true and
+  .[0].buildProfile == "android.e2e.group_media_269" and
+  .[0].dependencies == ["build.android.e2e.group_media_269"] and
+  .[0].families == ["group", "media", "transport"] and
+  .[0].command == ["dart", "run", "integration_test/scripts/run_group_media_send_reliability.dart", "--scenario", "group_media_foreground_retry_acl_roundtrip"] and
+  any(.[0].resources[]; .name == "build:android.e2e.group_media_269" and .access == "read") and
+  any(.[0].resources[]; .name == "device:android-physical" and .access == "exclusive") and
+  any(.[0].resources[]; .name == "device:android-emulator" and .access == "exclusive") and
+  any(.[0].resources[]; .name == "relay-mutation:staging" and .access == "exclusive") and
+  any(.[0].resources[]; .name == "artifact:group-media-reliability" and .access == "write") and
+  .[0].artifactValidator == "validateGroupMediaReliabilityArtifact"
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 269 manifest capability is incomplete or duplicated'
 
 grep -Fq $'support\tsupport\tintegration_test/scripts/run_ios_notification_payload_sims.dart\ttyped notification facade/campaign: Android and prebuilt physical-iOS APNs/NSE campaigns are automation-ready; live iOS credentials and dedicated-device teardown remain typed BLOCKED prerequisites; manifest owns execution' \
   "$records" || fail 'iOS notification discovery note is stale or loses typed credential blocking'

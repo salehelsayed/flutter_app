@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
 const int _defaultMaximumPrivateBackupBytes = 256 * 1024 * 1024;
 const int _maximumPrivateRestoreMemberListBytes = 8 * 1024 * 1024;
+const Duration _defaultHostCommandTimeout = Duration(minutes: 2);
+const Duration _defaultProcessTerminationGrace = Duration(seconds: 2);
 const String _recoveryManifestName = 'recovery-manifest.json';
 const String _recoveryManifestDigestName = 'recovery-manifest.sha256';
 const String _recoveryManifestSchema = 'mknoon.android-app-state-recovery.v1';
@@ -47,12 +51,212 @@ typedef AndroidPrivateArchiveCapturer =
       File destination,
     );
 
+/// Injectable start seam for the production binary private-archive stream.
+///
+/// Tests may return a real controlled subprocess. Production leaves this null
+/// and starts `adb` directly with shell interpretation disabled.
+typedef AndroidPrivateArchiveProcessStarter =
+    Future<Process> Function(String executable, List<String> arguments);
+
 final class SystemAndroidHostProcessRunner implements AndroidHostProcessRunner {
-  const SystemAndroidHostProcessRunner();
+  const SystemAndroidHostProcessRunner({
+    this.commandTimeout = _defaultHostCommandTimeout,
+    this.terminationGrace = _defaultProcessTerminationGrace,
+  });
+
+  final Duration commandTimeout;
+  final Duration terminationGrace;
 
   @override
-  Future<ProcessResult> run(String executable, List<String> arguments) =>
-      Process.run(executable, arguments);
+  Future<ProcessResult> run(String executable, List<String> arguments) async {
+    _requirePositiveDuration(commandTimeout, 'commandTimeout');
+    _requirePositiveDuration(terminationGrace, 'terminationGrace');
+    final process = await Process.start(
+      executable,
+      arguments,
+      runInShell: false,
+    );
+    final stdoutCollector = _ProcessOutputCollector.start(process.stdout);
+    final stderrCollector = _ProcessOutputCollector.start(process.stderr);
+    final stdinClosed = process.stdin.close();
+    final exitCodeFuture = process.exitCode;
+    final completed = Future.wait<Object?>(<Future<Object?>>[
+      exitCodeFuture,
+      stdoutCollector.result,
+      stderrCollector.result,
+      stdinClosed,
+    ]);
+    final neverAborted = Completer<void>();
+    final outcome = await _waitForBoundedProcess(
+      completed.then<void>((_) {}),
+      neverAborted.future,
+      commandTimeout,
+    );
+    if (outcome != _BoundedProcessOutcome.completed) {
+      await _terminateAndReap(
+        process,
+        exitCodeFuture,
+        terminationGrace: terminationGrace,
+      );
+      try {
+        await Future.wait<List<int>>(<Future<List<int>>>[
+          stdoutCollector.result,
+          stderrCollector.result,
+        ]).timeout(terminationGrace);
+      } on Object {
+        await Future.wait<void>(<Future<void>>[
+          stdoutCollector.cancel(terminationGrace),
+          stderrCollector.cancel(terminationGrace),
+        ]).timeout(terminationGrace, onTimeout: () => const <void>[]);
+      }
+      throw ProcessException(
+        executable,
+        const <String>[],
+        outcome == _BoundedProcessOutcome.timedOut
+            ? 'Host command timed out.'
+            : 'Host command stream failed.',
+        outcome == _BoundedProcessOutcome.timedOut ? 124 : 74,
+      );
+    }
+    final output = await completed;
+    return ProcessResult(
+      process.pid,
+      output[0]! as int,
+      utf8.decode(output[1]! as List<int>, allowMalformed: true),
+      utf8.decode(output[2]! as List<int>, allowMalformed: true),
+    );
+  }
+}
+
+void _requirePositiveDuration(Duration value, String name) {
+  if (value <= Duration.zero) {
+    throw ArgumentError.value(value, name, 'must be positive');
+  }
+}
+
+final class _ProcessOutputCollector {
+  _ProcessOutputCollector._();
+
+  static _ProcessOutputCollector start(Stream<List<int>> stream) {
+    final collector = _ProcessOutputCollector._();
+    collector._subscription = stream.listen(
+      collector._builder.add,
+      onError: (Object error, StackTrace stackTrace) {
+        if (collector._result.isCompleted) return;
+        collector._result.completeError(error, stackTrace);
+      },
+      onDone: collector._finish,
+      cancelOnError: false,
+    );
+    return collector;
+  }
+
+  final BytesBuilder _builder = BytesBuilder(copy: false);
+  final Completer<List<int>> _result = Completer<List<int>>();
+  late final StreamSubscription<List<int>> _subscription;
+  var _streamDone = false;
+
+  Future<List<int>> get result => _result.future;
+
+  void _finish() {
+    _streamDone = true;
+    if (!_result.isCompleted) _result.complete(_builder.takeBytes());
+  }
+
+  Future<void> cancel(Duration timeout) async {
+    if (_streamDone) return;
+    try {
+      await _subscription.cancel().timeout(timeout);
+    } on Object {
+      // The outer command deadline remains authoritative.
+    } finally {
+      _streamDone = true;
+      _finish();
+    }
+  }
+}
+
+Future<int?> _waitForExitWithin(Future<int> exitCode, Duration timeout) {
+  final result = Completer<int?>();
+  late final Timer timer;
+  timer = Timer(timeout, () => result.complete(null));
+  exitCode.then(
+    (code) {
+      if (result.isCompleted) return;
+      timer.cancel();
+      result.complete(code);
+    },
+    onError: (Object error, StackTrace stackTrace) {
+      if (result.isCompleted) return;
+      timer.cancel();
+      result.completeError(error, stackTrace);
+    },
+  );
+  return result.future;
+}
+
+Future<int?> _terminateAndReap(
+  Process process,
+  Future<int> exitCode, {
+  required Duration terminationGrace,
+  bool termAlreadySent = false,
+}) async {
+  if (!termAlreadySent) {
+    try {
+      process.kill(ProcessSignal.sigterm);
+    } on Object {
+      // Continue to the hard-stop and bounded reap path.
+    }
+  }
+  int? code;
+  try {
+    code = await _waitForExitWithin(exitCode, terminationGrace);
+  } on Object {
+    // Continue to SIGKILL; the caller will still report bounded failure.
+  }
+  if (code != null) return code;
+  try {
+    process.kill(ProcessSignal.sigkill);
+  } on Object {
+    // The final bounded reap below remains authoritative.
+  }
+  try {
+    code = await _waitForExitWithin(exitCode, terminationGrace);
+  } on Object {
+    // A missing exit code is returned as failure, never as success.
+  }
+  return code;
+}
+
+enum _BoundedProcessOutcome { completed, aborted, timedOut }
+
+Future<_BoundedProcessOutcome> _waitForBoundedProcess(
+  Future<void> completed,
+  Future<void> aborted,
+  Duration timeout,
+) {
+  final result = Completer<_BoundedProcessOutcome>();
+  late final Timer timer;
+  timer = Timer(timeout, () {
+    if (!result.isCompleted) {
+      result.complete(_BoundedProcessOutcome.timedOut);
+    }
+  });
+  void finish(_BoundedProcessOutcome outcome) {
+    if (result.isCompleted) return;
+    timer.cancel();
+    result.complete(outcome);
+  }
+
+  completed.then(
+    (_) => finish(_BoundedProcessOutcome.completed),
+    onError: (Object _, StackTrace _) => finish(_BoundedProcessOutcome.aborted),
+  );
+  aborted.then(
+    (_) => finish(_BoundedProcessOutcome.aborted),
+    onError: (Object _, StackTrace _) => finish(_BoundedProcessOutcome.aborted),
+  );
+  return result.future;
 }
 
 enum AndroidPackageRestoreAction {
@@ -115,18 +319,29 @@ final class AndroidAppStateGuard {
     required this.backupDirectory,
     required AndroidHostProcessRunner runner,
     required AndroidPrivateArchiveCapturer? privateArchiveCapturer,
+    required AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
     required int maximumPrivateBackupBytes,
+    required Duration privateArchiveTimeout,
+    required Duration processTerminationGrace,
   }) : _runner = runner,
        _privateArchiveCapturer = privateArchiveCapturer,
-       _maximumPrivateBackupBytes = maximumPrivateBackupBytes;
+       _privateArchiveProcessStarter = privateArchiveProcessStarter,
+       _maximumPrivateBackupBytes = maximumPrivateBackupBytes,
+       _privateArchiveTimeout = privateArchiveTimeout,
+       _processTerminationGrace = processTerminationGrace;
 
   static Future<AndroidAppStateGuard> capture({
     required List<String> devices,
     required String packageName,
     String backupLabel = 'campaign',
+    File? preparedArtifact,
+    String? expectedArtifactSha256,
     AndroidHostProcessRunner runner = const SystemAndroidHostProcessRunner(),
     AndroidPrivateArchiveCapturer? privateArchiveCapturer,
+    AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
     int maximumPrivateBackupBytes = _defaultMaximumPrivateBackupBytes,
+    Duration privateArchiveTimeout = _defaultHostCommandTimeout,
+    Duration processTerminationGrace = _defaultProcessTerminationGrace,
   }) async {
     final safeDevice = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
     final safePackage = RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$');
@@ -136,7 +351,9 @@ final class AndroidAppStateGuard {
             devices.length ||
         devices.any((device) => !safeDevice.hasMatch(device)) ||
         !safePackage.hasMatch(packageName) ||
-        maximumPrivateBackupBytes <= 0) {
+        maximumPrivateBackupBytes <= 0 ||
+        privateArchiveTimeout <= Duration.zero ||
+        processTerminationGrace <= Duration.zero) {
       throw const AndroidAppStateBlocked(
         'Android app-state guard received an unsafe target or package.',
       );
@@ -151,8 +368,30 @@ final class AndroidAppStateGuard {
       backupDirectory: backupDirectory,
       runner: runner,
       privateArchiveCapturer: privateArchiveCapturer,
+      privateArchiveProcessStarter: privateArchiveProcessStarter,
       maximumPrivateBackupBytes: maximumPrivateBackupBytes,
+      privateArchiveTimeout: privateArchiveTimeout,
+      processTerminationGrace: processTerminationGrace,
     );
+    if (preparedArtifact == null && expectedArtifactSha256 != null) {
+      backupDirectory.deleteSync(recursive: true);
+      throw const AndroidAppStateBlocked(
+        'Android artifact custody requires the prepared APK.',
+      );
+    }
+    if (preparedArtifact != null) {
+      try {
+        await guard._validatePreparedArtifact(
+          preparedArtifact.absolute,
+          expectedArtifactSha256: expectedArtifactSha256,
+        );
+      } on Object {
+        if (backupDirectory.existsSync()) {
+          backupDirectory.deleteSync(recursive: true);
+        }
+        rethrow;
+      }
+    }
     try {
       await guard._captureAll();
       return guard;
@@ -196,7 +435,10 @@ final class AndroidAppStateGuard {
         backupDirectory: absoluteBackup,
         runner: runner,
         privateArchiveCapturer: null,
+        privateArchiveProcessStarter: null,
         maximumPrivateBackupBytes: maximumPrivateBackupBytes,
+        privateArchiveTimeout: _defaultHostCommandTimeout,
+        processTerminationGrace: _defaultProcessTerminationGrace,
       );
       guard._snapshots.addAll(recovered.snapshots);
       return guard;
@@ -216,9 +458,13 @@ final class AndroidAppStateGuard {
   final Directory backupDirectory;
   final AndroidHostProcessRunner _runner;
   final AndroidPrivateArchiveCapturer? _privateArchiveCapturer;
+  final AndroidPrivateArchiveProcessStarter? _privateArchiveProcessStarter;
   final int _maximumPrivateBackupBytes;
+  final Duration _privateArchiveTimeout;
+  final Duration _processTerminationGrace;
   final Random _random = Random.secure();
   final Map<String, _PackageSnapshot> _snapshots = <String, _PackageSnapshot>{};
+  final Map<String, Set<String>> _unexpectedPackages = <String, Set<String>>{};
   var _restored = false;
 
   bool get restored => _restored;
@@ -230,9 +476,14 @@ final class AndroidAppStateGuard {
   Future<void> prepareFreshInstall({
     required String device,
     required File artifact,
+    String? expectedArtifactSha256,
   }) async {
     try {
-      await _prepareFreshInstallUnchecked(device: device, artifact: artifact);
+      await _prepareFreshInstallUnchecked(
+        device: device,
+        artifact: artifact,
+        expectedArtifactSha256: expectedArtifactSha256,
+      );
     } on AndroidAppStateFailure {
       rethrow;
     } on Object catch (error) {
@@ -246,6 +497,7 @@ final class AndroidAppStateGuard {
   Future<void> _prepareFreshInstallUnchecked({
     required String device,
     required File artifact,
+    required String? expectedArtifactSha256,
   }) async {
     _requireCapturedDevice(device);
     if (_restored) {
@@ -261,20 +513,41 @@ final class AndroidAppStateGuard {
         backupDirectory: backupDirectory,
       );
     }
-    await _forceStop(device);
+    final expectedSha256 = await _validatePreparedArtifact(
+      artifact.absolute,
+      expectedArtifactSha256: expectedArtifactSha256,
+    );
     var paths = await _installedPackagePaths(device);
-    final expectedSha256 = await _hostFileSha256(artifact.absolute);
+    final installedBase = _requireSingleBaseApkPath(paths, allowAbsent: true);
     var exactArtifactInstalled = false;
-    if (paths.length == 1) {
+    if (paths.length == 1 && installedBase != null) {
       try {
         exactArtifactInstalled =
-            await _deviceFileSha256(device, paths.single) == expectedSha256;
+            await _deviceFileSha256(device, installedBase) == expectedSha256;
       } on Object {
         // Digest probing is an optimization boundary. Fall back to the
         // established in-place install when the device cannot prove equality.
       }
     }
+    Set<String>? packagesBeforeInstall;
     if (!exactArtifactInstalled) {
+      // The package inventory is read before the first device mutation. If an
+      // installer ever introduces anything other than the attested package,
+      // restoration owns and removes that exact delta.
+      packagesBeforeInstall = await _installedThirdPartyPackages(device);
+    }
+    await _requirePreparedArtifactDigest(
+      artifact.absolute,
+      expectedSha256,
+      phase: 'before device mutation',
+    );
+    await _forceStop(device);
+    if (!exactArtifactInstalled) {
+      await _requirePreparedArtifactDigest(
+        artifact.absolute,
+        expectedSha256,
+        phase: 'immediately before install',
+      );
       final install = await _adb(device, <String>[
         'install',
         '-r',
@@ -282,17 +555,39 @@ final class AndroidAppStateGuard {
         '-t',
         artifact.absolute.path,
       ], allowFailure: true);
+      final packagesAfterInstall = await _installedThirdPartyPackages(device);
+      final introduced = packagesAfterInstall.difference(packagesBeforeInstall!)
+        ..remove(packageName);
+      if (introduced.isNotEmpty) {
+        _unexpectedPackages
+            .putIfAbsent(device, () => <String>{})
+            .addAll(introduced);
+      }
       if (install.exitCode != 0) {
         throw AndroidAppStateFailure(
           'The central APK could not be installed in place on $device.',
           backupDirectory: backupDirectory,
         );
       }
+      await _requirePreparedArtifactDigest(
+        artifact.absolute,
+        expectedSha256,
+        phase: 'immediately after install',
+      );
       paths = await _installedPackagePaths(device);
     }
-    if (paths.isEmpty) {
+    final installedBaseAfterPreparation = _requireSingleBaseApkPath(
+      paths,
+      allowAbsent: false,
+    );
+    if (paths.length != 1 ||
+        installedBaseAfterPreparation == null ||
+        await _deviceFileSha256(device, installedBaseAfterPreparation) !=
+            expectedSha256 ||
+        (_unexpectedPackages[device]?.isNotEmpty ?? false)) {
       throw AndroidAppStateFailure(
-        'The central APK was not discoverable after install on $device.',
+        'The installed Android package did not match the central APK on '
+        '$device.',
         backupDirectory: backupDirectory,
       );
     }
@@ -322,6 +617,11 @@ final class AndroidAppStateGuard {
         await _restoreOne(device, snapshot);
       } on Object catch (error) {
         failures.add('$device: $error');
+      }
+      try {
+        await _removeUnexpectedPackages(device);
+      } on Object catch (error) {
+        failures.add('$device: unexpected package cleanup failed: $error');
       }
     }
     if (failures.isNotEmpty) {
@@ -562,56 +862,170 @@ final class AndroidAppStateGuard {
       }
       return _hostFileSha256(destination);
     }
+    final arguments = <String>[
+      '-s',
+      device,
+      'exec-out',
+      'run-as',
+      packageName,
+      'tar',
+      '-cf',
+      '-',
+      '--',
+      ...entries,
+    ];
     late final Process process;
     try {
-      process = await Process.start('adb', <String>[
-        '-s',
-        device,
-        'exec-out',
-        'run-as',
-        packageName,
-        'tar',
-        '-cf',
-        '-',
-        '--',
-        ...entries,
-      ]);
-    } on ProcessException {
+      final starter = _privateArchiveProcessStarter;
+      process = starter == null
+          ? await Process.start('adb', arguments, runInShell: false)
+          : await starter('adb', List<String>.unmodifiable(arguments));
+    } on Object {
       throw const AndroidAppStateBlocked(
         'ADB could not start the private app-data backup stream.',
       );
     }
-    final stderrFuture = process.stderr
-        .transform(utf8.decoder)
-        .join()
-        .then(
-          (value) => value.length > 4096 ? value.substring(0, 4096) : value,
-        );
-    final sink = destination.openWrite();
+
+    late final IOSink sink;
+    try {
+      sink = destination.openWrite();
+    } on Object {
+      await _terminateAndReap(
+        process,
+        process.exitCode,
+        terminationGrace: _processTerminationGrace,
+      );
+      if (destination.existsSync()) destination.deleteSync();
+      throw AndroidAppStateBlocked(
+        'Private app-data backup failed on $device.',
+      );
+    }
+    final stdinClosed = process.stdin.close();
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+    final aborted = Completer<void>();
     var byteCount = 0;
     var overflow = false;
-    try {
-      await for (final chunk in process.stdout) {
+    var streamFailed = false;
+    var termAlreadySent = false;
+
+    void markAborted() {
+      if (!aborted.isCompleted) aborted.complete();
+    }
+
+    late final StreamSubscription<List<int>> stdoutSubscription;
+    late final StreamSubscription<List<int>> stderrSubscription;
+    stdoutSubscription = process.stdout.listen(
+      (chunk) {
+        if (overflow || streamFailed) return;
         byteCount += chunk.length;
         if (byteCount > _maximumPrivateBackupBytes) {
           overflow = true;
-          process.kill();
-          continue;
+          termAlreadySent = process.kill(ProcessSignal.sigterm);
+          markAborted();
+          return;
         }
-        sink.add(chunk);
-      }
-    } finally {
-      await sink.close();
+        try {
+          sink.add(chunk);
+        } on Object {
+          streamFailed = true;
+          markAborted();
+        }
+      },
+      onError: (Object _) {
+        streamFailed = true;
+        markAborted();
+        if (!stdoutDone.isCompleted) stdoutDone.complete();
+      },
+      onDone: () {
+        if (!stdoutDone.isCompleted) stdoutDone.complete();
+      },
+      cancelOnError: false,
+    );
+    stderrSubscription = process.stderr.listen(
+      (_) {},
+      onError: (Object _) {
+        streamFailed = true;
+        markAborted();
+        if (!stderrDone.isCompleted) stderrDone.complete();
+      },
+      onDone: () {
+        if (!stderrDone.isCompleted) stderrDone.complete();
+      },
+      cancelOnError: false,
+    );
+
+    final exitCodeFuture = process.exitCode;
+    int? exitCode;
+    final exitObserved = exitCodeFuture.then<void>(
+      (value) => exitCode = value,
+      onError: (Object _, StackTrace _) {
+        streamFailed = true;
+        markAborted();
+      },
+    );
+    final completed = Future.wait<void>(<Future<void>>[
+      exitObserved,
+      stdoutDone.future,
+      stderrDone.future,
+      stdinClosed,
+    ]);
+    final outcome = await _waitForBoundedProcess(
+      completed,
+      aborted.future,
+      _privateArchiveTimeout,
+    );
+
+    if (outcome != _BoundedProcessOutcome.completed) {
+      exitCode = await _terminateAndReap(
+        process,
+        exitCodeFuture,
+        terminationGrace: _processTerminationGrace,
+        termAlreadySent: termAlreadySent,
+      );
     }
-    final code = await process.exitCode;
-    await stderrFuture;
-    if (overflow ||
-        code != 0 ||
+
+    var drainsClosed = true;
+    try {
+      await Future.wait<void>(<Future<void>>[
+        stdoutDone.future,
+        stderrDone.future,
+      ]).timeout(_processTerminationGrace);
+    } on Object {
+      drainsClosed = false;
+      try {
+        await Future.wait<void>(<Future<void>>[
+          stdoutSubscription.cancel(),
+          stderrSubscription.cancel(),
+        ]).timeout(_processTerminationGrace, onTimeout: () => const <void>[]);
+      } on Object {
+        // Cleanup continues with sink closure and partial-file deletion.
+      } finally {
+        if (!stdoutDone.isCompleted) stdoutDone.complete();
+        if (!stderrDone.isCompleted) stderrDone.complete();
+      }
+    }
+
+    var sinkClosed = true;
+    try {
+      await sink.close().timeout(_processTerminationGrace);
+    } on Object {
+      sinkClosed = false;
+    }
+
+    if (outcome != _BoundedProcessOutcome.completed ||
+        overflow ||
+        streamFailed ||
+        !drainsClosed ||
+        !sinkClosed ||
+        exitCode != 0 ||
         !destination.existsSync() ||
         destination.lengthSync() == 0) {
       if (destination.existsSync()) destination.deleteSync();
       throw AndroidAppStateBlocked(
-        'Private app-data backup failed on $device.',
+        outcome == _BoundedProcessOutcome.timedOut
+            ? 'Private app-data backup timed out on $device.'
+            : 'Private app-data backup failed on $device.',
       );
     }
     return _hostFileSha256(destination);
@@ -1025,6 +1439,78 @@ final class AndroidAppStateGuard {
         .toList(growable: false);
   }
 
+  String? _requireSingleBaseApkPath(
+    List<String> paths, {
+    required bool allowAbsent,
+  }) {
+    if (paths.isEmpty && allowAbsent) return null;
+    final basePaths = paths
+        .where((path) => path.split('/').last == 'base.apk')
+        .toList(growable: false);
+    if (basePaths.length != 1) {
+      throw AndroidAppStateFailure(
+        'The expected Android base APK path was not unambiguous.',
+        backupDirectory: backupDirectory,
+      );
+    }
+    return basePaths.single;
+  }
+
+  Future<Set<String>> _installedThirdPartyPackages(String device) async {
+    final result = await _adb(device, const <String>[
+      'shell',
+      'pm',
+      'list',
+      'packages',
+      '-3',
+    ], allowFailure: true);
+    if (result.exitCode != 0) {
+      throw AndroidAppStateFailure(
+        'The Android package inventory was unavailable on $device.',
+        backupDirectory: backupDirectory,
+      );
+    }
+    final packages = <String>{};
+    for (final rawLine in '${result.stdout}'.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      if (!line.startsWith('package:')) {
+        throw AndroidAppStateFailure(
+          'The Android package inventory was malformed on $device.',
+          backupDirectory: backupDirectory,
+        );
+      }
+      final value = line.substring('package:'.length);
+      if (!RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$').hasMatch(value) ||
+          !packages.add(value)) {
+        throw AndroidAppStateFailure(
+          'The Android package inventory was malformed on $device.',
+          backupDirectory: backupDirectory,
+        );
+      }
+    }
+    return packages;
+  }
+
+  Future<void> _removeUnexpectedPackages(String device) async {
+    final pending = _unexpectedPackages[device];
+    if (pending == null || pending.isEmpty) return;
+    for (final unexpected in pending.toList()..sort()) {
+      final uninstall = await _adb(device, <String>[
+        'uninstall',
+        unexpected,
+      ], allowFailure: true);
+      if (uninstall.exitCode != 0) {
+        throw StateError('introduced package could not be removed');
+      }
+    }
+    final remaining = await _installedThirdPartyPackages(device);
+    if (pending.any(remaining.contains)) {
+      throw StateError('introduced package is still installed');
+    }
+    _unexpectedPackages.remove(device);
+  }
+
   Future<List<String>> _privateEntries(String device) async {
     final result = await _adb(device, <String>[
       'shell',
@@ -1185,6 +1671,114 @@ final class AndroidAppStateGuard {
 
   Future<String> _hostFileSha256(File file) async =>
       (await sha256.bind(file.openRead()).first).toString();
+
+  Future<String> _validatePreparedArtifact(
+    File artifact, {
+    required String? expectedArtifactSha256,
+  }) async {
+    if (expectedArtifactSha256 != null &&
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedArtifactSha256)) {
+      throw AndroidAppStateFailure(
+        'The expected Android artifact digest was invalid.',
+        backupDirectory: backupDirectory,
+      );
+    }
+    final digest = await _hostFileSha256(artifact);
+    if (expectedArtifactSha256 != null && digest != expectedArtifactSha256) {
+      throw AndroidAppStateFailure(
+        'The central Android artifact changed before device mutation.',
+        backupDirectory: backupDirectory,
+      );
+    }
+    final artifactPackage = await _preparedArtifactPackageName(artifact);
+    if (artifactPackage != packageName) {
+      throw AndroidAppStateFailure(
+        'The central Android artifact application ID did not match the '
+        'captured package.',
+        backupDirectory: backupDirectory,
+      );
+    }
+    await _requirePreparedArtifactDigest(
+      artifact,
+      digest,
+      phase: 'after application ID validation',
+    );
+    return digest;
+  }
+
+  Future<String> _preparedArtifactPackageName(File artifact) async {
+    for (final executable in _apkAnalyzerCandidates()) {
+      late final ProcessResult result;
+      try {
+        result = await _runner.run(executable, <String>[
+          'manifest',
+          'application-id',
+          artifact.path,
+        ]);
+      } on ProcessException {
+        continue;
+      }
+      final values = '${result.stdout}'
+          .split('\n')
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      if (result.exitCode == 0 &&
+          values.length == 1 &&
+          RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$').hasMatch(values.single)) {
+        return values.single;
+      }
+    }
+    throw AndroidAppStateFailure(
+      'The central Android artifact application ID could not be proven.',
+      backupDirectory: backupDirectory,
+    );
+  }
+
+  List<String> _apkAnalyzerCandidates() {
+    final candidates = <String>[];
+    final roots = <String>{
+      for (final name in const <String>['ANDROID_HOME', 'ANDROID_SDK_ROOT'])
+        if ((Platform.environment[name] ?? '').trim().isNotEmpty)
+          Platform.environment[name]!.trim(),
+    };
+    for (final root in roots) {
+      final commandLineTools = Directory(
+        '$root${Platform.pathSeparator}cmdline-tools',
+      );
+      if (!commandLineTools.existsSync()) continue;
+      final versions =
+          commandLineTools
+              .listSync(followLinks: false)
+              .whereType<Directory>()
+              .toList(growable: false)
+            ..sort((left, right) => right.path.compareTo(left.path));
+      for (final version in versions) {
+        final executable = File(
+          '${version.path}${Platform.pathSeparator}bin'
+          '${Platform.pathSeparator}apkanalyzer',
+        );
+        if (executable.existsSync()) candidates.add(executable.path);
+      }
+    }
+    candidates.add('apkanalyzer');
+    return candidates.toSet().toList(growable: false);
+  }
+
+  Future<void> _requirePreparedArtifactDigest(
+    File artifact,
+    String expected, {
+    required String phase,
+  }) async {
+    if (FileSystemEntity.typeSync(artifact.path, followLinks: true) !=
+            FileSystemEntityType.file ||
+        await _hostFileSha256(artifact) != expected) {
+      throw AndroidAppStateFailure(
+        'The central Android artifact changed $phase.',
+        backupDirectory: backupDirectory,
+      );
+    }
+  }
 
   Future<void> _forceStop(String device) async {
     final result = await _adb(device, <String>[

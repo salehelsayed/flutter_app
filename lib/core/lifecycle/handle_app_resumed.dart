@@ -78,6 +78,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? recoverStuckSendingMessagesFn, // Part A
   Future<int> Function()? recoverStuckSendingGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteGroupUploadsFn, // Section 5
+  Future<int> Function()? retryIncompleteGroupDownloadsFn, // Plan 269
   Future<int> Function()? retryFailedGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
@@ -422,6 +423,28 @@ Future<bool?> handleAppResumed({
           '[RESUME] Step 3c: drainGroupOfflineInbox done '
           '(errors=${groupDrainResult.errorCount}, took ${groupDrainMs}ms)',
         );
+
+        // 269: duplicate replay enrichment commits attachment rows during the
+        // inbox drain. Run the shared durable download coordinator only after
+        // that first bounded page has settled, so the same resume can recover
+        // newly enriched and previously interrupted ordinary group media.
+        // The account-migration gate and bridge re-prime have already passed.
+        if (retryIncompleteGroupDownloadsFn != null) {
+          try {
+            final count = await retryIncompleteGroupDownloadsFn();
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3c.1: retryIncompleteGroupDownloads=$count',
+              );
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_DOWNLOADS_RESUME_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
 
         if (needsGroupRecovery &&
             rejoinResult.canAcknowledgeGroupRecovery &&

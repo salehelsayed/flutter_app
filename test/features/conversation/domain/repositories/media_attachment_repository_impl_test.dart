@@ -1,14 +1,19 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
@@ -46,6 +51,32 @@ class _FailingSnapshotSecureKeyStore extends RecordingSecureKeyStore {
   }
 }
 
+const _retryCounterColumns = <String>{
+  'upload_retry_count',
+  'download_retry_count',
+};
+
+/// Scoped test double for the only SQLite-default behavior that the Plan 269
+/// widget fixtures need to model. A missing counter key gets the production
+/// schema default; an explicit SQL NULL remains invalid.
+Map<String, Object?> _applyProductionRetryCounterDefaults(
+  Map<String, Object?> row,
+) {
+  final normalized = Map<String, Object?>.of(row);
+  for (final column in _retryCounterColumns) {
+    if (!normalized.containsKey(column)) {
+      normalized[column] = 0;
+    } else if (normalized[column] == null) {
+      throw ArgumentError.value(
+        normalized[column],
+        column,
+        'production schema rejects an explicit null retry counter',
+      );
+    }
+  }
+  return normalized;
+}
+
 void main() {
   // 228: the repository fixture is a REAL in-memory database built through
   // the shared production registry (current schema), not a hand-rolled map
@@ -79,6 +110,7 @@ void main() {
     String? encryptionKeyBase64,
     String? encryptionNonce,
     String? encryptionScheme,
+    int? downloadRetryCount,
   }) {
     return MediaAttachment(
       id: id,
@@ -95,6 +127,7 @@ void main() {
       encryptionKeyBase64: encryptionKeyBase64,
       encryptionNonce: encryptionNonce,
       encryptionScheme: encryptionScheme,
+      downloadRetryCount: downloadRetryCount,
     );
   }
 
@@ -733,6 +766,259 @@ void main() {
           (await rawRow(refusedCompletion.id))!['download_status'],
           'upload_pending',
         );
+      },
+    );
+
+    test(
+      'P269 exact group upload completion accepts omitted counters without SQL null',
+      () async {
+        const messageId = 'p269-omitted-counter-parent';
+        const attachmentId = 'p269-omitted-counter-attachment';
+        await fixture.seedGroupParent(messageId);
+        await fixture.db.update(
+          'group_messages',
+          {'status': 'failed', 'is_incoming': 0},
+          where: 'id = ?',
+          whereArgs: [messageId],
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            size: 111,
+            localPath: 'pending_uploads/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final expectedParent = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: [messageId],
+        )).single;
+        final expectedAttachment = (await fixture.repo.getAttachmentById(
+          attachmentId,
+        ))!;
+        expect(expectedAttachment.uploadRetryCount, 0);
+        expect(expectedAttachment.downloadRetryCount, 0);
+
+        // A successful upload outcome does not own either local retry counter,
+        // so its model legitimately omits both keys from toMap().
+        final completedAttachment = MediaAttachment(
+          id: expectedAttachment.id,
+          messageId: expectedAttachment.messageId,
+          mime: expectedAttachment.mime,
+          size: 222,
+          mediaType: expectedAttachment.mediaType,
+          width: expectedAttachment.width,
+          height: expectedAttachment.height,
+          durationMs: expectedAttachment.durationMs,
+          localPath: 'media/groups/$attachmentId.jpg',
+          downloadStatus: 'done',
+          createdAt: expectedAttachment.createdAt,
+          waveform: expectedAttachment.waveform,
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          thumbnailHash: expectedAttachment.thumbnailHash,
+          encryptionKeyBase64: 'p269-omitted-counter-raw-key',
+          encryptionNonce: 'p269-omitted-counter-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+        final completedRow = completedAttachment.toMap();
+        for (final column in _retryCounterColumns) {
+          expect(completedRow, isNot(contains(column)));
+        }
+
+        expect(
+          await fixture.repo.completeGroupUploadRetrySecurely(
+            expectedParent: expectedParent,
+            expectedAttachment: expectedAttachment,
+            completedAttachment: completedAttachment,
+          ),
+          isTrue,
+        );
+
+        final row = (await rawRow(attachmentId))!;
+        expect(row['download_status'], 'done');
+        expect(row['upload_retry_count'], 0);
+        expect(row['download_retry_count'], 0);
+        expect(
+          row['encryption_key_base64'],
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+        );
+        expect(
+          row['encryption_key_base64'],
+          isNot('p269-omitted-counter-raw-key'),
+        );
+      },
+    );
+
+    test(
+      'P269 exact group upload completion preserves local authority and accepts upload owned fields',
+      () async {
+        const messageId = 'p269-field-owner-parent';
+        const attachmentId = 'p269-field-owner-attachment';
+        const localCreatedAt = '2026-07-22T08:00:00.000Z';
+        const uploadCreatedAt = '2036-01-02T03:04:05.000Z';
+        const localThumbnailHash =
+            '1111111111111111111111111111111111111111111111111111111111111111';
+        const uploadThumbnailHash =
+            '2222222222222222222222222222222222222222222222222222222222222222';
+        const uploadContentHash =
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        const rawKey = 'p269-field-owner-raw-key';
+        const uploadNonce = 'p269-field-owner-nonce';
+
+        await fixture.seedGroupParent(messageId);
+        await fixture.db.update(
+          'group_messages',
+          {'status': 'failed', 'is_incoming': 0},
+          where: 'id = ?',
+          whereArgs: [messageId],
+        );
+        await fixture.repo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 111,
+            mediaType: 'image',
+            width: 320,
+            height: 240,
+            durationMs: 1000,
+            localPath: 'pending_uploads/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: localCreatedAt,
+            waveform: const [0.1, 0.2],
+            uploadRetryCount: 2,
+            downloadRetryCount: 3,
+            thumbnailHash: localThumbnailHash,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final expectedParent = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: [messageId],
+        )).single;
+        final expectedAttachment = (await fixture.repo.getAttachmentById(
+          attachmentId,
+        ))!;
+        final completedAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/heic',
+          size: 987654,
+          mediaType: 'image',
+          width: 1440,
+          height: 1080,
+          durationMs: 6543,
+          localPath: 'media/groups/$attachmentId.heic',
+          downloadStatus: 'done',
+          createdAt: uploadCreatedAt,
+          waveform: const [0.9, 0.4],
+          uploadRetryCount: 91,
+          downloadRetryCount: 92,
+          contentHash: uploadContentHash,
+          thumbnailHash: uploadThumbnailHash,
+          encryptionKeyBase64: rawKey,
+          encryptionNonce: uploadNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+
+        expect(
+          await fixture.repo.completeGroupUploadRetrySecurely(
+            expectedParent: expectedParent,
+            expectedAttachment: expectedAttachment,
+            completedAttachment: completedAttachment,
+          ),
+          isTrue,
+        );
+
+        final row = (await rawRow(attachmentId))!;
+        // Local authority comes from the exact pending row.
+        expect(row['created_at'], localCreatedAt);
+        expect(row['thumbnail_hash'], localThumbnailHash);
+        expect(row['upload_retry_count'], 2);
+        expect(row['download_retry_count'], 3);
+
+        // Upload-owned normalization remains accepted rather than freezing the
+        // entire pre-upload row.
+        expect(row['mime'], 'image/heic');
+        expect(row['size'], 987654);
+        expect(row['media_type'], 'image');
+        expect(row['width'], 1440);
+        expect(row['height'], 1080);
+        expect(row['duration_ms'], 6543);
+        expect(row['local_path'], 'media/groups/$attachmentId.heic');
+        expect(row['download_status'], 'done');
+        expect(row['content_hash'], uploadContentHash);
+        expect(row['encryption_nonce'], uploadNonce);
+        expect(
+          row['encryption_scheme'],
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+        expect(await fixture.secureKeyStore.read(keyName), rawKey);
+        expect(
+          row['encryption_key_base64'],
+          secureStoreReferenceForKey(keyName),
+        );
+        expect(row['encryption_key_base64'], isNot(rawKey));
+        expect(
+          (await fixture.repo.getAttachmentById(attachmentId))!.waveform,
+          const [0.9, 0.4],
+        );
+      },
+    );
+
+    test(
+      'P269 SQL default wrapper matches production schema for omitted and explicit null counters',
+      () async {
+        Map<String, Object?> row(String id) => makeAttachment(
+          id: id,
+          messageId: 'p269-wrapper-parent',
+          localPath: 'pending_uploads/$id.jpg',
+          downloadStatus: 'upload_pending',
+        ).copyWith(ownerLane: MediaOwnerLane.group).toMap();
+
+        final omitted = row('p269-wrapper-omitted');
+        for (final column in _retryCounterColumns) {
+          expect(omitted, isNot(contains(column)));
+        }
+        final wrappedOmitted = _applyProductionRetryCounterDefaults(omitted);
+        await fixture.db.insert('media_attachments', omitted);
+        final productionOmitted = (await rawRow('p269-wrapper-omitted'))!;
+        for (final column in _retryCounterColumns) {
+          expect(wrappedOmitted[column], 0);
+          expect(productionOmitted[column], wrappedOmitted[column]);
+        }
+
+        for (final column in _retryCounterColumns) {
+          final id = 'p269-wrapper-explicit-null-$column';
+          final explicitNull = <String, Object?>{...row(id), column: null};
+          expect(
+            () => _applyProductionRetryCounterDefaults(explicitNull),
+            throwsArgumentError,
+          );
+          await expectLater(
+            fixture.db.insert('media_attachments', explicitNull),
+            throwsA(
+              isA<DatabaseException>().having(
+                (error) => error.toString(),
+                'message',
+                contains('media_attachments.$column'),
+              ),
+            ),
+          );
+          expect(await rawRow(id), isNull);
+        }
       },
     );
 
@@ -1637,6 +1923,839 @@ void main() {
         'media/peer/att-evict-d-new.mp4',
       );
     });
+
+    test(
+      'P269 group download failure CAS is atomic and deletion journal cannot resurrect media',
+      () async {
+        const groupId = 'group-p269-failure';
+        const parentId = 'msg-p269-failure';
+        await fixture.seedGroupParent(parentId, groupId: groupId);
+
+        final siblingDirectory = await Directory.systemTemp.createTemp(
+          'p269_group_download_failure_',
+        );
+        addTearDown(() async {
+          if (await siblingDirectory.exists()) {
+            await siblingDirectory.delete(recursive: true);
+          }
+        });
+        final directSiblingFile = File(
+          '${siblingDirectory.path}/direct-sibling.bin',
+        )..writeAsBytesSync(const [1, 2, 3, 4]);
+        final privateSiblingFile = File(
+          '${siblingDirectory.path}/group-private-sibling.bin',
+        )..writeAsBytesSync(const [5, 6, 7, 8]);
+
+        await fixture.seedDirectParent('msg-p269-direct-sibling');
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'att-p269-direct-sibling',
+            messageId: 'msg-p269-direct-sibling',
+            downloadStatus: kMediaDownloadStatusDone,
+            localPath: directSiblingFile.path,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.seedGroupParent(
+          'msg-p269-private-sibling',
+          groupId: groupId,
+        );
+        await fixture.db.update(
+          'group_messages',
+          {
+            'media_policy_version': 1,
+            'media_lifecycle': 'view_once',
+            'media_protected': 1,
+          },
+          where: 'id = ?',
+          whereArgs: ['msg-p269-private-sibling'],
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'att-p269-private-sibling',
+            messageId: 'msg-p269-private-sibling',
+            downloadStatus: kMediaDownloadStatusDone,
+            localPath: privateSiblingFile.path,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        final directSiblingBefore = Map<String, Object?>.from(
+          (await rawRow('att-p269-direct-sibling'))!,
+        );
+        final privateSiblingBefore = Map<String, Object?>.from(
+          (await rawRow('att-p269-private-sibling'))!,
+        );
+
+        Future<bool> recordFailure({
+          required String id,
+          String messageId = parentId,
+          String targetGroupId = groupId,
+          required bool incrementRetryCount,
+          required String failureStatus,
+          required String expectedDownloadStatus,
+          required String? expectedLocalPath,
+          required bool clearLocalPath,
+        }) => fixture.repo.recordOrdinaryGroupMediaDownloadFailure(
+          id,
+          groupId: targetGroupId,
+          messageId: messageId,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        );
+
+        const targetId = 'att-p269-failure';
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: targetId,
+            messageId: parentId,
+            downloadRetryCount: 0,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          await fixture.repo.beginMediaDownload(
+            targetId,
+            owner: MediaOwnerLane.group,
+          ),
+          isTrue,
+        );
+        expect(
+          await recordFailure(
+            id: targetId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isTrue,
+        );
+        var target = (await rawRow(targetId))!;
+        expect(target['download_status'], kMediaDownloadStatusFailed);
+        expect(target['download_retry_count'], 1);
+        expect(target['local_path'], isNull);
+
+        await fixture.db.update(
+          'media_attachments',
+          {
+            'download_status': kMediaDownloadStatusPending,
+            'download_retry_count': kMaxDownloadRetries - 1,
+          },
+          where: 'id = ?',
+          whereArgs: [targetId],
+        );
+        expect(
+          await fixture.repo.beginMediaDownload(
+            targetId,
+            owner: MediaOwnerLane.group,
+          ),
+          isTrue,
+        );
+        expect(
+          await recordFailure(
+            id: targetId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isTrue,
+        );
+        target = (await rawRow(targetId))!;
+        expect(target['download_status'], kMediaDownloadStatusDownloadFailed);
+        expect(target['download_retry_count'], kMaxDownloadRetries);
+
+        const authoritativePath =
+            'media/group-p269-failure/att-p269-failure.jpg';
+        await fixture.db.update(
+          'media_attachments',
+          {
+            'download_status': kMediaDownloadStatusDone,
+            'download_retry_count': 2,
+            'local_path': authoritativePath,
+          },
+          where: 'id = ?',
+          whereArgs: [targetId],
+        );
+        final exactBefore = Map<String, Object?>.from(
+          (await rawRow(targetId))!,
+        );
+        expect(
+          await recordFailure(
+            id: targetId,
+            incrementRetryCount: false,
+            failureStatus: kMediaDownloadStatusIntegrityFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDone,
+            expectedLocalPath: '$authoritativePath.changed',
+            clearLocalPath: true,
+          ),
+          isFalse,
+          reason: 'a changed path is lost authority, never a wildcard',
+        );
+        expect(await rawRow(targetId), exactBefore);
+        expect(
+          await recordFailure(
+            id: targetId,
+            incrementRetryCount: false,
+            failureStatus: kMediaDownloadStatusIntegrityFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDone,
+            expectedLocalPath: authoritativePath,
+            clearLocalPath: true,
+          ),
+          isTrue,
+        );
+        target = (await rawRow(targetId))!;
+        expect(target['download_status'], kMediaDownloadStatusIntegrityFailed);
+        expect(target['download_retry_count'], 2);
+        expect(target['local_path'], isNull);
+
+        const journalParentId = 'msg-p269-journal';
+        const journalAttachmentId = 'att-p269-journal';
+        await fixture.seedGroupParent(journalParentId, groupId: groupId);
+        await fixture.repo.saveAttachment(
+          makeAttachment(id: journalAttachmentId, messageId: journalParentId),
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          await fixture.repo.beginMediaDownload(
+            journalAttachmentId,
+            owner: MediaOwnerLane.group,
+          ),
+          isTrue,
+        );
+        await fixture.db.insert('group_media_deletion_journal', {
+          'attachment_id': journalAttachmentId,
+          'operation_id': 'op-p269-active-journal',
+          'message_id': journalParentId,
+          'group_id': groupId,
+          'operation_intent': 'delete_for_me',
+          'normalized_mime': 'image/jpeg',
+          'canonical_relative_path': null,
+          'created_at': '2026-07-22T12:10:00.000Z',
+        });
+        final journalBefore = Map<String, Object?>.from(
+          (await rawRow(journalAttachmentId))!,
+        );
+        expect(
+          await recordFailure(
+            id: journalAttachmentId,
+            messageId: journalParentId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isFalse,
+        );
+        expect(await rawRow(journalAttachmentId), journalBefore);
+
+        const deletedParentId = 'msg-p269-deleted';
+        const deletedAttachmentId = 'att-p269-deleted';
+        await fixture.seedGroupParent(deletedParentId, groupId: groupId);
+        await fixture.repo.saveAttachment(
+          makeAttachment(id: deletedAttachmentId, messageId: deletedParentId),
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          await fixture.repo.beginMediaDownload(
+            deletedAttachmentId,
+            owner: MediaOwnerLane.group,
+          ),
+          isTrue,
+        );
+        final prepared = await dbPrepareGroupMediaDeleteForMe(
+          fixture.db,
+          groupId: groupId,
+          messageId: deletedParentId,
+          operationId: 'op-p269-delete-for-me',
+        );
+        expect(prepared.outcome, GroupMediaDeletePrepareOutcome.prepared);
+        final deletedBefore = Map<String, Object?>.from(
+          (await rawRow(deletedAttachmentId))!,
+        );
+        expect(
+          await recordFailure(
+            id: deletedAttachmentId,
+            messageId: deletedParentId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isFalse,
+        );
+        expect(await rawRow(deletedAttachmentId), deletedBefore);
+        expect(
+          await dbFinalizeGroupMediaDeletionJournalEntry(
+            fixture.db,
+            attachmentId: deletedAttachmentId,
+            messageId: deletedParentId,
+          ),
+          isTrue,
+        );
+        expect(await rawRow(deletedAttachmentId), isNull);
+        expect(
+          await recordFailure(
+            id: deletedAttachmentId,
+            messageId: deletedParentId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isFalse,
+          reason: 'UPDATE-only failure persistence cannot resurrect a row',
+        );
+        expect(await rawRow(deletedAttachmentId), isNull);
+
+        Future<void> expectInactiveGroupRefusesFailure({
+          required String suffix,
+          required Map<String, Object?> groupMutation,
+        }) async {
+          final inactiveGroupId = 'group-p269-$suffix';
+          final inactiveParentId = 'msg-p269-$suffix';
+          final inactiveAttachmentId = 'att-p269-$suffix';
+          await fixture.seedGroupParent(
+            inactiveParentId,
+            groupId: inactiveGroupId,
+          );
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: inactiveAttachmentId,
+              messageId: inactiveParentId,
+              downloadRetryCount: 1,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          expect(
+            await fixture.repo.beginMediaDownload(
+              inactiveAttachmentId,
+              owner: MediaOwnerLane.group,
+            ),
+            isTrue,
+          );
+          await fixture.db.update(
+            'groups',
+            groupMutation,
+            where: 'id = ?',
+            whereArgs: [inactiveGroupId],
+          );
+          final before = Map<String, Object?>.from(
+            (await rawRow(inactiveAttachmentId))!,
+          );
+
+          expect(
+            await recordFailure(
+              id: inactiveAttachmentId,
+              messageId: inactiveParentId,
+              targetGroupId: inactiveGroupId,
+              incrementRetryCount: true,
+              failureStatus: kMediaDownloadStatusFailed,
+              expectedDownloadStatus: kMediaDownloadStatusDownloading,
+              expectedLocalPath: null,
+              clearLocalPath: false,
+            ),
+            isFalse,
+            reason: '$suffix group authority is no longer active',
+          );
+          expect(await rawRow(inactiveAttachmentId), before);
+        }
+
+        await expectInactiveGroupRefusesFailure(
+          suffix: 'dissolved',
+          groupMutation: const <String, Object?>{
+            'is_dissolved': 1,
+            'dissolved_at': '2026-07-22T12:20:00.000Z',
+            'dissolved_by': 'peer-g',
+          },
+        );
+        await expectInactiveGroupRefusesFailure(
+          suffix: 'self-removed',
+          groupMutation: const <String, Object?>{
+            'self_removed_at': '2026-07-22T12:21:00.000Z',
+          },
+        );
+
+        const faultParentId = 'msg-p269-fault';
+        const faultAttachmentId = 'att-p269-fault';
+        await fixture.seedGroupParent(faultParentId, groupId: groupId);
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: faultAttachmentId,
+            messageId: faultParentId,
+            downloadRetryCount: 1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          await fixture.repo.beginMediaDownload(
+            faultAttachmentId,
+            owner: MediaOwnerLane.group,
+          ),
+          isTrue,
+        );
+        final faultBefore = Map<String, Object?>.from(
+          (await rawRow(faultAttachmentId))!,
+        );
+        await fixture.db.execute('''
+CREATE TRIGGER p269_reject_group_download_failure
+BEFORE UPDATE OF download_status, download_retry_count, local_path
+ON media_attachments
+WHEN OLD.id = '$faultAttachmentId'
+BEGIN
+  SELECT RAISE(ABORT, 'injected p269 failure');
+END
+''');
+        await expectLater(
+          () => recordFailure(
+            id: faultAttachmentId,
+            messageId: faultParentId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusFailed,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          throwsA(anything),
+        );
+        expect(
+          await rawRow(faultAttachmentId),
+          faultBefore,
+          reason: 'one failed statement cannot split the status/count tuple',
+        );
+        await fixture.db.execute(
+          'DROP TRIGGER p269_reject_group_download_failure',
+        );
+
+        expect(await rawRow('att-p269-direct-sibling'), directSiblingBefore);
+        expect(await rawRow('att-p269-private-sibling'), privateSiblingBefore);
+        expect(directSiblingFile.readAsBytesSync(), const [1, 2, 3, 4]);
+        expect(privateSiblingFile.readAsBytesSync(), const [5, 6, 7, 8]);
+      },
+    );
+
+    test(
+      'P269 automatic ordinary group claim and commit requalify terminal evicted parent group and deletion authority',
+      () async {
+        const groupId = 'group-p269-auto-cas';
+        final repository =
+            fixture.repo as OrdinaryGroupAutomaticMediaDownloadStateRepository;
+
+        Future<void> seed(
+          String suffix, {
+          String status = kMediaDownloadStatusPending,
+        }) async {
+          final messageId = 'message-$suffix';
+          await fixture.seedGroupParent(messageId, groupId: groupId);
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: 'attachment-$suffix',
+              messageId: messageId,
+              downloadStatus: status,
+              downloadRetryCount: status == kMediaDownloadStatusDownloadFailed
+                  ? kMaxDownloadRetries
+                  : 0,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+
+        Future<bool> begin(
+          String suffix, {
+          String expectedStatus = kMediaDownloadStatusPending,
+        }) => repository.beginOrdinaryGroupAutomaticMediaDownload(
+          'attachment-$suffix',
+          groupId: groupId,
+          messageId: 'message-$suffix',
+          expectedDownloadStatus: expectedStatus,
+          expectedLocalPath: null,
+        );
+
+        Future<bool> commit(String suffix) =>
+            repository.commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+              'attachment-$suffix',
+              groupId: groupId,
+              messageId: 'message-$suffix',
+              expectedLocalPath: null,
+              localPath: 'group_media/attachment-$suffix.jpg',
+            );
+
+        for (final terminal in const <(String, String)>[
+          ('terminal', kMediaDownloadStatusDownloadFailed),
+          ('evicted', kMediaDownloadStatusEvicted),
+        ]) {
+          await seed(terminal.$1, status: terminal.$2);
+          final before = Map<String, Object?>.from(
+            (await rawRow('attachment-${terminal.$1}'))!,
+          );
+          expect(
+            await begin(terminal.$1, expectedStatus: terminal.$2),
+            isFalse,
+          );
+          expect(await rawRow('attachment-${terminal.$1}'), before);
+        }
+
+        await seed('dissolved');
+        expect(await begin('dissolved'), isTrue);
+        await fixture.db.update(
+          'groups',
+          {
+            'is_dissolved': 1,
+            'dissolved_at': '2026-07-22T14:00:00.000Z',
+            'dissolved_by': 'peer-g',
+          },
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+        expect(await commit('dissolved'), isFalse);
+        expect(
+          (await rawRow('attachment-dissolved'))!['download_status'],
+          kMediaDownloadStatusDownloading,
+        );
+        await fixture.db.update(
+          'groups',
+          {'is_dissolved': 0, 'dissolved_at': null, 'dissolved_by': null},
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+
+        await seed('self-removed');
+        expect(await begin('self-removed'), isTrue);
+        await fixture.db.update(
+          'groups',
+          {'self_removed_at': '2026-07-22T14:00:30.000Z'},
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+        expect(await commit('self-removed'), isFalse);
+        await fixture.db.update(
+          'groups',
+          {'self_removed_at': null},
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+
+        await seed('protected');
+        expect(await begin('protected'), isTrue);
+        await fixture.db.update(
+          'group_messages',
+          {
+            'media_policy_version': 1,
+            'media_lifecycle': 'view_once',
+            'media_protected': 1,
+          },
+          where: 'id = ?',
+          whereArgs: ['message-protected'],
+        );
+        expect(await commit('protected'), isFalse);
+
+        await seed('deleted');
+        expect(await begin('deleted'), isTrue);
+        await fixture.db.insert('group_message_local_deletions', {
+          'message_id': 'message-deleted',
+          'group_id': groupId,
+          'deleted_at': '2026-07-22T14:01:00.000Z',
+          'created_at': '2026-07-22T14:01:00.000Z',
+        });
+        expect(await commit('deleted'), isFalse);
+
+        await seed('journal');
+        expect(await begin('journal'), isTrue);
+        await fixture.db.insert('group_media_deletion_journal', {
+          'attachment_id': 'attachment-journal',
+          'operation_id': 'operation-journal',
+          'message_id': 'message-journal',
+          'group_id': groupId,
+          'operation_intent': 'delete_for_me',
+          'normalized_mime': 'image/jpeg',
+          'canonical_relative_path': null,
+          'created_at': '2026-07-22T14:02:00.000Z',
+        });
+        expect(await commit('journal'), isFalse);
+
+        await seed('valid');
+        expect(await begin('valid'), isTrue);
+        expect(await commit('valid'), isTrue);
+        final valid = (await rawRow('attachment-valid'))!;
+        expect(valid['download_status'], kMediaDownloadStatusDone);
+        expect(valid['local_path'], 'group_media/attachment-valid.jpg');
+      },
+    );
+
+    test(
+      'P269 recoverable group download query is authority scoped cursor paged and cannot starve later rows',
+      () async {
+        const sharedCreatedAt = '2026-07-22T13:00:00.000Z';
+
+        Future<void> seedGroupCandidate({
+          required String id,
+          String status = kMediaDownloadStatusPending,
+          int retryCount = 0,
+          bool incoming = true,
+          Map<String, Object?> parentOverrides = const <String, Object?>{},
+          bool selfRemoved = false,
+          bool dissolved = false,
+          bool deleteParent = false,
+          bool locallyDeleted = false,
+          bool deletionJournal = false,
+        }) async {
+          final groupId = 'group-$id';
+          final messageId = 'message-$id';
+          await fixture.seedGroupParent(
+            messageId,
+            groupId: groupId,
+            timestamp: sharedCreatedAt,
+          );
+          if (!incoming || parentOverrides.isNotEmpty) {
+            await fixture.db.update(
+              'group_messages',
+              <String, Object?>{
+                if (!incoming) 'is_incoming': 0,
+                ...parentOverrides,
+              },
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            );
+          }
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: id,
+              messageId: messageId,
+              downloadStatus: status,
+              downloadRetryCount: retryCount,
+              createdAt: sharedCreatedAt,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          if (selfRemoved || dissolved) {
+            await fixture.db.update(
+              'groups',
+              <String, Object?>{
+                if (selfRemoved) 'self_removed_at': sharedCreatedAt,
+                if (dissolved) ...<String, Object?>{
+                  'is_dissolved': 1,
+                  'dissolved_at': sharedCreatedAt,
+                  'dissolved_by': 'peer-g',
+                },
+              },
+              where: 'id = ?',
+              whereArgs: <Object?>[groupId],
+            );
+          }
+          if (locallyDeleted) {
+            await fixture.db.insert('group_message_local_deletions', {
+              'message_id': messageId,
+              'group_id': groupId,
+              'deleted_at': sharedCreatedAt,
+              'created_at': sharedCreatedAt,
+            });
+          }
+          if (deletionJournal) {
+            await fixture.db.insert('group_media_deletion_journal', {
+              'attachment_id': id,
+              'operation_id': 'operation-$id',
+              'message_id': messageId,
+              'group_id': groupId,
+              'operation_intent': 'delete_for_me',
+              'normalized_mime': 'image/jpeg',
+              'canonical_relative_path': null,
+              'created_at': sharedCreatedAt,
+            });
+          }
+          if (deleteParent) {
+            await fixture.db.delete(
+              'group_messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            );
+          }
+        }
+
+        const expectedIds = <String>[
+          '10-pending-0',
+          '20-pending-2',
+          '30-downloading-0',
+          '40-downloading-2',
+          '50-failed-0',
+          '60-failed-2',
+        ];
+        await seedGroupCandidate(id: expectedIds[0]);
+        await seedGroupCandidate(id: expectedIds[1], retryCount: 2);
+        await seedGroupCandidate(
+          id: expectedIds[2],
+          status: kMediaDownloadStatusDownloading,
+        );
+        await seedGroupCandidate(
+          id: expectedIds[3],
+          status: kMediaDownloadStatusDownloading,
+          retryCount: 2,
+        );
+        await seedGroupCandidate(
+          id: expectedIds[4],
+          status: kMediaDownloadStatusFailed,
+        );
+        await seedGroupCandidate(
+          id: expectedIds[5],
+          status: kMediaDownloadStatusFailed,
+          retryCount: 2,
+        );
+
+        const excludedIds = <String>[
+          '01-direct',
+          '02-outgoing-group',
+          '03-self-removed',
+          '04-dissolved',
+          '05-missing-parent',
+          '06-local-deletion',
+          '07-deletion-journal',
+          '08-protected',
+          '09-view-once',
+          '11-disappearing',
+          '12-pending-budget-3',
+          '13-downloading-budget-3',
+          '14-failed-budget-3',
+          '15-download-failed',
+          '16-integrity-failed',
+          '17-upload-pending',
+          '18-upload-failed',
+          '19-done',
+          '21-evicted',
+        ];
+        await fixture.seedDirectParent('message-${excludedIds[0]}');
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: excludedIds[0],
+            messageId: 'message-${excludedIds[0]}',
+            createdAt: sharedCreatedAt,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        await seedGroupCandidate(id: excludedIds[1], incoming: false);
+        await seedGroupCandidate(id: excludedIds[2], selfRemoved: true);
+        await seedGroupCandidate(id: excludedIds[3], dissolved: true);
+        await seedGroupCandidate(id: excludedIds[4], deleteParent: true);
+        await seedGroupCandidate(id: excludedIds[5], locallyDeleted: true);
+        await seedGroupCandidate(id: excludedIds[6], deletionJournal: true);
+        await seedGroupCandidate(
+          id: excludedIds[7],
+          parentOverrides: const <String, Object?>{
+            'media_policy_version': 1,
+            'media_lifecycle': 'standard',
+            'media_protected': 1,
+          },
+        );
+        await seedGroupCandidate(
+          id: excludedIds[8],
+          parentOverrides: const <String, Object?>{
+            'media_policy_version': 1,
+            'media_lifecycle': 'view_once',
+            'media_protected': 1,
+          },
+        );
+        await seedGroupCandidate(
+          id: excludedIds[9],
+          parentOverrides: const <String, Object?>{
+            'media_policy_version': 1,
+            'media_lifecycle': 'disappearing',
+            'media_duration_seconds': 3600,
+            'media_protected': 1,
+          },
+        );
+        await seedGroupCandidate(id: excludedIds[10], retryCount: 3);
+        await seedGroupCandidate(
+          id: excludedIds[11],
+          status: kMediaDownloadStatusDownloading,
+          retryCount: 3,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[12],
+          status: kMediaDownloadStatusFailed,
+          retryCount: 3,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[13],
+          status: kMediaDownloadStatusDownloadFailed,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[14],
+          status: kMediaDownloadStatusIntegrityFailed,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[15],
+          status: kMediaDownloadStatusUploadPending,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[16],
+          status: kMediaDownloadStatusUploadFailed,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[17],
+          status: kMediaDownloadStatusDone,
+        );
+        await seedGroupCandidate(
+          id: excludedIds[18],
+          status: kMediaDownloadStatusEvicted,
+        );
+
+        final excludedBefore = <String, Map<String, Object?>>{
+          for (final id in excludedIds)
+            id: Map<String, Object?>.from((await rawRow(id))!),
+        };
+
+        final repository =
+            fixture.repo as RecoverableGroupMediaDownloadRepository;
+        DurableGroupMediaDownloadCursor? cursor;
+        final scannedIds = <String>[];
+        String? laterPolicyEligibleId;
+        for (var pageNumber = 0; pageNumber < 10; pageNumber++) {
+          final page = await repository.loadRecoverableGroupDownloadPage(
+            after: cursor,
+            limit: 2,
+          );
+          if (page.isEmpty) break;
+          scannedIds.addAll(page.map((candidate) => candidate.attachment.id));
+          cursor = page.last.cursor;
+          for (final candidate in page) {
+            if (!expectedIds.take(5).contains(candidate.attachment.id)) {
+              laterPolicyEligibleId = candidate.attachment.id;
+            }
+            expect(candidate.groupId, 'group-${candidate.attachment.id}');
+            expect(candidate.attachment.ownerLane, MediaOwnerLane.group);
+          }
+        }
+
+        expect(scannedIds, expectedIds);
+        expect(scannedIds.toSet(), hasLength(scannedIds.length));
+        expect(
+          laterPolicyEligibleId,
+          expectedIds.last,
+          reason:
+              'advancing the durable cursor must reach a row after more than one externally denied page',
+        );
+        expect(
+          await repository.loadRecoverableGroupDownloadPage(
+            after: cursor,
+            limit: 2,
+          ),
+          isEmpty,
+        );
+
+        for (final entry in excludedBefore.entries) {
+          expect(
+            await rawRow(entry.key),
+            entry.value,
+            reason: '${entry.key} must stay byte-for-byte unchanged',
+          );
+        }
+      },
+    );
 
     // --- 228 TC-228-10 ---
 

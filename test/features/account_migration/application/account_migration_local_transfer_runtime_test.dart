@@ -874,15 +874,15 @@ void main() {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         addTearDown(() async => server.close(force: true));
         final commands = <String>[];
-        final remotePorts = <int>{};
+        final segmentRemotePorts = <int>[];
         server.listen((request) async {
           final remotePort = request.connectionInfo?.remotePort;
-          if (remotePort != null) {
-            remotePorts.add(remotePort);
-          }
           final command = request.uri.pathSegments.last;
           commands.add(command);
           if (command == accountMigrationLocalTransferCommandSegment) {
+            if (remotePort != null) {
+              segmentRemotePorts.add(remotePort);
+            }
             final body = await utf8.decoder.bind(request).join();
             final decoded = jsonDecode(body) as Map<String, dynamic>;
             if (decoded['index'] == 1) {
@@ -935,10 +935,13 @@ void main() {
           accountMigrationLocalTransferCommandSegment,
           accountMigrationLocalTransferCommandSegment,
         ]);
+        expect(segmentRemotePorts, hasLength(2));
         expect(
-          remotePorts.length,
-          1,
-          reason: 'the killed request should be on the reused TCP connection',
+          segmentRemotePorts[1],
+          segmentRemotePorts[0],
+          reason:
+              'the killed segment request should reuse the preceding segment '
+              'TCP connection',
         );
         expect(httpClient.closeCount, 1);
         expect(httpClient.forceCloseCount, 1);

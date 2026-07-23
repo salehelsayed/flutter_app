@@ -127,6 +127,16 @@ cp scripts/test/fixtures/intro_accept_notification_sims_dart_shim.sh \
   "$SHIM_DIR/dart"
 chmod +x "$SHIM_DIR/dart"
 
+cat >"$SHIM_DIR/apkanalyzer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = manifest ]
+[ "${2:-}" = application-id ]
+[ -f "${3:-}" ]
+printf 'com.mknoon.app\n'
+EOF
+chmod +x "$SHIM_DIR/apkanalyzer"
+
 cat >"$SHIM_DIR/adb" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -150,6 +160,13 @@ if [ "${1:-}" = -s ]; then
       case "$*" in
         'pm path com.mknoon.app')
           [ ! -f "$state" ] || printf 'package:/data/app/base.apk\n'
+          ;;
+        'pm list packages -3')
+          [ ! -f "$state" ] || printf 'package:com.mknoon.app\n'
+          ;;
+        'sha256sum /data/app/base.apk')
+          [ -f "$state" ]
+          printf 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /data/app/base.apk\n'
           ;;
         'pidof com.mknoon.app'|'dumpsys activity activities'|\
         'am force-stop com.mknoon.app'|\

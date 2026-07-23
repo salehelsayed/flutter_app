@@ -666,6 +666,87 @@ void main() {
       expect(payload['mime'], 'image/jpeg');
     });
 
+    test(
+      'P269 explicit empty group ACL fails closed before encryption or bridge upload',
+      () async {
+        final validJpegFile = File('${tempDir.path}/p269_empty_acl.jpg');
+        final sourceBytes = <int>[
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.filled(32, 0x7a),
+        ];
+        await validJpegFile.writeAsBytes(sourceBytes);
+
+        final invalidGroupAcls = <List<String>>[
+          const <String>[],
+          const <String>[' ', '\t', '\n'],
+        ];
+        for (var index = 0; index < invalidGroupAcls.length; index += 1) {
+          bridge = _FakeBridge();
+          final outcome = await uploadMedia(
+            bridge: bridge,
+            localFilePath: validJpegFile.path,
+            mime: 'image/jpeg',
+            recipientPeerId: 'group-1',
+            allowedPeers: invalidGroupAcls[index],
+            blobId: 'p269-empty-group-acl-$index',
+          );
+
+          expect(
+            bridge.commandLog,
+            isEmpty,
+            reason: 'empty group ACL must stop before blob:keygen',
+          );
+          expect(bridge.generatedKeys, isEmpty);
+          expect(bridge.requests, isEmpty);
+          expect(bridge.sendCallCount, 0);
+          expect(
+            outcome,
+            isA<UploadMediaFailed>()
+                .having(
+                  (failure) => failure.stage,
+                  'stage',
+                  UploadMediaStage.validation,
+                )
+                .having(
+                  (failure) => failure.disposition,
+                  'disposition',
+                  UploadMediaDisposition.terminal,
+                )
+                .having(
+                  (failure) => failure.errorCode,
+                  'errorCode',
+                  'EMPTY_GROUP_MEDIA_ACL',
+                ),
+          );
+          expect(await validJpegFile.readAsBytes(), sourceBytes);
+        }
+
+        // Null remains the explicit direct-mode discriminator and must retain
+        // its existing encrypted upload behavior.
+        bridge = _FakeBridge();
+        final directOutcome = await uploadMedia(
+          bridge: bridge,
+          localFilePath: validJpegFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'direct-transport-peer',
+          allowedPeers: null,
+          blobId: 'p269-null-direct-acl',
+        );
+        expect(directOutcome, isA<UploadMediaSucceeded>());
+        expect(bridge.commandLog, [
+          'blob:keygen',
+          'blob:encrypt',
+          'media:upload',
+        ]);
+        final directPayload =
+            bridge.lastRequest!['payload'] as Map<String, dynamic>;
+        expect(directPayload, isNot(contains('allowedPeers')));
+        expect(directPayload['mime'], kOpaqueMediaTransportMime);
+      },
+    );
+
     test('1:1 upload skips group mime/size policy', () async {
       // Green pin guarding the crypto-block hoist: encryption became
       // unconditional but GroupMediaMimePolicy/GroupMediaSizePolicy stay

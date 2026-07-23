@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -13,6 +15,8 @@ class InMemoryMediaAttachmentRepository
     implements
         MediaAttachmentRepository,
         MediaAttachmentByIdLookup,
+        OrdinaryGroupAutomaticMediaDownloadStateRepository,
+        OrdinaryGroupMediaDownloadFailureRepository,
         NewMessageMediaPersistenceRollback {
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
@@ -106,6 +110,93 @@ class InMemoryMediaAttachmentRepository
     if (a != null) {
       _attachments[id] = a.copyWith(downloadStatus: downloadStatus);
     }
+  }
+
+  @override
+  Future<bool> recordOrdinaryGroupMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+    required bool clearLocalPath,
+  }) async {
+    final attachment = _attachments[id];
+    if (attachment == null ||
+        attachment.ownerLane != MediaOwnerLane.group ||
+        attachment.messageId != messageId ||
+        attachment.downloadStatus != expectedDownloadStatus ||
+        attachment.localPath != expectedLocalPath) {
+      return false;
+    }
+    final retryCount = incrementRetryCount
+        ? (attachment.downloadRetryCount ?? 0) + 1
+        : attachment.downloadRetryCount;
+    final status = incrementRetryCount
+        ? (retryCount! >= kMaxDownloadRetries
+              ? kMediaDownloadStatusDownloadFailed
+              : kMediaDownloadStatusFailed)
+        : failureStatus;
+    _attachments[id] = attachment.copyWith(
+      downloadStatus: status,
+      downloadRetryCount: retryCount,
+      clearLocalPath: clearLocalPath,
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> beginOrdinaryGroupAutomaticMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) async {
+    final attachment = _attachments[id];
+    if (attachment == null ||
+        attachment.ownerLane != MediaOwnerLane.group ||
+        attachment.messageId != messageId ||
+        attachment.downloadStatus != expectedDownloadStatus ||
+        attachment.localPath != expectedLocalPath ||
+        (attachment.downloadRetryCount ?? 0) >= kMaxDownloadRetries ||
+        !const {
+          kMediaDownloadStatusPending,
+          kMediaDownloadStatusDownloading,
+          kMediaDownloadStatusFailed,
+        }.contains(attachment.downloadStatus)) {
+      return false;
+    }
+    _attachments[id] = attachment.copyWith(
+      downloadStatus: kMediaDownloadStatusDownloading,
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  }) async {
+    final attachment = _attachments[id];
+    if (attachment == null ||
+        attachment.ownerLane != MediaOwnerLane.group ||
+        attachment.messageId != messageId ||
+        attachment.downloadStatus != kMediaDownloadStatusDownloading ||
+        attachment.localPath != expectedLocalPath) {
+      return false;
+    }
+    _attachments[id] = attachment.copyWith(
+      localPath: localPath,
+      downloadStatus: kMediaDownloadStatusDone,
+      downloadRetryCount: 0,
+    );
+    return true;
   }
 
   @override

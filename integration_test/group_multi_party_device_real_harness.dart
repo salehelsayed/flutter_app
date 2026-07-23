@@ -19613,6 +19613,7 @@ Future<void> _sendPromptInviteToCharlie({
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     senderDeviceId: senderBinding.deviceId,
+    senderTransportPeerId: senderBinding.transportPeerId,
     groupId: groupId,
     groupKey: keyInfo.encryptedKey,
     keyEpoch: keyInfo.keyGeneration,

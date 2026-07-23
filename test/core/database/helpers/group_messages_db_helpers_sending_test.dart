@@ -221,4 +221,76 @@ void main() {
       expect(row['status'], 'failed');
     },
   );
+
+  test(
+    'P269 sending sweeper preserves parents with pending group uploads in both age modes',
+    () async {
+      await db.execute('''
+        CREATE TABLE media_attachments (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          owner_lane TEXT NOT NULL,
+          download_status TEXT NOT NULL
+        )
+      ''');
+      final oldTimestamp = DateTime.utc(2026, 1, 1).toIso8601String();
+      for (final id in const <String>[
+        'pending-upload-unbounded',
+        'pending-upload-aged',
+        'control-aged',
+      ]) {
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: id,
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: oldTimestamp,
+          ),
+        );
+      }
+      for (final messageId in const <String>[
+        'pending-upload-unbounded',
+        'pending-upload-aged',
+      ]) {
+        await db.insert('media_attachments', <String, Object?>{
+          'id': 'blob-$messageId',
+          'message_id': messageId,
+          'owner_lane': 'group',
+          'download_status': 'upload_pending',
+        });
+      }
+
+      final unboundedCount = await dbTransitionGroupSendingToFailed(db);
+      expect(unboundedCount, 1);
+      expect(
+        (await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const ['pending-upload-unbounded'],
+        )).single['status'],
+        'sending',
+      );
+
+      await db.update(
+        'group_messages',
+        const <String, Object?>{'status': 'sending'},
+        where: 'id = ?',
+        whereArgs: const ['control-aged'],
+      );
+      final agedCount = await dbTransitionGroupSendingToFailed(
+        db,
+        olderThan: DateTime.utc(2026, 3, 1),
+      );
+      expect(agedCount, 1);
+      expect(
+        (await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const ['pending-upload-aged'],
+        )).single['status'],
+        'sending',
+      );
+    },
+  );
 }

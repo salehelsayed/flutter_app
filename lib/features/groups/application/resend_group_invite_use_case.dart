@@ -2,6 +2,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -87,6 +88,17 @@ Future<ResendGroupInviteResult> resendGroupInvite({
 
   final members = await groupRepo.getMembers(groupId);
   final groupConfig = buildGroupConfigPayload(group, members);
+  final senderMembers = members
+      .where((candidate) => candidate.peerId == identity.peerId)
+      .toList(growable: false);
+  final senderMember = senderMembers.length == 1 ? senderMembers.single : null;
+  final senderHasDeviceRoster = senderMember?.devices.isNotEmpty == true;
+  final currentSenderTransportPeerId = p2pService.currentState.peerId?.trim();
+  final senderBinding = resolveGroupSenderDeviceBindingFromMember(
+    member: senderMember,
+    preferredTransportPeerId: currentSenderTransportPeerId,
+    senderPublicKey: identity.publicKey,
+  );
   // Mint the fresh invite id here so the delivery-attempt row records the
   // exact id sent, keeping a later revocation match working (HOLE-4).
   final inviteId = const Uuid().v4();
@@ -100,6 +112,10 @@ Future<ResendGroupInviteResult> resendGroupInvite({
     senderPublicKey: identity.publicKey,
     senderPrivateKey: identity.privateKey,
     senderUsername: identity.username,
+    senderDeviceId: senderHasDeviceRoster ? senderBinding.deviceId ?? '' : null,
+    senderTransportPeerId: senderHasDeviceRoster
+        ? currentSenderTransportPeerId ?? ''
+        : null,
     groupId: groupId,
     groupKey: keyInfo.encryptedKey,
     keyEpoch: keyInfo.keyGeneration,

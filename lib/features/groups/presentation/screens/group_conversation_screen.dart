@@ -86,6 +86,7 @@ class GroupConversationScreen extends StatelessWidget {
   /// notification-tapped message into view, not merely highlight it.
   final GlobalKey? highlightAnchorKey;
   final Map<String, List<MediaAttachment>> mediaMap;
+  final Map<String, String> mediaRenderedSemanticsLabels;
   final List<File> pendingAttachments;
   final bool isUploading;
   final bool isProcessing;
@@ -179,6 +180,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.highlightedMessageId,
     this.highlightAnchorKey,
     this.mediaMap = const {},
+    this.mediaRenderedSemanticsLabels = const <String, String>{},
     this.pendingAttachments = const [],
     this.isUploading = false,
     this.isProcessing = false,
@@ -857,6 +859,7 @@ class GroupConversationScreen extends StatelessWidget {
           // verified-content-hash gate above still applies — the fallback only
           // supplies the path; it never bypasses verification.
           ownedMediaPeerId: group.id,
+          mediaRenderedSemanticsLabels: mediaRenderedSemanticsLabels,
           onMediaTap:
               onMediaTap != null &&
                   !message.privateMediaPolicy.requiresRedaction

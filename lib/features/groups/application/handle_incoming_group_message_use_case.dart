@@ -22,6 +22,55 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 const _maxIncomingMessageFutureClockSkew = Duration(minutes: 5);
 const _incomingMediaRetrySearchLimit = 200;
 
+sealed class IncomingGroupMessageDetailedOutcome {
+  const IncomingGroupMessageDetailedOutcome();
+
+  const factory IncomingGroupMessageDetailedOutcome.delivered(
+    GroupMessage message,
+  ) = IncomingGroupMessageDelivered;
+
+  factory IncomingGroupMessageDetailedOutcome.duplicateEnriched(
+    GroupMessage canonicalMessage,
+    Set<String> persistedAttachmentIds,
+  ) = IncomingGroupMessageDuplicateEnriched;
+
+  const factory IncomingGroupMessageDetailedOutcome.ignored() =
+      IncomingGroupMessageIgnored;
+}
+
+final class IncomingGroupMessageDelivered
+    extends IncomingGroupMessageDetailedOutcome {
+  const IncomingGroupMessageDelivered(this.message);
+
+  final GroupMessage message;
+}
+
+final class IncomingGroupMessageDuplicateEnriched
+    extends IncomingGroupMessageDetailedOutcome {
+  IncomingGroupMessageDuplicateEnriched(
+    this.canonicalMessage,
+    Set<String> persistedAttachmentIds,
+  ) : persistedAttachmentIds = Set<String>.unmodifiable(
+        persistedAttachmentIds,
+      ) {
+    if (this.persistedAttachmentIds.isEmpty) {
+      throw ArgumentError.value(
+        persistedAttachmentIds,
+        'persistedAttachmentIds',
+        'must contain at least one committed attachment ID',
+      );
+    }
+  }
+
+  final GroupMessage canonicalMessage;
+  final Set<String> persistedAttachmentIds;
+}
+
+final class IncomingGroupMessageIgnored
+    extends IncomingGroupMessageDetailedOutcome {
+  const IncomingGroupMessageIgnored();
+}
+
 /// Handles an incoming group message.
 ///
 /// Verifies the group exists and the sender is a known member.
@@ -44,6 +93,59 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   String? quotedMessageId,
   // 236: exact-bool wire marker — absent/null/non-bool values decode false at
   // every caller, so legacy senders can never mark a row forwarded.
+  bool isForwarded = false,
+  Map<String, Object?> privateMediaPolicyFields = const <String, Object?>{},
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  AppendGroupEventLogEntry? appendGroupEventLogEntry,
+  bool enforceSelfJoinedAtLowerBound = false,
+  String deliverySource = 'direct',
+  DateTime Function()? nowUtc,
+}) async {
+  final outcome = await handleIncomingGroupMessageDetailed(
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    groupId: groupId,
+    senderId: senderId,
+    senderUsername: senderUsername,
+    keyEpoch: keyEpoch,
+    text: text,
+    timestamp: timestamp,
+    selfPeerId: selfPeerId,
+    transportPeerId: transportPeerId,
+    senderDeviceId: senderDeviceId,
+    messageId: messageId,
+    logicalDeliveryId: logicalDeliveryId,
+    quotedMessageId: quotedMessageId,
+    isForwarded: isForwarded,
+    privateMediaPolicyFields: privateMediaPolicyFields,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    appendGroupEventLogEntry: appendGroupEventLogEntry,
+    enforceSelfJoinedAtLowerBound: enforceSelfJoinedAtLowerBound,
+    deliverySource: deliverySource,
+    nowUtc: nowUtc,
+  );
+  return outcome is IncomingGroupMessageDelivered ? outcome.message : null;
+}
+
+/// Detailed incoming-message result used by the live listener to distinguish
+/// a new delivery from a stable duplicate that committed missing media.
+Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String senderId,
+  required String senderUsername,
+  required int keyEpoch,
+  required String text,
+  required String timestamp,
+  String? selfPeerId,
+  String? transportPeerId,
+  String? senderDeviceId,
+  String? messageId,
+  String? logicalDeliveryId,
+  String? quotedMessageId,
   bool isForwarded = false,
   Map<String, Object?> privateMediaPolicyFields = const <String, Object?>{},
   List<Map<String, dynamic>>? media,
@@ -104,7 +206,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'reason': mediaValidation.reason,
       },
     );
-    return null;
+    return const IncomingGroupMessageDetailedOutcome.ignored();
   }
   if (!mediaValidation.isValid) {
     emitFlowEvent(
@@ -143,7 +245,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         existing: existingById,
         senderId: senderId,
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
@@ -161,9 +263,11 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       if (reconciledSelfEcho != null) {
-        return reconciledSelfEcho;
+        return IncomingGroupMessageDetailedOutcome.delivered(
+          reconciledSelfEcho,
+        );
       }
-      await _enrichExistingDuplicateMessage(
+      final persistedAttachmentIds = await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         groupId: groupId,
         messageId: stableMessageId,
@@ -171,6 +275,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
+      final canonicalMessage =
+          await msgRepo.getMessage(stableMessageId) ?? existingById;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
@@ -183,11 +289,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           rawMessageId: stableMessageId,
           logicalDeliveryId: stableLogicalDeliveryId,
           candidateLocalRowId: stableMessageId,
-          localRow: existingById,
+          localRow: canonicalMessage,
           dedupeBy: 'messageId',
         ),
       );
-      return null;
+      return persistedAttachmentIds.isEmpty
+          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
+              canonicalMessage,
+              persistedAttachmentIds,
+            );
     }
   }
 
@@ -199,7 +310,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       event: 'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_GROUP',
       details: {},
     );
-    return null;
+    return const IncomingGroupMessageDetailedOutcome.ignored();
   }
 
   // Parse timestamp before applying membership-boundary checks.
@@ -225,7 +336,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         if (dissolvedAt != null) 'dissolvedAt': dissolvedAt.toIso8601String(),
       },
     );
-    return null;
+    return const IncomingGroupMessageDetailedOutcome.ignored();
   }
 
   GroupMember? localRecipientMember;
@@ -256,7 +367,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           'keyEpoch': keyEpoch,
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
 
     if (localRecipientMember != null &&
@@ -300,7 +411,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
             'keyEpoch': keyEpoch,
           },
         );
-        return null;
+        return const IncomingGroupMessageDetailedOutcome.ignored();
       }
 
       if (isReaddedAfterRemoval &&
@@ -330,7 +441,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
               'rejoinedAt': localRejoinedAt.toIso8601String(),
             },
           );
-          return null;
+          return const IncomingGroupMessageDetailedOutcome.ignored();
         }
       }
     }
@@ -358,7 +469,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           'cutoffAt': senderRemovalCutoff.toIso8601String(),
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
 
     if (senderRemovalCutoff == null) {
@@ -371,7 +482,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           'keyEpoch': keyEpoch,
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
 
     if (resolvedTransportPeerId != senderId) {
@@ -386,7 +497,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
               : resolvedTransportPeerId,
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
   } else if (!_isSenderDeviceBound(
     member: member,
@@ -404,7 +515,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
             : resolvedTransportPeerId,
       },
     );
-    return null;
+    return const IncomingGroupMessageDetailedOutcome.ignored();
   } else {
     senderRemovalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
       groupId,
@@ -424,7 +535,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           'joinedAt': joinedAt.toIso8601String(),
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
 
     if (senderRemovalCutoff != null &&
@@ -447,7 +558,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
             'rejoinedAt': joinedAt.toIso8601String(),
           },
         );
-        return null;
+        return const IncomingGroupMessageDetailedOutcome.ignored();
       }
     }
   }
@@ -470,7 +581,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'deliverySource': deliverySource,
       },
     );
-    return null;
+    return const IncomingGroupMessageDetailedOutcome.ignored();
   }
 
   if (localRecipientPeerId != null) {
@@ -492,7 +603,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           'joinedAt': selfJoinedAt.toIso8601String(),
         },
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
@@ -551,7 +662,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         existing: existingById,
         senderId: senderId,
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
@@ -569,9 +680,11 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       if (reconciledSelfEcho != null) {
-        return reconciledSelfEcho;
+        return IncomingGroupMessageDetailedOutcome.delivered(
+          reconciledSelfEcho,
+        );
       }
-      await _enrichExistingDuplicateMessage(
+      final persistedAttachmentIds = await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         groupId: groupId,
         messageId: stableMessageId,
@@ -579,6 +692,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
+      final canonicalMessage =
+          await msgRepo.getMessage(stableMessageId) ?? existingById;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
@@ -591,11 +706,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           rawMessageId: stableMessageId,
           logicalDeliveryId: stableLogicalDeliveryId,
           candidateLocalRowId: stableMessageId,
-          localRow: existingById,
+          localRow: canonicalMessage,
           dedupeBy: 'messageId',
         ),
       );
-      return null;
+      return persistedAttachmentIds.isEmpty
+          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
+              canonicalMessage,
+              persistedAttachmentIds,
+            );
     }
   }
 
@@ -609,7 +729,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     if (existingByLogicalDelivery != null &&
         existingByLogicalDelivery.id != stableMessageId &&
         !_isRepairPlaceholder(existingByLogicalDelivery)) {
-      await _enrichExistingDuplicateMessage(
+      final persistedAttachmentIds = await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         groupId: groupId,
         messageId: existingByLogicalDelivery.id,
@@ -636,7 +756,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           dedupeBy: 'logicalDeliveryId',
         ),
       );
-      return null;
+      return persistedAttachmentIds.isEmpty
+          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
+              canonicalMessage,
+              persistedAttachmentIds,
+            );
     }
   }
 
@@ -665,7 +790,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       privateMediaPolicy: privateMediaPolicy,
     );
     if (canonicalMessageId != null) {
-      await _enrichExistingDuplicateMessage(
+      final persistedAttachmentIds = await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         groupId: groupId,
         messageId: canonicalMessageId,
@@ -690,7 +815,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           dedupeBy: 'logicalMediaRetry',
         ),
       );
-      return null;
+      return persistedAttachmentIds.isEmpty || canonicalMessage == null
+          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
+              canonicalMessage,
+              persistedAttachmentIds,
+            );
     }
   }
 
@@ -732,7 +862,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           dedupeBy: 'content',
         ),
       );
-      return null;
+      return const IncomingGroupMessageDetailedOutcome.ignored();
     }
   }
 
@@ -805,7 +935,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     ),
   );
 
-  return message;
+  return IncomingGroupMessageDetailedOutcome.delivered(message);
 }
 
 Map<String, dynamic> _incomingMessageIdentityDetails({
@@ -1307,7 +1437,7 @@ DateTime _normalizeIncomingMessageTimestamp({
   return receivedAt;
 }
 
-Future<void> _enrichExistingDuplicateMessage({
+Future<Set<String>> _enrichExistingDuplicateMessage({
   required GroupMessageRepository msgRepo,
   required String groupId,
   required String messageId,
@@ -1316,7 +1446,20 @@ Future<void> _enrichExistingDuplicateMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   final existing = await msgRepo.getMessage(messageId);
-  if (existing != null &&
+  final mediaSave = await _saveIncomingMediaAttachmentsWithOutcome(
+    groupId: groupId,
+    messageId: messageId,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
+  final allMissingMediaWasRefused =
+      mediaSave.hadMissingAttachments &&
+      mediaSave.persistedAttachmentIds.isEmpty;
+  // A guarded refusal is one zero-write outcome: it must not leak a quote-only
+  // mutation. Quote-only and already-complete stable replays keep their
+  // existing repair behavior because they had no missing media to refuse.
+  if (!allMissingMediaWasRefused &&
+      existing != null &&
       (existing.quotedMessageId == null || existing.quotedMessageId!.isEmpty) &&
       quotedMessageId != null &&
       quotedMessageId.isNotEmpty) {
@@ -1325,21 +1468,37 @@ Future<void> _enrichExistingDuplicateMessage({
     );
   }
 
-  await _saveIncomingMediaAttachments(
-    groupId: groupId,
-    messageId: messageId,
-    media: media,
-    mediaAttachmentRepo: mediaAttachmentRepo,
-  );
+  return mediaSave.persistedAttachmentIds;
 }
 
-Future<void> _saveIncomingMediaAttachments({
+Future<Set<String>> _saveIncomingMediaAttachments({
   required String groupId,
   required String messageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
-  if (media == null || mediaAttachmentRepo == null) return;
+  final outcome = await _saveIncomingMediaAttachmentsWithOutcome(
+    groupId: groupId,
+    messageId: messageId,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
+  return outcome.persistedAttachmentIds;
+}
+
+Future<({Set<String> persistedAttachmentIds, bool hadMissingAttachments})>
+_saveIncomingMediaAttachmentsWithOutcome({
+  required String groupId,
+  required String messageId,
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (media == null || mediaAttachmentRepo == null) {
+    return (
+      persistedAttachmentIds: const <String>{},
+      hadMissingAttachments: false,
+    );
+  }
   // 235: prefer the guarded final write (exact-parent + deletion-journal
   // check inside the row-write transaction). A repository without the
   // capability keeps the legacy behavior.
@@ -1352,6 +1511,8 @@ Future<void> _saveIncomingMediaAttachments({
   final existingIds = existingAttachments
       .map((attachment) => attachment.id)
       .toSet();
+  final persistedAttachmentIds = <String>{};
+  var hadMissingAttachments = false;
 
   for (final rawAttachment in media) {
     final attachment =
@@ -1367,8 +1528,10 @@ Future<void> _saveIncomingMediaAttachments({
           ),
         );
     if (!existingIds.add(attachment.id)) continue;
+    hadMissingAttachments = true;
+    var committed = false;
     if (guardedRepo != null) {
-      await guardedRepo.saveGroupAttachmentGuarded(
+      committed = await guardedRepo.saveGroupAttachmentGuarded(
         attachment,
         groupId: groupId,
       );
@@ -1377,8 +1540,16 @@ Future<void> _saveIncomingMediaAttachments({
         attachment,
         owner: MediaOwnerLane.group,
       );
+      committed = true;
+    }
+    if (committed) {
+      persistedAttachmentIds.add(attachment.id);
     }
   }
+  return (
+    persistedAttachmentIds: Set<String>.unmodifiable(persistedAttachmentIds),
+    hadMissingAttachments: hadMissingAttachments,
+  );
 }
 
 GroupPrivateMediaEligibility _incomingGroupPrivateMediaEligibility({

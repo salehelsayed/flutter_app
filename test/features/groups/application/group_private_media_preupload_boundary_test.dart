@@ -136,6 +136,9 @@ void main() {
       final source = await File(
         'lib/features/groups/presentation/screens/group_conversation_wired.dart',
       ).readAsString();
+      final sharedLeaf = await File(
+        'lib/features/groups/application/foreground_group_media_upload.dart',
+      ).readAsString();
       final prepareStart = source.indexOf('_prepareDurableGroupMediaUploads({');
       final leafStart = source.indexOf(
         '_runForegroundGroupUploadLeaf({',
@@ -156,19 +159,23 @@ void main() {
         reason: 'filesystem prep must not create parentless upload rows',
       );
 
-      final leafBody = source.substring(leafStart, uploadStart);
-      final phase = leafBody.indexOf('runSelfRemovedGroupLifecycleLeaf');
-      final parentReload = leafBody.indexOf('widget.msgRepo.getMessage');
-      final pendingSave = leafBody.indexOf(
-        'mediaAttachmentRepo.saveAttachment',
+      final wrapperBody = source.substring(leafStart, uploadStart);
+      expect(wrapperBody, contains('runForegroundGroupUploadLeaf('));
+
+      final phase = sharedLeaf.indexOf('runSelfRemovedGroupLifecycleLeaf');
+      final parentReload = sharedLeaf.indexOf(
+        'groupMessageRepository.getMessage',
       );
-      final upload = leafBody.indexOf('final outcome = await upload');
+      final pendingSave = sharedLeaf.indexOf(
+        'mediaAttachmentRepository.saveAttachment',
+      );
+      final upload = sharedLeaf.indexOf('final outcome = await upload');
       expect(phase, isNonNegative);
       expect(parentReload, greaterThan(phase));
       expect(pendingSave, greaterThan(parentReload));
       expect(upload, greaterThan(pendingSave));
       expect(
-        leafBody,
+        sharedLeaf,
         contains('completion.completeUploadRetry'),
         reason: 'success completion must remain in the same bounded leaf',
       );
@@ -197,6 +204,9 @@ void main() {
       final source = await File(
         'lib/features/groups/presentation/screens/group_conversation_wired.dart',
       ).readAsString();
+      final sharedLeaf = await File(
+        'lib/features/groups/application/foreground_group_media_upload.dart',
+      ).readAsString();
       final leafStart = source.indexOf('_runForegroundGroupUploadLeaf({');
       final uploadStart = source.indexOf(
         '_uploadPreparedGroupMediaUploads({',
@@ -217,10 +227,12 @@ void main() {
       expect(onSendStart, isNonNegative);
       expect(onSendEnd, greaterThan(onSendStart));
 
-      final leafBody = source.substring(leafStart, uploadStart);
-      final phase = leafBody.indexOf('runSelfRemovedGroupLifecycleLeaf');
-      final replacementDelete = leafBody.indexOf(
-        'mediaAttachmentRepo.deleteAttachmentsForMessage',
+      final wrapperBody = source.substring(leafStart, uploadStart);
+      expect(wrapperBody, contains('runForegroundGroupUploadLeaf('));
+
+      final phase = sharedLeaf.indexOf('runSelfRemovedGroupLifecycleLeaf');
+      final replacementDelete = sharedLeaf.indexOf(
+        'mediaAttachmentRepository.deleteAttachmentsForMessage',
       );
       expect(phase, isNonNegative);
       expect(

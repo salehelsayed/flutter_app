@@ -51,6 +51,10 @@ class MediaAttachmentRepositoryImpl
         GroupMediaLibraryStateRepository,
         MediaLibraryRepository,
         MediaDownloadStateRepository,
+        OrdinaryGroupAutomaticMediaDownloadStateRepository,
+        OrdinaryGroupExplicitMediaDownloadStateRepository,
+        OrdinaryGroupMediaDownloadFailureRepository,
+        RecoverableGroupMediaDownloadRepository,
         DirectPrivateMediaDownloadStateRepository,
         DirectPrivateMediaAttachmentSaveRepository,
         DirectPrivateMediaCleanupRepository,
@@ -94,6 +98,12 @@ class MediaAttachmentRepositoryImpl
   dbMarkUploadPendingAttachmentsFailedForMessage;
   final Future<List<Map<String, Object?>>> Function()
   dbLoadPendingMediaDownloads;
+  final Future<List<Map<String, Object?>>> Function({
+    required int limit,
+    String? afterCreatedAt,
+    String? afterAttachmentId,
+  })?
+  dbLoadRecoverableGroupMediaDownloadPage;
   final Future<List<Map<String, Object?>>> Function({
     int limit,
     required String ownerLane,
@@ -152,6 +162,49 @@ class MediaAttachmentRepositoryImpl
     required String localPath,
   })?
   dbCommitMediaDownloadLocalPath;
+  final Future<int> Function(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  })?
+  dbBeginOrdinaryGroupAutomaticMediaDownloadExact;
+  final Future<int> Function(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  })?
+  dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact;
+  final Future<int> Function(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  })?
+  dbBeginOrdinaryGroupExplicitMediaDownloadExact;
+  final Future<int> Function(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  })?
+  dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact;
+  final Future<int> Function(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+    required bool clearLocalPath,
+  })?
+  dbRecordOrdinaryGroupMediaDownloadFailureExact;
   final Future<int> Function(
     String id, {
     required String ownerLane,
@@ -349,6 +402,7 @@ class MediaAttachmentRepositoryImpl
     required this.dbDeleteMediaForContact,
     required this.dbMarkUploadPendingAttachmentsFailedForMessage,
     required this.dbLoadPendingMediaDownloads,
+    this.dbLoadRecoverableGroupMediaDownloadPage,
     required this.dbLoadUploadPendingAttachments,
     required this.dbSetMediaBookmarked,
     this.dbSetDirectMediaBookmarkedIfOrdinary,
@@ -358,6 +412,11 @@ class MediaAttachmentRepositoryImpl
     this.dbLoadMediaStoragePage,
     this.dbBeginMediaDownload,
     this.dbCommitMediaDownloadLocalPath,
+    this.dbBeginOrdinaryGroupAutomaticMediaDownloadExact,
+    this.dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact,
+    this.dbBeginOrdinaryGroupExplicitMediaDownloadExact,
+    this.dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact,
+    this.dbRecordOrdinaryGroupMediaDownloadFailureExact,
     this.dbClaimMediaEvicted,
     this.dbFinalizeMediaEvictedPathCleared,
     this.dbCommitDirectPrivateMediaDownloadIfEligible,
@@ -934,6 +993,169 @@ class MediaAttachmentRepositoryImpl
       _emitAuthorizationChangeForRow(
         previous,
         MediaAttachmentAuthorizationMutation.downloadCommitted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> beginOrdinaryGroupAutomaticMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final claim = _requireCasClosure(
+      dbBeginOrdinaryGroupAutomaticMediaDownloadExact,
+      'beginOrdinaryGroupAutomaticMediaDownload',
+    );
+    final previous = await dbLoadMediaById(id);
+    final changed =
+        await claim(
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+        ) ==
+        1;
+    if (changed && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.downloadStarted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final commit = _requireCasClosure(
+      dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact,
+      'commitOrdinaryGroupAutomaticMediaDownloadLocalPath',
+    );
+    final previous = await dbLoadMediaById(id);
+    final changed =
+        await commit(
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedLocalPath: expectedLocalPath,
+          localPath: localPath,
+        ) ==
+        1;
+    if (changed && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.downloadCommitted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> beginOrdinaryGroupExplicitMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final claim = _requireCasClosure(
+      dbBeginOrdinaryGroupExplicitMediaDownloadExact,
+      'beginOrdinaryGroupExplicitMediaDownload',
+    );
+    final previous = await dbLoadMediaById(id);
+    final changed =
+        await claim(
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+        ) ==
+        1;
+    if (changed && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.downloadStarted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> commitOrdinaryGroupExplicitMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final commit = _requireCasClosure(
+      dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact,
+      'commitOrdinaryGroupExplicitMediaDownloadLocalPath',
+    );
+    final previous = await dbLoadMediaById(id);
+    final changed =
+        await commit(
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedLocalPath: expectedLocalPath,
+          localPath: localPath,
+        ) ==
+        1;
+    if (changed && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.downloadCommitted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> recordOrdinaryGroupMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+    required bool clearLocalPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final record = _requireCasClosure(
+      dbRecordOrdinaryGroupMediaDownloadFailureExact,
+      'recordOrdinaryGroupMediaDownloadFailure',
+    );
+    final changed =
+        await record(
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        ) ==
+        1;
+    if (changed) {
+      _emitAuthorizationChange(
+        owner: MediaOwnerLane.group,
+        scopeId: groupId,
+        messageId: messageId,
+        attachmentId: id,
+        kind: MediaAttachmentAuthorizationMutation.downloadStatusChanged,
       );
     }
     return changed;
@@ -2385,6 +2607,50 @@ class MediaAttachmentRepositoryImpl
   Future<List<MediaAttachment>> getPendingDownloads() async {
     final rows = await dbLoadPendingMediaDownloads();
     return _attachmentsFromRows(rows);
+  }
+
+  @override
+  Future<List<DurableGroupMediaDownloadCandidate>>
+  loadRecoverableGroupDownloadPage({
+    DurableGroupMediaDownloadCursor? after,
+    int limit = 25,
+  }) async {
+    final loadPage = dbLoadRecoverableGroupMediaDownloadPage;
+    if (loadPage == null) {
+      throw StateError(
+        'recoverable GROUP download page query is not wired on this '
+        'MediaAttachmentRepositoryImpl',
+      );
+    }
+    if (limit <= 0) {
+      throw ArgumentError.value(limit, 'limit', 'must be positive');
+    }
+    if (after != null &&
+        (after.createdAt.isEmpty || after.attachmentId.isEmpty)) {
+      throw ArgumentError.value(after, 'after', 'cursor fields must be set');
+    }
+
+    final rows = await loadPage(
+      limit: limit,
+      afterCreatedAt: after?.createdAt,
+      afterAttachmentId: after?.attachmentId,
+    );
+    final candidates = <DurableGroupMediaDownloadCandidate>[];
+    for (final row in rows) {
+      final groupId = row['recovery_group_id'] as String?;
+      if (groupId == null || groupId.isEmpty) {
+        throw StateError(
+          'recoverable GROUP download row omitted current group authority',
+        );
+      }
+      candidates.add(
+        DurableGroupMediaDownloadCandidate(
+          attachment: MediaAttachment.fromMap(await _hydrateRow(row)),
+          groupId: groupId,
+        ),
+      );
+    }
+    return candidates;
   }
 
   @override

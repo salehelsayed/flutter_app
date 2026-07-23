@@ -24,7 +24,9 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -82,11 +84,57 @@ bool canDeliverAnnouncementForwardToGroup({
 }
 
 class _ForwardGroupAuthority {
-  const _ForwardGroupAuthority({required this.group, required this.members});
+  const _ForwardGroupAuthority({
+    required this.group,
+    required this.members,
+    required this.latestKeyGeneration,
+  });
 
   final GroupModel group;
   final List<GroupMember> members;
+  final int latestKeyGeneration;
 }
+
+class _ForwardGroupUploadLeaf {
+  const _ForwardGroupUploadLeaf({
+    required this.authority,
+    required this.attachment,
+  });
+
+  final _ForwardGroupAuthority authority;
+  final MediaAttachment attachment;
+}
+
+String _forwardGroupAuthorityFingerprint(_ForwardGroupAuthority authority) {
+  final group = authority.group;
+  final memberRows =
+      authority.members
+          .map((member) => jsonEncode(member.toConfigJson()))
+          .toList(growable: false)
+        ..sort();
+  return jsonEncode(<String, Object?>{
+    'groupId': group.id,
+    'groupType': group.type.toValue(),
+    'createdBy': group.createdBy,
+    'myRole': group.myRole.toValue(),
+    'isArchived': group.isArchived,
+    'isDissolved': group.isDissolved,
+    'selfRemovedAt': group.selfRemovedAt?.toUtc().toIso8601String(),
+    'lastMembershipEventAt': group.lastMembershipEventAt
+        ?.toUtc()
+        .toIso8601String(),
+    'lastMembershipEventId': group.lastMembershipEventId,
+    'latestKeyGeneration': authority.latestKeyGeneration,
+    'members': memberRows,
+  });
+}
+
+bool _sameForwardGroupAuthority(
+  _ForwardGroupAuthority left,
+  _ForwardGroupAuthority right,
+) =>
+    _forwardGroupAuthorityFingerprint(left) ==
+    _forwardGroupAuthorityFingerprint(right);
 
 class _InternalForwardTargetResolution {
   const _InternalForwardTargetResolution.ready({
@@ -1094,7 +1142,11 @@ class DefaultShareBatchDeliveryCoordinator
         )) {
       return null;
     }
-    return _ForwardGroupAuthority(group: group, members: snapshot.members);
+    return _ForwardGroupAuthority(
+      group: group,
+      members: snapshot.members,
+      latestKeyGeneration: hydratedLatestKey!.keyGeneration,
+    );
   }
 
   Future<ProcessedShareMediaBatch> _processSharedMedia(
@@ -1335,7 +1387,6 @@ class DefaultShareBatchDeliveryCoordinator
         );
       }
       final resolvedGroup = authority.group;
-      final members = authority.members;
       if (existingOutput != null) {
         final coherent =
             stableOperationKey != null &&
@@ -1363,49 +1414,82 @@ class DefaultShareBatchDeliveryCoordinator
           detail: alreadySent ? 'Sent.' : 'Saved locally for existing retry.',
         );
       }
-      final allowedPeers = members
-          .map((member) => member.peerId.trim())
-          .where((peerId) => peerId.isNotEmpty)
-          .toSet()
-          .toList(growable: false);
+      var mediaUploadFailed = false;
       final attachments = <MediaAttachment>[];
-
+      var uploadAuthority = authority;
       for (final media in processedMedia) {
-        final mime = _mimeFromPath(media.file.path);
-        final attachmentId = _shareBatchUuid.v4();
-        uploadHooks.started(
-          blobId: attachmentId,
-          budgetBytes: media.budgetBytes,
-        );
-        MediaAttachment? uploaded;
-        try {
-          final outcome = await runUploadMedia(
-            uploadMediaFn: uploadMedia,
-            bridge: bridge,
-            localFilePath: media.file.path,
-            mime: mime,
-            recipientPeerId: resolvedGroup.id,
-            mediaFileManager: mediaFileManager,
-            width: media.width,
-            height: media.height,
-            durationMs: media.durationMs,
-            allowedPeers: allowedPeers,
-            blobId: attachmentId,
-          );
-          uploaded = outcome.attachmentOrNull;
-        } finally {
-          uploadHooks.settled(succeeded: uploaded != null);
-        }
-        if (uploaded == null) {
+        final guardedUpload =
+            await runSelfRemovedGroupLifecycleLeaf<_ForwardGroupUploadLeaf?>(
+              groupRepo: groupRepo,
+              groupId: resolvedGroup.id,
+              action: (currentGroup) async {
+                if (currentGroup.isDissolved) return null;
+                final currentAuthority = await _loadForwardGroupAuthority(
+                  groupRepo: groupRepo,
+                  groupId: resolvedGroup.id,
+                  senderPeerId: identity.peerId,
+                  allowAnnouncementTarget: allowAnnouncementTarget,
+                  sourceGroupIdToExclude: sourceGroupIdToExclude,
+                );
+                if (currentAuthority == null ||
+                    !_sameForwardGroupAuthority(
+                      uploadAuthority,
+                      currentAuthority,
+                    )) {
+                  return null;
+                }
+
+                final attachmentId = _shareBatchUuid.v4();
+                uploadHooks.started(
+                  blobId: attachmentId,
+                  budgetBytes: media.budgetBytes,
+                );
+                MediaAttachment? uploaded;
+                try {
+                  final outcome = await runUploadMedia(
+                    uploadMediaFn: uploadMedia,
+                    bridge: bridge,
+                    localFilePath: media.file.path,
+                    mime: _mimeFromPath(media.file.path),
+                    recipientPeerId: resolvedGroup.id,
+                    mediaFileManager: mediaFileManager,
+                    width: media.width,
+                    height: media.height,
+                    durationMs: media.durationMs,
+                    allowedPeers: groupMediaAllowedPeersForMembers(
+                      currentAuthority.members,
+                    ),
+                    blobId: attachmentId,
+                  );
+                  uploaded = outcome.attachmentOrNull;
+                } finally {
+                  uploadHooks.settled(succeeded: uploaded != null);
+                }
+                if (uploaded == null) {
+                  mediaUploadFailed = true;
+                  return null;
+                }
+                return _ForwardGroupUploadLeaf(
+                  authority: currentAuthority,
+                  attachment: uploaded.copyWith(
+                    id: attachmentId,
+                    downloadStatus: 'done',
+                  ),
+                );
+              },
+            );
+        final uploadLeaf = guardedUpload.value;
+        if (!guardedUpload.didRun || uploadLeaf == null) {
           return ShareBatchTargetResult(
             target: ShareTargetSelection.group(resolvedGroup),
             status: ShareBatchTargetStatus.failed,
-            detail: 'Media upload failed.',
+            detail: mediaUploadFailed
+                ? 'Media upload failed.'
+                : 'You no longer have permission to post there.',
           );
         }
-        attachments.add(
-          uploaded.copyWith(id: attachmentId, downloadStatus: 'done'),
-        );
+        uploadAuthority = uploadLeaf.authority;
+        attachments.add(uploadLeaf.attachment);
       }
 
       final senderDeviceId = _currentSenderDeviceId;
@@ -1437,6 +1521,17 @@ class DefaultShareBatchDeliveryCoordinator
         // Only an explicit internal Forward carries provenance; OS shares
         // and ordinary sends stay unmarked (TC-236-13).
         isForwarded: shareIntent.forwardProvenance != null,
+        currentAuthorityCheck: () async {
+          final currentAuthority = await _loadForwardGroupAuthority(
+            groupRepo: groupRepo,
+            groupId: resolvedGroup.id,
+            senderPeerId: identity.peerId,
+            allowAnnouncementTarget: allowAnnouncementTarget,
+            sourceGroupIdToExclude: sourceGroupIdToExclude,
+          );
+          return currentAuthority != null &&
+              _sameForwardGroupAuthority(uploadAuthority, currentAuthority);
+        },
       );
       final pendingCompletion =
           result == SendGroupMessageResult.success &&

@@ -28,11 +28,14 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
 late MessageRepository _defaultDirectMessageRepo;
 
@@ -61,12 +64,16 @@ Future<MediaAttachment?> downloadMedia({
   required String contactPeerId,
   required MediaOwnerLane owner,
   MessageRepository? messageRepo,
+  GroupMessageRepository? groupMessageRepo,
   MediaDownloadIntent? intent,
   bool enforceGroupMediaPolicy = false,
   Duration? transferStallTimeout,
   Duration? transferMaxTimeout,
   Duration? latePrivateTransferScrubDelay,
   int Function()? nowMs,
+  GroupMediaAutomaticDownloadAttemptStarted?
+  groupMediaAutomaticDownloadAttemptStarted,
+  GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
 }) {
   return download_use_case.downloadMedia(
     bridge: bridge,
@@ -78,12 +85,16 @@ Future<MediaAttachment?> downloadMedia({
     messageRepo:
         messageRepo ??
         (owner == MediaOwnerLane.direct ? _defaultDirectMessageRepo : null),
+    groupMessageRepo: groupMessageRepo,
     intent: intent,
     enforceGroupMediaPolicy: enforceGroupMediaPolicy,
     transferStallTimeout: transferStallTimeout,
     transferMaxTimeout: transferMaxTimeout,
     latePrivateTransferScrubDelay: latePrivateTransferScrubDelay,
     nowMs: nowMs,
+    groupMediaAutomaticDownloadAttemptStarted:
+        groupMediaAutomaticDownloadAttemptStarted,
+    groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
   );
 }
 
@@ -593,6 +604,294 @@ class _FakeMediaAttachmentRepo
         localPath: localPath,
         downloadStatus: kMediaDownloadStatusDone,
         downloadRetryCount: 0,
+      ),
+    );
+    return true;
+  }
+}
+
+class _AtomicOrdinaryGroupFailureMediaRepo extends _FakeMediaAttachmentRepo
+    implements
+        MediaDownloadStateRepository,
+        OrdinaryGroupAutomaticMediaDownloadStateRepository,
+        OrdinaryGroupExplicitMediaDownloadStateRepository,
+        OrdinaryGroupMediaDownloadFailureRepository {
+  final List<
+    ({
+      String id,
+      String groupId,
+      String messageId,
+      bool incrementRetryCount,
+      String failureStatus,
+      String expectedDownloadStatus,
+      String? expectedLocalPath,
+      bool clearLocalPath,
+    })
+  >
+  atomicFailureCalls = [];
+  int legacySaveCalls = 0;
+  FutureOr<void> Function(String id)? beforeAutomaticBegin;
+  FutureOr<void> Function(String id)? beforeAutomaticCommit;
+  FutureOr<void> Function(String id)? beforeExplicitBegin;
+  FutureOr<void> Function(String id)? beforeExplicitCommit;
+  int automaticBeginCalls = 0;
+  int automaticCommitCalls = 0;
+  int explicitBeginCalls = 0;
+  int explicitCommitCalls = 0;
+  bool automaticParentPresent = true;
+  bool automaticParentLocallyDeleted = false;
+  String? automaticParentGroupId;
+  bool automaticDeletionJournaled = false;
+
+  @override
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
+    legacySaveCalls += 1;
+    await super.saveAttachment(attachment, owner: owner);
+  }
+
+  @override
+  Future<bool> beginMediaDownload(
+    String id, {
+    required MediaOwnerLane owner,
+  }) async {
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.ownerLane != owner ||
+        !const {
+          kMediaDownloadStatusPending,
+          kMediaDownloadStatusDownloading,
+          kMediaDownloadStatusFailed,
+          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusEvicted,
+        }.contains(current.downloadStatus)) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> commitMediaDownloadLocalPath(
+    String id, {
+    required MediaOwnerLane owner,
+    required String localPath,
+  }) async {
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.ownerLane != owner ||
+        current.downloadStatus != kMediaDownloadStatusDownloading) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        localPath: localPath,
+        downloadStatus: kMediaDownloadStatusDone,
+        downloadRetryCount: 0,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> beginOrdinaryGroupAutomaticMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) async {
+    automaticBeginCalls += 1;
+    await beforeAutomaticBegin?.call(id);
+    final current = _findAttachment(id);
+    if (current == null ||
+        !automaticParentPresent ||
+        automaticParentLocallyDeleted ||
+        (automaticParentGroupId != null && automaticParentGroupId != groupId) ||
+        automaticDeletionJournaled ||
+        current.ownerLane != MediaOwnerLane.group ||
+        current.messageId != messageId ||
+        current.downloadStatus != expectedDownloadStatus ||
+        current.localPath != expectedLocalPath ||
+        (current.downloadRetryCount ?? 0) >= kMaxDownloadRetries ||
+        !const {
+          kMediaDownloadStatusPending,
+          kMediaDownloadStatusDownloading,
+          kMediaDownloadStatusFailed,
+        }.contains(current.downloadStatus)) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> commitOrdinaryGroupAutomaticMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  }) async {
+    automaticCommitCalls += 1;
+    await beforeAutomaticCommit?.call(id);
+    final current = _findAttachment(id);
+    if (current == null ||
+        !automaticParentPresent ||
+        automaticParentLocallyDeleted ||
+        (automaticParentGroupId != null && automaticParentGroupId != groupId) ||
+        automaticDeletionJournaled ||
+        current.ownerLane != MediaOwnerLane.group ||
+        current.messageId != messageId ||
+        current.downloadStatus != kMediaDownloadStatusDownloading ||
+        current.localPath != expectedLocalPath) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        localPath: localPath,
+        downloadStatus: kMediaDownloadStatusDone,
+        downloadRetryCount: 0,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> beginOrdinaryGroupExplicitMediaDownload(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+  }) async {
+    explicitBeginCalls += 1;
+    await beforeExplicitBegin?.call(id);
+    final current = _findAttachment(id);
+    if (current == null ||
+        !automaticParentPresent ||
+        automaticParentLocallyDeleted ||
+        (automaticParentGroupId != null && automaticParentGroupId != groupId) ||
+        automaticDeletionJournaled ||
+        current.ownerLane != MediaOwnerLane.group ||
+        current.messageId != messageId ||
+        current.downloadStatus != expectedDownloadStatus ||
+        current.localPath != expectedLocalPath ||
+        !const {
+          kMediaDownloadStatusPending,
+          kMediaDownloadStatusDownloading,
+          kMediaDownloadStatusFailed,
+          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusEvicted,
+        }.contains(current.downloadStatus)) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> commitOrdinaryGroupExplicitMediaDownloadLocalPath(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String? expectedLocalPath,
+    required String localPath,
+  }) async {
+    explicitCommitCalls += 1;
+    await beforeExplicitCommit?.call(id);
+    final current = _findAttachment(id);
+    if (current == null ||
+        !automaticParentPresent ||
+        automaticParentLocallyDeleted ||
+        (automaticParentGroupId != null && automaticParentGroupId != groupId) ||
+        automaticDeletionJournaled ||
+        current.ownerLane != MediaOwnerLane.group ||
+        current.messageId != messageId ||
+        current.downloadStatus != kMediaDownloadStatusDownloading ||
+        current.localPath != expectedLocalPath) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        localPath: localPath,
+        downloadStatus: kMediaDownloadStatusDone,
+        downloadRetryCount: 0,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<int> claimMediaEvicted(
+    String id, {
+    required MediaOwnerLane owner,
+    required String expectedLocalPath,
+  }) async => 0;
+
+  @override
+  Future<int> finalizeMediaEvictedPathCleared(
+    String id, {
+    required MediaOwnerLane owner,
+  }) async => 0;
+
+  @override
+  Future<bool> recordOrdinaryGroupMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    required String? expectedLocalPath,
+    required bool clearLocalPath,
+  }) async {
+    atomicFailureCalls.add((
+      id: id,
+      groupId: groupId,
+      messageId: messageId,
+      incrementRetryCount: incrementRetryCount,
+      failureStatus: failureStatus,
+      expectedDownloadStatus: expectedDownloadStatus,
+      expectedLocalPath: expectedLocalPath,
+      clearLocalPath: clearLocalPath,
+    ));
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.ownerLane != MediaOwnerLane.group ||
+        current.messageId != messageId ||
+        current.downloadStatus != expectedDownloadStatus ||
+        current.localPath != expectedLocalPath) {
+      return false;
+    }
+    final nextRetryCount = incrementRetryCount
+        ? (current.downloadRetryCount ?? 0) + 1
+        : current.downloadRetryCount;
+    final nextStatus = incrementRetryCount
+        ? (nextRetryCount! >= kMaxDownloadRetries
+              ? kMediaDownloadStatusDownloadFailed
+              : kMediaDownloadStatusFailed)
+        : failureStatus;
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        downloadStatus: nextStatus,
+        downloadRetryCount: nextRetryCount,
+        clearLocalPath: clearLocalPath,
       ),
     );
     return true;
@@ -1320,6 +1619,1045 @@ void main() {
       // Budget unchanged: the relay-unavailable terminal burns 0 retries.
       expect(stored.downloadRetryCount, 1);
     });
+
+    test(
+      'P269 ordinary group transient failure uses one atomic retry transition while relay authorization denial stays terminal',
+      () async {
+        const groupId = 'group-p269-atomic';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 12),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 12),
+          ),
+        );
+        final atomicRepo = _AtomicOrdinaryGroupFailureMediaRepo();
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        MediaAttachment groupAttachment({
+          required String id,
+          int retryCount = 0,
+          String? contentHash,
+        }) => _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: id,
+            ownerLane: MediaOwnerLane.group,
+            downloadRetryCount: retryCount,
+          ),
+          _jpegBytes,
+          contentHash: contentHash,
+        );
+
+        Future<MediaAttachment> stored(String id) async =>
+            (await atomicRepo.getAttachmentsForMessage(
+              testAttachment.messageId,
+              owner: MediaOwnerLane.group,
+            )).singleWhere((attachment) => attachment.id == id);
+
+        final transient = groupAttachment(id: 'p269-transient');
+        atomicRepo.seedAttachment(transient);
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorMessage': 'relay temporarily unavailable',
+        };
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: atomicRepo,
+            mediaFileManager: fileManager,
+            attachment: transient,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          ),
+          isNull,
+        );
+        var persisted = await stored(transient.id);
+        expect(persisted.downloadStatus, kMediaDownloadStatusFailed);
+        expect(persisted.downloadRetryCount, 1);
+        expect(atomicRepo.atomicFailureCalls, hasLength(1));
+        expect(atomicRepo.atomicFailureCalls.single, (
+          id: transient.id,
+          groupId: groupId,
+          messageId: transient.messageId,
+          incrementRetryCount: true,
+          failureStatus: kMediaDownloadStatusFailed,
+          expectedDownloadStatus: kMediaDownloadStatusDownloading,
+          expectedLocalPath: null,
+          clearLocalPath: false,
+        ));
+
+        final unauthorized = groupAttachment(
+          id: 'p269-unauthorized',
+          retryCount: 2,
+        );
+        atomicRepo.seedAttachment(unauthorized);
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorMessage': 'not authorized',
+        };
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: atomicRepo,
+            mediaFileManager: fileManager,
+            attachment: unauthorized,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          ),
+          isNull,
+        );
+        persisted = await stored(unauthorized.id);
+        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(
+          persisted.downloadRetryCount,
+          2,
+          reason: 'relay authorization denial consumes no retry budget',
+        );
+        expect(atomicRepo.atomicFailureCalls, hasLength(2));
+        expect(atomicRepo.atomicFailureCalls.last.incrementRetryCount, isFalse);
+        expect(
+          atomicRepo.atomicFailureCalls.last.failureStatus,
+          kMediaDownloadStatusDownloadFailed,
+        );
+        expect(
+          events.where(
+            (event) =>
+                event['event'] == 'MEDIA_DOWNLOAD_FAILED' &&
+                (event['details'] as Map<String, dynamic>)['error'] ==
+                    'not authorized',
+          ),
+          hasLength(1),
+          reason: 'denial stays the generic truthful relay reason',
+        );
+
+        final notFound = groupAttachment(id: 'p269-not-found', retryCount: 1);
+        atomicRepo.seedAttachment(notFound);
+        bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: atomicRepo,
+            mediaFileManager: fileManager,
+            attachment: notFound,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          ),
+          isNull,
+        );
+        persisted = await stored(notFound.id);
+        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(
+          persisted.downloadRetryCount,
+          1,
+          reason: 'relay not-found consumes no retry budget',
+        );
+        expect(atomicRepo.atomicFailureCalls, hasLength(3));
+        expect(atomicRepo.atomicFailureCalls.last, (
+          id: notFound.id,
+          groupId: groupId,
+          messageId: notFound.messageId,
+          incrementRetryCount: false,
+          failureStatus: kMediaDownloadStatusDownloadFailed,
+          expectedDownloadStatus: kMediaDownloadStatusDownloading,
+          expectedLocalPath: null,
+          clearLocalPath: false,
+        ));
+        expect(
+          events.where(
+            (event) =>
+                event['event'] == 'MEDIA_DOWNLOAD_FAILED' &&
+                (event['details'] as Map<String, dynamic>)['error'] ==
+                    'not found',
+          ),
+          hasLength(1),
+        );
+
+        final corrupt = groupAttachment(
+          id: 'p269-integrity',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ).copyWith(clearEncryptionKeyBase64: true);
+        atomicRepo.seedAttachment(corrupt);
+        final sendsBeforeIntegrity = bridge.sendCallCount;
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: atomicRepo,
+            mediaFileManager: fileManager,
+            attachment: corrupt,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          ),
+          isNull,
+        );
+        persisted = await stored(corrupt.id);
+        expect(persisted.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+        expect(persisted.downloadRetryCount, 0);
+        expect(bridge.sendCallCount, sendsBeforeIntegrity);
+        expect(atomicRepo.atomicFailureCalls, hasLength(4));
+        expect(atomicRepo.atomicFailureCalls.last, (
+          id: corrupt.id,
+          groupId: groupId,
+          messageId: corrupt.messageId,
+          incrementRetryCount: false,
+          failureStatus: kMediaDownloadStatusIntegrityFailed,
+          expectedDownloadStatus: kMediaDownloadStatusPending,
+          expectedLocalPath: null,
+          clearLocalPath: true,
+        ));
+
+        final encrypted = _encryptedBytes(_jpegBytes);
+        final hashMismatch = groupAttachment(
+          id: 'p269-post-download-integrity',
+          retryCount: 2,
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        );
+        atomicRepo.seedAttachment(hashMismatch);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': hashMismatch.id,
+          'mime': 'image/jpeg',
+          'size': encrypted.length,
+        };
+        final sendsBeforeHashMismatch = bridge.sendCallCount;
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: atomicRepo,
+            mediaFileManager: fileManager,
+            attachment: hashMismatch,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          ),
+          isNull,
+        );
+        persisted = await stored(hashMismatch.id);
+        expect(persisted.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+        expect(
+          persisted.downloadRetryCount,
+          2,
+          reason: 'post-download integrity quarantine consumes no retry budget',
+        );
+        expect(bridge.sendCallCount, sendsBeforeHashMismatch + 1);
+        expect(atomicRepo.atomicFailureCalls, hasLength(5));
+        expect(atomicRepo.atomicFailureCalls.last, (
+          id: hashMismatch.id,
+          groupId: groupId,
+          messageId: hashMismatch.messageId,
+          incrementRetryCount: false,
+          failureStatus: kMediaDownloadStatusIntegrityFailed,
+          expectedDownloadStatus: kMediaDownloadStatusDownloading,
+          expectedLocalPath: null,
+          clearLocalPath: true,
+        ));
+        final hashMismatchOutputPath =
+            (bridge.lastRequest!['payload']
+                    as Map<String, dynamic>)['outputPath']
+                as String;
+        expect(File(hashMismatchOutputPath).existsSync(), isFalse);
+
+        expect(atomicRepo.downloadStatusUpdates, isEmpty);
+        expect(atomicRepo.legacySaveCalls, 0);
+        expect(bridge.deleteRequests, isEmpty);
+      },
+    );
+
+    test(
+      'P269 automatic ordinary group lost terminal or evicted claim performs zero bridge calls',
+      () async {
+        const groupId = 'group-p269-automatic-claim';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 13),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 13),
+          ),
+        );
+
+        for (final terminalStatus in const <String>[
+          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusEvicted,
+        ]) {
+          final attachment = _encryptedGroupAttachment(
+            testAttachment.copyWith(
+              id: 'p269-raced-$terminalStatus',
+              ownerLane: MediaOwnerLane.group,
+              downloadRetryCount: 0,
+            ),
+            _jpegBytes,
+          );
+          final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+            ..seedAttachment(attachment);
+          repository.beforeAutomaticBegin = (id) {
+            repository._updateAttachment(
+              id,
+              (current) => current.copyWith(
+                downloadStatus: terminalStatus,
+                downloadRetryCount:
+                    terminalStatus == kMediaDownloadStatusDownloadFailed
+                    ? kMaxDownloadRetries
+                    : current.downloadRetryCount,
+              ),
+            );
+          };
+          final sendsBefore = bridge.sendCallCount;
+
+          expect(
+            await downloadMedia(
+              owner: MediaOwnerLane.group,
+              bridge: bridge,
+              mediaAttachmentRepo: repository,
+              mediaFileManager: fileManager,
+              attachment: attachment,
+              contactPeerId: groupId,
+              groupMessageRepo: groupRepo,
+              enforceGroupMediaPolicy: true,
+            ),
+            isNull,
+          );
+          expect(
+            bridge.sendCallCount,
+            sendsBefore,
+            reason: '$terminalStatus must lose before bridge access',
+          );
+          final persisted = (await repository.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.group,
+          )).single;
+          expect(persisted.downloadStatus, terminalStatus);
+          expect(repository.atomicFailureCalls, isEmpty);
+        }
+      },
+    );
+
+    test(
+      'P269 automatic ordinary group encrypted companion uses exact begin and commit authority without relay',
+      () async {
+        const groupId = 'group-p269-companion-success';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 15),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 15),
+          ),
+        );
+        final attachment = _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: 'p269-companion-success',
+            ownerLane: MediaOwnerLane.group,
+          ),
+          _jpegBytes,
+        );
+        final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+          ..seedAttachment(attachment);
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        final encryptedCompanion = File('$absolutePath.enc');
+        await encryptedCompanion.parent.create(recursive: true);
+        await encryptedCompanion.writeAsBytes(
+          _encryptedBytes(_jpegBytes),
+          flush: true,
+        );
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.group,
+          bridge: bridge,
+          mediaAttachmentRepo: repository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: groupId,
+          groupMessageRepo: groupRepo,
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNotNull);
+        expect(result!.localPath, absolutePath);
+        expect(result.downloadStatus, kMediaDownloadStatusDone);
+        expect(repository.automaticBeginCalls, 1);
+        expect(repository.automaticCommitCalls, 1);
+        expect(repository.localPathUpdates, isEmpty);
+        expect(repository.legacySaveCalls, 0);
+        expect(bridge.commandLog, equals(<String>['blob:decrypt']));
+        expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+        expect(encryptedCompanion.existsSync(), isFalse);
+        final stored = (await repository.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(stored.localPath, 'media/$groupId/${attachment.id}.jpg');
+        expect(stored.downloadStatus, kMediaDownloadStatusDone);
+      },
+    );
+
+    test(
+      'P269 automatic ordinary group companion loses before decrypt to delete-for-me or parent-group races',
+      () async {
+        const groupId = 'group-p269-companion-begin';
+        for (final race in const <String>['delete_for_me', 'parent_group']) {
+          final groupRepo = InMemoryGroupMessageRepository();
+          GroupMessage parent(String parentGroupId) => GroupMessage(
+            id: testAttachment.messageId,
+            groupId: parentGroupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 16),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 16),
+          );
+          await groupRepo.saveMessage(parent(groupId));
+          final attachment = _encryptedGroupAttachment(
+            testAttachment.copyWith(
+              id: 'p269-companion-$race',
+              ownerLane: MediaOwnerLane.group,
+            ),
+            _jpegBytes,
+          );
+          final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+            ..seedAttachment(attachment);
+          repository.beforeAutomaticBegin = (_) async {
+            if (race == 'delete_for_me') {
+              await groupRepo.deleteMessage(attachment.messageId);
+              repository.automaticParentLocallyDeleted = true;
+            } else {
+              const replacementGroupId = 'group-p269-reassigned';
+              await groupRepo.saveMessage(parent(replacementGroupId));
+              repository.automaticParentGroupId = replacementGroupId;
+            }
+          };
+          final absolutePath = await fileManager.localPathForAttachment(
+            contactPeerId: groupId,
+            blobId: attachment.id,
+            mime: attachment.mime,
+          );
+          final encryptedCompanion = File('$absolutePath.enc');
+          await encryptedCompanion.parent.create(recursive: true);
+          await encryptedCompanion.writeAsBytes(
+            _encryptedBytes(_jpegBytes),
+            flush: true,
+          );
+          final raceBridge = _FakeBridge();
+
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: raceBridge,
+            mediaAttachmentRepo: repository,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            enforceGroupMediaPolicy: true,
+          );
+
+          expect(result, isNull, reason: race);
+          expect(repository.automaticBeginCalls, 1, reason: race);
+          expect(repository.automaticCommitCalls, 0, reason: race);
+          expect(raceBridge.commandLog, isEmpty, reason: race);
+          expect(File(absolutePath).existsSync(), isFalse, reason: race);
+          expect(encryptedCompanion.existsSync(), isTrue, reason: race);
+          expect(repository.localPathUpdates, isEmpty, reason: race);
+          final stored = (await repository.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.group,
+          )).single;
+          expect(stored.downloadStatus, attachment.downloadStatus);
+          expect(stored.localPath, attachment.localPath);
+        }
+      },
+    );
+
+    test(
+      'P269 deletion-journal race loses companion commit, removes only new plaintext, and publishes nothing',
+      () async {
+        const groupId = 'group-p269-companion-journal';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 17),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 17),
+          ),
+        );
+        final attachment = _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: 'p269-companion-journal',
+            ownerLane: MediaOwnerLane.group,
+          ),
+          _jpegBytes,
+        );
+        final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+          ..seedAttachment(attachment);
+        repository.beforeAutomaticCommit = (_) {
+          repository.automaticDeletionJournaled = true;
+        };
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        final encryptedCompanion = File('$absolutePath.enc');
+        await encryptedCompanion.parent.create(recursive: true);
+        final encryptedBytes = _encryptedBytes(_jpegBytes);
+        await encryptedCompanion.writeAsBytes(encryptedBytes, flush: true);
+        final siblingPath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: 'p269-companion-sibling',
+          mime: attachment.mime,
+        );
+        final sibling = File(siblingPath);
+        await sibling.writeAsBytes(const <int>[7, 8, 9], flush: true);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.group,
+          bridge: bridge,
+          mediaAttachmentRepo: repository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: groupId,
+          groupMessageRepo: groupRepo,
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(repository.automaticBeginCalls, 1);
+        expect(repository.automaticCommitCalls, 1);
+        expect(bridge.commandLog, equals(<String>['blob:decrypt']));
+        expect(File(absolutePath).existsSync(), isFalse);
+        expect(encryptedCompanion.readAsBytesSync(), encryptedBytes);
+        expect(sibling.readAsBytesSync(), const <int>[7, 8, 9]);
+        expect(repository.localPathUpdates, isEmpty);
+        expect(repository.atomicFailureCalls, isEmpty);
+        final stored = (await repository.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(stored.downloadStatus, kMediaDownloadStatusDownloading);
+        expect(stored.localPath, isNull);
+        final eventNames = events.map((event) => event['event']).toList();
+        expect(eventNames, contains('MEDIA_DOWNLOAD_CLAIM_LOST'));
+        expect(
+          eventNames,
+          isNot(
+            contains('MEDIA_DOWNLOAD_REPAIRED_FROM_LOCAL_ENCRYPTED_COMPANION'),
+          ),
+        );
+        expect(
+          eventNames,
+          isNot(contains('MEDIA_DOWNLOAD_DURABLE_LOCAL_PATH_COMMITTED')),
+        );
+        expect(
+          eventNames,
+          isNot(contains('MEDIA_GROUP_DURABLE_LOCAL_PATH_DELAYED_PROBE')),
+        );
+      },
+    );
+
+    test(
+      'P269 explicit ordinary group companion preserves broad terminal retry semantics with exact authority',
+      () async {
+        const groupId = 'group-p269-explicit-companion-success';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 18),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 18),
+          ),
+        );
+
+        for (final terminalStatus in const <String>[
+          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusEvicted,
+        ]) {
+          final attachment = _encryptedGroupAttachment(
+            testAttachment.copyWith(
+              id: 'p269-explicit-companion-$terminalStatus',
+              ownerLane: MediaOwnerLane.group,
+              downloadStatus: terminalStatus,
+              downloadRetryCount: kMaxDownloadRetries,
+            ),
+            _jpegBytes,
+          );
+          final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+            ..seedAttachment(attachment);
+          final absolutePath = await fileManager.localPathForAttachment(
+            contactPeerId: groupId,
+            blobId: attachment.id,
+            mime: attachment.mime,
+          );
+          final encryptedCompanion = File('$absolutePath.enc');
+          await encryptedCompanion.parent.create(recursive: true);
+          await encryptedCompanion.writeAsBytes(
+            _encryptedBytes(_jpegBytes),
+            flush: true,
+          );
+          final explicitBridge = _FakeBridge();
+
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: explicitBridge,
+            mediaAttachmentRepo: repository,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            enforceGroupMediaPolicy: true,
+          );
+
+          expect(result, isNotNull, reason: terminalStatus);
+          expect(result!.localPath, absolutePath, reason: terminalStatus);
+          expect(
+            result.downloadStatus,
+            kMediaDownloadStatusDone,
+            reason: terminalStatus,
+          );
+          expect(repository.explicitBeginCalls, 1, reason: terminalStatus);
+          expect(repository.explicitCommitCalls, 1, reason: terminalStatus);
+          expect(repository.automaticBeginCalls, 0, reason: terminalStatus);
+          expect(repository.automaticCommitCalls, 0, reason: terminalStatus);
+          expect(repository.localPathUpdates, isEmpty, reason: terminalStatus);
+          expect(repository.legacySaveCalls, 0, reason: terminalStatus);
+          expect(
+            explicitBridge.commandLog,
+            equals(<String>['blob:decrypt']),
+            reason: terminalStatus,
+          );
+          expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+          expect(encryptedCompanion.existsSync(), isFalse);
+          final stored = (await repository.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.group,
+          )).single;
+          expect(
+            stored.localPath,
+            'media/$groupId/${attachment.id}.jpg',
+            reason: terminalStatus,
+          );
+          expect(
+            stored.downloadStatus,
+            kMediaDownloadStatusDone,
+            reason: terminalStatus,
+          );
+        }
+      },
+    );
+
+    test(
+      'P269 explicit ordinary group stale done path clears exactly then relays and commits exactly',
+      () async {
+        const groupId = 'group-p269-explicit-stale-done';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 18, 30),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 18, 30),
+          ),
+        );
+        const staleRelativePath =
+            'media/group-p269-explicit-stale-done/p269-explicit-stale-done.jpg';
+        final attachment = _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: 'p269-explicit-stale-done',
+            ownerLane: MediaOwnerLane.group,
+            downloadStatus: kMediaDownloadStatusDone,
+            localPath: staleRelativePath,
+          ),
+          _jpegBytes,
+        );
+        final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+          ..seedAttachment(attachment);
+        final encrypted = _encryptedBytes(_jpegBytes);
+        final explicitBridge = _FakeBridge()
+          ..downloadedBytes = encrypted
+          ..downloadResponse = <String, dynamic>{
+            'ok': true,
+            'id': attachment.id,
+            'mime': attachment.mime,
+            'size': encrypted.length,
+          };
+        final staleAbsolutePath = await fileManager.resolveStoredPath(
+          staleRelativePath,
+        );
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        expect(File(staleAbsolutePath).existsSync(), isFalse);
+        expect(File(absolutePath).existsSync(), isFalse);
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.group,
+          bridge: explicitBridge,
+          mediaAttachmentRepo: repository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: groupId,
+          groupMessageRepo: groupRepo,
+          intent: MediaDownloadIntent.explicitUser,
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNotNull);
+        expect(result!.downloadStatus, kMediaDownloadStatusDone);
+        expect(result.localPath, absolutePath);
+        expect(repository.atomicFailureCalls, hasLength(1));
+        final staleClear = repository.atomicFailureCalls.single;
+        expect(staleClear.incrementRetryCount, isFalse);
+        expect(staleClear.failureStatus, kMediaDownloadStatusFailed);
+        expect(staleClear.expectedDownloadStatus, kMediaDownloadStatusDone);
+        expect(staleClear.expectedLocalPath, staleRelativePath);
+        expect(staleClear.clearLocalPath, isTrue);
+        expect(repository.explicitBeginCalls, 1);
+        expect(repository.explicitCommitCalls, 1);
+        expect(repository.automaticBeginCalls, 0);
+        expect(repository.automaticCommitCalls, 0);
+        expect(repository.localPathUpdates, isEmpty);
+        expect(repository.legacySaveCalls, 0);
+        expect(
+          explicitBridge.commandLog.where(
+            (command) => command == 'media:download',
+          ),
+          hasLength(1),
+        );
+        expect(
+          explicitBridge.commandLog.where(
+            (command) => command == 'blob:decrypt',
+          ),
+          hasLength(1),
+        );
+        expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+        final stored = (await repository.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(stored.downloadStatus, kMediaDownloadStatusDone);
+        expect(stored.localPath, staleRelativePath);
+      },
+    );
+
+    test(
+      'P269 explicit ordinary group companion loses before decrypt to delete-for-me or parent-group races',
+      () async {
+        const groupId = 'group-p269-explicit-companion-begin';
+        for (final race in const <String>['delete_for_me', 'parent_group']) {
+          final groupRepo = InMemoryGroupMessageRepository();
+          GroupMessage parent(String parentGroupId) => GroupMessage(
+            id: testAttachment.messageId,
+            groupId: parentGroupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 19),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 19),
+          );
+          await groupRepo.saveMessage(parent(groupId));
+          final attachment = _encryptedGroupAttachment(
+            testAttachment.copyWith(
+              id: 'p269-explicit-companion-$race',
+              ownerLane: MediaOwnerLane.group,
+              downloadStatus: kMediaDownloadStatusDownloadFailed,
+              downloadRetryCount: kMaxDownloadRetries,
+            ),
+            _jpegBytes,
+          );
+          final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+            ..seedAttachment(attachment);
+          repository.beforeExplicitBegin = (_) async {
+            if (race == 'delete_for_me') {
+              await groupRepo.deleteMessage(attachment.messageId);
+              repository.automaticParentLocallyDeleted = true;
+            } else {
+              const replacementGroupId = 'group-p269-explicit-reassigned';
+              await groupRepo.saveMessage(parent(replacementGroupId));
+              repository.automaticParentGroupId = replacementGroupId;
+            }
+          };
+          final absolutePath = await fileManager.localPathForAttachment(
+            contactPeerId: groupId,
+            blobId: attachment.id,
+            mime: attachment.mime,
+          );
+          final encryptedCompanion = File('$absolutePath.enc');
+          await encryptedCompanion.parent.create(recursive: true);
+          final encryptedBytes = _encryptedBytes(_jpegBytes);
+          await encryptedCompanion.writeAsBytes(encryptedBytes, flush: true);
+          final raceBridge = _FakeBridge();
+
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: raceBridge,
+            mediaAttachmentRepo: repository,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: groupId,
+            groupMessageRepo: groupRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            enforceGroupMediaPolicy: true,
+          );
+
+          expect(result, isNull, reason: race);
+          expect(repository.explicitBeginCalls, 1, reason: race);
+          expect(repository.explicitCommitCalls, 0, reason: race);
+          expect(repository.automaticBeginCalls, 0, reason: race);
+          expect(repository.automaticCommitCalls, 0, reason: race);
+          expect(raceBridge.commandLog, isEmpty, reason: race);
+          expect(File(absolutePath).existsSync(), isFalse, reason: race);
+          expect(
+            encryptedCompanion.readAsBytesSync(),
+            encryptedBytes,
+            reason: race,
+          );
+          expect(repository.localPathUpdates, isEmpty, reason: race);
+          final stored = (await repository.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.group,
+          )).single;
+          expect(
+            stored.downloadStatus,
+            kMediaDownloadStatusDownloadFailed,
+            reason: race,
+          );
+          expect(stored.localPath, attachment.localPath, reason: race);
+        }
+      },
+    );
+
+    test(
+      'P269 explicit deletion-journal race loses companion commit without ID-only fallback or publication',
+      () async {
+        const groupId = 'group-p269-explicit-companion-journal';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 20),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 20),
+          ),
+        );
+        final attachment = _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: 'p269-explicit-companion-journal',
+            ownerLane: MediaOwnerLane.group,
+            downloadStatus: kMediaDownloadStatusEvicted,
+            downloadRetryCount: kMaxDownloadRetries,
+          ),
+          _jpegBytes,
+        );
+        final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+          ..seedAttachment(attachment);
+        repository.beforeExplicitCommit = (_) {
+          repository.automaticDeletionJournaled = true;
+        };
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        final encryptedCompanion = File('$absolutePath.enc');
+        await encryptedCompanion.parent.create(recursive: true);
+        final encryptedBytes = _encryptedBytes(_jpegBytes);
+        await encryptedCompanion.writeAsBytes(encryptedBytes, flush: true);
+        final siblingPath = await fileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: 'p269-explicit-companion-sibling',
+          mime: attachment.mime,
+        );
+        final sibling = File(siblingPath);
+        await sibling.writeAsBytes(const <int>[10, 11, 12], flush: true);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final explicitBridge = _FakeBridge();
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.group,
+          bridge: explicitBridge,
+          mediaAttachmentRepo: repository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: groupId,
+          groupMessageRepo: groupRepo,
+          intent: MediaDownloadIntent.explicitUser,
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(repository.explicitBeginCalls, 1);
+        expect(repository.explicitCommitCalls, 1);
+        expect(repository.automaticBeginCalls, 0);
+        expect(repository.automaticCommitCalls, 0);
+        expect(explicitBridge.commandLog, equals(<String>['blob:decrypt']));
+        expect(File(absolutePath).existsSync(), isFalse);
+        expect(encryptedCompanion.readAsBytesSync(), encryptedBytes);
+        expect(sibling.readAsBytesSync(), const <int>[10, 11, 12]);
+        expect(repository.localPathUpdates, isEmpty);
+        expect(repository.atomicFailureCalls, isEmpty);
+        final stored = (await repository.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(stored.downloadStatus, kMediaDownloadStatusDownloading);
+        expect(stored.localPath, isNull);
+        final eventNames = events.map((event) => event['event']).toList();
+        expect(eventNames, contains('MEDIA_DOWNLOAD_CLAIM_LOST'));
+        expect(
+          eventNames,
+          isNot(
+            contains('MEDIA_DOWNLOAD_REPAIRED_FROM_LOCAL_ENCRYPTED_COMPANION'),
+          ),
+        );
+        expect(
+          eventNames,
+          isNot(contains('MEDIA_DOWNLOAD_DURABLE_LOCAL_PATH_COMMITTED')),
+        );
+        expect(
+          eventNames,
+          isNot(contains('MEDIA_GROUP_DURABLE_LOCAL_PATH_DELAYED_PROBE')),
+        );
+      },
+    );
+
+    test(
+      'P269 process barrier observes one successful relay attempt after durable group claim and before commit',
+      () async {
+        const groupId = 'group-p269-process-barrier';
+        final groupRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveMessage(
+          GroupMessage(
+            id: testAttachment.messageId,
+            groupId: groupId,
+            senderPeerId: 'sender-p269',
+            text: '',
+            timestamp: DateTime.utc(2026, 7, 22, 14),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 22, 14),
+          ),
+        );
+        final attachment = _encryptedGroupAttachment(
+          testAttachment.copyWith(
+            id: 'p269-process-jpeg',
+            ownerLane: MediaOwnerLane.group,
+          ),
+          _jpegBytes,
+        );
+        final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+          ..seedAttachment(attachment);
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge
+          ..downloadedBytes = encrypted
+          ..downloadResponse = <String, dynamic>{
+            'ok': true,
+            'id': attachment.id,
+            'mime': attachment.mime,
+            'size': encrypted.length,
+          };
+        var barrierCalls = 0;
+        var attemptStartedCalls = 0;
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.group,
+          bridge: bridge,
+          mediaAttachmentRepo: repository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: groupId,
+          groupMessageRepo: groupRepo,
+          enforceGroupMediaPolicy: true,
+          groupMediaAutomaticDownloadAttemptStarted: (candidate) async {
+            attemptStartedCalls++;
+            expect(candidate.id, attachment.id);
+            expect(
+              bridge.commandLog.where((command) => command == 'media:download'),
+              isEmpty,
+              reason: 'attempt observation precedes local repair and relay',
+            );
+          },
+          groupMediaPostClaimPreCommit: (claimed) async {
+            barrierCalls++;
+            expect(claimed.id, attachment.id);
+            expect(
+              bridge.commandLog.where((command) => command == 'media:download'),
+              hasLength(1),
+              reason: 'barrier is after the first real relay attempt',
+            );
+            final durable = (await repository.getAttachmentsForMessage(
+              attachment.messageId,
+              owner: MediaOwnerLane.group,
+            )).single;
+            expect(durable.downloadStatus, kMediaDownloadStatusDownloading);
+            expect(durable.localPath, attachment.localPath);
+          },
+        );
+
+        expect(attemptStartedCalls, 1);
+        expect(barrierCalls, 1);
+        expect(result, isNotNull);
+        expect(result!.downloadStatus, kMediaDownloadStatusDone);
+      },
+    );
 
     test(
       'a successful download resets download_retry_count to 0 (INV-DL-2)',

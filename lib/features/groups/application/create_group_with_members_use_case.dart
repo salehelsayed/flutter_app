@@ -125,11 +125,58 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   required GroupType type,
   String? name,
   String? description,
+  Map<String, GroupMemberDeviceIdentity> selectedContactDeviceBindings =
+      const <String, GroupMemberDeviceIdentity>{},
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   GroupInviteLatencyTrace? inviteLatencyTrace,
 }) async {
   final uniqueContacts = _dedupeContactsByPeerId(selectedContacts);
+  final selectedPeerIds = uniqueContacts
+      .map((contact) => contact.peerId)
+      .toSet();
+  if (selectedContactDeviceBindings.keys.any(
+    (peerId) => !selectedPeerIds.contains(peerId),
+  )) {
+    throw ArgumentError(
+      'Contact device bindings must belong to selected contacts',
+    );
+  }
+  final contactByPeerId = <String, ContactModel>{
+    for (final contact in uniqueContacts) contact.peerId: contact,
+  };
+  for (final entry in selectedContactDeviceBindings.entries) {
+    final contact = contactByPeerId[entry.key]!;
+    final binding = entry.value;
+    final deviceId = binding.deviceId.trim();
+    final transportPeerId = binding.transportPeerId.trim();
+    final signingPublicKey = binding.deviceSigningPublicKey.trim();
+    final mlKemPublicKey = binding.mlKemPublicKey?.trim();
+    final keyPackageId = binding.keyPackageId?.trim();
+    final keyPackagePublicMaterial = binding.keyPackagePublicMaterial?.trim();
+    if (!binding.isActive ||
+        deviceId.isEmpty ||
+        deviceId != binding.deviceId ||
+        transportPeerId.isEmpty ||
+        transportPeerId != binding.transportPeerId ||
+        signingPublicKey.isEmpty ||
+        signingPublicKey != binding.deviceSigningPublicKey ||
+        signingPublicKey != contact.publicKey ||
+        mlKemPublicKey == null ||
+        mlKemPublicKey.isEmpty ||
+        mlKemPublicKey != binding.mlKemPublicKey ||
+        mlKemPublicKey != contact.mlKemPublicKey ||
+        keyPackageId == null ||
+        keyPackageId.isEmpty ||
+        keyPackageId != binding.keyPackageId ||
+        keyPackagePublicMaterial == null ||
+        keyPackagePublicMaterial.isEmpty ||
+        keyPackagePublicMaterial != binding.keyPackagePublicMaterial) {
+      throw ArgumentError(
+        'Contact device binding must be complete and match contact authority',
+      );
+    }
+  }
   emitFlowEvent(
     layer: 'FL',
     event: 'CREATE_GROUP_WITH_MEMBERS_BEGIN',
@@ -200,6 +247,15 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   final addMemberFailures = <CreateGroupMemberAddFailure>[];
   for (final contact in uniqueContacts) {
     try {
+      final deviceBinding = selectedContactDeviceBindings[contact.peerId];
+      if (deviceBinding != null &&
+          (!deviceBinding.isActive ||
+              deviceBinding.deviceSigningPublicKey != contact.publicKey ||
+              deviceBinding.mlKemPublicKey != contact.mlKemPublicKey)) {
+        throw ArgumentError(
+          'Contact device binding must match the selected contact authority',
+        );
+      }
       final newMember = GroupMember(
         groupId: group.id,
         peerId: contact.peerId,
@@ -207,6 +263,9 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
         role: MemberRole.writer,
         publicKey: contact.publicKey,
         mlKemPublicKey: contact.mlKemPublicKey,
+        devices: deviceBinding == null
+            ? const <GroupMemberDeviceIdentity>[]
+            : <GroupMemberDeviceIdentity>[deviceBinding],
         joinedAt: DateTime.now().toUtc(),
       );
       await addGroupMember(
@@ -370,6 +429,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       senderPrivateKey: identity.privateKey,
       senderUsername: identity.username,
       senderDeviceId: senderBinding.deviceId,
+      senderTransportPeerId: senderBinding.transportPeerId,
       groupId: group.id,
       groupKey: keyInfo.encryptedKey,
       keyEpoch: keyInfo.keyGeneration,

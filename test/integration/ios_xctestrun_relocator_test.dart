@@ -55,6 +55,7 @@ void main() {
     expect(encoded, isNot(contains(originalDerived.path)));
     final target = relocation.plist['RunnerUITests']! as Map;
     expect(target['UITargetAppPath'], app.path);
+    expect(target['UITargetAppBundleIdentifier'], 'com.mknoon.app');
     expect((target['EnvironmentVariables']! as Map)['EXISTING'], 'kept');
     expect((target['EnvironmentVariables']! as Map)['FIXTURE'], 'redacted');
     expect(
@@ -85,4 +86,87 @@ void main() {
     expect(arguments, isNot(contains('build-for-testing')));
     expect(arguments, isNot(contains('build')));
   });
+
+  test(
+    'P269 test without building accepts validated group media selector and preserves notification default',
+    () {
+      final dedicatedRelocation = relocateIosXctestrun(
+        plist: <String, Object?>{
+          'RunnerUITests': <String, Object?>{
+            'TestBundlePath':
+                '__TESTROOT__/Release-iphoneos/'
+                'RunnerUITests-Runner.app/PlugIns/RunnerUITests.xctest',
+          },
+        },
+        cachedProducts: Directory('/cache/TestProducts'),
+        cachedApplication: Directory(
+          '/cache/TestProducts/Release-iphoneos/Runner.app',
+        ),
+        uiTargetBundleIdentifier: 'com.mknoon.sims.groupmedia269',
+        uiEnvironment: const <String, String>{},
+      );
+      expect(
+        (dedicatedRelocation.plist['RunnerUITests']!
+            as Map)['UITargetAppBundleIdentifier'],
+        'com.mknoon.sims.groupmedia269',
+      );
+
+      final groupMediaArguments = iosTestWithoutBuildingArguments(
+        xctestrun: File('/cache/RunnerUITests.patched.xctestrun'),
+        receiverDeviceId: '00008030-001A6D2801BB802E',
+        selector:
+            'RunnerUITests/GroupMediaBackgroundRecoveryUITests/'
+            'testReceiverBackgroundRecovery',
+        resultBundle: Directory('/capture/group-media.xcresult'),
+      );
+      expect(
+        groupMediaArguments,
+        contains(
+          '-only-testing:RunnerUITests/'
+          'GroupMediaBackgroundRecoveryUITests/'
+          'testReceiverBackgroundRecovery',
+        ),
+      );
+      expect(groupMediaArguments.first, 'test-without-building');
+      expect(groupMediaArguments, isNot(contains('build-for-testing')));
+
+      final notificationArguments = iosTestWithoutBuildingArguments(
+        xctestrun: File('/cache/RunnerUITests.patched.xctestrun'),
+        receiverDeviceId: '00008030-001A6D2801BB802E',
+        selector: 'testPayloadFastPathNotificationTap',
+        resultBundle: Directory('/capture/notification.xcresult'),
+      );
+      expect(
+        notificationArguments,
+        contains(
+          '-only-testing:RunnerUITests/NotificationTapUITests/'
+          'testPayloadFastPathNotificationTap',
+        ),
+      );
+
+      for (final unsafe in const <String>[
+        'RunnerUITests/../testEscape',
+        'RunnerUITests/GroupMediaBackgroundRecoveryUITests',
+        'OtherTests/GroupMediaBackgroundRecoveryUITests/testRecovery',
+        'RunnerUITests/Group Media Tests/testRecovery',
+        '-only-testing:RunnerUITests/GroupMediaTests/testRecovery',
+      ]) {
+        expect(
+          () => validatedIosUiTestSelector(unsafe),
+          throwsFormatException,
+          reason: unsafe,
+        );
+      }
+      expect(
+        () => relocateIosXctestrun(
+          plist: const <String, Object?>{},
+          cachedProducts: Directory('/cache/TestProducts'),
+          cachedApplication: Directory('/cache/Runner.app'),
+          uiTargetBundleIdentifier: '../production',
+          uiEnvironment: const <String, String>{},
+        ),
+        throwsFormatException,
+      );
+    },
+  );
 }

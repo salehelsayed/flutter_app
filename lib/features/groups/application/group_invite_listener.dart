@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_decline_ack.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
@@ -34,6 +35,8 @@ class GroupInviteListener {
   final PendingGroupInviteRepository pendingInviteRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
+  final Future<GroupInviteLocalIdentitySnapshot> Function()?
+  loadOwnInviteIdentity;
   final Future<String?> Function() getOwnMlKemSecretKey;
   final Future<String?> Function()? getOwnPeerId;
   final Future<String?> Function()? getOwnDeviceId;
@@ -68,6 +71,7 @@ class GroupInviteListener {
     required this.pendingInviteRepo,
     required this.contactRepo,
     required this.bridge,
+    this.loadOwnInviteIdentity,
     required this.getOwnMlKemSecretKey,
     this.getOwnPeerId,
     this.getOwnDeviceId,
@@ -191,7 +195,13 @@ class GroupInviteListener {
         return;
       }
 
-      final ownSecretKey = await getOwnMlKemSecretKey();
+      final useIdentitySnapshot = loadOwnInviteIdentity != null;
+      final ownInviteIdentity = useIdentitySnapshot
+          ? await loadOwnInviteIdentity!()
+          : null;
+      final ownSecretKey = useIdentitySnapshot
+          ? ownInviteIdentity!.mlKemSecretKey
+          : await getOwnMlKemSecretKey();
 
       // On-join metadata resync (finding D) — most-specific discriminators
       // first, flag-gated. config:response applies; config:request responds.
@@ -230,7 +240,9 @@ class GroupInviteListener {
           ) !=
           null;
       if (isRevocation) {
-        final ownPeerId = await getOwnPeerId?.call();
+        final ownPeerId = useIdentitySnapshot
+            ? ownInviteIdentity!.accountPeerId
+            : await getOwnPeerId?.call();
         final (
           result,
           removedPendingInvite,
@@ -277,13 +289,24 @@ class GroupInviteListener {
         return;
       }
 
-      final ownPeerId = await getOwnPeerId?.call();
-      final ownDeviceId = await getOwnDeviceId?.call();
-      final ownTransportPeerId = await getOwnTransportPeerId?.call();
-      final ownMlKemPublicKey = await getOwnMlKemPublicKey?.call();
-      final ownKeyPackageId = await getOwnKeyPackageId?.call();
-      final ownKeyPackagePublicMaterial = await getOwnKeyPackagePublicMaterial
-          ?.call();
+      final ownPeerId = useIdentitySnapshot
+          ? ownInviteIdentity!.accountPeerId
+          : await getOwnPeerId?.call();
+      final ownDeviceId = useIdentitySnapshot
+          ? ownInviteIdentity!.deviceId
+          : await getOwnDeviceId?.call();
+      final ownTransportPeerId = useIdentitySnapshot
+          ? ownInviteIdentity!.transportPeerId
+          : await getOwnTransportPeerId?.call();
+      final ownMlKemPublicKey = useIdentitySnapshot
+          ? ownInviteIdentity!.mlKemPublicKey
+          : await getOwnMlKemPublicKey?.call();
+      final ownKeyPackageId = useIdentitySnapshot
+          ? ownInviteIdentity!.keyPackageId
+          : await getOwnKeyPackageId?.call();
+      final ownKeyPackagePublicMaterial = useIdentitySnapshot
+          ? ownInviteIdentity!.keyPackagePublicMaterial
+          : await getOwnKeyPackagePublicMaterial?.call();
       final receivedAt = now().toUtc();
       final (result, pendingInvite) = await storeIncomingPendingGroupInvite(
         message: message,

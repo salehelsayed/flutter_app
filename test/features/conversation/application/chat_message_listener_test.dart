@@ -1669,7 +1669,15 @@ void main() {
         ),
       );
 
-      await Future.delayed(const Duration(milliseconds: 300));
+      await _waitUntil(
+        () =>
+            emitted.length >= 2 &&
+            bridge.downloadCallCount >= 2 &&
+            emitted.last.media.length == 2 &&
+            emitted.last.media.every(
+              (attachment) => attachment.downloadStatus == 'done',
+            ),
+      );
 
       expect(emitted.length, 2);
       expect(emitted[1].media, hasLength(2));
@@ -2362,7 +2370,9 @@ void main() {
             media: _testMediaJson,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 250));
+        await _waitUntil(
+          () => denying.requests.isNotEmpty && emitted.length >= 2,
+        );
 
         expect(
           bridge.downloadCallCount,
@@ -2407,7 +2417,16 @@ void main() {
             media: _testMediaJson,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 250));
+        await _waitUntil(
+          () =>
+              allowing.requests.isNotEmpty &&
+              bridge.downloadCallCount >= 1 &&
+              allowedEmitted.isNotEmpty &&
+              allowedEmitted.last.media.isNotEmpty &&
+              allowedEmitted.last.media.every(
+                (attachment) => attachment.downloadStatus == 'done',
+              ),
+        );
 
         expect(bridge.downloadCallCount, 1);
         expect(allowing.requests, hasLength(1));

@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/rotate_and_distribute_gr
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_membership_effect_authority.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -27,7 +28,9 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_broadcas
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -37,6 +40,22 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+
+class _ContactPickerAvatarRegrantPhase {
+  const _ContactPickerAvatarRegrantPhase({
+    required this.authority,
+    required this.group,
+  });
+
+  final GroupMembershipEffectAuthority authority;
+  final GroupModel group;
+}
+
+bool _sameGroupAvatarMetadata(GroupModel left, GroupModel right) =>
+    left.id == right.id &&
+    left.avatarBlobId == right.avatarBlobId &&
+    left.avatarMime == right.avatarMime &&
+    left.avatarPath == right.avatarPath;
 
 /// Wired widget that loads contacts, filters out existing members,
 /// provides multi-select toggling, and batch-invites all selected contacts.
@@ -299,14 +318,40 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           .where((c) => _selectedPeerIds.contains(c.peerId))
           .toList();
 
-      final currentMembers = await widget.groupRepo.getMembers(widget.groupId);
+      final preTransitionAuthority =
+          await runGroupMembershipMutationLocked<
+            GroupMembershipEffectAuthority
+          >(
+            groupId: widget.groupId,
+            action: () async {
+              final group = await widget.groupRepo.getGroup(widget.groupId);
+              if (group == null) {
+                throw StateError('Group not found: ${widget.groupId}');
+              }
+              if (group.isDissolved || group.selfRemovedAt != null) {
+                throw StateError('Group is no longer active');
+              }
+              final members = await widget.groupRepo.getMembers(widget.groupId);
+              final latestKey = await widget.groupRepo.getLatestKey(
+                widget.groupId,
+              );
+              return GroupMembershipEffectAuthority(
+                group: group,
+                members: members,
+                latestKeyGeneration: latestKey?.keyGeneration,
+              );
+            },
+          );
+      final currentMembers = preTransitionAuthority.members;
       ensureWithinGroupMembershipLimit(
         currentMemberCount: currentMembers.length,
         requestedAdditionalMembers: selectedContacts.length,
       );
-      final preTransitionStateHash = await buildGroupTransitionStateHash(
-        widget.groupRepo,
-        widget.groupId,
+      final preTransitionStateHash = buildGroupTransitionStateHashFromSnapshot(
+        groupId: widget.groupId,
+        group: preTransitionAuthority.group,
+        members: preTransitionAuthority.members,
+        latestKeyGeneration: preTransitionAuthority.latestKeyGeneration,
       );
 
       // 1. Add all members locally (continue on individual errors)
@@ -347,17 +392,100 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         members: addedMembers,
       );
 
-      // 2. Build full GroupConfig and update Go topic validator ONCE
-      final loadedGroup = await widget.groupRepo.getGroup(widget.groupId);
-      final allMembers = await widget.groupRepo.getMembers(widget.groupId);
-      if (loadedGroup == null) throw StateError('Group not found');
-      final group = await _refreshAvatarAccessForMembers(
-        group: loadedGroup,
-        members: allMembers,
-      );
+      // 2. Re-read the exact post-add authority. This bounded lifecycle leaf
+      // owns only the single avatar regrant upload and its immediate local
+      // avatar-id persist; config/publish/fanout remain separate phases.
+      late Map<String, dynamic> groupConfig;
+      late GroupSenderDeviceBinding senderBinding;
+      GroupKeyInfo? keyInfo;
+      var membersAddedPublishFailed = false;
+      final guardedAvatarRegrant =
+          await runSelfRemovedGroupLifecycleLeaf<
+            _ContactPickerAvatarRegrantPhase?
+          >(
+            groupRepo: widget.groupRepo,
+            groupId: widget.groupId,
+            action: (currentGroup) async {
+              if (currentGroup.isDissolved) return null;
+              final allMembers = await widget.groupRepo.getMembers(
+                widget.groupId,
+              );
+              final latestKey = await widget.groupRepo.getLatestKey(
+                widget.groupId,
+              );
+              final authority = GroupMembershipEffectAuthority(
+                group: currentGroup,
+                members: allMembers,
+                latestKeyGeneration: latestKey?.keyGeneration,
+              );
+              final currentPreTransitionAuthority =
+                  GroupMembershipEffectAuthority(
+                    group: currentGroup,
+                    members: preTransitionAuthority.members,
+                    latestKeyGeneration: latestKey?.keyGeneration,
+                  );
+              if (!preTransitionAuthority.matches(
+                    currentPreTransitionAuthority,
+                  ) ||
+                  buildGroupTransitionStateHashFromSnapshot(
+                        groupId: widget.groupId,
+                        group: currentGroup,
+                        members: preTransitionAuthority.members,
+                        latestKeyGeneration: latestKey?.keyGeneration,
+                      ) !=
+                      preTransitionStateHash) {
+                return null;
+              }
+              final expectedPostAddAuthority = GroupMembershipEffectAuthority(
+                group: currentGroup,
+                members: <GroupMember>[
+                  ...preTransitionAuthority.members,
+                  ...addedMembers,
+                ],
+                latestKeyGeneration: latestKey?.keyGeneration,
+              );
+              if (!expectedPostAddAuthority.matches(authority)) {
+                return null;
+              }
+              final ownMember = authority.singleMember(identity.peerId);
+              if (ownMember == null ||
+                  !ownMember.permissions.allows(
+                    GroupMemberPermission.inviteMembers,
+                    ownMember.role,
+                  )) {
+                return null;
+              }
+              for (final addedMember in addedMembers) {
+                final matching = allMembers
+                    .where((member) => member.peerId == addedMember.peerId)
+                    .toList(growable: false);
+                if (matching.length != 1 ||
+                    jsonEncode(matching.single.toConfigJson()) !=
+                        jsonEncode(addedMember.toConfigJson())) {
+                  return null;
+                }
+              }
+              final group = await _refreshAvatarAccessForMembers(
+                group: currentGroup,
+                members: allMembers,
+              );
+              return _ContactPickerAvatarRegrantPhase(
+                authority: authority,
+                group: group,
+              );
+            },
+          );
+      final avatarPhase = guardedAvatarRegrant.value;
+      if (!guardedAvatarRegrant.didRun || avatarPhase == null) {
+        throw StateError('Group membership authority changed');
+      }
+      final membershipAuthority = avatarPhase.authority;
+      final loadedGroup = membershipAuthority.group;
+      final group = avatarPhase.group;
+      final allMembers = membershipAuthority.members;
 
-      final groupConfig = buildGroupConfigPayload(group, allMembers);
-      final senderBinding = await resolveGroupSenderDeviceBinding(
+      groupConfig = buildGroupConfigPayload(group, allMembers);
+      senderBinding = await resolveGroupSenderDeviceBinding(
         groupRepo: widget.groupRepo,
         groupId: widget.groupId,
         senderPeerId: identity.peerId,
@@ -366,31 +494,71 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         senderPublicKey: identity.publicKey,
       );
 
-      try {
-        await callGroupUpdateConfig(
-          widget.bridge,
-          groupId: widget.groupId,
-          groupConfig: groupConfig,
-        );
-      } catch (e) {
-        for (final member in addedMembers) {
-          await widget.groupRepo.removeMember(widget.groupId, member.peerId);
-          await widget.inviteDeliveryAttemptRepo?.deleteAttempt(
-            groupId: widget.groupId,
-            peerId: member.peerId,
+      final guardedConfigSync = await runSelfRemovedGroupLifecycleLeaf<bool?>(
+        groupRepo: widget.groupRepo,
+        groupId: widget.groupId,
+        action: (currentGroup) async {
+          if (currentGroup.isDissolved ||
+              !_sameGroupAvatarMetadata(currentGroup, group)) {
+            return null;
+          }
+          final currentMembers = await widget.groupRepo.getMembers(
+            widget.groupId,
           );
-        }
-        if (group.avatarBlobId != loadedGroup.avatarBlobId ||
-            group.avatarMime != loadedGroup.avatarMime ||
-            group.avatarPath != loadedGroup.avatarPath) {
-          await widget.groupRepo.updateGroup(loadedGroup);
-        }
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_PICKER_FL_CONFIG_SYNC_ROLLED_BACK',
-          details: {'groupId': widget.groupId, 'error': e.toString()},
-        );
-        rethrow;
+          final currentLatestKey = await widget.groupRepo.getLatestKey(
+            widget.groupId,
+          );
+          if (!membershipAuthority.matches(
+                GroupMembershipEffectAuthority(
+                  group: currentGroup,
+                  members: currentMembers,
+                  latestKeyGeneration: currentLatestKey?.keyGeneration,
+                ),
+              ) ||
+              jsonEncode(
+                    buildGroupConfigPayload(currentGroup, currentMembers),
+                  ) !=
+                  jsonEncode(groupConfig)) {
+            return null;
+          }
+          try {
+            await callGroupUpdateConfig(
+              widget.bridge,
+              groupId: widget.groupId,
+              groupConfig: groupConfig,
+            );
+            return true;
+          } catch (e) {
+            for (final member in addedMembers) {
+              await widget.groupRepo.removeMember(
+                widget.groupId,
+                member.peerId,
+              );
+              await widget.inviteDeliveryAttemptRepo?.deleteAttempt(
+                groupId: widget.groupId,
+                peerId: member.peerId,
+              );
+            }
+            if (!_sameGroupAvatarMetadata(group, loadedGroup)) {
+              await widget.groupRepo.updateGroup(
+                currentGroup.copyWith(
+                  avatarBlobId: loadedGroup.avatarBlobId,
+                  avatarMime: loadedGroup.avatarMime,
+                  avatarPath: loadedGroup.avatarPath,
+                ),
+              );
+            }
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CONTACT_PICKER_FL_CONFIG_SYNC_ROLLED_BACK',
+              details: {'groupId': widget.groupId, 'error': e.toString()},
+            );
+            rethrow;
+          }
+        },
+      );
+      if (!guardedConfigSync.didRun || guardedConfigSync.value != true) {
+        throw StateError('Group membership authority changed');
       }
 
       // 3. Broadcast ONE members_added system message
@@ -424,26 +592,60 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           .where((peerId) => peerId.isNotEmpty && peerId != identity.peerId)
           .toList(growable: false);
 
-      var membersAddedPublishFailed = false;
-      try {
-        final publishResult = await callGroupPublish(
-          widget.bridge,
-          groupId: widget.groupId,
-          text: sysMessage,
-          senderPeerId: identity.peerId,
-          senderPublicKey: identity.publicKey,
-          senderPrivateKey: identity.privateKey,
-          senderUsername: identity.username,
-          senderDeviceId: senderBinding.deviceId,
-          senderTransportPeerId: senderBinding.transportPeerId,
-          senderDevicePublicKey: senderBinding.devicePublicKey,
-          senderKeyPackageId: senderBinding.keyPackageId,
-          messageId: sourceEventId,
-        );
-        if (publishResult['ok'] != true) {
-          membersAddedPublishFailed = true;
-        }
-      } catch (e) {
+      final guardedPublish =
+          await runSelfRemovedGroupLifecycleLeaf<Map<String, dynamic>?>(
+            groupRepo: widget.groupRepo,
+            groupId: widget.groupId,
+            action: (currentGroup) async {
+              if (currentGroup.isDissolved ||
+                  !_sameGroupAvatarMetadata(currentGroup, group)) {
+                return null;
+              }
+              final currentMembers = await widget.groupRepo.getMembers(
+                widget.groupId,
+              );
+              final currentLatestKey = await widget.groupRepo.getLatestKey(
+                widget.groupId,
+              );
+              if (!membershipAuthority.matches(
+                    GroupMembershipEffectAuthority(
+                      group: currentGroup,
+                      members: currentMembers,
+                      latestKeyGeneration: currentLatestKey?.keyGeneration,
+                    ),
+                  ) ||
+                  jsonEncode(
+                        buildGroupConfigPayload(currentGroup, currentMembers),
+                      ) !=
+                      jsonEncode(groupConfig)) {
+                return null;
+              }
+              try {
+                return await callGroupPublish(
+                  widget.bridge,
+                  groupId: widget.groupId,
+                  text: sysMessage,
+                  senderPeerId: identity.peerId,
+                  senderPublicKey: identity.publicKey,
+                  senderPrivateKey: identity.privateKey,
+                  senderUsername: identity.username,
+                  senderDeviceId: senderBinding.deviceId,
+                  senderTransportPeerId: senderBinding.transportPeerId,
+                  senderDevicePublicKey: senderBinding.devicePublicKey,
+                  senderKeyPackageId: senderBinding.keyPackageId,
+                  messageId: sourceEventId,
+                );
+              } catch (_) {
+                membersAddedPublishFailed = true;
+                return <String, dynamic>{'ok': false};
+              }
+            },
+          );
+      final publishResult = guardedPublish.value;
+      if (!guardedPublish.didRun || publishResult == null) {
+        throw StateError('Group membership authority changed');
+      }
+      if (publishResult['ok'] != true) {
         membersAddedPublishFailed = true;
       }
 
@@ -453,27 +655,69 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       // on the next rejoin/foreground, re-using the canonical
       // (publishedAt, sourceEventId) so a retry can't resurrect stale state.
       var membersAddedEnqueuedForRetry = false;
-      if (membersAddedPublishFailed && hasGroupPendingBroadcastEnqueueSink) {
-        final nowUtc = DateTime.now().toUtc();
-        await enqueueGroupPendingBroadcast(
-          GroupPendingBroadcast(
-            id: 'pending_group_broadcast:${widget.groupId}:$sourceEventId',
-            groupId: widget.groupId,
-            kind: 'members_added',
-            sysText: sysMessage,
-            recipientPeerIds: existingRecipientPeerIds,
-            eventAt: publishedAt,
-            sourceMessageId: sourceEventId,
-            createdAt: nowUtc,
-            updatedAt: nowUtc,
-          ),
-        );
-        membersAddedEnqueuedForRetry = true;
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONTACT_PICKER_FL_MEMBERS_ADDED_BROADCAST_QUEUED',
-          details: {'groupId': widget.groupId},
-        );
+      if (membersAddedPublishFailed) {
+        final publishFailureAuthorityStillExact =
+            await runGroupMembershipMutationLocked<bool>(
+              groupId: widget.groupId,
+              action: () async {
+                final currentGroup = await widget.groupRepo.getGroup(
+                  widget.groupId,
+                );
+                if (currentGroup == null ||
+                    currentGroup.isDissolved ||
+                    currentGroup.selfRemovedAt != null ||
+                    !_sameGroupAvatarMetadata(currentGroup, group)) {
+                  return false;
+                }
+                final currentMembers = await widget.groupRepo.getMembers(
+                  widget.groupId,
+                );
+                final currentLatestKey = await widget.groupRepo.getLatestKey(
+                  widget.groupId,
+                );
+                if (!membershipAuthority.matches(
+                      GroupMembershipEffectAuthority(
+                        group: currentGroup,
+                        members: currentMembers,
+                        latestKeyGeneration: currentLatestKey?.keyGeneration,
+                      ),
+                    ) ||
+                    jsonEncode(
+                          buildGroupConfigPayload(currentGroup, currentMembers),
+                        ) !=
+                        jsonEncode(groupConfig)) {
+                  return false;
+                }
+                if (hasGroupPendingBroadcastEnqueueSink) {
+                  final nowUtc = DateTime.now().toUtc();
+                  await enqueueGroupPendingBroadcast(
+                    GroupPendingBroadcast(
+                      id: 'pending_group_broadcast:${widget.groupId}:$sourceEventId',
+                      groupId: widget.groupId,
+                      kind: 'members_added',
+                      sysText: sysMessage,
+                      recipientPeerIds: existingRecipientPeerIds,
+                      eventAt: publishedAt,
+                      sourceMessageId: sourceEventId,
+                      createdAt: nowUtc,
+                      updatedAt: nowUtc,
+                    ),
+                  );
+                  membersAddedEnqueuedForRetry = true;
+                }
+                return true;
+              },
+            );
+        if (!publishFailureAuthorityStillExact) {
+          throw StateError('Group membership authority changed');
+        }
+        if (membersAddedEnqueuedForRetry) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_PICKER_FL_MEMBERS_ADDED_BROADCAST_QUEUED',
+            details: {'groupId': widget.groupId},
+          );
+        }
       }
       if (!membersAddedPublishFailed || membersAddedEnqueuedForRetry) {
         // Anchor the local membership watermark to the canonical members_added
@@ -491,7 +735,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           eventId: sourceEventId,
         );
       }
-      final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
+      keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
       if (existingRecipientPeerIds.isNotEmpty && keyInfo != null) {
         try {
           final inboxPayload = jsonEncode({
@@ -641,7 +885,8 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       // 4. Send individual encrypted P2P invites in parallel
       GroupInviteBatchResult? inviteBatchResult;
       var inviteDeliverySkippedMissingKey = false;
-      if (keyInfo != null) {
+      final inviteKeyInfo = keyInfo;
+      if (inviteKeyInfo != null) {
         final recipients = selectedContacts
             .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
             .map(
@@ -662,9 +907,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           senderPrivateKey: identity.privateKey,
           senderUsername: identity.username,
           senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
           groupId: widget.groupId,
-          groupKey: keyInfo.encryptedKey,
-          keyEpoch: keyInfo.keyGeneration,
+          groupKey: inviteKeyInfo.encryptedKey,
+          keyEpoch: inviteKeyInfo.keyGeneration,
           groupConfig: groupConfig,
           recipients: recipients,
           latencyTrace: inviteLatencyTrace,

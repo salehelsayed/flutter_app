@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -6,7 +7,16 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/core/debug/group_media_disposable_transport_start.dart';
+import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
+import 'package:flutter_app/core/debug/group_media_ios_background_e2e_main_actions.dart';
+import 'package:flutter_app/core/debug/group_media_ios_background_e2e_overlay.dart';
+import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+import 'package:flutter_app/core/debug/group_media_ios_disposable_reset.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
@@ -34,6 +44,7 @@ import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpe
 import 'package:flutter_app/core/database/helpers/intro_review_seen_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
+import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
@@ -81,6 +92,7 @@ import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storag
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
@@ -107,10 +119,12 @@ import 'package:flutter_app/features/account_migration/application/migration_sto
 import 'package:flutter_app/features/account_migration/application/migration_transfer_checkpoint_store.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
@@ -180,6 +194,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository_impl.dart';
@@ -189,6 +204,7 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -229,6 +245,7 @@ import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
@@ -255,7 +272,7 @@ import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, Platform;
 import 'package:flutter/foundation.dart'
     show
         ValueListenable,
@@ -264,6 +281,7 @@ import 'package:flutter/foundation.dart'
         kDebugMode,
         kIsWeb;
 import 'package:path_provider/path_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -346,6 +364,64 @@ Stream<void> _mergeVoidStreams(Iterable<Stream<void>> inputs) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  const installedSimsProfile = String.fromEnvironment('SIMS_BUILD_PROFILE_ID');
+  final isGroupMediaIosDisposableProfile =
+      installedSimsProfile == groupMediaIosDisposableBuildProfile;
+  final isGroupMediaAndroidDisposableProfile =
+      installedSimsProfile == groupMediaAndroidDisposableBuildProfile;
+  if (isGroupMediaIosDisposableProfile ||
+      isGroupMediaAndroidDisposableProfile) {
+    if ((isGroupMediaIosDisposableProfile && !Platform.isIOS) ||
+        (isGroupMediaAndroidDisposableProfile && !Platform.isAndroid)) {
+      throw StateError('dedicated group-media reset platform rejected');
+    }
+    const configuredIosBundleId = String.fromEnvironment(
+      'SIMS_IOS_DISPOSABLE_BUNDLE_ID',
+    );
+    const configuredAndroidPackageId = String.fromEnvironment(
+      'SIMS_ANDROID_DISPOSABLE_PACKAGE_ID',
+    );
+    final expectedBundleId = isGroupMediaIosDisposableProfile
+        ? groupMediaIosDisposableBundleId
+        : groupMediaAndroidDisposablePackageId;
+    final expectedProfileId = isGroupMediaIosDisposableProfile
+        ? groupMediaIosDisposableBuildProfile
+        : groupMediaAndroidDisposableBuildProfile;
+    final configuredBundleId = isGroupMediaIosDisposableProfile
+        ? configuredIosBundleId
+        : configuredAndroidPackageId;
+    if (configuredBundleId != expectedBundleId) {
+      throw StateError('dedicated group-media reset bundle define rejected');
+    }
+    final resetPackageInfoProbe = PackageInfo.fromPlatform();
+    final resetDocumentsDirectoryProbe = getApplicationDocumentsDirectory();
+    final resetDatabasesPathProbe = sqlcipher.getDatabasesPath();
+    final resetApplicationSupportDirectoryProbe =
+        getApplicationSupportDirectory();
+    await Future.wait<Object?>([
+      resetPackageInfoProbe,
+      resetDocumentsDirectoryProbe,
+      resetDatabasesPathProbe,
+      resetApplicationSupportDirectoryProbe,
+    ]);
+    final packageInfo = await resetPackageInfoProbe;
+    final resetStore = FlutterSecureKeyStore();
+    final resetHandled = await runGroupMediaIosDisposableResetIfRequested(
+      documentsDirectory: await resetDocumentsDirectoryProbe,
+      databasesDirectory: Directory(await resetDatabasesPathProbe),
+      applicationSupportDirectory: await resetApplicationSupportDirectoryProbe,
+      installedProfileId: installedSimsProfile,
+      installedBundleId: packageInfo.packageName,
+      expectedProfileId: expectedProfileId,
+      expectedBundleId: expectedBundleId,
+      deleteDefaultSecureStorage: resetStore.deleteAll,
+      readDefaultSecureStorage: resetStore.readAll,
+    );
+    if (resetHandled) {
+      runApp(const SizedBox.shrink());
+      return;
+    }
+  }
   StartupTiming.instance.mark('app_start');
   // FDC-S1 measurement harness (observation-only, OFF by default): built with
   // --dart-define=FDC_FLOW_LOG=1 (or true/yes/on) this forces flow-event logging
@@ -379,6 +455,14 @@ void main() async {
   final initialShareIntent = await shareIntentProbe;
   final appDocDir = await appDocDirProbe;
   final isShareLaunch = initialShareIntent != null;
+  final groupMediaReliabilityE2EController =
+      GroupMediaReliabilityE2EController.forInstalledProfile(
+        stateDirectory: Directory(appDocDir.path),
+      );
+  final groupMediaIosBackgroundE2EController =
+      GroupMediaIosBackgroundE2EController.forInstalledProfile(
+        stateDirectory: Directory(appDocDir.path),
+      );
   StartupTiming.instance.mark('share_launch_probe_complete');
 
   // Initialize Firebase (mobile only — not available on desktop)
@@ -410,7 +494,7 @@ void main() async {
       // 04-P0 / SI-5 (iOS): wire the recent-remote gate to also consume the NSE's
       // app-group sidecar dedupe markers, and persist the app-group container path
       // so the FCM background isolate can read it too.
-      if (!kIsWeb && Platform.isIOS) {
+      if (!kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile) {
         configureRecentRemoteNotificationGateForIos();
         unawaited(persistAppGroupContainerPathForGate());
       }
@@ -450,7 +534,8 @@ void main() async {
 
   // 1. Create secure key store
   final secureKeyStore = FlutterSecureKeyStore();
-  final SecureKeyStore? sharedPushKeyStore = !kIsWeb && Platform.isIOS
+  final SecureKeyStore? sharedPushKeyStore =
+      !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile
       ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
       : null;
   final directReactionNotificationProjection = sharedPushKeyStore == null
@@ -464,10 +549,11 @@ void main() async {
   // media transfer entry point (direct listener, direct visible-media
   // recovery, shared group loader) consults the user's persisted matrix +
   // current network class immediately before transferring.
-  defaultMediaAutoDownloadDecider =
+  final mediaAutoDownloadDecider =
       PreferenceBackedMediaAutoDownloadDecider.fromSecureKeyStore(
         secureKeyStore: secureKeyStore,
       );
+  defaultMediaAutoDownloadDecider = mediaAutoDownloadDecider;
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
   final pushRelayRegistrationProof = await loadPushRelayRegistrationProof();
   if (pushRelayRegistrationProof case final proof?) {
@@ -1110,6 +1196,17 @@ void main() async {
           messageId,
         ),
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+    dbLoadRecoverableGroupMediaDownloadPage:
+        ({
+          required int limit,
+          String? afterCreatedAt,
+          String? afterAttachmentId,
+        }) => dbLoadRecoverableGroupMediaDownloadPage(
+          db,
+          limit: limit,
+          afterCreatedAt: afterCreatedAt,
+          afterAttachmentId: afterAttachmentId,
+        ),
     dbLoadUploadPendingAttachments:
         ({int limit = 50, required String ownerLane}) =>
             dbLoadUploadPendingAttachments(
@@ -1194,6 +1291,87 @@ void main() async {
               ownerLane: ownerLane,
               localPath: localPath,
             ),
+    dbBeginOrdinaryGroupAutomaticMediaDownloadExact:
+        (
+          id, {
+          required groupId,
+          required messageId,
+          required expectedDownloadStatus,
+          required expectedLocalPath,
+        }) => dbBeginOrdinaryGroupAutomaticMediaDownloadExact(
+          db,
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+        ),
+    dbBeginOrdinaryGroupExplicitMediaDownloadExact:
+        (
+          id, {
+          required groupId,
+          required messageId,
+          required expectedDownloadStatus,
+          required expectedLocalPath,
+        }) => dbBeginOrdinaryGroupExplicitMediaDownloadExact(
+          db,
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+        ),
+    dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact:
+        (
+          id, {
+          required groupId,
+          required messageId,
+          required expectedLocalPath,
+          required localPath,
+        }) => dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact(
+          db,
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedLocalPath: expectedLocalPath,
+          localPath: localPath,
+        ),
+    dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact:
+        (
+          id, {
+          required groupId,
+          required messageId,
+          required expectedLocalPath,
+          required localPath,
+        }) => dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact(
+          db,
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          expectedLocalPath: expectedLocalPath,
+          localPath: localPath,
+        ),
+    dbRecordOrdinaryGroupMediaDownloadFailureExact:
+        (
+          id, {
+          required groupId,
+          required messageId,
+          required incrementRetryCount,
+          required failureStatus,
+          required expectedDownloadStatus,
+          required expectedLocalPath,
+          required clearLocalPath,
+        }) => dbRecordOrdinaryGroupMediaDownloadFailureExact(
+          db,
+          id,
+          groupId: groupId,
+          messageId: messageId,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        ),
     dbClaimMediaEvicted:
         (id, {required String ownerLane, required String expectedLocalPath}) =>
             dbClaimMediaEvicted(
@@ -3576,6 +3754,67 @@ void main() async {
     await groupKeyRepairRequestSender.call(request);
   }
 
+  final groupMediaDownloadCoordinator = RetryIncompleteGroupDownloadsUseCase(
+    loadPage: ({required after, required limit}) async {
+      final rows = await mediaAttachmentRepository
+          .loadRecoverableGroupDownloadPage(
+            after: after == null
+                ? null
+                : DurableGroupMediaDownloadCursor(
+                    createdAt: after.createdAt,
+                    attachmentId: after.attachmentId,
+                  ),
+            limit: limit,
+          );
+      return rows
+          .map(
+            (candidate) => RecoverableGroupDownloadCandidate(
+              attachment: candidate.attachment,
+              groupId: candidate.groupId,
+            ),
+          )
+          .toList(growable: false);
+    },
+    loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
+    loadCurrentParent: groupMessageRepository.getMessage,
+    loadCurrentGroup: groupRepository.getGroup,
+    autoDownloadDecider: mediaAutoDownloadDecider,
+    allowsNetworkSideEffects: () async {
+      if (groupMediaReliabilityE2EController.holdsAutomaticRecovery ||
+          groupMediaIosBackgroundE2EController.holdsAutomaticRecovery) {
+        return false;
+      }
+      return allowsAccountRuntimeNetworkSideEffects(
+        'group_media_download_recovery',
+      );
+    },
+    transfer: ({required attachment, required parent, required group}) async {
+      return downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        mediaFileManager: mediaFileManager,
+        attachment: attachment,
+        contactPeerId: group.id,
+        owner: MediaOwnerLane.group,
+        enforceGroupMediaPolicy: true,
+        groupMessageRepo: groupMessageRepository,
+        groupMediaAutomaticDownloadAttemptStarted: (candidate) =>
+            groupMediaReliabilityE2EController
+                .onAutomaticDownloadAttemptStarted(attachment: candidate),
+        groupMediaPostClaimPreCommit: (claimed) async {
+          await groupMediaReliabilityE2EController.onPostClaimPreCommit(
+            attachment: claimed,
+            loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
+          );
+          await groupMediaIosBackgroundE2EController.onPostClaimPreCommit(
+            attachment: claimed,
+            loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
+          );
+        },
+      );
+    },
+  );
+
   // Create group message listener and wire bridge callback to stream
   late final GroupMessageListener groupMessageListener;
   late final GroupExitIntentRepositoryImpl groupExitIntentRepository;
@@ -3617,6 +3856,7 @@ void main() async {
     },
     mediaAttachmentRepo: mediaAttachmentRepository,
     mediaFileManager: mediaFileManager,
+    groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
     notificationService: notificationService,
     groupConversationTracker: groupConversationTracker,
     notificationToneTracker: notificationToneTracker,
@@ -4109,6 +4349,7 @@ void main() async {
     deliveryRepo: groupInviteDeliveryAttemptRepository,
     p2pService: p2pService,
     loadOwnIdentity: () => repository.loadIdentity(),
+    loadOwnInviteIdentity: groupIdentityCallbacks.loadOwnInviteIdentity,
     getOwnMlKemSecretKey: groupIdentityCallbacks.getOwnMlKemSecretKey,
     getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
     getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
@@ -4378,6 +4619,17 @@ void main() async {
         requireOsConnectivity: true,
       ),
     ),
+    retryIncompleteGroupDownloadsFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_download_recovery',
+      blockedValue: 0,
+      action: groupMediaDownloadCoordinator.call,
+    ),
+    retryIncompleteGroupDownloadsPeriodicFn: () =>
+        runAccountRuntimeNetworkAction(
+          operation: 'pending_retrier_group_download_recovery_periodic',
+          blockedValue: 0,
+          action: groupMediaDownloadCoordinator.call,
+        ),
     retryFailedGroupMessagesFn: () => runAccountRuntimeNetworkAction(
       operation: 'pending_retrier_group_failed_retry',
       blockedValue: 0,
@@ -4687,6 +4939,10 @@ void main() async {
       imageProcessor: imageProcessor,
       audioRecorderService: audioRecorderService,
       privateMediaOutboxE2EController: privateMediaOutboxE2EController,
+      groupMediaIosBackgroundProofLabels:
+          groupMediaIosBackgroundE2EController.enabled
+          ? groupMediaIosBackgroundE2EController.uiProofLabels
+          : null,
       reactionRepository: reactionRepository,
       isDesktop: isDesktop,
       notificationService: notificationService,
@@ -4711,6 +4967,7 @@ void main() async {
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
+      groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
       groupKeyRepairResponderListener: groupKeyRepairResponderListener,
@@ -4845,6 +5102,81 @@ void main() async {
     }),
   );
 
+  Future<void> awaitGroupMediaProofEndpointReady(
+    String operation, {
+    GroupMediaIosProofReadiness requirement =
+        GroupMediaIosProofReadiness.fullRelayCustody,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 120));
+    while (DateTime.now().isBefore(deadline)) {
+      final state = p2pService.currentState;
+      if (groupMediaIosProofEndpointReady(state, requirement: requirement) &&
+          await allowsAccountRuntimeNetworkSideEffects(operation)) {
+        return;
+      }
+      try {
+        await p2pService.performImmediateHealthCheck();
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw StateError(
+      'group-media reliability endpoint did not reach gated readiness',
+    );
+  }
+
+  Future<Map<String, Object?>?> acceptGroupMediaProofInvite(
+    String groupId,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
+    while (DateTime.now().isBefore(deadline) &&
+        await pendingGroupInviteRepository.getPendingInvite(groupId) == null) {
+      await p2pService.performImmediateHealthCheck();
+      await p2pService.drainOfflineInbox();
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    if (await pendingGroupInviteRepository.getPendingInvite(groupId) == null) {
+      return null;
+    }
+    final identity = await repository.loadIdentity();
+    final transportPeerId = p2pService.currentState.peerId?.trim();
+    if (identity == null ||
+        transportPeerId == null ||
+        transportPeerId.isEmpty ||
+        identity.peerId == transportPeerId) {
+      return null;
+    }
+    final accepted = await acceptPendingGroupInvite(
+      pendingInviteRepo: pendingGroupInviteRepository,
+      groupRepo: groupRepository,
+      contactRepo: contactRepository,
+      msgRepo: groupMessageRepository,
+      bridge: bridge,
+      groupId: groupId,
+      mediaAttachmentRepo: mediaAttachmentRepository,
+      reactionRepo: reactionRepository,
+      groupMessageListener: groupMessageListener,
+      senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
+      senderUsername: identity.username,
+      ownDeviceId: transportPeerId,
+      ownTransportPeerId: transportPeerId,
+      ownMlKemPublicKey: identity.mlKemPublicKey,
+      ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+        transportPeerId,
+      ),
+      ownKeyPackagePublicMaterial: identity.mlKemPublicKey,
+    );
+    if (accepted.$1 != AcceptPendingGroupInviteResult.success ||
+        accepted.$2?.id != groupId) {
+      return null;
+    }
+    return <String, Object?>{
+      'accountPeerId': identity.peerId,
+      'transportPeerId': transportPeerId,
+    };
+  }
+
   // Keep polling for intro E2E config files in explicit test mode so
   // simulator relaunch timing does not race a single startup timer.
   startIntroE2EPoller(
@@ -4867,6 +5199,350 @@ void main() async {
     detailedInboxStore: p2pService,
     wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
     privateMediaOutboxE2EController: privateMediaOutboxE2EController,
+    runGroupMediaReliabilityE2E: (config) async {
+      final request = GroupMediaReliabilityE2ERequest.fromConfig(config);
+      await awaitGroupMediaProofEndpointReady(
+        'p269_group_media_endpoint_ready',
+      );
+
+      return runGroupMediaReliabilityE2EAction(
+        config: config,
+        controller: groupMediaReliabilityE2EController,
+        loadAttachment: mediaAttachmentRepository.getAttachmentById,
+        probeIdentity: (role) async {
+          final identity = await repository.loadIdentity();
+          final transportPeerId = p2pService.currentState.peerId?.trim();
+          if (identity == null ||
+              transportPeerId == null ||
+              transportPeerId.isEmpty ||
+              transportPeerId == identity.peerId) {
+            throw StateError(
+              'group-media disposable identity authority did not settle',
+            );
+          }
+          return <String, Object?>{
+            'accountPeerId': identity.peerId,
+            'transportPeerId': transportPeerId,
+          };
+        },
+        setupSender: (receiverAccountPeerId, receiverTransportPeerId) =>
+            setupGroupMediaReliabilitySender(
+              receiverAccountPeerId: receiverAccountPeerId,
+              receiverTransportPeerId: receiverTransportPeerId,
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepository: repository,
+              contactRepository: contactRepository,
+              groupRepository: groupRepository,
+              inviteDeliveryAttemptRepository:
+                  groupInviteDeliveryAttemptRepository,
+            ),
+        acceptReceiver: acceptGroupMediaProofInvite,
+        sendMedia:
+            (
+              groupId,
+              messageIds,
+              attachmentIds,
+              receiverAccountPeerId,
+              receiverTransportPeerId,
+            ) => sendGroupMediaReliabilityFixtures(
+              runId: request.runId,
+              groupId: groupId,
+              messageIds: messageIds,
+              attachmentIds: attachmentIds,
+              receiverAccountPeerId: receiverAccountPeerId,
+              receiverTransportPeerId: receiverTransportPeerId,
+              fixtureDirectory: Directory(
+                '${appDocDir.path}/p269-group-media-fixtures',
+              ),
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepository: repository,
+              groupRepository: groupRepository,
+              groupMessageRepository: groupMessageRepository,
+              mediaAttachmentRepository: mediaAttachmentRepository,
+              mediaFileManager: mediaFileManager,
+              audioRecorderService: audioRecorderService,
+              inviteDeliveryAttemptRepository:
+                  groupInviteDeliveryAttemptRepository,
+            ),
+        probeRole: (role, messageIds, attachmentIds) => (() {
+          final transportPeerId = p2pService.currentState.peerId?.trim();
+          if (transportPeerId == null || transportPeerId.isEmpty) {
+            throw StateError(
+              'group-media role database lacks transport authority',
+            );
+          }
+          return probeGroupMediaReliabilityRoleDatabase(
+            role: role,
+            runId: request.runId,
+            transportPeerId: transportPeerId,
+            messageIds: messageIds,
+            attachmentIds: attachmentIds,
+            database: db,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+          );
+        })(),
+        // TC-269-19 must exercise the exact production periodic callbacks,
+        // not a proof-only reconstruction that can drift from retrier wiring.
+        retryUploads: () {
+          final retry =
+              pendingMessageRetrier.retryIncompleteGroupUploadsPeriodicFn;
+          if (retry == null) {
+            throw StateError('periodic group upload retry is not wired');
+          }
+          return retry();
+        },
+        retryDownloads: () {
+          final retry =
+              pendingMessageRetrier.retryIncompleteGroupDownloadsPeriodicFn;
+          if (retry == null) {
+            throw StateError('periodic group download retry is not wired');
+          }
+          return retry();
+        },
+        renderReceiver: (groupId, messageIds, attachmentIds) async {
+          if (messageIds.keys.toSet().length != 3 ||
+              attachmentIds.keys.toSet().length != 3 ||
+              !messageIds.keys.toSet().containsAll(
+                groupMediaReliabilityRenderLabelsByKind.keys,
+              ) ||
+              !attachmentIds.keys.toSet().containsAll(
+                groupMediaReliabilityRenderLabelsByKind.keys,
+              )) {
+            throw StateError('group-media render tuple is incomplete');
+          }
+          final group = await groupRepository.getGroup(groupId);
+          if (group == null || group.id != groupId) {
+            throw StateError('group-media render group is unavailable');
+          }
+          NavigatorState? navigator;
+          for (var attempt = 0; attempt < 40; attempt++) {
+            navigator = MyApp.navigatorKey.currentState;
+            if (navigator != null) break;
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
+          if (navigator == null) {
+            throw StateError('group-media render navigator is unavailable');
+          }
+          final labelsByAttachment = <String, String>{
+            for (final kind in groupMediaReliabilityRenderLabelsByKind.keys)
+              attachmentIds[kind]!:
+                  groupMediaReliabilityRenderLabelsByKind[kind]!,
+          };
+          final routeBuilt = Completer<void>();
+          navigator.popUntil((route) => route.isFirst);
+          unawaited(
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (_) {
+                  if (!routeBuilt.isCompleted) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!routeBuilt.isCompleted) routeBuilt.complete();
+                    });
+                  }
+                  return GroupConversationWired(
+                    group: group,
+                    groupRepo: groupRepository,
+                    msgRepo: groupMessageRepository,
+                    uploadRetryProjectionRepo: groupMessageRepository,
+                    groupMessageListener: groupMessageListener,
+                    groupMediaDownloadCoordinator:
+                        groupMediaDownloadCoordinator,
+                    inviteDeliveryAttemptRepo:
+                        groupInviteDeliveryAttemptRepository,
+                    bridge: bridge,
+                    identityRepo: repository,
+                    contactRepo: contactRepository,
+                    p2pService: p2pService,
+                    groupConversationTracker: groupConversationTracker,
+                    openAnnouncementSenderConversation: null,
+                    initialHighlightedMessageId: messageIds['jpeg'],
+                    mediaAttachmentRepo: mediaAttachmentRepository,
+                    mediaDeleteForMeCoordinator: deleteGroupMediaForMeUseCase,
+                    mediaFileManager: mediaFileManager,
+                    imageProcessor: imageProcessor,
+                    audioRecorderService: audioRecorderService,
+                    reactionRepo: reactionRepository,
+                    groupReactionReplayOutboxRepository:
+                        groupReactionReplayOutboxRepository,
+                    historyGapRepairRepo: groupHistoryGapRepairRepository,
+                    backgroundPreference:
+                        appShellController.backgroundPreference,
+                    forwardMessageRepository: messageRepository,
+                    forwardChatMessageListener: chatMessageListener,
+                    mediaRenderedSemanticsLabels: labelsByAttachment,
+                  );
+                },
+              ),
+            ),
+          );
+          await routeBuilt.future.timeout(const Duration(seconds: 10));
+          return <String, Object?>{'renderProbeArmed': true};
+        },
+      );
+    },
+    runGroupMediaIosBackgroundE2E:
+        (
+          config, {
+          onReceiverObservationAccepted,
+          onReceiverObservationComplete,
+        }) async {
+          final request = GroupMediaIosBackgroundE2ERequest.fromConfig(config);
+          final readiness = switch (request.phase) {
+            groupMediaIosIdentityPhase => GroupMediaIosProofReadiness.identity,
+            groupMediaIosReceiverRecoverPhase =>
+              GroupMediaIosProofReadiness.receiveRecovery,
+            _ => GroupMediaIosProofReadiness.fullRelayCustody,
+          };
+          await awaitGroupMediaProofEndpointReady(
+            'p269_group_media_ios_endpoint_ready',
+            requirement: readiness,
+          );
+          return runGroupMediaIosBackgroundE2EAction(
+            config: config,
+            controller: groupMediaIosBackgroundE2EController,
+            loadAttachment: mediaAttachmentRepository.getAttachmentById,
+            exportIdentity: () async {
+              final identity = await repository.loadIdentity();
+              final transportPeerId = p2pService.currentState.peerId?.trim();
+              if (identity == null ||
+                  transportPeerId == null ||
+                  transportPeerId.isEmpty ||
+                  identity.peerId == transportPeerId ||
+                  identity.mlKemPublicKey?.trim().isNotEmpty != true) {
+                throw StateError(
+                  'physical-iOS proof identity authority is unavailable',
+                );
+              }
+              final (result, qrPayload) = await buildQRPayload(
+                repo: repository,
+                callSign: (data, key) => callSignPayload(
+                  bridge: bridge,
+                  dataToSign: data,
+                  privateKey: key,
+                ),
+                cachedIdentity: identity,
+              );
+              if (result != BuildQRPayloadResult.success || qrPayload == null) {
+                throw StateError('physical-iOS signed identity export failed');
+              }
+              return <String, Object?>{
+                'accountPeerId': identity.peerId,
+                'transportPeerId': transportPeerId,
+                'qrPayload': qrPayload,
+                'mlKemPublicKey': identity.mlKemPublicKey!,
+              };
+            },
+            addContact: (qrPayload, mlKemPublicKey) async {
+              final decoded = jsonDecode(qrPayload);
+              if (decoded is! Map<String, dynamic>) {
+                throw const FormatException(
+                  'physical-iOS signed contact payload rejected',
+                );
+              }
+              if (mlKemPublicKey != null) decoded['mlkem'] = mlKemPublicKey;
+              final contact = ContactModel.fromQRPayload(decoded);
+              final result = await addContact(
+                repository: contactRepository,
+                contact: contact,
+              );
+              if (result != AddContactResult.success &&
+                  result != AddContactResult.alreadyExists) {
+                throw StateError('physical-iOS contact persistence failed');
+              }
+              final stored = await contactRepository.getContact(contact.peerId);
+              if (stored == null ||
+                  stored.publicKey != contact.publicKey ||
+                  stored.mlKemPublicKey?.trim().isNotEmpty != true) {
+                throw StateError(
+                  'physical-iOS contact authority did not settle',
+                );
+              }
+            },
+            setupSender:
+                (receiverAccountPeerId, receiverTransportPeerId, groupName) =>
+                    setupGroupMediaIosBackgroundSender(
+                      receiverAccountPeerId: receiverAccountPeerId,
+                      receiverTransportPeerId: receiverTransportPeerId,
+                      groupName: groupName,
+                      bridge: bridge,
+                      p2pService: p2pService,
+                      identityRepository: repository,
+                      contactRepository: contactRepository,
+                      groupRepository: groupRepository,
+                      inviteDeliveryAttemptRepository:
+                          groupInviteDeliveryAttemptRepository,
+                    ),
+            acceptReceiver: acceptGroupMediaProofInvite,
+            sendFixture:
+                (
+                  phase,
+                  groupId,
+                  messageId,
+                  attachmentId,
+                  marker,
+                  receiverAccountPeerId,
+                  receiverTransportPeerId,
+                ) => sendGroupMediaIosBackgroundFixture(
+                  runId: request.runId,
+                  phase: phase,
+                  groupId: groupId,
+                  messageId: messageId,
+                  attachmentId: attachmentId,
+                  marker: marker,
+                  receiverAccountPeerId: receiverAccountPeerId,
+                  receiverTransportPeerId: receiverTransportPeerId,
+                  fixtureDirectory: Directory(
+                    '${appDocDir.path}/p269-group-media-ios-fixtures',
+                  ),
+                  bridge: bridge,
+                  p2pService: p2pService,
+                  identityRepository: repository,
+                  groupRepository: groupRepository,
+                  groupMessageRepository: groupMessageRepository,
+                  mediaAttachmentRepository: mediaAttachmentRepository,
+                  mediaFileManager: mediaFileManager,
+                  inviteDeliveryAttemptRepository:
+                      groupInviteDeliveryAttemptRepository,
+                ),
+            probeDatabase: (phase, messageId, attachmentId) =>
+                reopenGroupMediaIosBackgroundDatabase(
+                  runId: request.runId,
+                  phase: phase,
+                  messageId: messageId,
+                  attachmentId: attachmentId,
+                  expectedParentMarker: groupMediaIosBackgroundParentMarker(
+                    request.runId,
+                    phase,
+                  ),
+                  liveDatabase: db,
+                  secureKeyStore: secureKeyStore,
+                ),
+            drainGroupInbox: () async {
+              final drain = pendingMessageRetrier.drainGroupOfflineInboxFn;
+              if (drain == null) {
+                throw StateError('group offline inbox drain is not wired');
+              }
+              await drain();
+            },
+            retryDownloads: () {
+              final retry =
+                  pendingMessageRetrier.retryIncompleteGroupDownloadsPeriodicFn;
+              if (retry == null) {
+                throw StateError('periodic group download retry is not wired');
+              }
+              return retry();
+            },
+            reserveReceiveCriticalTask: () async {
+              final reservation = await groupMessageListener
+                  .reserveGroupMediaReceiveCriticalTaskForForegroundHandoff();
+              return reservation.release;
+            },
+            onReceiverObservationAccepted: onReceiverObservationAccepted,
+            onReceiverObservationComplete: onReceiverObservationComplete,
+          );
+        },
     resolveWakeToken: wakeTokenResolver,
     openConversationByPeerId: (peerId) async {
       for (var attempt = 0; attempt < 30; attempt++) {
@@ -4999,6 +5675,7 @@ class MyApp extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
   final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
+  final ValueListenable<List<String>>? groupMediaIosBackgroundProofLabels;
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
@@ -5022,6 +5699,7 @@ class MyApp extends StatefulWidget {
   final GroupReactionReplayOutboxRepositoryImpl
   groupReactionReplayOutboxRepository;
   final GroupMessageListener groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupKeyRepairResponderListener groupKeyRepairResponderListener;
@@ -5108,6 +5786,7 @@ class MyApp extends StatefulWidget {
     required this.imageProcessor,
     required this.audioRecorderService,
     this.privateMediaOutboxE2EController,
+    this.groupMediaIosBackgroundProofLabels,
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
@@ -5129,6 +5808,7 @@ class MyApp extends StatefulWidget {
     required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
     required this.groupKeyRepairResponderListener,
@@ -5959,6 +6639,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               msgRepo: widget.groupMessageRepository,
               uploadRetryProjectionRepo: widget.groupMessageRepository,
               groupMessageListener: widget.groupMessageListener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               openAnnouncementSenderConversation: (contact) =>
                   _openConversationForContact(
                     navigator: navigator,
@@ -6078,6 +6760,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupReactionReplayOutboxRepository:
             widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
+        groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
         groupInviteListener: widget.groupInviteListener,
         waitForGroupMembershipUpdateIdle:
             widget.groupMembershipUpdateListener.waitForIdle,
@@ -6583,6 +7266,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           releaseUploadLease: mediaUploadInFlightTracker.release,
           requireOsConnectivity: true,
         ),
+        retryIncompleteGroupDownloadsFn:
+            widget.groupMediaDownloadCoordinator?.call,
         retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
           groupMsgRepo: widget.groupMessageRepository,
           groupRepo: widget.groupRepository,
@@ -6976,10 +7661,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         navigatorKey: MyApp.navigatorKey,
         scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
         navigatorObservers: [directPrivateMediaRouteObserver],
-        builder: (context, child) => DirectPrivateMediaRouteObserverScope(
-          observer: directPrivateMediaRouteObserver,
-          child: child ?? const SizedBox.shrink(),
-        ),
+        builder: (context, child) {
+          final routedChild = DirectPrivateMediaRouteObserverScope(
+            observer: directPrivateMediaRouteObserver,
+            child: child ?? const SizedBox.shrink(),
+          );
+          final proofLabels = widget.groupMediaIosBackgroundProofLabels;
+          if (proofLabels == null) return routedChild;
+          return GroupMediaIosBackgroundE2EOverlay(
+            labels: proofLabels,
+            child: routedChild,
+          );
+        },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: AppTheme.lightTheme,
@@ -7016,6 +7709,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           groupReactionReplayOutboxRepository:
               widget.groupReactionReplayOutboxRepository,
           groupMessageListener: widget.groupMessageListener,
+          groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
           canRejoinForExitIntent: widget.canRejoinForExitIntent,
           processExitIntent: widget.processGroupExitIntent,
           groupExitIntentRecovery: widget.groupExitIntentRecovery,
@@ -7030,6 +7724,29 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           shareIntentService: widget.shareIntentService,
           initialShareIntentCapture: _initialShareIntentCapture,
           ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
+          startP2PNodeOverride:
+              isGroupMediaDisposableTransportProfile(
+                const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
+              )
+              ? () {
+                  final migrationGate = AccountMigrationRuntimeNetworkGate(
+                    authorityRepository:
+                        SecureKeyStoreAccountMigrationAuthorityRepository(
+                          secureKeyStore: widget.secureKeyStore,
+                        ),
+                  );
+                  return startGroupMediaDisposableTransportNode(
+                    identityRepository: widget.repository,
+                    secureKeyStore: widget.secureKeyStore,
+                    generateIdentity: () => callIdentityGenerate(widget.bridge),
+                    startNode: widget.p2pService.startNode,
+                    currentTransportPeerId: () =>
+                        widget.p2pService.currentState.peerId,
+                    accountMigrationNetworkGate:
+                        migrationGate.allowsAccountNetworkSideEffects,
+                  );
+                }
+              : null,
           // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
           // to the concrete impl method (off the P2PService interface to avoid
           // churning the fakes); idempotent with startNode's own early seam.

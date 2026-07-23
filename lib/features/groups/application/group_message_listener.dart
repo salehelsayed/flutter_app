@@ -29,6 +29,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
@@ -73,6 +74,41 @@ typedef RotateGroupKeyAfterRemoteRemoval =
 /// group's exit intent and that intent's exact leave-notice row atomically.
 typedef TerminalizeGroupExitWorkAfterRemoteDissolve =
     Future<void> Function(String groupId);
+
+/// Acquires one OS critical-task lease for an eligible background group-media
+/// receive batch. A null result means the OS refused the lease.
+typedef BeginGroupMediaReceiveCriticalTask = Future<String?> Function();
+
+/// Releases the exact critical-task lease granted to a background group-media
+/// receive batch.
+typedef EndGroupMediaReceiveCriticalTask = Future<void> Function(String taskId);
+
+final class _GroupMediaReceiveCriticalTaskLease {
+  _GroupMediaReceiveCriticalTaskLease(this.taskId);
+
+  final String? taskId;
+  int participants = 0;
+}
+
+/// Opaque ownership of one participant in the listener's shared group-media
+/// receive critical task.
+///
+/// [release] is idempotent: every caller observes the same terminal future and
+/// the underlying participant is released at most once.
+final class GroupMediaReceiveCriticalTaskReservation {
+  GroupMediaReceiveCriticalTaskReservation._(this._releaseParticipant);
+
+  final Future<void> Function() _releaseParticipant;
+  Future<void>? _releaseFuture;
+
+  Future<void> release() {
+    return _releaseFuture ??= _releaseOnce();
+  }
+
+  Future<void> _releaseOnce() async {
+    await _releaseParticipant();
+  }
+}
 
 const _maxPendingMembershipDependentMessagesPerGroup = 50;
 
@@ -168,6 +204,9 @@ class GroupMessageListener {
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final HoldPendingSiblingDeviceFn? _holdPendingSiblingDevice;
   final GroupPrivateMediaAvailability _privateMediaAvailability;
+  final GroupMediaDownloadCoordinator? _groupMediaDownloadCoordinator;
+  final BeginGroupMediaReceiveCriticalTask? _beginGroupMediaReceiveCriticalTask;
+  final EndGroupMediaReceiveCriticalTask? _endGroupMediaReceiveCriticalTask;
 
   StreamSubscription<void>? _subscription;
   StreamSubscription<void>? _reactionSubscription;
@@ -182,6 +221,10 @@ class GroupMessageListener {
   final Map<String, List<_PendingMembershipDependentMessage>>
   _pendingMembershipDependentMessagesByGroup = {};
   final Set<Future<void>> _inFlightHandlers = {};
+  _GroupMediaReceiveCriticalTaskLease? _groupMediaReceiveCriticalTaskLease;
+  Future<_GroupMediaReceiveCriticalTaskLease>?
+  _groupMediaReceiveCriticalTaskLeaseAcquisition;
+  Future<void>? _groupMediaReceiveCriticalTaskLeaseEnd;
   Future<void>? _dispatcherOverflowRecovery;
   Future<void>? _stopFuture;
   Future<DurableNotificationToneLease?>? _durableNotificationCoordinatorFuture;
@@ -223,6 +266,9 @@ class GroupMessageListener {
     HoldPendingSiblingDeviceFn? holdPendingSiblingDevice,
     GroupPrivateMediaAvailability privateMediaAvailability =
         productionGroupPrivateMediaAvailability,
+    GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
+    BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
+    EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -254,7 +300,10 @@ class GroupMessageListener {
            terminalizeGroupExitWorkAfterRemoteDissolve,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _holdPendingSiblingDevice = holdPendingSiblingDevice,
-       _privateMediaAvailability = privateMediaAvailability;
+       _privateMediaAvailability = privateMediaAvailability,
+       _groupMediaDownloadCoordinator = groupMediaDownloadCoordinator,
+       _beginGroupMediaReceiveCriticalTask = beginGroupMediaReceiveCriticalTask,
+       _endGroupMediaReceiveCriticalTask = endGroupMediaReceiveCriticalTask;
 
   Future<DurableNotificationToneLease?>
   _resolveDurableNotificationCoordinator() {
@@ -1168,7 +1217,7 @@ class GroupMessageListener {
         return;
       }
 
-      final result = await handleIncomingGroupMessage(
+      final outcome = await handleIncomingGroupMessageDetailed(
         groupRepo: _groupRepo,
         msgRepo: msgRepo,
         groupId: groupId,
@@ -1191,7 +1240,29 @@ class GroupMessageListener {
         deliverySource: deliverySource,
       );
 
-      if (result != null) {
+      if (outcome is IncomingGroupMessageDuplicateEnriched) {
+        final canonicalMessage = outcome.canonicalMessage;
+        if (_privateMediaAvailability.allowsMediaDerivatives(
+              canonicalMessage.privateMediaPolicy,
+            ) &&
+            _hasAutomaticMediaRecovery) {
+          // A stable duplicate may add media that was absent from the original
+          // delivery. Recover only the IDs this invocation actually committed;
+          // do not replay delivery, notification, unread, reaction, or key-
+          // repair side effects for the canonical message.
+          _trackInFlight(
+            _recoverAutomaticMedia(
+              canonicalMessage,
+              attachmentIds: outcome.persistedAttachmentIds,
+              emitAfterDownload: false,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (outcome is IncomingGroupMessageDelivered) {
+        final result = outcome.message;
         _emitGroupMessage(result);
         // The target message just landed — replay any reactions that arrived
         // before it (INV-R4). This single site serves BOTH live and offline
@@ -1311,11 +1382,15 @@ class GroupMessageListener {
         }
 
         // Fire-and-forget: auto-download media attachments
-        if (_bridge != null &&
-            _mediaAttachmentRepo != null &&
-            _mediaFileManager != null &&
-            persistedAttachments.isNotEmpty) {
-          _autoDownloadMedia(result);
+        if (_hasAutomaticMediaRecovery && persistedAttachments.isNotEmpty) {
+          _trackInFlight(
+            _recoverAutomaticMedia(
+              result,
+              attachmentIds: persistedAttachments.map(
+                (attachment) => attachment.id,
+              ),
+            ),
+          );
         }
       }
     } catch (e) {
@@ -1964,11 +2039,243 @@ class GroupMessageListener {
     return deleted;
   }
 
+  /// A shared coordinator owns its transfer dependencies. The legacy path
+  /// remains available only when all of its local collaborators are present.
+  bool get _hasAutomaticMediaRecovery =>
+      _groupMediaDownloadCoordinator != null ||
+      (_bridge != null &&
+          _mediaAttachmentRepo != null &&
+          _mediaFileManager != null);
+
+  /// Reserves the same receive critical-task lease used by an eligible
+  /// background media transfer before the app leaves the foreground.
+  ///
+  /// The reservation is tracked as in-flight listener work, so [stop] waits
+  /// for its idempotent release just as it waits for the transfer participant.
+  Future<GroupMediaReceiveCriticalTaskReservation>
+  reserveGroupMediaReceiveCriticalTaskForForegroundHandoff() async {
+    if (_isStopping || _isDisposed) {
+      throw StateError(
+        'cannot reserve a group-media receive critical task while stopping',
+      );
+    }
+
+    final reservationReleased = Completer<void>();
+    _trackInFlight(reservationReleased.future);
+    try {
+      final lease = await _acquireReceiveCriticalTaskLease();
+      if (lease.taskId == null) {
+        await _releaseReceiveCriticalTaskLease(lease);
+        throw StateError(
+          'native group-media receive critical-task reservation was refused',
+        );
+      }
+      if (_isStopping || _isDisposed) {
+        await _releaseReceiveCriticalTaskLease(lease);
+        throw StateError(
+          'group-media receive critical-task reservation stopped during acquisition',
+        );
+      }
+
+      return GroupMediaReceiveCriticalTaskReservation._(() async {
+        try {
+          await _releaseReceiveCriticalTaskLease(lease);
+        } finally {
+          if (!reservationReleased.isCompleted) {
+            reservationReleased.complete();
+          }
+        }
+      });
+    } catch (_) {
+      if (!reservationReleased.isCompleted) {
+        reservationReleased.complete();
+      }
+      rethrow;
+    }
+  }
+
   /// Downloads media attachments for an incoming group message.
   ///
   /// Runs fire-and-forget after the message is emitted. On completion,
   /// re-emits the message so the UI can update with resolved local paths.
-  Future<void> _autoDownloadMedia(GroupMessage message) async {
+  Future<void> _recoverAutomaticMedia(
+    GroupMessage message, {
+    required Iterable<String> attachmentIds,
+    bool emitAfterDownload = true,
+  }) async {
+    final exactAttachmentIds = attachmentIds
+        .where((attachmentId) => attachmentId.isNotEmpty)
+        .toSet();
+    _GroupMediaReceiveCriticalTaskLease? criticalTaskLease;
+    if (_shouldOwnReceiveCriticalTask(message, exactAttachmentIds)) {
+      criticalTaskLease = await _acquireReceiveCriticalTaskLease();
+    }
+    try {
+      final coordinator = _groupMediaDownloadCoordinator;
+      if (coordinator == null) {
+        await _autoDownloadMedia(
+          message,
+          attachmentIds: exactAttachmentIds,
+          emitAfterDownload: emitAfterDownload,
+        );
+        return;
+      }
+
+      final recovery = await coordinator.recoverAttachments(
+        groupId: message.groupId,
+        attachmentIds: exactAttachmentIds,
+      );
+      if (emitAfterDownload &&
+          recovery.affectedMessageIds.contains(message.id)) {
+        _emitGroupMessage(message);
+      }
+    } finally {
+      if (criticalTaskLease != null) {
+        await _releaseReceiveCriticalTaskLease(criticalTaskLease);
+      }
+    }
+  }
+
+  bool _shouldOwnReceiveCriticalTask(
+    GroupMessage message,
+    Set<String> attachmentIds,
+  ) {
+    if (attachmentIds.isEmpty ||
+        !message.isIncoming ||
+        !message.privateMediaPolicy.isOrdinary) {
+      return false;
+    }
+
+    // An explicit foreground-to-background handoff reservation is stronger
+    // than a potentially stale Flutter lifecycle snapshot. Eligible incoming
+    // work must join the already-live native task instead of letting the
+    // reservation release end it underneath the transfer.
+    if (_groupMediaReceiveCriticalTaskLease != null ||
+        _groupMediaReceiveCriticalTaskLeaseAcquisition != null) {
+      return true;
+    }
+
+    final lifecycle = _getAppLifecycleState;
+    if (lifecycle == null) return false;
+    try {
+      return lifecycle() != AppLifecycleState.resumed;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<String?> _beginReceiveCriticalTask() async {
+    try {
+      final injected = _beginGroupMediaReceiveCriticalTask;
+      final taskId = injected != null
+          ? await injected()
+          : _bridge == null
+          ? null
+          : await callBgBegin(_bridge);
+      final normalizedTaskId = taskId?.trim();
+      return normalizedTaskId == null || normalizedTaskId.isEmpty
+          ? null
+          : normalizedTaskId;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_RECEIVE_CRITICAL_TASK_BEGIN_FAILED',
+        details: {'error': error.toString()},
+      );
+      return null;
+    }
+  }
+
+  Future<_GroupMediaReceiveCriticalTaskLease>
+  _acquireReceiveCriticalTaskLease() async {
+    while (true) {
+      final existing = _groupMediaReceiveCriticalTaskLease;
+      if (existing != null) {
+        existing.participants += 1;
+        return existing;
+      }
+
+      // Never overlap a new native task with the terminal end of the prior
+      // listener-owned lease.
+      final ending = _groupMediaReceiveCriticalTaskLeaseEnd;
+      if (ending != null) {
+        await ending;
+        continue;
+      }
+
+      var acquisition = _groupMediaReceiveCriticalTaskLeaseAcquisition;
+      if (acquisition == null) {
+        late final Future<_GroupMediaReceiveCriticalTaskLease> tracked;
+        tracked = _beginReceiveCriticalTask()
+            .then((taskId) {
+              final lease = _GroupMediaReceiveCriticalTaskLease(taskId);
+              _groupMediaReceiveCriticalTaskLease = lease;
+              return lease;
+            })
+            .whenComplete(() {
+              if (identical(
+                _groupMediaReceiveCriticalTaskLeaseAcquisition,
+                tracked,
+              )) {
+                _groupMediaReceiveCriticalTaskLeaseAcquisition = null;
+              }
+            });
+        _groupMediaReceiveCriticalTaskLeaseAcquisition = tracked;
+        acquisition = tracked;
+      }
+      final acquired = await acquisition;
+      acquired.participants += 1;
+      return acquired;
+    }
+  }
+
+  Future<void> _releaseReceiveCriticalTaskLease(
+    _GroupMediaReceiveCriticalTaskLease lease,
+  ) async {
+    if (lease.participants <= 0) {
+      throw StateError('group-media receive critical-task lease underflow');
+    }
+    lease.participants -= 1;
+    if (lease.participants != 0 ||
+        !identical(_groupMediaReceiveCriticalTaskLease, lease)) {
+      return;
+    }
+
+    _groupMediaReceiveCriticalTaskLease = null;
+    late final Future<void> tracked;
+    tracked = _endReceiveCriticalTask(lease.taskId).whenComplete(() {
+      if (identical(_groupMediaReceiveCriticalTaskLeaseEnd, tracked)) {
+        _groupMediaReceiveCriticalTaskLeaseEnd = null;
+      }
+    });
+    _groupMediaReceiveCriticalTaskLeaseEnd = tracked;
+    await tracked;
+  }
+
+  Future<void> _endReceiveCriticalTask(String? taskId) async {
+    if (taskId == null) return;
+    try {
+      final injected = _endGroupMediaReceiveCriticalTask;
+      if (injected != null) {
+        await injected(taskId);
+      } else {
+        final bridge = _bridge;
+        if (bridge != null) await callBgEnd(bridge, taskId);
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_RECEIVE_CRITICAL_TASK_END_FAILED',
+        details: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<void> _autoDownloadMedia(
+    GroupMessage message, {
+    Set<String>? attachmentIds,
+    bool emitAfterDownload = true,
+  }) async {
     try {
       final bridge = _bridge;
       final mediaAttachmentRepo = _mediaAttachmentRepo;
@@ -1986,6 +2293,9 @@ class GroupMessageListener {
       if (attachments.isEmpty) return;
 
       for (final attachment in attachments) {
+        if (attachmentIds != null && !attachmentIds.contains(attachment.id)) {
+          continue;
+        }
         if (attachment.downloadStatus != 'pending') continue;
         try {
           await downloadMedia(
@@ -2012,8 +2322,10 @@ class GroupMessageListener {
         }
       }
 
-      // Re-emit so the UI refreshes with downloaded media
-      _emitGroupMessage(message);
+      if (emitAfterDownload) {
+        // Re-emit so the UI refreshes with downloaded media.
+        _emitGroupMessage(message);
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

@@ -36,6 +36,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -92,6 +93,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
@@ -133,6 +135,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.groupInviteDeliveryAttemptRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.groupInviteListener,
     this.groupConversationTracker,
     this.introductionRepository,
@@ -283,6 +286,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             groupReactionReplayOutboxRepository:
                 widget.groupReactionReplayOutboxRepository,
             groupMessageListener: widget.groupMessageListener,
+            groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
@@ -624,6 +628,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           groupReactionReplayOutboxRepository:
               widget.groupReactionReplayOutboxRepository,
           groupMessageListener: widget.groupMessageListener,
+          groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
           groupInviteListener: widget.groupInviteListener,
           groupConversationTracker: widget.groupConversationTracker,
           introductionRepository: widget.introductionRepository,

@@ -120,6 +120,10 @@ final class SimsProcessExecutor {
     String executable = row.command.first;
     File? buildViolationLog;
     if (!row.declaredBuildException) {
+      final absoluteXcodebuildBypass = _absoluteXcodebuildBypass(row.command);
+      if (absoluteXcodebuildBypass != null) {
+        return _internalBuildGuardFailure(row, absoluteXcodebuildBypass);
+      }
       final guard = _installBuildGuard(row, childEnvironment);
       if (guard.error != null) {
         return _internalBlocked(row, SimsBlockerKind.harness, guard.error!);
@@ -256,6 +260,30 @@ final class SimsProcessExecutor {
     );
   }
 
+  SimsCommandExecution _internalBuildGuardFailure(
+    CapabilitySpec row,
+    String detail,
+  ) {
+    final logPath = _writeLog(
+      row,
+      stdoutText: '',
+      stderrText: detail,
+      exitCode: 91,
+    );
+    return SimsCommandExecution(
+      verdict: SimsVerdict.fail(
+        row.id,
+        assertionsAttempted: 1,
+        exitCode: 91,
+        blocker: SimsBlockerKind.harness,
+        detail: detail,
+      ),
+      stdoutText: '',
+      stderrText: detail,
+      logPath: logPath,
+    );
+  }
+
   String _writeLog(
     CapabilitySpec row, {
     required String stdoutText,
@@ -275,6 +303,67 @@ final class SimsProcessExecutor {
     return file.path;
   }
 }
+
+String? _absoluteXcodebuildBypass(List<String> command) {
+  if (command.isEmpty) return null;
+  final directExecutable = command.first.replaceAll('\\', '/').split('/').last;
+  final start = directExecutable == 'xcodebuild' ? 1 : 0;
+  for (var index = start; index < command.length; index += 1) {
+    if (_containsAbsoluteXcodebuild(command[index])) {
+      return 'Undeclared child build command rejected: absolute xcodebuild '
+          'paths may not bypass the Sims build guard.';
+    }
+  }
+
+  final visited = <String>{};
+  for (final argument in command) {
+    if (!RegExp(r'\.(?:dart|sh|py)$').hasMatch(argument)) continue;
+    final source = File(argument);
+    if (_sourceContainsAbsoluteXcodebuild(source, visited)) {
+      return 'Undeclared child build command rejected: an absolute xcodebuild '
+          'path is embedded in the guarded runner source.';
+    }
+  }
+  return null;
+}
+
+bool _sourceContainsAbsoluteXcodebuild(File source, Set<String> visited) {
+  if (!source.existsSync()) return false;
+  late final String canonicalPath;
+  try {
+    canonicalPath = source.resolveSymbolicLinksSync();
+  } on FileSystemException {
+    return false;
+  }
+  if (!visited.add(canonicalPath)) return false;
+  final canonical = File(canonicalPath);
+  if (canonical.lengthSync() > 2 * 1024 * 1024) return false;
+  final contents = canonical.readAsStringSync();
+  if (_containsAbsoluteXcodebuild(contents)) return true;
+  if (!canonical.path.endsWith('.dart')) return false;
+
+  final importPattern = RegExp(
+    r'''^\s*(?:import|export|part)\s+['"]([^'"]+)['"]''',
+    multiLine: true,
+  );
+  for (final match in importPattern.allMatches(contents)) {
+    final relative = match.group(1)!;
+    if (relative.startsWith('dart:') ||
+        relative.startsWith('package:') ||
+        relative.contains('://')) {
+      continue;
+    }
+    final imported = File(
+      '${canonical.parent.path}${Platform.pathSeparator}$relative',
+    );
+    if (_sourceContainsAbsoluteXcodebuild(imported, visited)) return true;
+  }
+  return false;
+}
+
+bool _containsAbsoluteXcodebuild(String value) => RegExp(
+  r'''(?:^|[\s'"=])/(?:[^\s'"]+/)*xcodebuild(?:$|[\s'"])''',
+).hasMatch(value);
 
 final class _BuildGuardInstallation {
   const _BuildGuardInstallation._({this.path, this.log, this.error});
@@ -319,17 +408,56 @@ exec $quotedExecutable "\$@"
 ''',
     'xcodebuild' =>
       '''#!/bin/sh
-for arg in "\$@"; do
-  case "\$arg" in
-    build|archive)
-      printf 'xcodebuild' >>"\${SIMS_BUILD_GUARD_LOG:?}"
-      printf ' %s' "\$@" >>"\$SIMS_BUILD_GUARD_LOG"
-      printf '\n' >>"\$SIMS_BUILD_GUARD_LOG"
-      exit 91
-      ;;
+xcode_allowed=0
+if [ "\${SIMS_CHILD_BUILDS_FORBIDDEN-}" = "1" ] &&
+   [ "\$#" -eq 10 ] &&
+   [ "\$1" = "test-without-building" ] &&
+   [ "\$2" = "-xctestrun" ] &&
+   [ "\$4" = "-destination" ] &&
+   [ "\$6" = "-parallel-testing-enabled" ] &&
+   [ "\$7" = "NO" ] &&
+   [ "\$9" = "-resultBundlePath" ]; then
+  case "\$3" in
+    /*.xctestrun) [ -f "\$3" ] && xcode_allowed=1 ;;
   esac
-done
-exec $quotedExecutable "\$@"
+  case "\$5" in
+    platform=iOS,id=*)
+      xcode_device="\${5#platform=iOS,id=}"
+      case "\$xcode_device" in
+        ''|*[!A-Za-z0-9._:-]*) xcode_allowed=0 ;;
+      esac
+      ;;
+    *) xcode_allowed=0 ;;
+  esac
+  case "\$8" in
+    -only-testing:RunnerUITests/*/*)
+      xcode_selector="\${8#-only-testing:RunnerUITests/}"
+      case "\$xcode_selector" in
+        */*/*|*[!A-Za-z0-9_/-]*) xcode_allowed=0 ;;
+      esac
+      xcode_class="\${xcode_selector%%/*}"
+      xcode_method="\${xcode_selector#*/}"
+      case "\$xcode_class" in
+        ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) xcode_allowed=0 ;;
+      esac
+      case "\$xcode_method" in
+        ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) xcode_allowed=0 ;;
+      esac
+      ;;
+    *) xcode_allowed=0 ;;
+  esac
+  case "\${10}" in
+    /*.xcresult) ;;
+    *) xcode_allowed=0 ;;
+  esac
+fi
+if [ "\$xcode_allowed" -eq 1 ]; then
+  exec $quotedExecutable "\$@"
+fi
+printf 'xcodebuild' >>"\${SIMS_BUILD_GUARD_LOG:?}"
+printf ' %s' "\$@" >>"\$SIMS_BUILD_GUARD_LOG"
+printf '\n' >>"\$SIMS_BUILD_GUARD_LOG"
+exit 91
 ''',
     _ => throw StateError('Unsupported guarded tool: $tool'),
   };

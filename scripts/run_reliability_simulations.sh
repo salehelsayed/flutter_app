@@ -356,6 +356,13 @@ while IFS=$'\t' read -r kind path scenario; do
     printf '%s\t%s\tinvite_send_latency\n' "$kind" "$path"
     continue
   fi
+  if [ "$path" = "integration_test/scripts/run_group_media_send_reliability.dart" ]; then
+    # Plan 269 exposes both target-bounded rows independently while the typed
+    # manifest owns only the prepared Android production-critical capability.
+    printf '%s\t%s\tgroup_media_foreground_retry_acl_roundtrip\n' "$kind" "$path"
+    printf '%s\t%s\tgroup_media_ios_receiver_background_recovery\n' "$kind" "$path"
+    continue
+  fi
   printf '%s\t%s\t%s\n' "$kind" "$path" "$scenario"
 done <"$raw_plan_file" >"$plan_file"
 
@@ -513,6 +520,7 @@ path_needs_multi_device() {
     integration_test/scripts/run_b1b_sibling_device_convergence.dart|\
     integration_test/scripts/run_group_multi_device_real.dart|\
     integration_test/scripts/run_invite_reliability_multi_device.dart|\
+    integration_test/scripts/run_group_media_send_reliability.dart|\
     integration_test/scripts/run_notification_open_during_other_chat.dart|\
     integration_test/scripts/run_notification_sound_smoke.dart|\
     integration_test/scripts/run_routing_smoke_e2e.dart)
@@ -564,7 +572,9 @@ requires_explicit_multi_device_ids() {
   local scenario="${2:-}"
 
   [ "$path:$scenario" = \
-    "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency" ]
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency" ] ||
+    [ "$path" = \
+      "integration_test/scripts/run_group_media_send_reliability.dart" ]
 }
 
 print_device_arg_for_path() {

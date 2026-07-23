@@ -63,6 +63,7 @@ import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -165,6 +166,7 @@ class FeedWired extends StatefulWidget {
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteListener? groupInviteListener;
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
@@ -211,6 +213,7 @@ class FeedWired extends StatefulWidget {
     this.groupInviteDeliveryAttemptRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.groupInviteListener,
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
@@ -1893,6 +1896,8 @@ class _FeedWiredState extends State<FeedWired>
               groupRepo: groupRepo,
               msgRepo: msgRepo,
               groupMessageListener: listener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
@@ -2616,6 +2621,7 @@ class _FeedWiredState extends State<FeedWired>
       groupReactionReplayOutboxRepository:
           widget.groupReactionReplayOutboxRepository,
       groupMessageListener: widget.groupMessageListener,
+      groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
       groupInviteListener: widget.groupInviteListener,
       waitForGroupMembershipUpdateIdle: widget.waitForGroupMembershipUpdateIdle,
       groupConversationTracker: widget.groupConversationTracker,

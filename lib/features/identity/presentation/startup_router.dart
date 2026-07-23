@@ -15,6 +15,7 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -175,6 +176,7 @@ class StartupRouter extends StatefulWidget {
 
   /// The group message listener for incoming group messages.
   final GroupMessageListener? groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
 
   /// Durable group-exit authority used by cold-start rejoin and recovery.
   final Future<bool> Function(String groupId)? canRejoinForExitIntent;
@@ -203,6 +205,10 @@ class StartupRouter extends StatefulWidget {
   final ShareIntentService? shareIntentService;
   final Future<void>? initialShareIntentCapture;
   final Future<void> Function()? ensureRuntimeServicesReady;
+
+  /// Dedicated-profile seam for replacing only the P2P node-start operation.
+  /// Normal application startup continues to use [startP2PNode].
+  final Future<StartNodeResult> Function()? startP2PNodeOverride;
 
   /// FDC-07: cold-start hook that starts LAN mDNS discovery early (ahead of the
   /// warmBackground inbox-drain body) so a same-WiFi peer can populate the LAN
@@ -278,6 +284,7 @@ class StartupRouter extends StatefulWidget {
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.canRejoinForExitIntent,
     this.processExitIntent,
     this.groupExitIntentRecovery,
@@ -290,6 +297,7 @@ class StartupRouter extends StatefulWidget {
     this.shareIntentService,
     this.initialShareIntentCapture,
     this.ensureRuntimeServicesReady,
+    this.startP2PNodeOverride,
     this.startEarlyLocalDiscovery,
     required this.appShellController,
     required this.pendingPostTargetStore,
@@ -412,6 +420,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupReactionReplayOutboxRepository:
                 widget.groupReactionReplayOutboxRepository,
             groupMessageListener: widget.groupMessageListener,
+            groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
             groupInviteListener: widget.groupInviteListener,
             waitForGroupMembershipUpdateIdle:
                 widget.waitForGroupMembershipUpdateIdle,
@@ -538,6 +547,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupRepository: widget.groupRepository,
             groupMessageRepository: widget.groupMessageRepository,
             groupMessageListener: widget.groupMessageListener,
+            groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
@@ -610,6 +620,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       groupReactionReplayOutboxRepository:
                           widget.groupReactionReplayOutboxRepository,
                       groupMessageListener: widget.groupMessageListener,
+                      groupMediaDownloadCoordinator:
+                          widget.groupMediaDownloadCoordinator,
                       groupInviteListener: widget.groupInviteListener,
                       groupConversationTracker: widget.groupConversationTracker,
                       introductionRepository: widget.introductionRepository,
@@ -683,15 +695,19 @@ class _StartupRouterState extends State<StartupRouter> {
     StartupTiming.instance.mark('p2p_startup_begin');
     emitFlowEvent(layer: 'FL', event: 'P2P_STARTUP_BEGIN', details: {});
 
-    final result = await startP2PNode(
-      identityRepo: widget.repository,
-      p2pService: widget.p2pService,
-      accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
-        authorityRepository: SecureKeyStoreAccountMigrationAuthorityRepository(
-          secureKeyStore: widget.secureKeyStore,
-        ),
-      ).allowsAccountNetworkSideEffects,
-    );
+    final startP2PNodeOverride = widget.startP2PNodeOverride;
+    final result = startP2PNodeOverride != null
+        ? await startP2PNodeOverride()
+        : await startP2PNode(
+            identityRepo: widget.repository,
+            p2pService: widget.p2pService,
+            accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
+              authorityRepository:
+                  SecureKeyStoreAccountMigrationAuthorityRepository(
+                    secureKeyStore: widget.secureKeyStore,
+                  ),
+            ).allowsAccountNetworkSideEffects,
+          );
 
     emitFlowEvent(
       layer: 'FL',
@@ -1047,6 +1063,7 @@ class _StartupRouterState extends State<StartupRouter> {
     GroupRepository? groupRepository,
     GroupMessageRepository? groupMessageRepository,
     GroupMessageListener? groupMessageListener,
+    GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
     GroupInviteListener? groupInviteListener,
     ActiveConversationTracker? groupConversationTracker,
     IntroductionRepository? introductionRepository,
@@ -1079,6 +1096,7 @@ class _StartupRouterState extends State<StartupRouter> {
         groupInviteDeliveryAttemptRepository:
             widget.groupInviteDeliveryAttemptRepository,
         groupMessageListener: groupMessageListener,
+        groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
         groupInviteListener: groupInviteListener,
         groupConversationTracker: groupConversationTracker,
         introductionRepository: introductionRepository,
@@ -1241,6 +1259,7 @@ class _StartupRouterState extends State<StartupRouter> {
       shareIntentService: widget.shareIntentService,
       initialShareIntentCapture: widget.initialShareIntentCapture,
       ensureRuntimeServicesReady: widget.ensureRuntimeServicesReady,
+      startP2PNodeOverride: widget.startP2PNodeOverride,
       startEarlyLocalDiscovery: widget.startEarlyLocalDiscovery,
       appShellController: widget.appShellController,
       pendingPostTargetStore: widget.pendingPostTargetStore,

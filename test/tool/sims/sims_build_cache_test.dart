@@ -107,27 +107,63 @@ void main() {
     );
   });
 
-  test('Android E2E artifacts attest the selected relay boundary', () {
+  test('device E2E artifacts attest only a configured relay boundary', () {
     final manifest = SimsManifest.loadSync(
       File('tool/sims/critical_features.json'),
     );
-    final profile = manifest.buildProfileById('android.e2e.main')!;
     const stagingRelays =
         '/dns/staging.example/udp/4002/quic-v1/p2p/12D3KooWFixture';
 
-    final configured = effectiveSimsCompileDefines(
-      profile,
-      environment: const <String, String>{
-        'MKNOON_RELAY_ADDRESSES': stagingRelays,
-      },
-    );
-    expect(configured['MKNOON_RELAY_ADDRESSES'], stagingRelays);
+    for (final profileId in const <String>[
+      'android.e2e.main',
+      'ios.device.production',
+      'ios.device.group_media_269',
+    ]) {
+      final profile = manifest.buildProfileById(profileId)!;
+      final configured = effectiveSimsCompileDefines(
+        profile,
+        environment: const <String, String>{
+          'MKNOON_RELAY_ADDRESSES': stagingRelays,
+        },
+      );
+      expect(
+        configured['MKNOON_RELAY_ADDRESSES'],
+        stagingRelays,
+        reason: '$profileId must be bound to the selected real relay',
+      );
+      expect(configured['SIMS_BUILD_PROFILE_ID'], profileId);
 
-    final unconfigured = effectiveSimsCompileDefines(
-      profile,
-      environment: const <String, String>{},
+      final unconfigured = effectiveSimsCompileDefines(
+        profile,
+        environment: const <String, String>{},
+      );
+      expect(
+        unconfigured,
+        isNot(contains('MKNOON_RELAY_ADDRESSES')),
+        reason: '$profileId must not embed an absent relay boundary',
+      );
+      expect(unconfigured['SIMS_BUILD_PROFILE_ID'], profileId);
+      expect(
+        effectiveSimsCompileDefines(
+          profile,
+          environment: const <String, String>{'MKNOON_RELAY_ADDRESSES': '   '},
+        ),
+        isNot(contains('MKNOON_RELAY_ADDRESSES')),
+      );
+    }
+
+    final groupMediaIos = manifest.buildProfileById(
+      'ios.device.group_media_269',
+    )!;
+    expect(
+      effectiveSimsApplicationId(
+        groupMediaIos,
+        environment: const <String, String>{
+          'SIMS_APP_ID': 'com.example.must-not-override',
+        },
+      ),
+      'com.mknoon.sims.groupmedia269',
     );
-    expect(unconfigured, isNot(contains('MKNOON_RELAY_ADDRESSES')));
   });
 
   test(

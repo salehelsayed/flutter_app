@@ -25,6 +25,7 @@ import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -55,6 +56,7 @@ class GroupListWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final Bridge bridge;
   final IdentityRepository identityRepo;
@@ -88,6 +90,7 @@ class GroupListWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.inviteDeliveryAttemptRepo,
     required this.bridge,
     required this.identityRepo,
@@ -336,6 +339,8 @@ class _GroupListWiredState extends State<GroupListWired>
               groupRepo: widget.groupRepo,
               msgRepo: widget.msgRepo,
               groupMessageListener: widget.groupMessageListener,
+              groupMediaDownloadCoordinator:
+                  widget.groupMediaDownloadCoordinator,
               openAnnouncementSenderConversation: null,
               inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
               bridge: widget.bridge,

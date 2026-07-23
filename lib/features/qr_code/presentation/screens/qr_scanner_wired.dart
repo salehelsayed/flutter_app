@@ -26,6 +26,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -83,6 +84,7 @@ class QRScannerWired extends StatelessWidget {
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final GroupInviteListener? groupInviteListener;
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
@@ -124,6 +126,7 @@ class QRScannerWired extends StatelessWidget {
     this.groupExitDiagnosticRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.groupInviteListener,
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
@@ -412,6 +415,8 @@ class QRScannerWired extends StatelessWidget {
                         groupReactionReplayOutboxRepository:
                             groupReactionReplayOutboxRepository,
                         groupMessageListener: groupMessageListener,
+                        groupMediaDownloadCoordinator:
+                            groupMediaDownloadCoordinator,
                         groupInviteListener: groupInviteListener,
                         waitForGroupMembershipUpdateIdle:
                             waitForGroupMembershipUpdateIdle,

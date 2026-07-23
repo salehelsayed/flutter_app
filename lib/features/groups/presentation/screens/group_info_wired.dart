@@ -29,8 +29,10 @@ import 'package:flutter_app/features/groups/application/dissolve_group_use_case.
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_membership_effect_authority.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
@@ -42,6 +44,7 @@ import 'package:flutter_app/features/groups/application/resend_group_invite_use_
 import 'package:flutter_app/features/groups/application/revoke_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
+import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -71,6 +74,28 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+class _GroupInfoAvatarUploadPhase {
+  const _GroupInfoAvatarUploadPhase({required this.authority, this.uploaded});
+
+  final GroupMembershipEffectAuthority authority;
+  final GroupAvatarUpload? uploaded;
+}
+
+bool _sameGroupMetadataSnapshot(GroupModel left, GroupModel right) {
+  bool sameInstant(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return a == null && b == null;
+    return a.toUtc().isAtSameMomentAs(b.toUtc());
+  }
+
+  return left.id == right.id &&
+      left.name == right.name &&
+      left.description == right.description &&
+      left.avatarBlobId == right.avatarBlobId &&
+      left.avatarMime == right.avatarMime &&
+      left.avatarPath == right.avatarPath &&
+      sameInstant(left.lastMetadataEventAt, right.lastMetadataEventAt);
+}
 
 /// Wired widget connecting GroupInfoScreen to business logic.
 class GroupInfoWired extends StatefulWidget {
@@ -1758,7 +1783,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     // Snapshot for an honest rollback: if the local metadata is persisted but
     // the broadcast does not actually leave this device, we revert rather than
     // claim success while peers received nothing.
-    final preEditGroup = _group;
+    GroupModel? preEditGroup;
+    GroupModel? committedGroupForRecovery;
+    GroupMembershipEffectAuthority? editAuthorityForRecovery;
     var metadataPersisted = false;
     String? committedTimelineMessageId;
     // Captured once the signed broadcast is built, so a post-persist failure can
@@ -1779,9 +1806,79 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (identity == null) {
         throw StateError(noIdentityMessage);
       }
+      final groupId = _group.id;
+      final guardedUpload =
+          await runSelfRemovedGroupLifecycleLeaf<_GroupInfoAvatarUploadPhase?>(
+            groupRepo: widget.groupRepo,
+            groupId: groupId,
+            action: (currentGroup) async {
+              if (currentGroup.isDissolved ||
+                  currentGroup.myRole != GroupRole.admin) {
+                return null;
+              }
+              final members = await widget.groupRepo.getMembers(groupId);
+              final latestKey = await widget.groupRepo.getLatestKey(groupId);
+              final authority = GroupMembershipEffectAuthority(
+                group: currentGroup,
+                members: members,
+                latestKeyGeneration: latestKey?.keyGeneration,
+              );
+              final ownMember = authority.singleMember(identity.peerId);
+              if (ownMember == null ||
+                  !ownMember.permissions.allows(
+                    GroupMemberPermission.editMetadata,
+                    ownMember.role,
+                  )) {
+                return null;
+              }
+              if ((isRemovingAvatar || isReplacingAvatar) &&
+                  isGroupRecoveryInProgress()) {
+                throw StateError(groupRecoveryPendingError);
+              }
+              if (!isReplacingAvatar) {
+                return _GroupInfoAvatarUploadPhase(authority: authority);
+              }
+              final uploaded = await widget.uploadGroupAvatarFn(
+                bridge: widget.bridge,
+                localFilePath: edit.preparedAvatarPath!,
+                groupId: groupId,
+                allowedPeers: groupMediaAllowedPeersForMembers(members),
+                mime: 'image/jpeg',
+              );
+              if (uploaded == null) {
+                throw StateError(uploadPhotoFailedMessage);
+              }
+              return _GroupInfoAvatarUploadPhase(
+                authority: authority,
+                uploaded: uploaded,
+              );
+            },
+          );
+      final uploadPhase = guardedUpload.value;
+      if (!guardedUpload.didRun || uploadPhase == null) {
+        throw StateError(detailsUpdateFailedMessage);
+      }
+      final editAuthority = uploadPhase.authority;
+      editAuthorityForRecovery = editAuthority;
+      preEditGroup = editAuthority.group;
+      Future<bool> currentEditAuthorityMatches(GroupModel current) async {
+        if (!_sameGroupMetadataSnapshot(current, editAuthority.group)) {
+          return false;
+        }
+        final currentMembers = await widget.groupRepo.getMembers(groupId);
+        final currentLatestKey = await widget.groupRepo.getLatestKey(groupId);
+        return editAuthority.matches(
+          GroupMembershipEffectAuthority(
+            group: current,
+            members: currentMembers,
+            latestKeyGeneration: currentLatestKey?.keyGeneration,
+          ),
+        );
+      }
+
       final senderBinding = await resolveGroupSenderDeviceBinding(
         groupRepo: widget.groupRepo,
-        groupId: _group.id,
+        groupId: groupId,
         senderPeerId: identity.peerId,
         preferredDeviceId: _currentSenderDeviceId,
         preferredTransportPeerId: _currentSenderDeviceId,
@@ -1789,54 +1886,47 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       );
       final preTransitionStateHash = await buildGroupTransitionStateHash(
         widget.groupRepo,
-        _group.id,
+        groupId,
       );
 
-      final members = await widget.groupRepo.getMembers(_group.id);
-      final allowedPeers = members.isEmpty
-          ? <String>[identity.peerId]
-          : groupMediaAllowedPeersForMembers(members);
-
-      String? avatarBlobId = _group.avatarBlobId;
-      String? avatarMime = _group.avatarMime;
-      String? avatarPath = _group.avatarPath;
+      String? avatarBlobId = editAuthority.group.avatarBlobId;
+      String? avatarMime = editAuthority.group.avatarMime;
+      String? avatarPath = editAuthority.group.avatarPath;
       String? preparedReplacementAvatarPath;
-
-      if ((isRemovingAvatar || isReplacingAvatar) &&
-          isGroupRecoveryInProgress()) {
-        throw StateError(groupRecoveryPendingError);
-      }
-
       if (isRemovingAvatar) {
         avatarBlobId = null;
         avatarMime = null;
         avatarPath = null;
       }
-
       if (isReplacingAvatar) {
-        final uploaded = await widget.uploadGroupAvatarFn(
-          bridge: widget.bridge,
-          localFilePath: edit.preparedAvatarPath!,
-          groupId: _group.id,
-          allowedPeers: allowedPeers,
-          mime: 'image/jpeg',
-        );
-        if (uploaded == null) {
-          throw StateError(uploadPhotoFailedMessage);
-        }
-
+        final uploaded = uploadPhase.uploaded!;
         preparedReplacementAvatarPath = edit.preparedAvatarPath!;
         avatarBlobId = uploaded.id;
         avatarMime = uploaded.mime;
-        avatarPath = groupAvatarRelativePath(_group.id);
+        avatarPath = groupAvatarRelativePath(groupId);
       }
 
       List<GroupMember>? refreshedMembers;
       String? sysText;
 
-      await updateGroupMetadata(
+      final authorityStillCurrent =
+          await runGroupMembershipMutationLocked<bool>(
+            groupId: groupId,
+            action: () async {
+              final current = await widget.groupRepo.getGroup(groupId);
+              return current != null &&
+                  current.isDissolved == false &&
+                  current.selfRemovedAt == null &&
+                  await currentEditAuthorityMatches(current);
+            },
+          );
+      if (!authorityStillCurrent) {
+        throw StateError(detailsUpdateFailedMessage);
+      }
+
+      final committedGroup = await updateGroupMetadata(
         groupRepo: widget.groupRepo,
-        groupId: _group.id,
+        groupId: groupId,
         name: resolvedName,
         description: resolvedDescription,
         avatarBlobId: avatarBlobId,
@@ -1844,13 +1934,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         avatarPath: avatarPath,
         eventAt: changedAt,
         beforePersist: (updatedGroup) async {
-          final membersForConfig = await widget.groupRepo.getMembers(_group.id);
+          final membersForConfig = await widget.groupRepo.getMembers(groupId);
           final groupConfig = buildGroupConfigPayload(
             updatedGroup,
             membersForConfig,
           );
           final actorPayload = buildGroupMetadataActorEventPayload(
-            groupId: _group.id,
+            groupId: groupId,
             updatedAt: changedAt,
             actorPeerId: identity.peerId,
             actorUsername: identity.username,
@@ -1873,7 +1963,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           }
 
           final sourceEventId =
-              'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+              'group_metadata_updated:$groupId:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
           final unsignedPayload = {
             '__sys': 'group_metadata_updated',
             'updatedAt': changedAt.toIso8601String(),
@@ -1887,7 +1977,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           final signedPayload = await signGroupSystemTransitionPayload(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
-            groupId: _group.id,
+            groupId: groupId,
             transitionType: 'group_metadata_updated',
             sourceEventId: sourceEventId,
             eventAt: changedAt,
@@ -1908,14 +1998,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           }
           if (isRemovingAvatar) {
             await deleteGroupAvatar(
-              storedPath: _group.avatarPath,
-              groupId: _group.id,
+              storedPath: editAuthority.group.avatarPath,
+              groupId: groupId,
             );
           }
           final replacementPath = preparedReplacementAvatarPath;
           if (replacementPath != null) {
             await commitPreparedGroupAvatar(
-              groupId: _group.id,
+              groupId: groupId,
               sourcePath: replacementPath,
               avatarNormalizer: AvatarNormalizationHelper(
                 imageProcessor: widget.imageProcessor,
@@ -1926,7 +2016,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           refreshedMembers = membersForConfig;
           sysText = jsonEncode(signedPayload);
         },
+        currentAuthorityCheck: currentEditAuthorityMatches,
       );
+      committedGroupForRecovery = committedGroup;
 
       // The local DB now holds the new metadata (and the avatar file is
       // committed); from here a broadcast failure must roll this back.
@@ -1938,7 +2030,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         throw StateError(signMetadataFailedMessage);
       }
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
-        groupId: _group.id,
+        groupId: groupId,
         senderId: identity.peerId,
         senderUsername: identity.username,
         eventAt: changedAt,
@@ -1950,7 +2042,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       }
 
       final sourceMessageId =
-          'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+          'group_metadata_updated:$groupId:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
       final recipientPeerIds = signedMembers
           .where((member) => member.peerId != identity.peerId)
           .map((member) => member.peerId)
@@ -1961,20 +2053,48 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       committedSourceMessageId = sourceMessageId;
       committedRecipientPeerIds = recipientPeerIds;
 
-      final publishResult = await callGroupPublish(
-        widget.bridge,
-        groupId: _group.id,
-        text: signedSysText,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username,
-        senderDeviceId: senderBinding.deviceId,
-        senderTransportPeerId: senderBinding.transportPeerId,
-        senderDevicePublicKey: senderBinding.devicePublicKey,
-        senderKeyPackageId: senderBinding.keyPackageId,
-        messageId: sourceMessageId,
-      );
+      final guardedPublish =
+          await runSelfRemovedGroupLifecycleLeaf<Map<String, dynamic>?>(
+            groupRepo: widget.groupRepo,
+            groupId: groupId,
+            action: (currentGroup) async {
+              if (currentGroup.isDissolved ||
+                  !_sameGroupMetadataSnapshot(currentGroup, committedGroup)) {
+                return null;
+              }
+              final currentMembers = await widget.groupRepo.getMembers(groupId);
+              final currentLatestKey = await widget.groupRepo.getLatestKey(
+                groupId,
+              );
+              if (!editAuthority.matches(
+                GroupMembershipEffectAuthority(
+                  group: currentGroup,
+                  members: currentMembers,
+                  latestKeyGeneration: currentLatestKey?.keyGeneration,
+                ),
+              )) {
+                return null;
+              }
+              return callGroupPublish(
+                widget.bridge,
+                groupId: groupId,
+                text: signedSysText,
+                senderPeerId: identity.peerId,
+                senderPublicKey: identity.publicKey,
+                senderPrivateKey: identity.privateKey,
+                senderUsername: identity.username,
+                senderDeviceId: senderBinding.deviceId,
+                senderTransportPeerId: senderBinding.transportPeerId,
+                senderDevicePublicKey: senderBinding.devicePublicKey,
+                senderKeyPackageId: senderBinding.keyPackageId,
+                messageId: sourceMessageId,
+              );
+            },
+          );
+      final publishResult = guardedPublish.value;
+      if (!guardedPublish.didRun || publishResult == null) {
+        throw StateError(detailsUpdateFailedMessage);
+      }
       // [callGroupPublish] returns {ok:false} (e.g. BRIDGE_TIMEOUT) on a soft
       // failure instead of throwing; discarding it previously showed the
       // success snackbar while peers received nothing. Route soft failures
@@ -1990,7 +2110,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
       if (recipientPeerIds.isNotEmpty) {
         final inboxPayload = jsonEncode({
-          'groupId': _group.id,
+          'groupId': groupId,
           'senderId': identity.peerId,
           'senderUsername': identity.username,
           if (senderBinding.deviceId != null)
@@ -2004,7 +2124,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         final replayEnvelope = await buildGroupOfflineReplayEnvelope(
           bridge: widget.bridge,
           groupRepo: widget.groupRepo,
-          groupId: _group.id,
+          groupId: groupId,
           payloadType: groupOfflineReplayPayloadTypeMessage,
           plaintext: inboxPayload,
           senderPeerId: identity.peerId,
@@ -2018,7 +2138,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         );
         await callGroupInboxStore(
           widget.bridge,
-          _group.id,
+          groupId,
           replayEnvelope,
           recipientPeerIds: recipientPeerIds,
           preserveRecipientPeerIds: true,
@@ -2034,7 +2154,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                 return widget.p2pService.sendMessage(peerId, message);
               },
               recipientPeerId: target.deliveryPeerId,
-              groupId: _group.id,
+              groupId: groupId,
               senderPeerId: identity.peerId,
               replayEnvelope: replayEnvelope,
               timestamp: changedAt,
@@ -2050,7 +2170,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         groupRepo: widget.groupRepo,
         inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
         identity: identity,
-        groupId: _group.id,
+        groupId: groupId,
       );
 
       _didMutateGroup = true;
@@ -2069,49 +2189,82 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       // while peers received nothing.
       var enqueuedForRetry = false;
       if (metadataPersisted) {
-        final persisted = await widget.groupRepo.getGroup(_group.id);
-        final persistedMetadataAt = persisted?.lastMetadataEventAt;
-        // Monotonicity guard: never clobber a newer remote metadata that landed
-        // between our persist and this failure.
-        final newerRemoteLanded =
-            persistedMetadataAt != null &&
-            persistedMetadataAt.isAfter(changedAt);
-        final signedBroadcast = committedSysText;
+        await runGroupMembershipMutationLocked<void>(
+          groupId: _group.id,
+          action: () async {
+            final current = await widget.groupRepo.getGroup(_group.id);
+            final expectedAuthority = editAuthorityForRecovery;
+            final expectedCommitted = committedGroupForRecovery;
+            var exactCurrent =
+                current != null &&
+                !current.isDissolved &&
+                current.selfRemovedAt == null &&
+                expectedAuthority != null &&
+                expectedCommitted != null &&
+                _sameGroupMetadataSnapshot(current, expectedCommitted);
+            if (exactCurrent) {
+              final currentMembers = await widget.groupRepo.getMembers(
+                _group.id,
+              );
+              final currentLatestKey = await widget.groupRepo.getLatestKey(
+                _group.id,
+              );
+              exactCurrent = expectedAuthority.matches(
+                GroupMembershipEffectAuthority(
+                  group: current,
+                  members: currentMembers,
+                  latestKeyGeneration: currentLatestKey?.keyGeneration,
+                ),
+              );
+            }
 
-        if (!newerRemoteLanded &&
-            signedBroadcast != null &&
-            hasGroupPendingBroadcastEnqueueSink) {
-          // S2b: keep the local edit and queue the already-signed broadcast for
-          // a re-push on the next rejoin/foreground. Re-uses the original
-          // [changedAt] so a retry can't resurrect stale state.
-          final now = DateTime.now().toUtc();
-          await enqueueGroupPendingBroadcast(
-            GroupPendingBroadcast(
-              id: 'pending_group_broadcast:${_group.id}:$committedSourceMessageId',
-              groupId: _group.id,
-              kind: 'group_metadata_updated',
-              sysText: signedBroadcast,
-              recipientPeerIds: committedRecipientPeerIds,
-              eventAt: changedAt,
-              sourceMessageId: committedSourceMessageId,
-              createdAt: now,
-              updatedAt: now,
-            ),
-          );
-          enqueuedForRetry = true;
-        } else {
-          if (persisted != null && !newerRemoteLanded) {
-            // Restores the GroupModel fields (name/description/avatar*). The
-            // on-disk avatar file committed in beforePersist is NOT restored
-            // here; that residual only affects an avatar-changing edit that also
-            // fails to broadcast and is reconciled on the next successful sync.
-            await widget.groupRepo.updateGroup(preEditGroup);
-          }
-          final timelineId = committedTimelineMessageId;
-          if (timelineId != null) {
-            await widget.msgRepo?.deleteMessage(timelineId);
-          }
-        }
+            final timelineId = committedTimelineMessageId;
+            if (!exactCurrent) {
+              if (timelineId != null) {
+                await widget.msgRepo?.deleteMessage(timelineId);
+              }
+              return;
+            }
+
+            final signedBroadcast = committedSysText;
+            if (signedBroadcast != null &&
+                hasGroupPendingBroadcastEnqueueSink) {
+              final now = DateTime.now().toUtc();
+              await enqueueGroupPendingBroadcast(
+                GroupPendingBroadcast(
+                  id: 'pending_group_broadcast:${_group.id}:$committedSourceMessageId',
+                  groupId: _group.id,
+                  kind: 'group_metadata_updated',
+                  sysText: signedBroadcast,
+                  recipientPeerIds: committedRecipientPeerIds,
+                  eventAt: changedAt,
+                  sourceMessageId: committedSourceMessageId,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+              );
+              enqueuedForRetry = true;
+              return;
+            }
+
+            final rollbackGroup = preEditGroup;
+            if (rollbackGroup != null) {
+              await widget.groupRepo.updateGroup(
+                current!.copyWith(
+                  name: rollbackGroup.name,
+                  description: rollbackGroup.description,
+                  avatarBlobId: rollbackGroup.avatarBlobId,
+                  avatarMime: rollbackGroup.avatarMime,
+                  avatarPath: rollbackGroup.avatarPath,
+                  lastMetadataEventAt: rollbackGroup.lastMetadataEventAt,
+                ),
+              );
+            }
+            if (timelineId != null) {
+              await widget.msgRepo?.deleteMessage(timelineId);
+            }
+          },
+        );
       }
       emitFlowEvent(
         layer: 'FL',

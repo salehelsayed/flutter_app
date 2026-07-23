@@ -283,10 +283,18 @@ Future<bool> dbCompleteGroupUploadRetry(
       return false;
     }
 
+    const locallyOwnedCompletionFields = <String>{
+      'created_at',
+      'thumbnail_hash',
+      'upload_retry_count',
+      'download_retry_count',
+    };
     final completedValues = <String, Object?>{
       for (final field in _groupUploadAttachmentAuthorityFields)
         if (field != 'id' && field != 'message_id' && field != 'owner_lane')
-          field: completedAttachment[field],
+          field: locallyOwnedCompletionFields.contains(field)
+              ? expectedAttachment[field]
+              : completedAttachment[field],
     };
     final count = await txn.update(
       'media_attachments',
@@ -2597,6 +2605,341 @@ Future<int> dbCommitMediaDownloadLocalPath(
   return affected;
 }
 
+Future<int> _dbBeginOrdinaryGroupMediaDownloadExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String expectedDownloadStatus,
+  required String? expectedLocalPath,
+  required bool explicitUserRetry,
+  required String event,
+}) async {
+  final claimableStatuses = <String>[
+    kMediaDownloadStatusPending,
+    kMediaDownloadStatusDownloading,
+    kMediaDownloadStatusFailed,
+    if (explicitUserRetry) kMediaDownloadStatusDownloadFailed,
+    if (explicitUserRetry) kMediaDownloadStatusEvicted,
+  ];
+  final statusPlaceholders = List<String>.filled(
+    claimableStatuses.length,
+    '?',
+  ).join(', ');
+  final retryCeiling = explicitUserRetry
+      ? ''
+      : 'AND COALESCE(download_retry_count, 0) < ? ';
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET download_status = ? '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND download_status = ? '
+    'AND download_status IN ($statusPlaceholders) '
+    '$retryCeiling'
+    'AND ((local_path IS NULL AND ? IS NULL) OR local_path = ?) '
+    'AND EXISTS (SELECT 1 FROM group_messages group_message_parent '
+    'WHERE group_message_parent.id = media_attachments.message_id '
+    'AND group_message_parent.id = ? AND group_message_parent.group_id = ? '
+    'AND group_message_parent.is_incoming = 1 '
+    'AND group_message_parent.media_policy_version = 0 '
+    "AND group_message_parent.media_lifecycle = 'standard' "
+    'AND group_message_parent.media_duration_seconds IS NULL '
+    'AND group_message_parent.media_protected = 0 '
+    'AND group_message_parent.media_received_at IS NULL '
+    'AND group_message_parent.media_expires_at IS NULL '
+    'AND group_message_parent.media_last_checked_at IS NULL '
+    'AND group_message_parent.media_consumed_at IS NULL '
+    'AND group_message_parent.media_expired_at IS NULL '
+    'AND group_message_parent.media_cleanup_pending = 0 '
+    'AND EXISTS (SELECT 1 FROM groups active_group '
+    'WHERE active_group.id = group_message_parent.group_id '
+    'AND active_group.self_removed_at IS NULL '
+    'AND active_group.is_dissolved = 0) '
+    'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions deleted '
+    'WHERE deleted.message_id = group_message_parent.id '
+    'AND deleted.group_id = group_message_parent.group_id)) '
+    'AND NOT EXISTS (SELECT 1 FROM group_media_deletion_journal journal '
+    'WHERE journal.attachment_id = media_attachments.id)',
+    <Object?>[
+      kMediaDownloadStatusDownloading,
+      id,
+      messageId,
+      MediaOwnerLane.group.dbValue,
+      expectedDownloadStatus,
+      ...claimableStatuses,
+      if (!explicitUserRetry) kMaxDownloadRetries,
+      expectedLocalPath,
+      expectedLocalPath,
+      messageId,
+      groupId,
+    ],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: event,
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'groupId': groupId,
+      'messageId': messageId,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
+/// Claims one currently authorized ordinary incoming GROUP attachment for an
+/// automatic download.
+///
+/// Terminal `download_failed` and user-only `evicted` are intentionally not
+/// claimable here. The exact expected state/path and all parent/group/deletion
+/// authority are evaluated by the same UPDATE, closing the race between a
+/// recovery coordinator's read and the first bridge side effect.
+Future<int> dbBeginOrdinaryGroupAutomaticMediaDownloadExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String expectedDownloadStatus,
+  required String? expectedLocalPath,
+}) => _dbBeginOrdinaryGroupMediaDownloadExact(
+  db,
+  id,
+  groupId: groupId,
+  messageId: messageId,
+  expectedDownloadStatus: expectedDownloadStatus,
+  expectedLocalPath: expectedLocalPath,
+  explicitUserRetry: false,
+  event: 'MEDIA_DB_ORDINARY_GROUP_AUTOMATIC_DOWNLOAD_CLAIM',
+);
+
+/// Claims one currently authorized ordinary incoming GROUP attachment for an
+/// explicit user retry.
+///
+/// This shares the complete automatic authority predicate, but preserves the
+/// broad user retry contract by admitting `download_failed` and `evicted`
+/// rows without applying the automatic retry ceiling.
+Future<int> dbBeginOrdinaryGroupExplicitMediaDownloadExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String expectedDownloadStatus,
+  required String? expectedLocalPath,
+}) => _dbBeginOrdinaryGroupMediaDownloadExact(
+  db,
+  id,
+  groupId: groupId,
+  messageId: messageId,
+  expectedDownloadStatus: expectedDownloadStatus,
+  expectedLocalPath: expectedLocalPath,
+  explicitUserRetry: true,
+  event: 'MEDIA_DB_ORDINARY_GROUP_EXPLICIT_DOWNLOAD_CLAIM',
+);
+
+Future<int> _dbCommitOrdinaryGroupMediaDownloadLocalPathExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String? expectedLocalPath,
+  required String localPath,
+  required String event,
+}) async {
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET local_path = ?, download_status = ?, '
+    'download_retry_count = 0 '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND download_status = ? '
+    'AND ((local_path IS NULL AND ? IS NULL) OR local_path = ?) '
+    'AND EXISTS (SELECT 1 FROM group_messages group_message_parent '
+    'WHERE group_message_parent.id = media_attachments.message_id '
+    'AND group_message_parent.id = ? AND group_message_parent.group_id = ? '
+    'AND group_message_parent.is_incoming = 1 '
+    'AND group_message_parent.media_policy_version = 0 '
+    "AND group_message_parent.media_lifecycle = 'standard' "
+    'AND group_message_parent.media_duration_seconds IS NULL '
+    'AND group_message_parent.media_protected = 0 '
+    'AND group_message_parent.media_received_at IS NULL '
+    'AND group_message_parent.media_expires_at IS NULL '
+    'AND group_message_parent.media_last_checked_at IS NULL '
+    'AND group_message_parent.media_consumed_at IS NULL '
+    'AND group_message_parent.media_expired_at IS NULL '
+    'AND group_message_parent.media_cleanup_pending = 0 '
+    'AND EXISTS (SELECT 1 FROM groups active_group '
+    'WHERE active_group.id = group_message_parent.group_id '
+    'AND active_group.self_removed_at IS NULL '
+    'AND active_group.is_dissolved = 0) '
+    'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions deleted '
+    'WHERE deleted.message_id = group_message_parent.id '
+    'AND deleted.group_id = group_message_parent.group_id)) '
+    'AND NOT EXISTS (SELECT 1 FROM group_media_deletion_journal journal '
+    'WHERE journal.attachment_id = media_attachments.id)',
+    <Object?>[
+      localPath,
+      kMediaDownloadStatusDone,
+      id,
+      messageId,
+      MediaOwnerLane.group.dbValue,
+      kMediaDownloadStatusDownloading,
+      expectedLocalPath,
+      expectedLocalPath,
+      messageId,
+      groupId,
+    ],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: event,
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'groupId': groupId,
+      'messageId': messageId,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
+/// Commits one automatic ordinary GROUP download only while all authority
+/// that admitted its claim is still current.
+Future<int> dbCommitOrdinaryGroupAutomaticMediaDownloadLocalPathExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String? expectedLocalPath,
+  required String localPath,
+}) => _dbCommitOrdinaryGroupMediaDownloadLocalPathExact(
+  db,
+  id,
+  groupId: groupId,
+  messageId: messageId,
+  expectedLocalPath: expectedLocalPath,
+  localPath: localPath,
+  event: 'MEDIA_DB_ORDINARY_GROUP_AUTOMATIC_DOWNLOAD_COMMIT',
+);
+
+/// Commits one explicit ordinary GROUP retry only while the same exact
+/// attachment, parent, group, local-visibility, and journal authority remains
+/// current.
+Future<int> dbCommitOrdinaryGroupExplicitMediaDownloadLocalPathExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required String? expectedLocalPath,
+  required String localPath,
+}) => _dbCommitOrdinaryGroupMediaDownloadLocalPathExact(
+  db,
+  id,
+  groupId: groupId,
+  messageId: messageId,
+  expectedLocalPath: expectedLocalPath,
+  localPath: localPath,
+  event: 'MEDIA_DB_ORDINARY_GROUP_EXPLICIT_DOWNLOAD_COMMIT',
+);
+
+/// Atomically records one incoming ordinary-group download failure.
+///
+/// This is deliberately UPDATE-only and qualifies the exact attachment tuple,
+/// live ordinary incoming parent, active group, local-deletion tombstone, and
+/// deletion journal in the same SQLite statement. A missing/deleted row or a
+/// lost status/path authority therefore affects zero rows and can never be
+/// resurrected through the generic preserving-save path.
+Future<int> dbRecordOrdinaryGroupMediaDownloadFailureExact(
+  Database db,
+  String id, {
+  required String groupId,
+  required String messageId,
+  required bool incrementRetryCount,
+  required String failureStatus,
+  required String expectedDownloadStatus,
+  required String? expectedLocalPath,
+  required bool clearLocalPath,
+}) async {
+  const allowedStatuses = {
+    kMediaDownloadStatusFailed,
+    kMediaDownloadStatusDownloadFailed,
+    kMediaDownloadStatusIntegrityFailed,
+  };
+  if (!allowedStatuses.contains(failureStatus)) {
+    throw ArgumentError.value(failureStatus, 'failureStatus');
+  }
+
+  final activeGroup = await dbOrdinaryGroupParentPredicate(
+    db,
+    groupIdExpression: 'group_message_parent.group_id',
+  );
+  final activeDissolutionGuard = await dbHasSelfRemovedGroupWriteGuard(db)
+      ? 'AND EXISTS (SELECT 1 FROM groups active_failure_group '
+            'WHERE active_failure_group.id = group_message_parent.group_id '
+            'AND active_failure_group.is_dissolved = 0) '
+      : '';
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET '
+    'download_status = CASE WHEN ? = 1 THEN '
+    'CASE WHEN COALESCE(download_retry_count, 0) + 1 >= ? '
+    'THEN ? ELSE ? END ELSE ? END, '
+    'download_retry_count = CASE WHEN ? = 1 '
+    'THEN COALESCE(download_retry_count, 0) + 1 '
+    'ELSE download_retry_count END, '
+    'local_path = CASE WHEN ? = 1 THEN NULL ELSE local_path END '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND download_status = ? '
+    'AND ((local_path IS NULL AND ? IS NULL) OR local_path = ?) '
+    'AND EXISTS (SELECT 1 FROM group_messages group_message_parent '
+    'WHERE group_message_parent.id = media_attachments.message_id '
+    'AND group_message_parent.id = ? AND group_message_parent.group_id = ? '
+    'AND group_message_parent.is_incoming = 1 '
+    'AND group_message_parent.media_policy_version = 0 '
+    "AND group_message_parent.media_lifecycle = 'standard' "
+    'AND group_message_parent.media_duration_seconds IS NULL '
+    'AND group_message_parent.media_protected = 0 '
+    'AND group_message_parent.media_received_at IS NULL '
+    'AND group_message_parent.media_expires_at IS NULL '
+    'AND group_message_parent.media_last_checked_at IS NULL '
+    'AND group_message_parent.media_consumed_at IS NULL '
+    'AND group_message_parent.media_expired_at IS NULL '
+    'AND group_message_parent.media_cleanup_pending = 0 '
+    'AND $activeGroup '
+    '$activeDissolutionGuard'
+    'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions deleted '
+    'WHERE deleted.message_id = group_message_parent.id '
+    'AND deleted.group_id = group_message_parent.group_id)) '
+    'AND NOT EXISTS (SELECT 1 FROM group_media_deletion_journal journal '
+    'WHERE journal.attachment_id = media_attachments.id)',
+    <Object?>[
+      incrementRetryCount ? 1 : 0,
+      kMaxDownloadRetries,
+      kMediaDownloadStatusDownloadFailed,
+      kMediaDownloadStatusFailed,
+      failureStatus,
+      incrementRetryCount ? 1 : 0,
+      clearLocalPath ? 1 : 0,
+      id,
+      messageId,
+      MediaOwnerLane.group.dbValue,
+      expectedDownloadStatus,
+      expectedLocalPath,
+      expectedLocalPath,
+      messageId,
+      groupId,
+    ],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_ORDINARY_GROUP_DOWNLOAD_FAILURE',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'groupId': groupId,
+      'messageId': messageId,
+      'failureStatus': failureStatus,
+      'incrementRetryCount': incrementRetryCount,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
 /// 229: owner-aware CAS eviction claim. Flips the exact
 /// `(id, owner, localPath, done)` row to `evicted` while RETAINING the
 /// stored path (deletion happens after the durable claim; the path is
@@ -3289,6 +3632,110 @@ Future<List<Map<String, Object?>>> dbLoadPendingMediaDownloads(
       layer: 'DB',
       event: 'MEDIA_DB_LOAD_PENDING_ERROR',
       details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Loads one stable page of durable automatic GROUP download work.
+///
+/// Authority is applied in SQL before [limit]: only current incoming ordinary
+/// parents in active groups, outside local-deletion and attachment-deletion
+/// journals, may surface. The cursor is the strict `(created_at, id)` successor
+/// of the last row inspected by the caller, so policy-denied rows cannot cause
+/// a fixed first page to repeat forever.
+Future<List<Map<String, Object?>>> dbLoadRecoverableGroupMediaDownloadPage(
+  Database db, {
+  required int limit,
+  String? afterCreatedAt,
+  String? afterAttachmentId,
+}) async {
+  if (limit <= 0) {
+    throw ArgumentError.value(limit, 'limit', 'must be positive');
+  }
+  final hasCreatedAt = afterCreatedAt != null;
+  final hasAttachmentId = afterAttachmentId != null;
+  if (hasCreatedAt != hasAttachmentId ||
+      (afterCreatedAt != null && afterCreatedAt.isEmpty) ||
+      (afterAttachmentId != null && afterAttachmentId.isEmpty)) {
+    throw ArgumentError(
+      'afterCreatedAt and afterAttachmentId must be a non-empty pair',
+    );
+  }
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_LOAD_RECOVERABLE_GROUP_DOWNLOADS_START',
+    details: {'limit': limit, 'hasCursor': hasCreatedAt},
+  );
+
+  final cursorPredicate = hasCreatedAt
+      ? 'AND (attachment.created_at > ? OR '
+            '(attachment.created_at = ? AND attachment.id > ?))'
+      : '';
+  final cursorArguments = hasCreatedAt
+      ? <Object?>[afterCreatedAt, afterCreatedAt, afterAttachmentId]
+      : const <Object?>[];
+
+  try {
+    final rows = await db.rawQuery(
+      '''
+SELECT attachment.*, group_parent.group_id AS recovery_group_id
+FROM media_attachments attachment
+JOIN group_messages group_parent
+  ON group_parent.id = attachment.message_id
+JOIN groups active_group
+  ON active_group.id = group_parent.group_id
+WHERE attachment.owner_lane = ?
+  AND attachment.download_status IN (?, ?, ?)
+  AND COALESCE(attachment.download_retry_count, 0) < ?
+  AND group_parent.is_incoming = 1
+  AND group_parent.media_policy_version = 0
+  AND group_parent.media_lifecycle = 'standard'
+  AND group_parent.media_duration_seconds IS NULL
+  AND group_parent.media_protected = 0
+  AND group_parent.media_received_at IS NULL
+  AND group_parent.media_expires_at IS NULL
+  AND group_parent.media_last_checked_at IS NULL
+  AND group_parent.media_consumed_at IS NULL
+  AND group_parent.media_expired_at IS NULL
+  AND group_parent.media_cleanup_pending = 0
+  AND active_group.self_removed_at IS NULL
+  AND active_group.is_dissolved = 0
+  AND NOT EXISTS (
+    SELECT 1 FROM group_message_local_deletions deleted
+    WHERE deleted.message_id = group_parent.id
+      AND deleted.group_id = group_parent.group_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM group_media_deletion_journal journal
+    WHERE journal.attachment_id = attachment.id
+  )
+  $cursorPredicate
+ORDER BY attachment.created_at ASC, attachment.id ASC
+LIMIT ?
+''',
+      <Object?>[
+        MediaOwnerLane.group.dbValue,
+        kMediaDownloadStatusPending,
+        kMediaDownloadStatusDownloading,
+        kMediaDownloadStatusFailed,
+        kMaxDownloadRetries,
+        ...cursorArguments,
+        limit,
+      ],
+    );
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_LOAD_RECOVERABLE_GROUP_DOWNLOADS_SUCCESS',
+      details: {'count': rows.length},
+    );
+    return rows;
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_LOAD_RECOVERABLE_GROUP_DOWNLOADS_ERROR',
+      details: {'error': error.toString()},
     );
     rethrow;
   }

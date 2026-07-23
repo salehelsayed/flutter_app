@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -824,49 +825,48 @@ void main() {
       );
     }
 
-    test(
-      'T1: an admin responder answers a member\'s config:request with a '
-      'config:response and never stores it as a pending invite',
-      () async {
-        await seedBobGroup(bobRole: MemberRole.admin);
-        // Alice is a current member with an ML-KEM key (so the reply can be
-        // encrypted to her).
-        await groupRepo.saveMember(
-          GroupMember(
-            groupId: 'grp-abc123',
-            peerId: '12D3KooWAlice',
-            username: 'Alice',
-            role: MemberRole.writer,
-            publicKey: 'alicePubKey64',
-            mlKemPublicKey: 'aliceMlKem64',
-            joinedAt: DateTime.utc(2026, 1, 1),
-          ),
-        );
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true),
-          sendMessageResult: true,
-        );
-        final requestListener = buildConfigRequestListener(
-          p2pService: p2pService,
-        );
-        addTearDown(requestListener.dispose);
-        requestListener.start();
+    test('T1: an admin responder answers a member\'s config:request with a '
+        'config:response and never stores it as a pending invite', () async {
+      await seedBobGroup(bobRole: MemberRole.admin);
+      // Alice is a current member with an ML-KEM key (so the reply can be
+      // encrypted to her).
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'grp-abc123',
+          peerId: '12D3KooWAlice',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'alicePubKey64',
+          mlKemPublicKey: 'aliceMlKem64',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true),
+        sendMessageResult: true,
+      );
+      final requestListener = buildConfigRequestListener(
+        p2pService: p2pService,
+      );
+      addTearDown(requestListener.dispose);
+      requestListener.start();
 
-        incomingController.add(_makeConfigRequestMessage());
-        await Future.delayed(const Duration(milliseconds: 100));
-        await requestListener.waitForIdle();
+      incomingController.add(_makeConfigRequestMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+      await requestListener.waitForIdle();
 
-        // The admin replied with a config:response.
-        expect(p2pService.sendMessageCallCount, 1);
-        expect(p2pService.lastSendMessagePeerId, '12D3KooWAlice');
-        expect(
-          GroupConfigResyncEnvelope.isResponse(p2pService.lastSendMessageContent!),
-          isTrue,
-        );
-        // Routing discrimination: a config:request is NOT an invite.
-        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
-      },
-    );
+      // The admin replied with a config:response.
+      expect(p2pService.sendMessageCallCount, 1);
+      expect(p2pService.lastSendMessagePeerId, '12D3KooWAlice');
+      expect(
+        GroupConfigResyncEnvelope.isResponse(
+          p2pService.lastSendMessageContent!,
+        ),
+        isTrue,
+      );
+      // Routing discrimination: a config:request is NOT an invite.
+      expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+    });
 
     test(
       'T1: a config:request from a NON-member is rejected without a reply',
@@ -938,7 +938,8 @@ void main() {
         expect(p2pService.sendMessageCallCount, 0);
         expect(
           events.where(
-            (e) => e['event'] == 'GROUP_CONFIG_REQUEST_HANDLE_NOT_ADMIN_RESPONDER',
+            (e) =>
+                e['event'] == 'GROUP_CONFIG_REQUEST_HANDLE_NOT_ADMIN_RESPONDER',
           ),
           hasLength(1),
         );
@@ -1038,6 +1039,66 @@ void main() {
         );
         expect(await groupRepo.getGroup('grp-abc123'), isNull);
         expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'P269 loads one atomic invite identity snapshot without mixing legacy getters',
+      () async {
+        var snapshotLoadCount = 0;
+        var legacyGetterCount = 0;
+
+        Future<String?> legacyGetter() async {
+          legacyGetterCount++;
+          return 'legacy-value-must-not-be-used';
+        }
+
+        final packageListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          loadOwnInviteIdentity: () async {
+            snapshotLoadCount++;
+            return const GroupInviteLocalIdentitySnapshot(
+              accountPeerId: '12D3KooWBob',
+              deviceId: 'bob-device-1',
+              transportPeerId: 'bob-device-1',
+              mlKemPublicKey: 'bobMlKem64',
+              mlKemSecretKey: 'snapshot-secret-key',
+              keyPackageId: 'key-package-bob-device-1',
+              keyPackagePublicMaterial: 'bob-kpm-1',
+            );
+          },
+          getOwnMlKemSecretKey: legacyGetter,
+          getOwnPeerId: legacyGetter,
+          getOwnDeviceId: legacyGetter,
+          getOwnTransportPeerId: legacyGetter,
+          getOwnMlKemPublicKey: legacyGetter,
+          getOwnKeyPackageId: legacyGetter,
+          getOwnKeyPackagePublicMaterial: legacyGetter,
+          now: () => listenerNow,
+        );
+        addTearDown(packageListener.dispose);
+        packageListener.start();
+
+        final invites = <PendingGroupInvite>[];
+        packageListener.pendingInviteStream.listen(invites.add);
+
+        incomingController.add(_makeSignedV2WelcomePackageInviteMessage());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await packageListener.waitForIdle();
+
+        expect(snapshotLoadCount, 1);
+        expect(legacyGetterCount, 0);
+        expect(invites, hasLength(1));
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
       },
     );
 

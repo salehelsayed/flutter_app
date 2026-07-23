@@ -27,6 +27,18 @@ val androidApplicationId = providers.gradleProperty("androidApplicationId")
 val hasGoogleServicesConfig = file("google-services.json").exists()
 val disableGoogleServicesForDisposableProof =
     providers.gradleProperty("disableGoogleServicesForDisposableProof").orNull == "true"
+val enableGroupMedia269DisposableProof =
+    when (
+        val raw = providers.gradleProperty(
+            "enableGroupMedia269DisposableProof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enableGroupMedia269DisposableProof must be exactly true or false."
+        )
+    }
 val enablePictureInPictureEngineDetachProof =
     when (
         val raw = providers.gradleProperty(
@@ -63,6 +75,18 @@ val enableGroupExitReleaseDiagnosticsProof =
             "enableGroupExitReleaseDiagnosticsProof must be exactly true or false."
         )
     }
+if (
+    enableGroupMedia269DisposableProof &&
+    (
+        androidApplicationId != "com.mknoon.sims.groupmedia269" ||
+            !disableGoogleServicesForDisposableProof
+    )
+) {
+    throw GradleException(
+        "The group-media 269 proof requires the exact disposable application " +
+            "ID com.mknoon.sims.groupmedia269 with Google services disabled."
+    )
+}
 if (
     enableGroupExitReleaseDiagnosticsProof &&
     (

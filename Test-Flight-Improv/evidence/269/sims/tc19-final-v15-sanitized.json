@@ -1,0 +1,61 @@
+{
+  "schema": "mknoon.plan-269.sanitized-device-evidence.v1",
+  "scenario": "group_media_foreground_retry_acl_roundtrip",
+  "runId": "p269-tc19-final-v15",
+  "status": "PASS",
+  "proofSha256": "c1ba18d8f4deccb84844a4da4c148b36f9b7708a5abde6c073ea43268bd8defe",
+  "preparedArtifact": {
+    "profile": "android.e2e.group_media_269",
+    "sha256": "ec7c039ad768793f865ce6ced81e7126d1db590dcf4cbc5297c65879540be862",
+    "childBuilds": 0,
+    "buildGuardBytes": 0
+  },
+  "identityDiscriminator": {
+    "senderAccountDiffersFromTransport": true,
+    "receiverAccountDiffersFromTransport": true
+  },
+  "media": {
+    "uploadsPerBlob": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    },
+    "publicationsPerMessage": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    },
+    "downloadAttempts": {
+      "jpeg": 2,
+      "mp4": 1,
+      "voice": 1
+    },
+    "renderedSurfaces": {
+      "jpeg": 1,
+      "mp4": 1,
+      "voice": 1
+    }
+  },
+  "settlement": {
+    "secondUploadPassWork": 0,
+    "secondDownloadPassWork": 0,
+    "senderDatabaseReopened": true,
+    "receiverDatabaseReopened": true,
+    "databaseUserVersion": 104,
+    "cipherVersionPresent": true
+  },
+  "cleanup": {
+    "receiptsDistinct": true,
+    "productionPackageCommands": 0,
+    "uninstallCommands": 0,
+    "pmClearCommands": 0,
+    "broadDeleteCommands": 0
+  },
+  "redaction": {
+    "rawDeviceIdsIncluded": false,
+    "rawPeerIdsIncluded": false,
+    "relayAddressesIncluded": false,
+    "tokensOrKeysIncluded": false,
+    "databasePathsIncluded": false
+  }
+}

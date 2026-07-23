@@ -17,6 +17,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -40,6 +41,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
   final OpenAnnouncementSenderConversation? openAnnouncementSenderConversation;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final ContactRepository contactRepo;
@@ -65,6 +67,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.groupMediaDownloadCoordinator,
     this.openAnnouncementSenderConversation,
     this.inviteDeliveryAttemptRepo,
     required this.contactRepo,
@@ -227,6 +230,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             groupRepo: widget.groupRepo,
             msgRepo: widget.msgRepo,
             groupMessageListener: widget.groupMessageListener,
+            groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
             openAnnouncementSenderConversation:
                 widget.openAnnouncementSenderConversation,
             inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,

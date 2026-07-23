@@ -39,4 +39,11 @@ class FlutterSecureKeyStore implements SecureKeyStore {
 
   @override
   Future<bool> containsKey(String key) => _storage.containsKey(key: key);
+
+  /// Bounded harness support for a dedicated disposable application namespace.
+  /// Production code must continue to use key-specific deletes.
+  Future<void> deleteAll() => _storage.deleteAll();
+
+  /// Read-back used to prove the dedicated namespace is empty after reset.
+  Future<Map<String, String>> readAll() => _storage.readAll();
 }

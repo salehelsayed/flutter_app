@@ -38,7 +38,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
-import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -53,6 +52,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/foreground_group_media_upload.dart';
 import 'package:flutter_app/features/groups/application/announcement_private_reply_policy.dart';
 import 'package:flutter_app/features/groups/application/announcement_private_reply_request.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
@@ -82,9 +82,9 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
-import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -130,18 +130,6 @@ class _PreparedGroupMediaUpload {
     required this.source,
     required this.pendingAttachment,
     required this.absoluteDurablePath,
-  });
-}
-
-class _ForegroundGroupUploadLeafResult {
-  final UploadMediaOutcome outcome;
-  final MediaAttachment? completedAttachment;
-  final UploadRetryProjectionResult? failureProjection;
-
-  const _ForegroundGroupUploadLeafResult({
-    required this.outcome,
-    this.completedAttachment,
-    this.failureProjection,
   });
 }
 
@@ -331,6 +319,18 @@ class GroupConversationWired extends StatefulWidget {
   /// user-authoritative and never gated by this decider.
   final MediaAutoDownloadDecider? autoDownloadDecider;
 
+  /// 269: the one app-owned coordinator shared by automatic listener, route,
+  /// resume, and periodic group-media recovery triggers. When present, both
+  /// initial-load and live-message recovery delegate exact eligible attachment
+  /// IDs to it; the explicit user retry remains on this screen's direct path.
+  /// Null preserves the legacy route-local recovery for lightweight callers.
+  final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
+
+  /// Exact-profile device-proof labels for the real group media renderers.
+  /// The map is empty for every ordinary route; the TC-269 post-settlement
+  /// route alone binds opaque attachment IDs to safe, non-secret labels.
+  final Map<String, String> mediaRenderedSemanticsLabels;
+
   /// 235: Save/Share qualification adapter. Null (production default when a
   /// media repository is available) constructs the real controller over
   /// [ReceivedMediaEgressService]; tests inject a recording controller. The
@@ -394,6 +394,8 @@ class GroupConversationWired extends StatefulWidget {
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.openAnnouncementSenderConversation,
     this.autoDownloadDecider,
+    this.groupMediaDownloadCoordinator,
+    this.mediaRenderedSemanticsLabels = const <String, String>{},
     this.mediaActionsController,
     this.mediaDeleteForMeCoordinator,
     this.groupMediaForwardLauncher,
@@ -711,6 +713,31 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     publicKey: _senderPublicKey,
     privateKey: _senderPrivateKey,
   );
+
+  bool _passesGroupMediaAclPreflight(
+    Iterable<GroupMember> members, {
+    required String surface,
+  }) {
+    if (groupMediaAllowedPeersForMembers(members).isNotEmpty) {
+      return true;
+    }
+    const failure = UploadMediaFailed(
+      stage: UploadMediaStage.validation,
+      disposition: UploadMediaDisposition.terminal,
+      errorCode: kEmptyGroupMediaAclErrorCode,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_MEDIA_ACL_PREFLIGHT_REJECTED',
+      details: {
+        'surface': surface,
+        'stage': failure.stage.name,
+        'disposition': failure.disposition.name,
+        'errorCode': failure.errorCode,
+      },
+    );
+    return false;
+  }
 
   bool _tryBeginSendFlow() {
     if (_isSending) return false;
@@ -1912,6 +1939,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _downloadPendingMedia(
     Map<String, List<MediaAttachment>> mediaMap,
   ) async {
+    final coordinator = widget.groupMediaDownloadCoordinator;
+    if (coordinator != null) {
+      await _recoverPendingMediaWithCoordinator(mediaMap, coordinator);
+      return;
+    }
     if (widget.mediaFileManager == null || widget.mediaAttachmentRepo == null) {
       return;
     }
@@ -2006,6 +2038,73 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           setState(() => _updateMediaForMessage(entry.key, resolved));
         }
       }
+    }
+  }
+
+  Future<void> _recoverPendingMediaWithCoordinator(
+    Map<String, List<MediaAttachment>> mediaMap,
+    GroupMediaDownloadCoordinator coordinator,
+  ) async {
+    final recoveryGroupId = _group.id;
+    final attachmentIds = <String>{};
+    final targetMessageIds = <String>{};
+    for (final entry in mediaMap.entries) {
+      final eligibleIds = entry.value
+          .where(_shouldRecoverVisibleAttachment)
+          .map((attachment) => attachment.id)
+          .where((attachmentId) => attachmentId.isNotEmpty)
+          .toSet();
+      if (eligibleIds.isEmpty) continue;
+
+      final currentParent = await widget.msgRepo.getMessage(entry.key);
+      if (currentParent == null ||
+          currentParent.groupId != recoveryGroupId ||
+          !currentParent.isIncoming ||
+          !currentParent.privateMediaPolicy.isOrdinary) {
+        continue;
+      }
+      attachmentIds.addAll(eligibleIds);
+      targetMessageIds.add(currentParent.id);
+    }
+    if (attachmentIds.isEmpty ||
+        !mounted ||
+        widget.group.id != recoveryGroupId ||
+        _group.id != recoveryGroupId) {
+      return;
+    }
+
+    final result = await coordinator.recoverAttachments(
+      groupId: recoveryGroupId,
+      attachmentIds: attachmentIds,
+    );
+    if (!mounted ||
+        widget.group.id != recoveryGroupId ||
+        _group.id != recoveryGroupId) {
+      return;
+    }
+
+    // Re-read both successful messages and attempted visible parents. The
+    // transfer boundary can truthfully persist a failed/quarantined state while
+    // returning null, which still needs to replace the optimistic UI snapshot.
+    final messagesToRehydrate = <String>{
+      ...targetMessageIds,
+      ...result.affectedMessageIds,
+    };
+    for (final messageId in messagesToRehydrate) {
+      final currentParent = await widget.msgRepo.getMessage(messageId);
+      if (!mounted ||
+          widget.group.id != recoveryGroupId ||
+          _group.id != recoveryGroupId) {
+        return;
+      }
+      if (currentParent == null ||
+          currentParent.groupId != recoveryGroupId ||
+          !currentParent.isIncoming ||
+          !currentParent.privateMediaPolicy.isOrdinary ||
+          !_messages.any((message) => message.id == messageId)) {
+        continue;
+      }
+      await _refreshMessageWithHydratedMedia(messageId);
     }
   }
 
@@ -2214,6 +2313,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<List<_PreparedGroupMediaUpload>> _prepareDurableGroupMediaUploads({
     required String messageId,
     required List<PendingComposerMedia> mediaToUpload,
+    required List<String> attachmentIds,
   }) async {
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     final mediaFileManager = widget.mediaFileManager;
@@ -2235,7 +2335,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       },
     );
 
-    for (final pending in mediaToUpload) {
+    if (attachmentIds.length != mediaToUpload.length) {
+      throw StateError('group media attachment identity count mismatch');
+    }
+    for (var index = 0; index < mediaToUpload.length; index++) {
+      final pending = mediaToUpload[index];
       final mime = _mimeFromPath(pending.file.path);
       final validation = await GroupMediaMimePolicy.validateFile(
         path: pending.file.path,
@@ -2262,7 +2366,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         );
         throw const _RejectedPendingGroupMediaException();
       }
-      final blobId = _uuid.v4();
+      final blobId = attachmentIds[index];
       final durableRelativePath = await mediaFileManager.copyToDurableStorage(
         sourceFilePath: pending.file.path,
         messageId: messageId,
@@ -2287,6 +2391,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         localPath: durableRelativePath,
         downloadStatus: 'upload_pending',
         createdAt: createdAt,
+        uploadRetryCount: 0,
+        downloadRetryCount: 0,
         contentHash: contentHash,
         ownerLane: MediaOwnerLane.group,
       );
@@ -2318,7 +2424,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     return preparedUploads;
   }
 
-  Future<_ForegroundGroupUploadLeafResult?> _runForegroundGroupUploadLeaf({
+  Future<ForegroundGroupUploadLeafResult?> _runForegroundGroupUploadLeaf({
     required GroupMessage expectedParent,
     required MediaAttachment expectedAttachment,
     required Future<UploadMediaOutcome> Function(List<String> allowedPeers)
@@ -2326,229 +2432,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required Future<MediaAttachment> Function(MediaAttachment uploaded)
     buildCompleted,
     bool replaceExistingAttachments = false,
-  }) async {
-    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
-    final senderPeerId = _ownPeerId;
-    if (mediaAttachmentRepo == null || senderPeerId == null) return null;
-
-    final guarded =
-        await runSelfRemovedGroupLifecycleLeaf<
-          _ForegroundGroupUploadLeafResult?
-        >(
-          groupRepo: widget.groupRepo,
-          groupId: expectedParent.groupId,
-          action: (_) async {
-            final currentParent = await widget.msgRepo.getMessage(
-              expectedParent.id,
-            );
-            if (currentParent == null ||
-                !sameExactGroupPrivateMediaDispatchParent(
-                  currentParent,
-                  expectedParent,
-                )) {
-              return null;
-            }
-            final members = await widget.groupRepo.getMembers(
-              expectedParent.groupId,
-            );
-            if (!members.any((member) => member.peerId == senderPeerId)) {
-              return null;
-            }
-            var allowedPeers = groupMediaAllowedPeersForMembers(members);
-            if (expectedParent.privateMediaPolicy.isPrivate) {
-              if (!widget.privateMediaAvailability.isEnabled) return null;
-              final qualification = await qualifyCurrentPrivateGroupMediaSend(
-                groupRepo: widget.groupRepo,
-                msgRepo: widget.msgRepo,
-                expectedParent: expectedParent,
-                senderPeerId: senderPeerId,
-                inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-              );
-              if (qualification == null) return null;
-              allowedPeers = groupMediaAllowedPeersForMembers(
-                qualification.members,
-              );
-            }
-
-            final currentAttachments = await mediaAttachmentRepo
-                .getAttachmentsForMessage(
-                  expectedParent.id,
-                  owner: MediaOwnerLane.group,
-                );
-            MediaAttachment? matchedAttachment;
-            for (final attachment in currentAttachments) {
-              if (attachment.id == expectedAttachment.id) {
-                matchedAttachment = attachment;
-                break;
-              }
-            }
-            var currentAttachment = matchedAttachment;
-            if (currentAttachment != null &&
-                !sameExactGroupRetryAttachment(
-                  currentAttachment,
-                  expectedAttachment,
-                )) {
-              return null;
-            }
-            if (currentAttachment == null) {
-              if (replaceExistingAttachments) {
-                for (final attachment in currentAttachments) {
-                  await _deleteUnsafeLocalMediaFile(attachment);
-                }
-                await mediaAttachmentRepo.deleteAttachmentsForMessage(
-                  expectedParent.id,
-                  owner: MediaOwnerLane.group,
-                );
-              }
-              await mediaAttachmentRepo.saveAttachment(
-                expectedAttachment,
-                owner: MediaOwnerLane.group,
-              );
-              final persistedAttachments = await mediaAttachmentRepo
-                  .getAttachmentsForMessage(
-                    expectedParent.id,
-                    owner: MediaOwnerLane.group,
-                  );
-              for (final attachment in persistedAttachments) {
-                if (attachment.id == expectedAttachment.id) {
-                  currentAttachment = attachment;
-                  break;
-                }
-              }
-              if (currentAttachment == null ||
-                  !sameExactGroupRetryAttachment(
-                    currentAttachment,
-                    expectedAttachment,
-                  )) {
-                return null;
-              }
-              emitFlowEvent(
-                layer: 'FL',
-                event: 'GROUP_CONV_FL_MEDIA_DURABLE_ROW_SAVE',
-                details: {
-                  'messageId': expectedParent.id.length > 8
-                      ? expectedParent.id.substring(0, 8)
-                      : expectedParent.id,
-                  'blobId': expectedAttachment.id.length > 8
-                      ? expectedAttachment.id.substring(0, 8)
-                      : expectedAttachment.id,
-                },
-              );
-            }
-
-            final outcome = await upload(allowedPeers);
-            if (outcome case final UploadMediaFailed failure) {
-              final latestParent = await widget.msgRepo.getMessage(
-                expectedParent.id,
-              );
-              final latestAttachments = await mediaAttachmentRepo
-                  .getAttachmentsForMessage(
-                    expectedParent.id,
-                    owner: MediaOwnerLane.group,
-                  );
-              MediaAttachment? latestAttachment;
-              for (final attachment in latestAttachments) {
-                if (attachment.id == expectedAttachment.id) {
-                  latestAttachment = attachment;
-                  break;
-                }
-              }
-              if (latestParent == null ||
-                  !sameExactGroupPrivateMediaDispatchParent(
-                    latestParent,
-                    expectedParent,
-                  ) ||
-                  latestAttachment == null ||
-                  !sameExactGroupRetryAttachment(
-                    latestAttachment,
-                    expectedAttachment,
-                  )) {
-                return null;
-              }
-              final projection = _uploadRetryProjection;
-              if (projection != null) {
-                final projected = await projection.projectUploadFailure(
-                  messageId: expectedParent.id,
-                  attachmentId: expectedAttachment.id,
-                  failure: failure,
-                );
-                if (!projected.applied) return null;
-                return _ForegroundGroupUploadLeafResult(
-                  outcome: outcome,
-                  failureProjection: projected,
-                );
-              }
-              final nextRetryCount =
-                  (latestAttachment.uploadRetryCount ?? 0) + 1;
-              await mediaAttachmentRepo.saveAttachment(
-                latestAttachment.copyWith(
-                  downloadStatus: nextRetryCount >= kMaxUploadRetries
-                      ? 'upload_failed'
-                      : 'upload_pending',
-                  uploadRetryCount: nextRetryCount,
-                  ownerLane: MediaOwnerLane.group,
-                ),
-                owner: MediaOwnerLane.group,
-              );
-              return _ForegroundGroupUploadLeafResult(outcome: outcome);
-            }
-
-            final uploaded = (outcome as UploadMediaSucceeded).attachment;
-            final completed = (await buildCompleted(
-              uploaded,
-            )).copyWith(ownerLane: MediaOwnerLane.group);
-            final completion =
-                widget.msgRepo is GroupUploadRetryCompletionRepository
-                ? widget.msgRepo as GroupUploadRetryCompletionRepository
-                : null;
-            if (completion != null) {
-              final applied = await completion.completeUploadRetry(
-                expectedParent: expectedParent,
-                expectedAttachment: expectedAttachment,
-                completedAttachment: completed,
-              );
-              if (!applied) return null;
-            } else {
-              final latestParent = await widget.msgRepo.getMessage(
-                expectedParent.id,
-              );
-              final latestAttachments = await mediaAttachmentRepo
-                  .getAttachmentsForMessage(
-                    expectedParent.id,
-                    owner: MediaOwnerLane.group,
-                  );
-              MediaAttachment? latestAttachment;
-              for (final attachment in latestAttachments) {
-                if (attachment.id == expectedAttachment.id) {
-                  latestAttachment = attachment;
-                  break;
-                }
-              }
-              if (latestParent == null ||
-                  !sameExactGroupPrivateMediaDispatchParent(
-                    latestParent,
-                    expectedParent,
-                  ) ||
-                  latestAttachment == null ||
-                  !sameExactGroupRetryAttachment(
-                    latestAttachment,
-                    expectedAttachment,
-                  )) {
-                return null;
-              }
-              await mediaAttachmentRepo.saveAttachment(
-                completed,
-                owner: MediaOwnerLane.group,
-              );
-            }
-            return _ForegroundGroupUploadLeafResult(
-              outcome: outcome,
-              completedAttachment: completed,
-            );
-          },
-        );
-    return guarded.didRun ? guarded.value : null;
-  }
+  }) => runForegroundGroupUploadLeaf(
+    groupRepository: widget.groupRepo,
+    groupMessageRepository: widget.msgRepo,
+    mediaAttachmentRepository: widget.mediaAttachmentRepo!,
+    expectedParent: expectedParent,
+    expectedAttachment: expectedAttachment,
+    senderPeerId: _ownPeerId!,
+    upload: upload,
+    buildCompleted: buildCompleted,
+    privateMediaAvailability: widget.privateMediaAvailability,
+    inviteDeliveryAttemptRepository: widget.inviteDeliveryAttemptRepo,
+    uploadRetryProjectionRepository: _uploadRetryProjection,
+    deleteReplacedAttachmentFile: _deleteUnsafeLocalMediaFile,
+    replaceExistingAttachments: replaceExistingAttachments,
+  );
 
   Future<List<MediaAttachment>?> _uploadPreparedGroupMediaUploads({
     required GroupMessage expectedParent,
@@ -2570,7 +2468,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     await _startRelayUploadTracking(totalBytes);
     _lastUploadProjectionTerminal = false;
-    final uploadResults = <_ForegroundGroupUploadLeafResult?>[];
+    final uploadResults = <ForegroundGroupUploadLeafResult?>[];
     try {
       for (var index = 0; index < preparedUploads.length; index++) {
         if (_activeAttachmentUpload?.cancelRequested ?? false) {
@@ -2755,6 +2653,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_validatePendingGroupMediaDescriptors(mediaToUpload)) {
       return;
     }
+    if (hasAttachments) {
+      final preflightMembers = await widget.groupRepo.getMembers(
+        widget.group.id,
+      );
+      if (!_passesGroupMediaAclPreflight(
+        preflightMembers,
+        surface: 'ordinary',
+      )) {
+        return;
+      }
+    }
     if (!_tryBeginSendFlow()) return;
     final restoredContinuation = restoredResolution.continuation;
     if (restoredContinuation != null) {
@@ -2865,6 +2774,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             final preparedUploads = await _prepareDurableGroupMediaUploads(
               messageId: messageId,
               mediaToUpload: mediaToUpload,
+              attachmentIds: optimisticMedia!
+                  .map((attachment) => attachment.id)
+                  .toList(growable: false),
             );
             await widget.msgRepo.saveMessage(optimisticMessage);
             optimisticMedia = preparedUploads
@@ -2920,25 +2832,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               return;
             }
           } else {
-            final optimistic = <MediaAttachment>[];
-            for (final m in mediaToUpload) {
-              final mime = _mimeFromPath(m.file.path);
-              optimistic.add(
-                MediaAttachment(
-                  id: _uuid.v4(),
-                  messageId: messageId,
-                  mime: mime,
-                  size: 0,
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  width: m.width,
-                  height: m.height,
-                  durationMs: m.durationMs,
-                  localPath: m.file.path,
-                  downloadStatus: 'done',
-                  createdAt: now.toIso8601String(),
-                ),
-              );
-            }
+            final optimistic = optimisticMedia!;
             optimisticMedia = optimistic;
             showOptimisticMessage();
 
@@ -5016,6 +4910,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
       if (recording == null || _ownPeerId == null) return;
 
+      final preflightMembers = await widget.groupRepo.getMembers(
+        widget.group.id,
+      );
+      if (!_passesGroupMediaAclPreflight(preflightMembers, surface: 'voice')) {
+        return;
+      }
+
       if (quotedMessageId != null && mounted) {
         setState(() => _activeQuoteMessageId = null);
       }
@@ -5113,6 +5014,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           waveform: waveform,
           downloadStatus: 'upload_pending',
           createdAt: now.toIso8601String(),
+          uploadRetryCount: 0,
+          downloadRetryCount: 0,
           contentHash: contentHash,
           ownerLane: MediaOwnerLane.group,
         );
@@ -5157,10 +5060,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
       final bgTaskId = await _beginBackgroundTaskGuarded();
       try {
+        // The native begin call may finish after route disposal. The durable
+        // pending row is already committed, so leave recovery to the shared
+        // retry coordinator without touching the disposed composer notifier.
+        if (!mounted) return;
         _updateComposerState(isUploading: true);
         await _startRelayUploadTracking(recording.sizeBytes);
         _markRelayUploadStarted(attachmentId);
-        _ForegroundGroupUploadLeafResult? voiceUpload;
+        ForegroundGroupUploadLeafResult? voiceUpload;
         try {
           voiceUpload = await _runForegroundGroupUploadLeaf(
             expectedParent: optimisticMessage,
@@ -7300,6 +7207,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       'gif': 'image/gif',
       'webp': 'image/webp',
       'heic': 'image/heic',
+      'heif': 'image/heic',
       'mp4': 'video/mp4',
       'mov': 'video/quicktime',
       'avi': 'video/x-msvideo',
@@ -7724,6 +7632,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             highlightedMessageId: _highlightedMessageId,
             highlightAnchorKey: _highlightAnchorKey,
             mediaMap: _mediaMap,
+            mediaRenderedSemanticsLabels: widget.mediaRenderedSemanticsLabels,
             composerStateListenable: _composerState,
             onRemoveAttachment: _canWrite ? _removeAttachment : null,
             onAttach: _canWrite ? _onAttach : null,

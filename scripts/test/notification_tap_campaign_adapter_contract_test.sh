@@ -71,6 +71,8 @@ printf '%s\n' \
   '  printf "1\\n"' \
   'elif [ "$*" = "-s emulator-5554 shell settings get global mobile_data" ]; then' \
   '  printf "1\\n"' \
+  'elif [[ "$*" == *"shell pm list packages -3" ]]; then' \
+  '  exit 0' \
   'elif [ "$*" = "-s emulator-5554 shell dumpsys notification --noredact" ]; then' \
   '  printf "Ranking Config:\\n"' \
   'elif [[ "$*" == *"shell dumpsys activity activities" ]]; then' \
@@ -85,7 +87,14 @@ printf '%s\n' \
   'set -euo pipefail' \
   'printf "ssh %s\\n" "$*" >>"${SIMS_NOTIFICATION_COMMAND_LOG:?}"' \
   'printf "active\\n"' >"$fake_bin/ssh"
-chmod +x "$fake_bin/adb" "$fake_bin/ssh"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  '[ "${1:-}" = manifest ]' \
+  '[ "${2:-}" = application-id ]' \
+  '[ -f "${3:-}" ]' \
+  'printf "com.mknoon.app\\n"' >"$fake_bin/apkanalyzer"
+chmod +x "$fake_bin/adb" "$fake_bin/ssh" "$fake_bin/apkanalyzer"
 printf 'central-prebuilt-apk\n' >"$tmp_dir/app-debug.apk"
 printf 'fixture-key\n' >"$tmp_dir/relay-key.pem"
 printf '{"project_id":"fixture-project"}\n' >"$tmp_dir/fcm.json"

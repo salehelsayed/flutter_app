@@ -9,6 +9,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
@@ -71,9 +72,15 @@ final class DurableConversationNotificationIdRegistry {
     AppGroupPathChannel? appGroupPathChannel,
     Future<Directory> Function()? supportDirectory,
     bool? useIosAppGroup,
+    String installedProfileId = const String.fromEnvironment(
+      'SIMS_BUILD_PROFILE_ID',
+    ),
   }) async {
     late final Directory root;
-    if (useIosAppGroup ?? Platform.isIOS) {
+    final usesSharedAppGroup =
+        installedProfileId != groupMediaIosDisposableBuildProfile &&
+        (useIosAppGroup ?? Platform.isIOS);
+    if (usesSharedAppGroup) {
       final appGroup = await resolveSharedNotificationAppGroupDirectory(
         channel: appGroupPathChannel,
         supportDirectory: supportDirectory,

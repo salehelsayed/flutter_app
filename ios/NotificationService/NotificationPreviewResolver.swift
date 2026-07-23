@@ -9,9 +9,16 @@ import UserNotifications
 import GoMknoon
 #endif
 
+#if MKNOON_SIMS_GROUP_MEDIA_269
+let mknoonSharedAppGroupIdentifier =
+  "group.com.mknoon.sims.groupmedia269.share"
+let mknoonSharedKeychainAccessGroupIdentifier =
+  "397R9Q4WMX.group.com.mknoon.sims.groupmedia269.share"
+#else
 let mknoonSharedAppGroupIdentifier = "group.com.mknoon.app.share"
 let mknoonSharedKeychainAccessGroupIdentifier =
   "397R9Q4WMX.group.com.mknoon.app.share"
+#endif
 let mknoonFlutterSecureStorageService = "flutter_secure_storage_service"
 
 enum PushSharedKeyNames {

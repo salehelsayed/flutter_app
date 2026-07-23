@@ -135,6 +135,99 @@ void main() {
     },
   );
 
+  testWidgets(
+    'P269 render semantics appears only after a decoded image or thumbnail frame',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: jpgFile.path,
+            mediaType: 'image',
+            renderedSemanticsLabel: 'P269 receiver JPEG rendered',
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.bySemanticsLabel('P269 receiver JPEG rendered'),
+        findsNothing,
+      );
+
+      final image = tester.widget<Image>(find.byType(Image));
+      final decodedImage = image.frameBuilder!(
+        tester.element(find.byType(Image)),
+        const SizedBox(),
+        0,
+        false,
+      );
+      await tester.pumpWidget(wrap(decodedImage));
+      expect(
+        find.bySemanticsLabel('P269 receiver JPEG rendered'),
+        findsOneWidget,
+      );
+
+      final videoFile = File('${tempDir.path}/proof.mp4')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+      final thumbnailFile = File('${tempDir.path}/proof.jpg')
+        ..writeAsBytesSync(_tinyJpgBytes);
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: videoFile.path,
+            mediaType: 'video',
+            placeholder: const Text('video fallback'),
+            renderedSemanticsLabel: 'P269 receiver MP4 rendered',
+            videoThumbnailResolver: (_) async => thumbnailFile.path,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final videoImage = tester.widget<Image>(find.byType(Image));
+      final decodedVideoThumbnail = videoImage.frameBuilder!(
+        tester.element(find.byType(Image)),
+        const SizedBox(),
+        0,
+        false,
+      );
+      await tester.pumpWidget(wrap(decodedVideoThumbnail));
+      expect(
+        find.bySemanticsLabel('P269 receiver MP4 rendered'),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: videoFile.path,
+            mediaType: 'video',
+            placeholder: const Text('video fallback'),
+            renderedSemanticsLabel: 'P269 fallback MP4 rendered',
+            videoThumbnailResolver: (_) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('P269 fallback MP4 rendered'), findsNothing);
+
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: '${tempDir.path}/missing-proof.mp4',
+            mediaType: 'video',
+            placeholder: const Text('video fallback'),
+            error: const Text('video unavailable'),
+            renderedSemanticsLabel: 'P269 missing MP4 rendered',
+            videoThumbnailResolver: (_) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('P269 missing MP4 rendered'), findsNothing);
+      semantics.dispose();
+    },
+  );
+
   testWidgets('uses error when video thumbnail is null and source is missing', (
     tester,
   ) async {
@@ -201,34 +294,33 @@ void main() {
     },
   );
 
-  testWidgets(
-    '117: undecodable image (non-video) still shows error',
-    (tester) async {
-      // A genuinely-corrupt image (not a video) SHOULD still surface the
-      // error widget — the placeholder fallback is video-specific.
-      final corruptImage = File('${tempDir.path}/corrupt.jpg')
-        ..writeAsBytesSync(const [1, 2, 3, 4, 5, 6, 7, 8]);
+  testWidgets('117: undecodable image (non-video) still shows error', (
+    tester,
+  ) async {
+    // A genuinely-corrupt image (not a video) SHOULD still surface the
+    // error widget — the placeholder fallback is video-specific.
+    final corruptImage = File('${tempDir.path}/corrupt.jpg')
+      ..writeAsBytesSync(const [1, 2, 3, 4, 5, 6, 7, 8]);
 
-      await tester.pumpWidget(
-        wrap(
-          MediaThumbnailImage(
-            mediaPath: corruptImage.path,
-            mediaType: 'image',
-            placeholder: const Text('image fallback'),
-            error: const Text('image unavailable'),
-          ),
+    await tester.pumpWidget(
+      wrap(
+        MediaThumbnailImage(
+          mediaPath: corruptImage.path,
+          mediaType: 'image',
+          placeholder: const Text('image fallback'),
+          error: const Text('image unavailable'),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      final errorWidget = renderErrorBuilder(tester);
-      await tester.pumpWidget(wrap(errorWidget));
-      await tester.pumpAndSettle();
+    final errorWidget = renderErrorBuilder(tester);
+    await tester.pumpWidget(wrap(errorWidget));
+    await tester.pumpAndSettle();
 
-      expect(find.text('image unavailable'), findsOneWidget);
-      expect(find.text('image fallback'), findsNothing);
-    },
-  );
+    expect(find.text('image unavailable'), findsOneWidget);
+    expect(find.text('image fallback'), findsNothing);
+  });
 
   // 143: The real Image.file decode runs async I/O that does not complete in
   // the testWidgets fake-async zone (same constraint the errorBuilder tests

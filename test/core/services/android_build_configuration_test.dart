@@ -105,8 +105,18 @@ void main() {
       // Extract Android applicationId default
       expect(appBuild, contains('"com.mknoon.app"'));
 
-      // iOS bundle identifiers must match
-      expect(pbxproj, contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app'));
+      // The production default stays exact even though the dedicated Sims
+      // profile overrides it through an explicit indirection.
+      expect(
+        pbxproj,
+        contains('MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;'),
+      );
+      expect(
+        pbxproj,
+        contains(
+          'PRODUCT_BUNDLE_IDENTIFIER = "\$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";',
+        ),
+      );
     });
 
     test('iOS app group and share extension follow naming convention', () {
@@ -124,7 +134,17 @@ void main() {
       expect(shareEntitlements, contains('group.com.mknoon.app.share'));
       expect(
         pbxproj,
-        contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension'),
+        contains(
+          'MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = '
+          'com.mknoon.app.ShareExtension;',
+        ),
+      );
+      expect(
+        pbxproj,
+        contains(
+          'PRODUCT_BUNDLE_IDENTIFIER = '
+          '"\$(MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER)";',
+        ),
       );
     });
 

@@ -13,12 +13,14 @@ class AudioPlayerWidget extends StatefulWidget {
   final MediaAttachment attachment;
   final bool requireVerifiedContentHash;
   final VoidCallback? onRetryUnavailableMedia;
+  final String? renderedSemanticsLabel;
 
   const AudioPlayerWidget({
     super.key,
     required this.attachment,
     this.requireVerifiedContentHash = false,
     this.onRetryUnavailableMedia,
+    this.renderedSemanticsLabel,
   });
 
   @override
@@ -225,7 +227,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
     final hasWaveform = widget.attachment.waveform != null;
 
-    return Row(
+    final player = Row(
       children: [
         // Play/pause button
         GestureDetector(
@@ -296,6 +298,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
         ),
       ],
     );
+    final label = widget.renderedSemanticsLabel;
+    if (label == null || !_isLoaded) return player;
+    return Semantics(container: true, label: label, child: player);
   }
 
   /// 229: "local copy removed" pill. Retry is user-authoritative (never

@@ -1,0 +1,33 @@
+{
+  "schema": "mknoon.plan-269.sanitized-prepared-artifacts.v1",
+  "sourceDigest": "6914da96b4413c903e7d28473d1135cc03d9a6c2d83fd9408615128fb9247616",
+  "artifacts": {
+    "android": {
+      "profile": "android.e2e.group_media_269",
+      "artifactSha256": "ec7c039ad768793f865ce6ced81e7126d1db590dcf4cbc5297c65879540be862",
+      "actualBuilds": 1,
+      "cacheHits": 0,
+      "cacheMisses": 1,
+      "failedProfiles": 0,
+      "buildReportSha256": "308c46aea5b86b5747ab3297fc6bd7f28fc2b3b5f929b4ec744143c4b4ecf46a",
+      "attestationSha256": "cea1a24640f26da067852c648b1bd28b99c42a54b1574d95cd8196b09c01c118"
+    },
+    "ios": {
+      "profile": "ios.device.group_media_269",
+      "artifactSha256": "cb253736786bc44e4763075c71bff28f33b4b55ecc671b8cd46af65aae1bf1a7",
+      "actualBuilds": 1,
+      "cacheHits": 0,
+      "cacheMisses": 1,
+      "failedProfiles": 0,
+      "buildReportSha256": "0fcdd6a8be946550b3d654af45e9305c128d06b716dacf4abef4f2907e411273",
+      "attestationSha256": "1c02dfefe9ec1921e433d2482c9bdb4d50d49aeacc6039f4aad1df9ad573ce2b"
+    }
+  },
+  "note": "The preparation reports are filtered profile runs, so their releaseEligible flag is intentionally false; they attest artifact custody, not release-wide closure.",
+  "redaction": {
+    "artifactPathsIncluded": false,
+    "rawDeviceIdsIncluded": false,
+    "signingMaterialIncluded": false,
+    "environmentValuesIncluded": false
+  }
+}

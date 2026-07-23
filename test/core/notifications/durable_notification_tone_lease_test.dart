@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
@@ -672,6 +673,36 @@ void main() {
       appGroup.path,
     );
   });
+
+  test(
+    'P269 dedicated iOS profile forces reset-owned local notification storage',
+    () async {
+      final support = await Directory.systemTemp.createTemp(
+        'reaction-p269-support-',
+      );
+      addTearDown(() => support.delete(recursive: true));
+      var appGroupCalls = 0;
+
+      final coordinator = await DurableNotificationToneLease.openDefault(
+        useIosAppGroup: true,
+        installedProfileId: groupMediaIosDisposableBuildProfile,
+        appGroupPathChannel: AppGroupPathChannel(
+          invoker: (_, _) async {
+            appGroupCalls += 1;
+            return '/forbidden-production-app-group';
+          },
+        ),
+        supportDirectory: () async => support,
+      );
+
+      expect(appGroupCalls, 0);
+      expect(
+        coordinator.directory.path,
+        '${support.path}/ReactionNotificationClaims',
+      );
+      expect(await coordinator.claimEvent('p269-local-event'), isTrue);
+    },
+  );
 }
 
 Future<bool> _holdToneLockInFreshIsolate(String path) {

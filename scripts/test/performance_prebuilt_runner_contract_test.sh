@@ -85,6 +85,14 @@ case "${1:-}" in
           'pm path com.mknoon.app')
             [ ! -f "$APP_STATE" ] || printf 'package:/data/app/base.apk\n'
             ;;
+          'pm list packages -3')
+            [ ! -f "$APP_STATE" ] || printf 'package:com.mknoon.app\n'
+            ;;
+          'sha256sum /data/app/base.apk')
+            [ -f "$APP_STATE" ]
+            printf '%s  /data/app/base.apk\n' \
+              "$(shasum -a 256 "$EXPECTED_ARTIFACT" | awk '{print $1}')"
+            ;;
           'pidof com.mknoon.app'|'dumpsys activity activities'|\
           'run-as com.mknoon.app ls -1 -A .')
             ;;
@@ -127,6 +135,16 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$shim_dir/adb"
+
+cat >"$shim_dir/apkanalyzer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = manifest ]
+[ "${2:-}" = application-id ]
+[ -f "${3:-}" ]
+printf 'com.mknoon.app\n'
+EOF
+chmod +x "$shim_dir/apkanalyzer"
 
 cat >"$shim_dir/flutter" <<'EOF'
 #!/usr/bin/env bash

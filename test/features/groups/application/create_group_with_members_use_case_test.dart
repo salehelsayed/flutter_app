@@ -764,6 +764,143 @@ void main() {
     });
 
     test(
+      'P269 active recipient device binding sends invite to exact transport with key package',
+      () async {
+        const recipientTransportPeerId = 'transport-peer-bob-phone';
+        const recipientDeviceId = 'device-bob-phone';
+        const recipientKeyPackageId = 'key-package-bob-phone';
+        final recipientBinding = GroupMemberDeviceIdentity(
+          deviceId: recipientDeviceId,
+          transportPeerId: recipientTransportPeerId,
+          deviceSigningPublicKey: contactBob.publicKey,
+          mlKemPublicKey: contactBob.mlKemPublicKey,
+          keyPackageId: recipientKeyPackageId,
+          keyPackagePublicMaterial: 'bob-key-package-material',
+        );
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactBob],
+          selectedContactDeviceBindings: {contactBob.peerId: recipientBinding},
+          type: GroupType.chat,
+          name: 'P269 Split Identity Group',
+        );
+
+        expect(result.invitesSent, 1);
+        final storedBob = await groupRepo.getMember(
+          'test-group-id',
+          contactBob.peerId,
+        );
+        expect(storedBob, isNotNull);
+        expect(storedBob!.devices, [recipientBinding]);
+
+        expect(p2pService.sentMessageLog, hasLength(1));
+        final delivery = p2pService.sentMessageLog.single;
+        expect(delivery.peerId, recipientTransportPeerId);
+        expect(delivery.peerId, isNot(contactBob.peerId));
+
+        final envelope = jsonDecode(delivery.content) as Map<String, dynamic>;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final invite = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        );
+        expect(invite, isNotNull);
+        expect(invite!.recipientPeerId, contactBob.peerId);
+        expect(invite.recipientDeviceId, recipientDeviceId);
+        expect(invite.recipientTransportPeerId, recipientTransportPeerId);
+        expect(invite.recipientKeyPackageId, recipientKeyPackageId);
+        expect(
+          invite.recipientKeyPackagePublicMaterial,
+          'bob-key-package-material',
+        );
+        expect(invite.welcomeKeyPackage, isNotNull);
+        final welcomeKeyPackage = invite.welcomeKeyPackage!;
+        expect(welcomeKeyPackage.packageId, recipientKeyPackageId);
+        expect(
+          welcomeKeyPackage.recipientTransportPeerId,
+          recipientTransportPeerId,
+        );
+        expect(welcomeKeyPackage.isStructurallyValid(), isTrue);
+        expect(
+          welcomeKeyPackage.matchesInviteAndRecipient(
+            inviteId: invite.id,
+            groupId: invite.groupId,
+            keyEpoch: invite.keyEpoch,
+            recipientPeerId: invite.recipientPeerId,
+            recipientDeviceId: invite.recipientDeviceId,
+            recipientTransportPeerId: invite.recipientTransportPeerId,
+            recipientMlKemPublicKey: invite.recipientMlKemPublicKey,
+            recipientKeyPackageId: invite.recipientKeyPackageId,
+            recipientKeyPackagePublicMaterial:
+                invite.recipientKeyPackagePublicMaterial,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'P269 rejects malformed explicit recipient transport before group creation',
+      () async {
+        final malformedBindings =
+            <({String label, GroupMemberDeviceIdentity binding})>[
+              (
+                label: 'blank transport',
+                binding: GroupMemberDeviceIdentity(
+                  deviceId: 'device-bob-phone',
+                  transportPeerId: '   ',
+                  deviceSigningPublicKey: contactBob.publicKey,
+                  mlKemPublicKey: contactBob.mlKemPublicKey,
+                  keyPackageId: 'key-package-bob-phone',
+                  keyPackagePublicMaterial: 'bob-key-package-material',
+                ),
+              ),
+              (
+                label: 'wrong signing authority',
+                binding: GroupMemberDeviceIdentity(
+                  deviceId: 'device-bob-phone',
+                  transportPeerId: 'transport-peer-bob-phone',
+                  deviceSigningPublicKey: 'attacker-signing-key',
+                  mlKemPublicKey: contactBob.mlKemPublicKey,
+                  keyPackageId: 'key-package-bob-phone',
+                  keyPackagePublicMaterial: 'bob-key-package-material',
+                ),
+              ),
+            ];
+
+        for (final malformed in malformedBindings) {
+          await expectLater(
+            createGroupWithMembers(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              p2pService: p2pService,
+              identity: testIdentity,
+              selectedContacts: [contactBob],
+              selectedContactDeviceBindings: {
+                contactBob.peerId: malformed.binding,
+              },
+              type: GroupType.chat,
+              name: 'P269 Invalid Binding',
+            ),
+            throwsA(isA<ArgumentError>()),
+            reason: malformed.label,
+          );
+
+          expect(groupRepo.groupCount, 0, reason: malformed.label);
+          expect(
+            bridge.commandLog,
+            isNot(contains('group:create')),
+            reason: malformed.label,
+          );
+          expect(p2pService.sentMessageLog, isEmpty, reason: malformed.label);
+        }
+      },
+    );
+
+    test(
       'PREREQ-INVITER-FRESHNESS create fanout sends invites with signed freshness proof',
       () async {
         await createGroupWithMembers(

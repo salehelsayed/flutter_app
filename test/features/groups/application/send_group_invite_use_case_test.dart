@@ -521,6 +521,7 @@ void main() {
           recipientMlKemPublicKey: 'bobMlKem64',
           recipientDeviceId: 'bob-device-1',
           senderDeviceId: 'alice-device-1',
+          senderTransportPeerId: 'alice-device-1',
           senderPeerId: '12D3KooWAlice',
           senderPublicKey: 'alicePubKey64',
           senderPrivateKey: 'alicePrivateKey64',
@@ -552,6 +553,175 @@ void main() {
           payload.welcomeKeyPackage!.packageId,
         );
         expect(payload.senderDeviceId, 'alice-device-1');
+      },
+    );
+
+    test(
+      'deviceful sender resolves its unique active signing device without a legacy downgrade',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_deviceBoundGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientDeviceId: 'bob-device-1',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _deviceBoundGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.success);
+        final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+          p2pService.lastSendMessageContent!,
+        )!;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final payload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        )!;
+        expect(payload.senderDeviceId, 'alice-device-1');
+        expect(payload.senderTransportPeerId, 'alice-device-1');
+        expect(payload.senderDeviceSigningPublicKey, 'alicePubKey64');
+      },
+    );
+
+    test(
+      'stale partial and ambiguous explicit sender bindings fail before crypto or transport',
+      () async {
+        final aliceMember =
+            (_deviceBoundGroupConfig['members'] as List<dynamic>).first
+                as Map<String, dynamic>;
+        final ambiguousConfig = <String, dynamic>{
+          ..._deviceBoundGroupConfig,
+          'members': <dynamic>[
+            <String, dynamic>{
+              ...aliceMember,
+              'devices': <dynamic>[
+                ...(aliceMember['devices'] as List<dynamic>),
+                <String, dynamic>{
+                  'deviceId': 'alice-device-2',
+                  'transportPeerId': 'alice-device-1',
+                  'deviceSigningPublicKey': 'alicePubKey64',
+                  'mlKemPublicKey': 'aliceMlKem64',
+                  'status': 'active',
+                },
+              ],
+            },
+            (_deviceBoundGroupConfig['members'] as List<dynamic>)[1],
+          ],
+        };
+        final scenarios =
+            <
+              ({
+                Map<String, dynamic> config,
+                String? deviceId,
+                String? transportPeerId,
+              })
+            >[
+              (
+                config: _deviceBoundGroupConfig,
+                deviceId: 'alice-device-1',
+                transportPeerId: null,
+              ),
+              (
+                config: _deviceBoundGroupConfig,
+                deviceId: 'alice-device-old',
+                transportPeerId: 'alice-transport-old',
+              ),
+              (
+                config: ambiguousConfig,
+                deviceId: 'alice-device-1',
+                transportPeerId: 'alice-device-1',
+              ),
+            ];
+
+        for (final scenario in scenarios) {
+          final scenarioBridge = PassthroughCryptoBridge();
+          final scenarioP2P = FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+          );
+          addTearDown(scenarioP2P.dispose);
+          final result = await sendGroupInvite(
+            p2pService: scenarioP2P,
+            bridge: scenarioBridge,
+            groupRepo: await _repoFromConfig(scenario.config),
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            recipientDeviceId: 'bob-device-1',
+            senderDeviceId: scenario.deviceId,
+            senderTransportPeerId: scenario.transportPeerId,
+            senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: scenario.config,
+          );
+
+          expect(result, SendGroupInviteResult.invalidPayload);
+          expect(scenarioBridge.commandLog, isNot(contains('payload.sign')));
+          expect(scenarioBridge.commandLog, isNot(contains('message.encrypt')));
+          expect(scenarioP2P.sendMessageCallCount, 0);
+          expect(scenarioP2P.storeInInboxCallCount, 0);
+        }
+      },
+    );
+
+    test(
+      'ambiguous implicit sender signing device fails before crypto or transport',
+      () async {
+        final aliceMember =
+            (_deviceBoundGroupConfig['members'] as List<dynamic>).first
+                as Map<String, dynamic>;
+        final ambiguousConfig = <String, dynamic>{
+          ..._deviceBoundGroupConfig,
+          'members': <dynamic>[
+            <String, dynamic>{
+              ...aliceMember,
+              'devices': <dynamic>[
+                ...(aliceMember['devices'] as List<dynamic>),
+                <String, dynamic>{
+                  'deviceId': 'alice-device-2',
+                  'transportPeerId': 'alice-device-2',
+                  'deviceSigningPublicKey': 'alicePubKey64',
+                  'mlKemPublicKey': 'aliceMlKem64',
+                  'status': 'active',
+                },
+              ],
+            },
+            (_deviceBoundGroupConfig['members'] as List<dynamic>)[1],
+          ],
+        };
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(ambiguousConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientDeviceId: 'bob-device-1',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: ambiguousConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
       },
     );
 
@@ -648,6 +818,7 @@ void main() {
           recipientMlKemPublicKey: 'charlieMlKem64',
           recipientDeviceId: 'charlie-device-1',
           senderDeviceId: 'bob-device-1',
+          senderTransportPeerId: 'bob-device-1',
           senderPeerId: '12D3KooWBob',
           senderPublicKey: 'bobPubKey64',
           senderPrivateKey: 'bobPrivateKey64',
@@ -736,6 +907,7 @@ void main() {
             recipientMlKemPublicKey: mlKemPublicKey,
             recipientDeviceId: deviceId,
             senderDeviceId: 'alice-device-1',
+            senderTransportPeerId: 'alice-device-1',
             senderPeerId: '12D3KooWAlice',
             senderPublicKey: 'alicePubKey64',
             senderPrivateKey: 'alicePrivateKey64',
@@ -815,6 +987,7 @@ void main() {
           recipientMlKemPublicKey: 'bobMlKem64',
           recipientDeviceId: 'bob-device-1',
           senderDeviceId: 'alice-device-1',
+          senderTransportPeerId: 'alice-device-1',
           senderPeerId: '12D3KooWAlice',
           senderPublicKey: 'alicePubKey64',
           senderPrivateKey: 'alicePrivateKey64',
@@ -1504,6 +1677,65 @@ void main() {
         expect(p2pService.sentMessageLog.length, equals(2));
       },
     );
+
+    test('forwards the exact sender device and transport binding', () async {
+      final senderMember =
+          (_parallelGroupConfig['members'] as List<dynamic>).first
+              as Map<String, dynamic>;
+      final devicefulConfig = <String, dynamic>{
+        ..._parallelGroupConfig,
+        'members': <dynamic>[
+          <String, dynamic>{
+            ...senderMember,
+            'devices': const <dynamic>[
+              <String, dynamic>{
+                'deviceId': 'alice-device-1',
+                'transportPeerId': 'alice-transport-1',
+                'deviceSigningPublicKey': 'alicePubKey64',
+                'mlKemPublicKey': 'aliceMlKem64',
+                'status': 'active',
+              },
+            ],
+          },
+          ...(_parallelGroupConfig['members'] as List<dynamic>).skip(1),
+        ],
+      };
+
+      final result = await sendGroupInvitesInParallel(
+        p2pService: p2pService,
+        bridge: bridge,
+        groupRepo: await _repoFromConfig(devicefulConfig),
+        senderPeerId: sharedArgs.senderPeerId,
+        senderPublicKey: sharedArgs.senderPublicKey,
+        senderPrivateKey: sharedArgs.senderPrivateKey,
+        senderUsername: sharedArgs.senderUsername,
+        senderDeviceId: 'alice-device-1',
+        senderTransportPeerId: 'alice-transport-1',
+        groupId: sharedArgs.groupId,
+        groupKey: sharedArgs.groupKey,
+        keyEpoch: sharedArgs.keyEpoch,
+        groupConfig: devicefulConfig,
+        recipients: const [
+          (
+            peerId: '12D3KooWBob',
+            username: 'Bob',
+            mlKemPublicKey: 'bobMlKem64',
+          ),
+        ],
+      );
+
+      expect(result.successCount, 1);
+      final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+        p2pService.sentMessageLog.single.content,
+      )!;
+      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+      final payload = GroupInvitePayload.fromInnerJson(
+        encrypted['ciphertext'] as String,
+      )!;
+      expect(payload.senderDeviceId, 'alice-device-1');
+      expect(payload.senderTransportPeerId, 'alice-transport-1');
+      expect(payload.senderDeviceSigningPublicKey, 'alicePubKey64');
+    });
 
     test(
       'targets each active registered device for one recipient from current config',

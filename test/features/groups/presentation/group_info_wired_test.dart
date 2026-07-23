@@ -104,6 +104,56 @@ class _FailingDeleteGroupMessageRepository
   }
 }
 
+class _DissolveOnMetadataTimelineSaveRepository
+    extends InMemoryGroupMessageRepository {
+  _DissolveOnMetadataTimelineSaveRepository(this.groupRepo);
+
+  final InMemoryGroupRepository groupRepo;
+  var _didDissolve = false;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    await super.saveMessage(message);
+    if (_didDissolve || !message.id.startsWith('sys-group_metadata_updated:')) {
+      return;
+    }
+    _didDissolve = true;
+    final current = await groupRepo.getGroup(message.groupId);
+    await groupRepo.updateGroup(
+      current!.copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 7, 22, 15, 30),
+        dissolvedBy: 'peer-remote-admin',
+      ),
+    );
+  }
+}
+
+class _RotateKeyOnMetadataTimelineSaveRepository
+    extends InMemoryGroupMessageRepository {
+  _RotateKeyOnMetadataTimelineSaveRepository(this.groupRepo);
+
+  final InMemoryGroupRepository groupRepo;
+  var _didRotate = false;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    await super.saveMessage(message);
+    if (_didRotate || !message.id.startsWith('sys-group_metadata_updated:')) {
+      return;
+    }
+    _didRotate = true;
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: message.groupId,
+        keyGeneration: 2,
+        encryptedKey: 'test-group-key-2',
+        createdAt: DateTime.utc(2026, 7, 22, 15, 40),
+      ),
+    );
+  }
+}
+
 class _ControlledRecoveryIdentityRepository extends FakeIdentityRepository {
   bool beginRecoveryOnNextLoad = false;
 
@@ -3657,6 +3707,226 @@ void main() {
     );
 
     testWidgets(
+      'P269 metadata commit followed by dissolve before publish preserves terminal state without publish queue or rollback',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((broadcast) async {
+          enqueued.add(broadcast);
+        });
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final groupRepo = InMemoryGroupRepository();
+        final original = makeAdminGroup().copyWith(
+          name: 'Original Name',
+          description: 'Original description',
+        );
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        final msgRepo = _DissolveOnMetadataTimelineSaveRepository(groupRepo);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Committed Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup(original.id);
+        expect(persisted?.isDissolved, isTrue);
+        expect(persisted?.dissolvedBy, 'peer-remote-admin');
+        expect(persisted?.name, 'Committed Rename');
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+        expect(enqueued, isEmpty);
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    testWidgets(
+      'P269 key rotation after metadata commit blocks stale publish and retry',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((broadcast) async {
+          enqueued.add(broadcast);
+        });
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final groupRepo = InMemoryGroupRepository();
+        final original = makeAdminGroup().copyWith(name: 'Original Name');
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        final msgRepo = _RotateKeyOnMetadataTimelineSaveRepository(groupRepo);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Committed Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup(original.id);
+        final latestKey = await groupRepo.getLatestKey(original.id);
+        expect(persisted?.name, 'Committed Rename');
+        expect(persisted?.isDissolved, isFalse);
+        expect(latestKey?.keyGeneration, 2);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+        expect(enqueued, isEmpty);
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    testWidgets(
+      'P269 avatar edit loses authority when dissolve lands while the editor is open and performs zero upload or publish',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(
+          tempDir,
+          'p269-dialog-dissolve',
+        );
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await _seedEditableGroup(groupRepo, group: group);
+        final bridge = FakeBridge();
+        var uploadCalls = 0;
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: group,
+          bridge: bridge,
+          msgRepo: msgRepo,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(),
+          uploadGroupAvatarFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required groupId,
+                required allowedPeers,
+                blobId,
+                mime = 'image/jpeg',
+              }) async {
+                uploadCalls += 1;
+                return const GroupAvatarUpload(
+                  id: 'must-not-upload',
+                  mime: 'image/jpeg',
+                  size: 4,
+                );
+              },
+        );
+        await _openGroupDetailsEditor(tester);
+        await _pickGroupEditPhoto(tester);
+        await tester.enterText(_groupEditNameField(), 'Stale rename');
+
+        final current = await groupRepo.getGroup(group.id);
+        await groupRepo.updateGroup(
+          current!.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 7, 22, 14),
+            dissolvedBy: 'peer-remote-admin',
+          ),
+        );
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup(group.id);
+        expect(uploadCalls, 0);
+        expect(persisted?.isDissolved, isTrue);
+        expect(persisted?.name, group.name);
+        expect(persisted?.avatarBlobId, isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'P269 group avatar edit rejects missing membership with zero upload and no account-ID fallback',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(
+          tempDir,
+          'p269-empty-member-acl',
+        );
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        final group = makeAdminGroup();
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo, groupId: group.id);
+        expect(await groupRepo.getMembers(group.id), isEmpty);
+
+        var uploadCalls = 0;
+        List<String>? capturedAllowedPeers;
+        Future<GroupAvatarUpload?> captureRejectedUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String groupId,
+          required List<String> allowedPeers,
+          String? blobId,
+          String mime = 'image/jpeg',
+        }) async {
+          uploadCalls += 1;
+          capturedAllowedPeers = List<String>.from(allowedPeers);
+          return null;
+        }
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: group,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(),
+          uploadGroupAvatarFn: captureRejectedUpload,
+        );
+        await _openGroupDetailsEditor(tester);
+        await _pickGroupEditPhoto(tester);
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(uploadCalls, 0);
+        expect(capturedAllowedPeers, isNull);
+
+        final persisted = await groupRepo.getGroup(group.id);
+        expect(persisted!.avatarBlobId, isNull);
+        expect(persisted.avatarMime, isNull);
+        expect(persisted.avatarPath, isNull);
+      },
+    );
+
+    testWidgets(
       'GCA-103 post-invite avatar upload includes late invitee in allowedPeers',
       (tester) async {
         final tempDir = await _installPathProviderTempDirForTest();
@@ -3670,13 +3940,53 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         await _seedEditableGroup(groupRepo, group: group);
         await groupRepo.saveMember(
-          makeMember(peerId: 'peer-a', username: 'User A'),
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+          ).copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-admin-gca103',
+                transportPeerId: 'transport-admin-gca103',
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+          ),
         );
         await groupRepo.saveMember(
-          makeMember(peerId: 'peer-b', username: 'User B'),
+          makeMember(peerId: 'peer-a', username: 'User A').copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-a-gca103',
+                transportPeerId: 'transport-a-gca103',
+                deviceSigningPublicKey: 'pk-a-gca103',
+              ),
+            ],
+          ),
         );
         await groupRepo.saveMember(
-          makeMember(peerId: 'peer-d', username: 'User D'),
+          makeMember(peerId: 'peer-b', username: 'User B').copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-b-gca103',
+                transportPeerId: 'transport-b-gca103',
+                deviceSigningPublicKey: 'pk-b-gca103',
+              ),
+            ],
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-d', username: 'User D').copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-d-gca103',
+                transportPeerId: 'transport-d-gca103',
+                deviceSigningPublicKey: 'pk-d-gca103',
+              ),
+            ],
+          ),
         );
         final memberRows = await groupRepo.getMembers(group.id);
         expect(
@@ -3731,14 +4041,26 @@ void main() {
         expect(capturedAllowedPeers, isNotNull);
         expect(
           capturedAllowedPeers,
-          containsAll(['peer-admin', 'peer-a', 'peer-b', 'peer-d']),
+          containsAll(<String>[
+            'transport-admin-gca103',
+            'transport-a-gca103',
+            'transport-b-gca103',
+            'transport-d-gca103',
+          ]),
         );
         expect(
           capturedAllowedPeers!.toSet(),
           hasLength(capturedAllowedPeers!.length),
           reason: 'avatar ACL should not contain duplicate peer ids',
         );
-        expect(capturedAllowedPeers, contains('peer-d'));
+        expect(capturedAllowedPeers, contains('transport-d-gca103'));
+        expect(
+          capturedAllowedPeers,
+          everyElement(
+            isNot(isIn(<String>['peer-admin', 'peer-a', 'peer-b', 'peer-d'])),
+          ),
+          reason: 'avatar ACL must use active transport IDs, not account IDs',
+        );
       },
     );
 

@@ -1,0 +1,26 @@
+{
+  "schema": "mknoon.plan-269.sanitized-device-evidence.v1",
+  "capability": "groups.media_send_reliability",
+  "scenario": "group_media_foreground_retry_acl_roundtrip",
+  "status": "PASS",
+  "proofSha256": "9cbd5c5f98b9c0fe4517f4d946a20c7cbcdcc824e282fcd1e0d2567374aba83c",
+  "preparedArtifact": {
+    "profile": "android.e2e.group_media_269",
+    "sha256": "ec7c039ad768793f865ce6ced81e7126d1db590dcf4cbc5297c65879540be862",
+    "actualBuilds": 0,
+    "cacheHits": 1,
+    "childBuilds": 0,
+    "buildGuardBytes": 0
+  },
+  "validator": {
+    "strictVersionOneSchema": true,
+    "validatedArtifactCount": 1
+  },
+  "redaction": {
+    "rawArtifactPathIncluded": false,
+    "rawDeviceIdsIncluded": false,
+    "rawPeerIdsIncluded": false,
+    "relayAddressesIncluded": false,
+    "tokensOrKeysIncluded": false
+  }
+}

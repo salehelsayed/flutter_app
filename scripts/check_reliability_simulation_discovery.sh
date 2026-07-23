@@ -231,6 +231,25 @@ classify_path() {
       record "support" "$path" "support" "234 deterministic device-local private-media proof support"
       return
       ;;
+    integration_test/scripts/android_group_media_reliability_controller.dart|\
+    integration_test/scripts/group_media_ios_background_recovery.dart|\
+    integration_test/scripts/group_media_ios_background_recovery_evidence.dart|\
+    integration_test/scripts/group_media_ios_fixture_driver.dart|\
+    integration_test/scripts/group_media_prepared_artifact_custody.dart|\
+    integration_test/scripts/group_media_reliability_criteria.dart|\
+    integration_test/scripts/group_media_reliability_runner_contract.dart|\
+    integration_test/support/group_media_android_disposable_app.dart|\
+    lib/core/debug/group_media_ios_background_e2e.dart|\
+    lib/core/debug/group_media_ios_background_e2e_contract.dart|\
+    lib/core/debug/group_media_ios_background_e2e_main_actions.dart|\
+    lib/core/debug/group_media_ios_background_e2e_overlay.dart|\
+    lib/core/debug/group_media_ios_disposable_profile.dart|\
+    lib/core/debug/group_media_ios_disposable_reset.dart|\
+    lib/core/debug/group_media_reliability_e2e.dart|\
+    lib/core/debug/group_media_reliability_e2e_main_actions.dart)
+      record "support" "$path" "support" "269 strict group-media app hooks, host controllers, artifact criteria, and prepared-runner contract"
+      return
+      ;;
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
     integration_test/sims_dispatcher.dart|\
@@ -467,6 +486,10 @@ classify_path() {
       record "support" "$path" "support" "typed sims adapter for the group reaction-notification campaign; manifest owns the executable proof row"
       return
       ;;
+    integration_test/scripts/run_group_media_send_reliability.dart)
+      record "group" "$path" "runner" "269 prepared-artifact two-role group-media reliability runner (--list-scenarios)"
+      return
+      ;;
     integration_test/group_multi_party_phase0_runtime_channel_probe.dart)
       record "support" "$path" "support" "group multi-party Phase 0 runtime-channel probe target"
       return
@@ -607,6 +630,8 @@ discover_candidates() {
   {
     find integration_test -maxdepth 1 -type f -name '*.dart' -print 2>/dev/null
     find integration_test/scripts -maxdepth 1 -type f -print 2>/dev/null
+    [ ! -f integration_test/support/group_media_android_disposable_app.dart ] ||
+      printf '%s\n' integration_test/support/group_media_android_disposable_app.dart
     find scripts -maxdepth 1 -type f \( \
       -name '*simulator*.sh' -o \
       -name '*emulator*.sh' -o \
@@ -614,6 +639,11 @@ discover_candidates() {
       -name '*smoke*.sh' \
     \) -print 2>/dev/null
     find lib/core/debug -maxdepth 1 -type f \( -name '*e2e*.dart' -o -name '*smoke*.dart' \) -print 2>/dev/null
+    for path in \
+      lib/core/debug/group_media_ios_disposable_profile.dart \
+      lib/core/debug/group_media_ios_disposable_reset.dart; do
+      [ ! -f "$path" ] || printf '%s\n' "$path"
+    done
     [ -f smoke_test_friends.sh ] && printf '%s\n' smoke_test_friends.sh
     [ -f reset_simulators.sh ] && printf '%s\n' reset_simulators.sh
   } | sed 's#^\./##' | sort -u
@@ -996,6 +1026,27 @@ expand_group_reaction_notification_device() {
   fi
 }
 
+expand_group_media_reliability() {
+  local category="$1"
+  local path="$2"
+  local note="$3"
+  local scenario
+  local count=0
+
+  while IFS= read -r scenario; do
+    [ -n "$scenario" ] || continue
+    record_check "$category" "$path" "$scenario" "$note; scenario=$scenario"
+    count=$((count + 1))
+  done < <(
+    dart "$path" --list-scenarios 2>/dev/null |
+      awk '/^[[:alnum:]_]+$/ { print }'
+  )
+
+  if [ "$count" -ne 2 ]; then
+    record_expansion_error "$path" "expected exactly two Plan 269 group-media scenarios, found $count"
+  fi
+}
+
 expand_record_to_checks() {
   local category="$1"
   local kind="$2"
@@ -1044,6 +1095,10 @@ expand_record_to_checks() {
       ;;
     integration_test/scripts/run_group_reaction_notification_device.dart)
       expand_group_reaction_notification_device "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_group_media_send_reliability.dart)
+      expand_group_media_reliability "$category" "$path" "$note"
       return
       ;;
     integration_test/scripts/run_intro_accept_notification_android.dart)

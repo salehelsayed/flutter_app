@@ -1,0 +1,54 @@
+{
+  "schema": "mknoon.plan-269.sanitized-device-evidence.v1",
+  "scenario": "group_media_ios_receiver_background_recovery",
+  "runId": "p269-tc20-final-single-v15",
+  "status": "FAIL",
+  "disposition": "bypassed_by_explicit_user_instruction_after_single_allowed_run",
+  "postCapRunCount": 1,
+  "furtherRunsPermitted": false,
+  "validatedFinalArtifactPresent": false,
+  "preparedArtifacts": {
+    "androidSha256": "ec7c039ad768793f865ce6ced81e7126d1db590dcf4cbc5297c65879540be862",
+    "iosSha256": "cb253736786bc44e4763075c71bff28f33b4b55ecc671b8cd46af65aae1bf1a7",
+    "childBuilds": 0,
+    "buildGuardBytes": 0
+  },
+  "phaseA": {
+    "receiptObserved": true,
+    "productionDatabaseObserved": true,
+    "nativeTaskObserved": true,
+    "receiptSourceSha256": "f9c0ac1ff158b271d6bae6d1d90a0a11ac262bf471868dadde32bef8342ed232",
+    "databaseSourceSha256": "27448a72db77109594d9b29d633e79d31bc0bb579948025130496c28df36696e",
+    "nativeSourceSha256": "412d072729b2d8d9abdc99817b87075bd9dda82f9131111f50717bfa3f91b512"
+  },
+  "phaseB": {
+    "claimReceiptObserved": true,
+    "claimDatabaseObserved": true,
+    "claimNativeTaskObserved": true,
+    "hostTerminationObserved": true,
+    "coldRecoveryStarted": true,
+    "finalUiEffectObserved": false,
+    "claimReceiptSourceSha256": "3ee63b70294971fc3858d507384a2bbf2ce677ed701fe9849a964f50daef1eb9",
+    "claimDatabaseSourceSha256": "511ebac5328641e5299986e95974275f481863135d4a34bc19f7e1949dc29c9e",
+    "claimNativeSourceSha256": "e2a9d6caf1565559f80060d235a5bc92f87628d3b56ee430b3671e3102882ab5",
+    "hostTerminationSourceSha256": "84d2be37989e2023f5945c56a7a4aeae12109c26064792d52498bab5b67eba45"
+  },
+  "xcodeResult": {
+    "test": "GroupMediaBackgroundRecoveryUITests.testReceiverBackgroundRecovery",
+    "durationSeconds": 261,
+    "failure": "expected group-media UI effect did not become visible"
+  },
+  "postFailureDiagnostic": {
+    "causedTestFailure": false,
+    "credentialSupplied": false,
+    "collectorStoppedAfterFailure": true
+  },
+  "redaction": {
+    "rawXcresultIncluded": false,
+    "rawDeviceLogsIncluded": false,
+    "rawDeviceIdsIncluded": false,
+    "rawPeerIdsIncluded": false,
+    "relayAddressesIncluded": false,
+    "tokensOrKeysIncluded": false
+  }
+}

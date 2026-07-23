@@ -5,11 +5,13 @@ List<String> groupMediaAllowedPeersForMembers(Iterable<GroupMember> members) {
   final seen = <String>{};
   final allowedPeers = <String>[];
   for (final member in members) {
-    final peerId = member.peerId.trim();
-    if (peerId.isEmpty || !seen.add(peerId)) {
-      continue;
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final transportPeerId = device.transportPeerId.trim();
+      if (transportPeerId.isEmpty || !seen.add(transportPeerId)) {
+        continue;
+      }
+      allowedPeers.add(transportPeerId);
     }
-    allowedPeers.add(peerId);
   }
   return allowedPeers;
 }

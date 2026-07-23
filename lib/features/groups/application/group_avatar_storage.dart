@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
@@ -89,6 +90,19 @@ Future<GroupAvatarUpload?> uploadGroupAvatar({
   String? blobId,
   String mime = 'image/jpeg',
 }) async {
+  if (!allowedPeers.any((peerId) => peerId.trim().isNotEmpty)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_AVATAR_UPLOAD_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        if (blobId != null)
+          'blobId': blobId.length > 8 ? blobId.substring(0, 8) : blobId,
+        'reason': kEmptyGroupMediaAclErrorCode,
+      },
+    );
+    return null;
+  }
   final effectiveBlobId = blobId ?? _uuid.v4();
   final file = File(localFilePath);
   final fileExists = await file.exists();
