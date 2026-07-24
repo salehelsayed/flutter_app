@@ -432,7 +432,7 @@ class _ComposeAreaState extends State<ComposeArea>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (widget.privateMediaEligibility.allowsPrivateMedia &&
+              if (widget.privateMediaEligibility.allowsNewPrivateMedia &&
                   widget.onPrivateMediaPolicyChanged != null)
                 _buildPrivateMediaSelector(context),
               if (showQuotePreview)

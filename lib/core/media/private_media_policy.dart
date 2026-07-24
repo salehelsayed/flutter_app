@@ -81,6 +81,17 @@ class PrivateMediaEligibility {
         !isForward;
   }
 
+  bool get allowsNewPrivateMedia {
+    final allowedKind =
+        attachmentKind == PrivateMediaAttachmentKind.image ||
+        attachmentKind == PrivateMediaAttachmentKind.video;
+    return attachmentCount == 1 &&
+        allowedKind &&
+        !hasTextOrCaption &&
+        !isEdit &&
+        !isForward;
+  }
+
   @override
   bool operator ==(Object other) =>
       other is PrivateMediaEligibility &&
@@ -276,7 +287,7 @@ PrivateMediaPolicy normalizePrivateMediaComposerPolicy({
   required bool eligibleAttachmentIdentityChanged,
 }) {
   if (!selectedPolicy.isPrivate) return const PrivateMediaPolicy.ordinary();
-  if (!eligibility.allowsPrivateMedia || eligibleAttachmentIdentityChanged) {
+  if (!eligibility.allowsNewPrivateMedia || eligibleAttachmentIdentityChanged) {
     return const PrivateMediaPolicy.ordinary();
   }
   return selectedPolicy;

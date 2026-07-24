@@ -1759,13 +1759,21 @@
   "private_media_disappearing_1h": "Disappears after 1 hour",
   "private_media_disappearing_1d": "Disappears after 1 day",
   "private_media_disappearing_7d": "Disappears after 7 days",
-  "private_media_invalid_shape": "Private media needs one photo, GIF, or video with no caption.",
+  "private_media_invalid_shape": "Private media needs one photo or video with no caption.",
   "private_media_notification_body": "Private media",
   "group_private_media_notification_body": "New private media",
   "private_media_expiry_device_local": "Deleted from their device after this time.",
   "private_media_view_once_copy": "Disappears after they open it once.",
   "private_media_protected_body_received": "You can view it again. {name} doesn't allow saving or sharing.",
   "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_protected_body_received_compact": "{name} doesn't allow saving or sharing.",
+  "@private_media_protected_body_received_compact": {
     "placeholders": {
       "name": {
         "type": "String"

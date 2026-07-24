@@ -3353,7 +3353,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get private_media_invalid_shape =>
-      'تتطلب الوسائط الخاصة صورة أو GIF أو فيديو واحدًا بلا تعليق.';
+      'تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.';
 
   @override
   String get private_media_notification_body => 'وسائط خاصة';
@@ -3371,6 +3371,11 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String private_media_protected_body_received(String name) {
     return 'يمكنك مشاهدته مجددًا. $name لا يسمح بالحفظ أو المشاركة.';
+  }
+
+  @override
+  String private_media_protected_body_received_compact(String name) {
+    return '$name لا يسمح بالحفظ أو المشاركة.';
   }
 
   @override

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -455,20 +456,36 @@ String privateMediaModeLabel(AppLocalizations l10n, PrivateMediaPolicy policy) {
 /// The visual is intentionally icon/gradient-only: private pixels never enter
 /// this widget through a path, provider, attachment, or byte payload.
 class PrivateMediaVisualCard extends StatelessWidget {
-  const PrivateMediaVisualCard({
+  PrivateMediaVisualCard({
     super.key,
     required this.title,
     required this.body,
     required this.icon,
     this.titleKey,
     this.action,
-  });
+    this.onTap,
+    this.opening = false,
+    this.tapLabel,
+    this.openingLabel,
+  }) : assert(
+         onTap == null || (tapLabel != null && tapLabel.trim().isNotEmpty),
+         'tapLabel must be non-empty when onTap is provided.',
+       ),
+       assert(
+         onTap == null ||
+             (openingLabel != null && openingLabel.trim().isNotEmpty),
+         'openingLabel must be non-empty when onTap is provided.',
+       );
 
-  final String title;
+  final String? title;
   final String body;
   final IconData icon;
   final Key? titleKey;
   final Widget? action;
+  final VoidCallback? onTap;
+  final bool opening;
+  final String? tapLabel;
+  final String? openingLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -479,40 +496,195 @@ class PrivateMediaVisualCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            key: const ValueKey('private-media-card-visual'),
-            height: 88,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  colors.primary.withValues(alpha: 0.30),
-                  colors.tertiary.withValues(alpha: 0.14),
-                  colors.surfaceContainerHighest.withValues(alpha: 0.78),
-                ],
+          if (onTap == null)
+            Container(
+              key: const ValueKey('private-media-card-visual'),
+              height: 88,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    colors.primary.withValues(alpha: 0.30),
+                    colors.tertiary.withValues(alpha: 0.14),
+                    colors.surfaceContainerHighest.withValues(alpha: 0.78),
+                  ],
+                ),
+                border: Border.all(
+                  color: colors.outlineVariant.withValues(alpha: 0.55),
+                ),
               ),
-              border: Border.all(
-                color: colors.outlineVariant.withValues(alpha: 0.55),
+              child: Center(
+                child: Icon(icon, size: 38, color: colors.onSurfaceVariant),
               ),
+            )
+          else
+            _PrivateMediaTappableTile(
+              icon: icon,
+              onTap: onTap!,
+              opening: opening,
+              tapLabel: tapLabel!,
+              openingLabel: openingLabel!,
             ),
-            child: Center(
-              child: Icon(icon, size: 38, color: colors.onSurfaceVariant),
-            ),
-          ),
           const SizedBox(height: 10),
-          Text(
-            title,
-            key: titleKey,
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
+          if (title != null) ...[
+            if (onTap == null)
+              Text(
+                title!,
+                key: titleKey,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              )
+            else
+              ExcludeSemantics(
+                child: Text(
+                  title!,
+                  key: titleKey,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+            const SizedBox(height: 4),
+          ],
           Text(body, style: Theme.of(context).textTheme.bodySmall),
           if (action != null) ...[const SizedBox(height: 10), action!],
         ],
+      ),
+    );
+  }
+}
+
+class _PrivateMediaTappableTile extends StatefulWidget {
+  const _PrivateMediaTappableTile({
+    required this.icon,
+    required this.onTap,
+    required this.opening,
+    required this.tapLabel,
+    required this.openingLabel,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool opening;
+  final String tapLabel;
+  final String openingLabel;
+
+  @override
+  State<_PrivateMediaTappableTile> createState() =>
+      _PrivateMediaTappableTileState();
+}
+
+class _PrivateMediaTappableTileState extends State<_PrivateMediaTappableTile> {
+  bool _pressed = false;
+  int? _activePointer;
+  Offset? _pointerDownPosition;
+
+  @override
+  void didUpdateWidget(_PrivateMediaTappableTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.opening) {
+      _pressed = false;
+      _activePointer = null;
+      _pointerDownPosition = null;
+    }
+  }
+
+  void _setPressed(bool pressed) {
+    if (_pressed == pressed) return;
+    setState(() => _pressed = pressed);
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (_activePointer != null) return;
+    _activePointer = event.pointer;
+    _pointerDownPosition = event.position;
+    _setPressed(true);
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _activePointer || !_pressed) return;
+    final downPosition = _pointerDownPosition;
+    if (downPosition != null &&
+        (event.position - downPosition).distance > kTouchSlop) {
+      _setPressed(false);
+    }
+  }
+
+  void _handlePointerEnd(PointerEvent event) {
+    if (event.pointer != _activePointer) return;
+    _activePointer = null;
+    _pointerDownPosition = null;
+    _setPressed(false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final pointerEnabled = !widget.opening;
+
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      enabled: pointerEnabled,
+      button: true,
+      label: widget.tapLabel,
+      value: widget.opening ? widget.openingLabel : null,
+      onTap: pointerEnabled ? widget.onTap : null,
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: pointerEnabled ? _handlePointerDown : null,
+        onPointerMove: pointerEnabled ? _handlePointerMove : null,
+        onPointerUp: pointerEnabled ? _handlePointerEnd : null,
+        onPointerCancel: pointerEnabled ? _handlePointerEnd : null,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          excludeFromSemantics: true,
+          onTap: pointerEnabled ? widget.onTap : null,
+          onTapDown: pointerEnabled ? (_) => _setPressed(true) : null,
+          onTapUp: pointerEnabled ? (_) => _setPressed(false) : null,
+          onTapCancel: pointerEnabled ? () => _setPressed(false) : null,
+          child: AnimatedScale(
+            scale: pointerEnabled && _pressed ? 0.975 : 1,
+            duration: const Duration(milliseconds: 120),
+            child: Opacity(
+              opacity: widget.opening ? 0.62 : 1,
+              child: Container(
+                key: const ValueKey('private-media-card-visual'),
+                height: 150,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colors.primary.withValues(alpha: 0.30),
+                      colors.tertiary.withValues(alpha: 0.14),
+                      colors.surfaceContainerHighest.withValues(alpha: 0.78),
+                    ],
+                  ),
+                  border: Border.all(
+                    color: colors.outlineVariant.withValues(alpha: 0.55),
+                  ),
+                ),
+                child: Center(
+                  child: widget.opening
+                      ? const SizedBox.square(
+                          dimension: 38,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        )
+                      : Icon(
+                          widget.icon,
+                          size: 38,
+                          color: colors.onSurfaceVariant,
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -583,6 +755,13 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final labeledPolicy = policy;
+    final tapTileKind =
+        kind == PrivateMediaAttachmentKind.image ||
+        kind == PrivateMediaAttachmentKind.video;
+    final tapTileMode =
+        labeledPolicy?.mode == PrivateMediaMode.protected ||
+        labeledPolicy?.mode == PrivateMediaMode.disappearing;
+    final usesTapTile = tapTileKind && tapTileMode && onOpen != null;
     final actionLabel = labeledPolicy?.mode == PrivateMediaMode.viewOnce
         ? (privateMediaCardUsesVideoCopy(kind)
               ? l10n.private_media_view_video
@@ -610,22 +789,31 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
     if (labeledPolicy == null || !labeledPolicy.isPrivate) {
       return button;
     }
+    final title = privateMediaCardTitle(l10n, labeledPolicy, kind);
     final body = switch (labeledPolicy.mode) {
+      PrivateMediaMode.protected || PrivateMediaMode.disappearing
+          when tapTileKind =>
+        l10n.private_media_protected_body_received_compact(contactDisplayName),
       PrivateMediaMode.protected || PrivateMediaMode.disappearing =>
         l10n.private_media_protected_body_received(contactDisplayName),
       PrivateMediaMode.viewOnce => l10n.private_media_view_once_body_received,
       _ => null,
     };
-    return Semantics(
-      label: privateMediaCardTitle(l10n, labeledPolicy, kind),
-      child: PrivateMediaVisualCard(
-        title: privateMediaCardTitle(l10n, labeledPolicy, kind),
-        titleKey: const ValueKey('private-media-mode-label'),
-        body: body ?? privateMediaModeLabel(l10n, labeledPolicy),
-        icon: privateMediaCardIcon(labeledPolicy),
-        action: button,
-      ),
+    final card = PrivateMediaVisualCard(
+      title: usesTapTile && labeledPolicy.mode == PrivateMediaMode.protected
+          ? null
+          : title,
+      titleKey: const ValueKey('private-media-mode-label'),
+      body: body ?? privateMediaModeLabel(l10n, labeledPolicy),
+      icon: privateMediaCardIcon(labeledPolicy),
+      action: usesTapTile ? null : button,
+      onTap: usesTapTile ? onOpen : null,
+      opening: opening,
+      tapLabel: usesTapTile ? title : null,
+      openingLabel: usesTapTile ? l10n.private_media_opening : null,
     );
+    if (usesTapTile) return card;
+    return Semantics(label: title, child: card);
   }
 }
 

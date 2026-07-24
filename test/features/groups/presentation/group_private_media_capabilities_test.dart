@@ -213,10 +213,20 @@ void main() {
       );
       expect(row, findsOneWidget);
       expect(open, findsOneWidget);
+      expect(find.text('View-once photo'), findsOneWidget);
       expect(find.text('New private media'), findsOneWidget);
+      expect(find.text('View photo'), findsOneWidget);
       expect(find.textContaining('SECRET caption'), findsNothing);
       expect(find.textContaining('SECRET-thumbnail'), findsNothing);
       expect(find.byType(SwipeToQuoteBubble), findsNothing);
+
+      final visual = find.byKey(const ValueKey('private-media-card-visual'));
+      expect(visual, findsOneWidget);
+      expect(tester.getSize(visual).height, 88);
+      final innerAction = find.byKey(
+        const ValueKey('group-private-card-action-message-private'),
+      );
+      expect(innerAction, findsOneWidget);
 
       final card = tester.widget<LetterCard>(
         find.descendant(of: row, matching: find.byType(LetterCard)),
@@ -228,9 +238,13 @@ void main() {
       expect(card.onLongPress, isNull);
       expect(card.onReactionTap, isNull);
 
-      await tester.tap(open);
+      await tester.tap(innerAction);
       await tester.pump();
       expect(opens, <String>['message-private']);
+
+      await tester.tap(find.text('View-once photo'));
+      await tester.pump();
+      expect(opens, <String>['message-private', 'message-private']);
     },
   );
 

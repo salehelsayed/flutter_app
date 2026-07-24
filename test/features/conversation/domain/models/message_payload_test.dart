@@ -653,6 +653,58 @@ void main() {
         expect(message.privateMediaState, PrivateMediaLifecycleState.available);
       });
 
+      test(
+        'legacy private GIF inner policy remains private and never becomes ordinary',
+        () {
+          const policy = PrivateMediaPolicy.protected();
+          const payload = MessagePayload(
+            id: 'legacy-private-gif',
+            text: '',
+            senderPeerId: 'sender',
+            senderUsername: 'Sender',
+            timestamp: '2026-07-11T00:00:00.000Z',
+            media: [
+              {
+                'id': 'legacy-gif-attachment',
+                'mime': 'image/gif',
+                'mediaType': 'image',
+              },
+            ],
+            privateMediaPolicy: policy,
+          );
+
+          final inner =
+              jsonDecode(payload.toInnerJson()) as Map<String, dynamic>;
+          expect(inner['privateMedia'], {'version': 1, 'mode': 'protected'});
+          expect(
+            (inner['media'] as List<dynamic>).single,
+            containsPair('mime', 'image/gif'),
+          );
+
+          final restored = MessagePayload.fromDecryptedJson(
+            payload.toInnerJson(),
+          );
+          expect(restored, isNotNull);
+          expect(restored!.privateMediaPolicy, policy);
+          expect(restored.privateMediaPolicy.isUnsupported, isFalse);
+          expect(
+            restored.privateMediaPolicy,
+            isNot(const PrivateMediaPolicy.ordinary()),
+          );
+
+          final message = restored.toConversationMessage(
+            contactPeerId: 'sender',
+            isIncoming: true,
+            status: 'delivered',
+          );
+          expect(message.privateMediaPolicy, policy);
+          expect(
+            message.privateMediaState,
+            PrivateMediaLifecycleState.available,
+          );
+        },
+      );
+
       test('clear v2 envelope and v1 writer never contain privateMedia', () {
         final payload = privatePayload(
           PrivateMediaPolicy.fromJson({'version': 1, 'mode': 'protected'}),

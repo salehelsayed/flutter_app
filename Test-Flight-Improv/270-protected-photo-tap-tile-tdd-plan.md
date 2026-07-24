@@ -1,10 +1,10 @@
 # 270 - Direct image/video private selection and received tap-tile redesign (Modification)
 
-Status: execution-ready
+Status: implemented and host-green (2026-07-24)
 Scope decision: KIND-01 is resolved — new direct 1:1 private-media selection supports images and videos only; GIFs remain ordinary “Keep in chat” media, pre-existing private-GIF intent is grandfathered without downgrade, and group chats are out of scope.
 Type: Modification
 Spec: free-text intent (no formal spec) — user request 2026-07-24 + approved mockup `docker-ws/protected-photo-mockup.html` (option B). Disappearing composition = option A (keep expiry title). New attachment selection = image + video only; GIF = “Keep in chat” only; group chats excluded (user decisions 2026-07-24). Existing durable/wire private-GIF intent remains private solely for backward-compatible privacy safety.
-Classification: execution-ready
+Classification: implemented
 Closure tier: host
 
 ## Planning Progress
@@ -21,7 +21,10 @@ Closure tier: host
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| - | not started | - | - | no planning blocker; implementation has not run | snapshot dirty tree, author causal REDs, then change production |
+| 2026-07-24 | Clean baseline | planning artifacts | Committed the pre-existing planning tree as `9922308fb` (`Plan protected photo tap tile improvements`); `git status --short` was empty before execution | No blocker | Author causal REDs before production |
+| 2026-07-24 | RED | tile, policy/composer, body/l10n, and typed-launcher tests | TC-01 failed with callback count `0`; TC-18 initially compile-failed because `allowsNewPrivateMedia` did not exist; TC-11 failed on the absent compact key/old copy; TC-12 produced no opened media. The full tile file had TC-01..08, TC-10, and TC-18 RED while TC-09 stayed green | Failures matched the planned causal seams | Implement the bounded production change |
+| 2026-07-24 | GREEN + mutation | direct policy/composer/viewer, ARBs/generated l10n, focused tests, gate registration | New tile file: 11/11; focused direct-policy/composer/body/action/wired set: 360/360; viewer/card/continuity: 34/34; exact group and iOS surface sentinels passed; l10n: 6/6; registration count: exactly `1`. Representative mutations re-reddened tap dispatch, semantic isolation, cancel reset, compact copy, GIF exclusion/normalization, legacy GIF validation, and disabled 88px height, then were reverted | Contract is causally covered without send/retry/group production edits | Run curated closure gates |
+| 2026-07-24 | Closure | complete plan diff and Graphify architecture graph | `./scripts/run_test_gates.sh 1to1`: 2,437 Flutter tests + relay Go legs passed; `./scripts/run_test_gates.sh groups`: 3,305 Flutter tests + bridge/node/relay Go legs passed; post-mutation tile and l10n suites passed; `flutter analyze`: no issues; `git diff --check`: clean; incremental Graphify refresh and affected/review queries completed; independent counterexample audit found no actionable findings | Host closure complete; no device leg required by scope | Commit implementation and verify clean worktree |
 
 ## Source Of Truth
 - Spec / intent: user messages 2026-07-24 + `docker-ws/protected-photo-mockup.html` (option B). The latest user decisions limit new direct private selection to images/videos, keep GIF ordinary-only, and exclude groups. Pre-existing private-GIF state remains protected as a backward-compatibility safety rule, never as a selectable new mode. Historical grounding workflow: `wf_7d204825-534`; its journal path is not retained as a usable repository path, so the current Graph/source snapshot below is authoritative for execution.
@@ -41,7 +44,7 @@ Closure tier: host
 - Reuse rule: these anchors may be handed to review/execution, but every conclusion still requires current-source or command evidence.
 
 ## Session Classification
-execution-ready (host-only direct-policy + widget + l10n work; no DB migration or device proof). The attachment-kind row is resolved and all Test Contract rows are defined.
+implemented and host-green (host-only direct-policy + widget + l10n work; no DB migration or device proof). The attachment-kind row is resolved and all Test Contract rows passed.
 
 ## Problem And Evidence
 
@@ -331,15 +334,15 @@ git diff --check
 - Environment blocker: none for host closure; use repository-relative commands and the discovered `flutter` on `PATH`.
 - Scope drift: any new direct-composer GIF private selector/state, normalization bypass, shape-guard weakening, send/retry/compatibility production edit, image/video exclusion, legacy private-GIF downgrade, compact-copy/tile leakage to legacy GIF, iOS selector regression, view-once/outgoing/failure/group production change, real-pixel entry, duplicate/dead/loading-spinner semantics action, or device-harness edit blocks closure.
 
-- [ ] TC-18 records real RED→GREEN evidence for image/video inclusion and GIF exclusion plus the ordinary-GIF sentinel; TC-16 separately records group preservation.
-- [ ] The execution-time census records the known external private-policy seeds (`:4409`, `:4449`, `:5508`, `:6522`) flowing to normalization, `:5575` as the sole normalized sink, and no new private-capable fresh send producer outside the direct-composer funnel.
-- [ ] Every remaining behavior has the named proof in the Test Contract.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded during execution.
-- [ ] TC-09 and TC-13..18, exact l10n tests, `1to1`, and preservation-only `groups` pass with zero failures.
-- [ ] The new tile test appears exactly once in the scoped `ONE_TO_ONE_TESTS` source block, and the actual unbatched `1to1` gate selects/runs it.
-- [ ] l10n is regenerated; exact en/ar/de copy and `{name}` parity pass.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] The unified Scope Contract And Guard is respected.
+- [x] TC-18 records real RED→GREEN evidence for image/video inclusion and GIF exclusion plus the ordinary-GIF sentinel; TC-16 separately records group preservation.
+- [x] The execution-time census records the known external private-policy seeds (`:4409`, `:4449`, `:5508`, `:6522`) flowing to normalization, `:5575` as the sole normalized sink, and no new private-capable fresh send producer outside the direct-composer funnel.
+- [x] Every remaining behavior has the named proof in the Test Contract.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are recorded during execution.
+- [x] TC-09 and TC-13..18, exact l10n tests, `1to1`, and preservation-only `groups` pass with zero failures.
+- [x] The new tile test appears exactly once in the scoped `ONE_TO_ONE_TESTS` source block, and the actual unbatched `1to1` gate selects/runs it.
+- [x] l10n is regenerated; exact en/ar/de copy and `{name}` parity pass.
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] The unified Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -350,7 +353,7 @@ git diff --check
 - Migration: none.
 - Boundary closure: host-only; no simulator, device, relay, real crypto, or SQLCipher proof.
 - Gate cadence: focused tests + exact sentinels + `1to1` + preservation-only `groups`; full `host-all` after the relevant direct presentation wave and at final release closure.
-- Unresolved evidence: none. Implementation and runtime test evidence have not run.
+- Unresolved evidence: none. Implementation and runtime evidence are recorded in Execution Progress.
 
 ## Reviewer Findings (historical `/tdd-review`)
 `/tdd-review` 8-agent audit (`wf_0730119f-6d4`, 2026-07-24; 1 verifier died on a retry cap but its ground — sibling enumeration, blast radius — was independently re-established by the critic's B-2/B-3 sweep). Dimension scores: Goal 64 / Compartmentalization 72 / Anti-drift 51 (weak) / Define-good 67 / Goal-verification 50 (weak). **Core bet VERIFIED SOUND**: gesture routing (opaque `GestureDetector` `hitTestSelf`), long-press/swipe coexistence (onTap-only detector installs no long-press recognizer), blast-radius containment (the then-proposed retext key had one consumer; continuity tests + device harness genuinely spared), and the `card_test` Container-cast landmine handling. KIND-01 later tightened that copy design to a new scoped key so GIF is not changed.
@@ -374,4 +377,4 @@ The earlier arbiter marked the plan ready after fixing the option-A and basic Se
 - Deterministic structural gaps are patched above: Graph snapshot, canonical 18-row contract, stateful press helper design, opening/duplicate/spinner semantics, disabled fallback, positive typed-launcher proof, protected+disappearing compact-copy coverage, view-once/group/shared sentinels, the full image/video-only new-selection predicate, assignment-funnel invariant, unchanged compatibility boundary, literal locale proofs, per-file gate ownership, valid commands, gate cadence, unified scope, and handoff.
 - The source contradiction is explicit implementation work, not a remaining planning blocker: current composer paths expose private modes for GIF, while the accepted contract limits new direct private selection to images/videos. TC-18 supplies causal REDs for that correction and cheap ordinary/decode/iOS preservation sentinels. It deliberately does not claim a new domain-level authorization rule inside unchanged `sendChatMessage`.
 - Group chats are excluded from production scope. Their single test/gate leg exists only because the modified shared card must remain render-compatible for its group caller.
-- Verdict: `execution-ready`; implementation has not run.
+- Verdict: implemented and host-green on 2026-07-24.

@@ -114,6 +114,67 @@ void main() {
       },
     );
 
+    test(
+      'new private selection permits image and video while compatibility validation preserves GIF',
+      () {
+        const attachmentCounts = <int>[0, 1, 2];
+        const flags = <bool>[false, true];
+        const protected = PrivateMediaPolicy.protected();
+
+        for (final attachmentCount in attachmentCounts) {
+          for (final attachmentKind in PrivateMediaAttachmentKind.values) {
+            for (final hasTextOrCaption in flags) {
+              for (final isEdit in flags) {
+                for (final isForward in flags) {
+                  final eligibility = PrivateMediaEligibility(
+                    attachmentCount: attachmentCount,
+                    attachmentKind: attachmentKind,
+                    hasTextOrCaption: hasTextOrCaption,
+                    isEdit: isEdit,
+                    isForward: isForward,
+                  );
+                  final hasEligibleShape =
+                      attachmentCount == 1 &&
+                      !hasTextOrCaption &&
+                      !isEdit &&
+                      !isForward;
+                  final expectedNewSelection =
+                      hasEligibleShape &&
+                      (attachmentKind == PrivateMediaAttachmentKind.image ||
+                          attachmentKind == PrivateMediaAttachmentKind.video);
+                  final expectedCompatibility =
+                      hasEligibleShape &&
+                      (attachmentKind == PrivateMediaAttachmentKind.image ||
+                          attachmentKind == PrivateMediaAttachmentKind.gif ||
+                          attachmentKind == PrivateMediaAttachmentKind.video);
+                  final reason =
+                      'count=$attachmentCount kind=${attachmentKind.name} '
+                      'caption=$hasTextOrCaption edit=$isEdit '
+                      'forward=$isForward';
+
+                  expect(
+                    eligibility.allowsNewPrivateMedia,
+                    expectedNewSelection,
+                    reason: reason,
+                  );
+                  expect(
+                    eligibility.allowsPrivateMedia,
+                    expectedCompatibility,
+                    reason: 'compatibility: $reason',
+                  );
+                  expect(
+                    protected.validatedFor(eligibility).isUnsupported,
+                    !expectedCompatibility,
+                    reason: 'legacy validation: $reason',
+                  );
+                }
+              }
+            }
+          }
+        }
+      },
+    );
+
     test('unknown and malformed policy fails closed as typed unsupported', () {
       final invalid = <Object?>[
         'protected',

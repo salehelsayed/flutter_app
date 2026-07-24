@@ -3308,7 +3308,7 @@ class _ConversationWiredState extends State<ConversationWired>
       draftText: sanitizedText,
     );
     if (privateMediaPolicy.isPrivate &&
-        !privateEligibility.allowsPrivateMedia) {
+        !privateEligibility.allowsNewPrivateMedia) {
       _setPrivateMediaPolicy(const PrivateMediaPolicy.ordinary());
       messenger?.showSnackBar(
         SnackBar(
@@ -5505,7 +5505,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _setPrivateMediaPolicy(PrivateMediaPolicy policy) {
     final eligibility = _currentPrivateMediaEligibility();
-    _privateMediaPolicy = policy.isPrivate && eligibility.allowsPrivateMedia
+    _privateMediaPolicy = policy.isPrivate && eligibility.allowsNewPrivateMedia
         ? policy
         : const PrivateMediaPolicy.ordinary();
     _updateComposerState();

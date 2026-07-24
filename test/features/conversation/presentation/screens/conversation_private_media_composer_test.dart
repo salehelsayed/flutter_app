@@ -23,6 +23,9 @@ class _TestAppLocalizationsDelegate
       false;
 }
 
+const _selectorEligibilityTestName =
+    'selector appears only for one eligible image or video and GIF stays keep in chat';
+
 void main() {
   test('eligibility has value equality for incremental composer state', () {
     const first = PrivateMediaEligibility(
@@ -86,10 +89,9 @@ void main() {
     );
   }
 
-  testWidgets('selector appears only for one eligible image', (tester) async {
+  testWidgets(_selectorEligibilityTestName, (tester) async {
     for (final kind in const [
       PrivateMediaAttachmentKind.image,
-      PrivateMediaAttachmentKind.gif,
       PrivateMediaAttachmentKind.video,
     ]) {
       await tester.pumpWidget(
@@ -106,7 +108,32 @@ void main() {
         findsOneWidget,
         reason: kind.name,
       );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('private-media-selector')),
+          matching: find.text('Keep in chat'),
+        ),
+        findsOneWidget,
+        reason: kind.name,
+      );
     }
+
+    await tester.pumpWidget(
+      buildComposer(
+        eligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.gif,
+        ),
+        policy: const PrivateMediaPolicy.protected(),
+        onPolicyChanged: (_) {},
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey('private-media-selector')),
+      findsNothing,
+      reason: 'a new GIF draft has no private-mode selector',
+    );
+    expect(find.text('Protected view'), findsNothing);
 
     for (final eligibility in const [
       PrivateMediaEligibility(
@@ -426,7 +453,7 @@ void main() {
       buildComposer(
         eligibility: const PrivateMediaEligibility(
           attachmentCount: 1,
-          attachmentKind: PrivateMediaAttachmentKind.gif,
+          attachmentKind: PrivateMediaAttachmentKind.image,
         ),
         senderReopenEnabled: true,
         onPolicyChanged: (_) {},
@@ -434,7 +461,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('private-media-selector')));
     await tester.pumpAndSettle();
-    expect(find.text('How should Lina see this GIF?'), findsOneWidget);
+    expect(find.text('How should Lina see this photo?'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('private-media-option-view-once')),
     );
@@ -465,47 +492,64 @@ void main() {
   });
 
   test('every stale or ineligible composer shape resets private policy', () {
-    final cases = const [
-      PrivateMediaEligibility(
-        attachmentCount: 0,
-        attachmentKind: PrivateMediaAttachmentKind.unknown,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 2,
-        attachmentKind: PrivateMediaAttachmentKind.image,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.audio,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.file,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.image,
-        hasTextOrCaption: true,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.image,
-        isEdit: true,
-      ),
-      PrivateMediaEligibility(
-        attachmentCount: 1,
-        attachmentKind: PrivateMediaAttachmentKind.image,
-        isForward: true,
-      ),
+    const attachmentCounts = <int>[0, 1, 2];
+    const flags = <bool>[false, true];
+    final selectedPolicies = <PrivateMediaPolicy>[
+      const PrivateMediaPolicy.protected(),
+      const PrivateMediaPolicy.viewOnce(),
+      PrivateMediaPolicy.disappearing(3600),
     ];
 
-    for (final eligibility in cases) {
-      final next = normalizePrivateMediaComposerPolicy(
-        selectedPolicy: const PrivateMediaPolicy.protected(),
-        eligibility: eligibility,
-        eligibleAttachmentIdentityChanged: false,
-      );
-      expect(next, const PrivateMediaPolicy.ordinary());
+    for (final selectedPolicy in selectedPolicies) {
+      for (final attachmentCount in attachmentCounts) {
+        for (final attachmentKind in PrivateMediaAttachmentKind.values) {
+          for (final hasTextOrCaption in flags) {
+            for (final isEdit in flags) {
+              for (final isForward in flags) {
+                final eligibility = PrivateMediaEligibility(
+                  attachmentCount: attachmentCount,
+                  attachmentKind: attachmentKind,
+                  hasTextOrCaption: hasTextOrCaption,
+                  isEdit: isEdit,
+                  isForward: isForward,
+                );
+                final isEligibleNewSelection =
+                    attachmentCount == 1 &&
+                    (attachmentKind == PrivateMediaAttachmentKind.image ||
+                        attachmentKind == PrivateMediaAttachmentKind.video) &&
+                    !hasTextOrCaption &&
+                    !isEdit &&
+                    !isForward;
+                final reason =
+                    'policy=${selectedPolicy.mode.wireValue} '
+                    'count=$attachmentCount kind=${attachmentKind.name} '
+                    'caption=$hasTextOrCaption edit=$isEdit '
+                    'forward=$isForward';
+
+                final next = normalizePrivateMediaComposerPolicy(
+                  selectedPolicy: selectedPolicy,
+                  eligibility: eligibility,
+                  eligibleAttachmentIdentityChanged: isEligibleNewSelection,
+                );
+                expect(
+                  next,
+                  const PrivateMediaPolicy.ordinary(),
+                  reason: reason,
+                );
+
+                if (isEligibleNewSelection) {
+                  final retained = normalizePrivateMediaComposerPolicy(
+                    selectedPolicy: selectedPolicy,
+                    eligibility: eligibility,
+                    eligibleAttachmentIdentityChanged: false,
+                  );
+                  expect(retained, selectedPolicy, reason: reason);
+                }
+              }
+            }
+          }
+        }
+      }
     }
   });
 }

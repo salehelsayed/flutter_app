@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/l10n/app_localizations_ar.dart';
 
 void main() {
   Future<void> pumpPlaceholder(
@@ -31,23 +30,40 @@ void main() {
   }
 
   testWidgets(
-    'protected placeholder shows sender-attributed reassurance body',
+    'protected and disappearing image and video placeholders show compact sender-attributed body',
     (tester) async {
-      await pumpPlaceholder(
-        tester,
-        const DirectPrivateMediaOpenPlaceholder(
-          onOpen: null,
-          policy: PrivateMediaPolicy.protected(),
-          contactDisplayName: 'Layla',
-        ),
-      );
+      final policies = <PrivateMediaPolicy>[
+        const PrivateMediaPolicy.protected(),
+        PrivateMediaPolicy.disappearing(3600),
+      ];
+      const kinds = <PrivateMediaAttachmentKind>[
+        PrivateMediaAttachmentKind.image,
+        PrivateMediaAttachmentKind.video,
+      ];
+      for (final policy in policies) {
+        for (final kind in kinds) {
+          await pumpPlaceholder(
+            tester,
+            DirectPrivateMediaOpenPlaceholder(
+              onOpen: () {},
+              policy: policy,
+              kind: kind,
+              contactDisplayName: 'pixel',
+            ),
+          );
 
-      expect(
-        find.text(
-          "You can view it again. Layla doesn't allow saving or sharing.",
-        ),
-        findsOneWidget,
-      );
+          expect(
+            find.text("pixel doesn't allow saving or sharing."),
+            findsOneWidget,
+            reason: '${policy.mode}:$kind',
+          );
+          expect(
+            find.textContaining('You can view it again.'),
+            findsNothing,
+            reason: '${policy.mode}:$kind',
+          );
+        }
+      }
     },
   );
 
@@ -73,56 +89,67 @@ void main() {
     },
   );
 
-  testWidgets('reassurance bodies render localized and RTL-safe under ar', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 568);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'compact received bodies render literal ar and de copy without old lead-ins and remain RTL-safe',
+    (tester) async {
+      final policies = <PrivateMediaPolicy>[
+        const PrivateMediaPolicy.protected(),
+        PrivateMediaPolicy.disappearing(3600),
+      ];
+      const kinds = <PrivateMediaAttachmentKind>[
+        PrivateMediaAttachmentKind.image,
+        PrivateMediaAttachmentKind.video,
+      ];
+      for (final locale in const <Locale>[Locale('ar'), Locale('de')]) {
+        final isArabic = locale.languageCode == 'ar';
+        final contactName = isArabic ? 'ليلى' : 'Pixel';
+        final expected = isArabic
+            ? 'ليلى لا يسمح بالحفظ أو المشاركة.'
+            : 'Pixel erlaubt kein Speichern oder Teilen.';
+        final oldLeadIn = isArabic
+            ? 'يمكنك مشاهدته مجددًا.'
+            : 'Du kannst es erneut ansehen.';
+        final expectedDirection = isArabic
+            ? TextDirection.rtl
+            : TextDirection.ltr;
 
-    const contactName = 'ليلى';
-    await pumpPlaceholder(
-      tester,
-      const SingleChildScrollView(
-        child: Column(
-          key: ValueKey('private-media-arabic-bodies'),
-          children: <Widget>[
-            DirectPrivateMediaOpenPlaceholder(
-              onOpen: null,
-              policy: PrivateMediaPolicy.protected(),
-              contactDisplayName: contactName,
-            ),
-            DirectPrivateMediaOutgoingPlaceholder(
-              policy: PrivateMediaPolicy.protected(),
-              contactDisplayName: contactName,
-            ),
-          ],
-        ),
-      ),
-      locale: const Locale('ar'),
-    );
+        for (final policy in policies) {
+          for (final kind in kinds) {
+            final key = ValueKey(
+              'compact-${locale.languageCode}-${policy.mode.name}-${kind.name}',
+            );
+            await pumpPlaceholder(
+              tester,
+              KeyedSubtree(
+                key: key,
+                child: DirectPrivateMediaOpenPlaceholder(
+                  onOpen: () {},
+                  policy: policy,
+                  kind: kind,
+                  contactDisplayName: contactName,
+                ),
+              ),
+              locale: locale,
+            );
 
-    final ar = AppLocalizationsAr();
-    expect(
-      find.text(ar.private_media_protected_body_received(contactName)),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '${ar.private_media_outgoing_body(contactName)}\n'
-        '${ar.private_media_disclosure_reopen}',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      Directionality.of(
-        tester.element(
-          find.byKey(const ValueKey('private-media-arabic-bodies')),
-        ),
-      ),
-      TextDirection.rtl,
-    );
-    expect(tester.takeException(), isNull);
-  });
+            expect(
+              find.text(expected),
+              findsOneWidget,
+              reason: '${locale.languageCode}:${policy.mode}:$kind',
+            );
+            expect(
+              find.textContaining(oldLeadIn),
+              findsNothing,
+              reason: '${locale.languageCode}:${policy.mode}:$kind',
+            );
+            expect(
+              Directionality.of(tester.element(find.byKey(key))),
+              expectedDirection,
+            );
+            expect(tester.takeException(), isNull);
+          }
+        }
+      }
+    },
+  );
 }

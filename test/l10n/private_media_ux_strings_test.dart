@@ -130,6 +130,70 @@ void main() {
     }
   });
 
+  test('plan 270 compact copy and image-video eligibility text are exact', () {
+    const compactByLocale = <String, String>{
+      'en': "{name} doesn't allow saving or sharing.",
+      'ar': '{name} لا يسمح بالحفظ أو المشاركة.',
+      'de': '{name} erlaubt kein Speichern oder Teilen.',
+    };
+    const invalidShapeByLocale = <String, String>{
+      'en': 'Private media needs one photo or video with no caption.',
+      'ar': 'تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.',
+      'de':
+          'Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.',
+    };
+    const legacyBodyByLocale = <String, String>{
+      'en': "You can view it again. {name} doesn't allow saving or sharing.",
+      'ar': 'يمكنك مشاهدته مجددًا. {name} لا يسمح بالحفظ أو المشاركة.',
+      'de':
+          'Du kannst es erneut ansehen. {name} erlaubt kein Speichern oder Teilen.',
+    };
+    const oldLeadInByLocale = <String, String>{
+      'en': 'You can view it again.',
+      'ar': 'يمكنك مشاهدته مجددًا.',
+      'de': 'Du kannst es erneut ansehen.',
+    };
+
+    for (final locale in const ['en', 'ar', 'de']) {
+      final bundle = _loadArb(locale);
+      final compact = compactByLocale[locale]!;
+      expect(
+        bundle['private_media_protected_body_received_compact'],
+        compact,
+        reason: '$locale:compact',
+      );
+      expect(
+        compact,
+        isNot(contains(oldLeadInByLocale[locale]!)),
+        reason: '$locale:compact-old-lead-in',
+      );
+      expect(
+        bundle['private_media_invalid_shape'],
+        invalidShapeByLocale[locale],
+        reason: '$locale:image-video-only-shape',
+      );
+      expect(
+        bundle['private_media_protected_body_received'],
+        legacyBodyByLocale[locale],
+        reason: '$locale:legacy-body-must-not-be-retexted',
+      );
+
+      final metadata =
+          bundle['@private_media_protected_body_received_compact']
+              as Map<String, dynamic>?;
+      expect(metadata, isNotNull, reason: '$locale:compact-metadata');
+      final placeholders = metadata?['placeholders'] as Map<String, dynamic>?;
+      expect(placeholders?.keys, <String>[
+        'name',
+      ], reason: '$locale:compact-placeholders');
+      expect(
+        (placeholders?['name'] as Map<String, dynamic>?)?['type'],
+        'String',
+        reason: '$locale:compact-name-type',
+      );
+    }
+  });
+
   test('disclosures make no screenshot-blocking claim', () {
     for (final locale in const ['en', 'ar', 'de']) {
       final bundle = _loadArb(locale);

@@ -1644,13 +1644,21 @@
   "private_media_disappearing_1h": "Verschwindet nach 1 Stunde",
   "private_media_disappearing_1d": "Verschwindet nach 1 Tag",
   "private_media_disappearing_7d": "Verschwindet nach 7 Tagen",
-  "private_media_invalid_shape": "Private Medien benötigen ein Foto, GIF oder Video ohne Bildunterschrift.",
+  "private_media_invalid_shape": "Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.",
   "private_media_notification_body": "Private Medien",
   "group_private_media_notification_body": "Neue private Medien",
   "private_media_expiry_device_local": "Wird nach dieser Zeit von ihrem Gerät gelöscht.",
   "private_media_view_once_copy": "Verschwindet, nachdem es einmal geöffnet wurde.",
   "private_media_protected_body_received": "Du kannst es erneut ansehen. {name} erlaubt kein Speichern oder Teilen.",
   "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_protected_body_received_compact": "{name} erlaubt kein Speichern oder Teilen.",
+  "@private_media_protected_body_received_compact": {
     "placeholders": {
       "name": {
         "type": "String"

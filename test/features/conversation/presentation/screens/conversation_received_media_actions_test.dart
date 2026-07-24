@@ -8,6 +8,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
 import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -118,6 +119,7 @@ void main() {
     ValueChanged<String>? onDeleteMessage,
     String? activeQuoteText,
     ConversationMediaViewerBuilder? mediaViewerBuilder,
+    DirectPrivateMediaResultLauncher? onOpenPrivateMediaResult,
     MediaPictureInPictureControllerFactory? pictureInPictureControllerFactory,
     MediaPictureInPictureAuthorizationLoader? loadPictureInPictureAuthorization,
     MediaViewerResumeStore? mediaViewerResumeStore,
@@ -144,6 +146,7 @@ void main() {
           onDeleteMediaMessage: onDeleteMediaMessage,
           activeQuoteText: activeQuoteText,
           mediaViewerBuilder: mediaViewerBuilder,
+          onOpenPrivateMediaResult: onOpenPrivateMediaResult,
           pictureInPictureControllerFactory: pictureInPictureControllerFactory,
           loadPictureInPictureAuthorization: loadPictureInPictureAuthorization,
           mediaViewerResumeStore: mediaViewerResumeStore,
@@ -811,6 +814,72 @@ void main() {
   });
 
   testWidgets(
+    'received protected tile reaches typed private launcher and never enters ordinary viewers',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final attachment = makeAttachment(
+        id: 'att-protected-tile',
+        messageId: 'msg-protected-tile',
+        localPath: writeMediaFile('protected-tile.jpg'),
+      );
+      final message = makeMessage(
+        id: 'msg-protected-tile',
+        media: [attachment],
+        policy: const PrivateMediaPolicy.protected(),
+        state: PrivateMediaLifecycleState.available,
+      );
+      final opened = <DirectPrivateMediaViewerIdentity>[];
+      final guardStates = <DirectPrivateMediaContinuityState>[];
+      var ordinaryBuilderCalls = 0;
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [message],
+          onOpenPrivateMediaResult: (identity, continuityGuard) async {
+            opened.add(identity);
+            guardStates.add(continuityGuard.state);
+            return const DirectPrivateMediaOpenResult.displayed(
+              DirectPrivateMediaSettleResult(
+                disposition: DirectPrivateMediaSettleDisposition.noLease,
+                exitReason: DirectPrivateMediaExitReason.close,
+                firstFrameRecorded: true,
+              ),
+            );
+          },
+          mediaViewerBuilder:
+              ({required localPath, required allPaths, required initialIndex}) {
+                ordinaryBuilderCalls++;
+                return const SizedBox.shrink();
+              },
+        ),
+      );
+      await pumpFrames(tester);
+
+      final tile = find.byKey(const ValueKey('private-media-card-visual'));
+      expect(tile, findsOneWidget);
+      await tester.tap(tile);
+      await pumpFrames(tester);
+
+      expect(opened, const <DirectPrivateMediaViewerIdentity>[
+        DirectPrivateMediaViewerIdentity(
+          messageId: 'msg-protected-tile',
+          attachmentId: 'att-protected-tile',
+        ),
+      ]);
+      expect(guardStates, const <DirectPrivateMediaContinuityState>[
+        DirectPrivateMediaContinuityState.valid,
+      ]);
+      expect(ordinaryBuilderCalls, 0);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'private terminal and stale parents never enter typed or legacy ordinary viewers',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2160);
@@ -850,13 +919,16 @@ void main() {
       await pumpFrames(tester);
       expect(cell('msg-private', 'att-private'), findsNothing);
       expect(cell('msg-terminal', 'att-terminal'), findsNothing);
-      expect(find.byKey(const ValueKey('private-media-open')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('private-media-card-visual')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('private-terminal-expired')),
         findsOneWidget,
       );
       expect(find.textContaining('SECRET'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('private-media-open')));
+      await tester.tap(find.byKey(const ValueKey('private-media-card-visual')));
       await pumpFrames(tester);
       expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
 
@@ -872,7 +944,7 @@ void main() {
         ),
       );
       await pumpFrames(tester);
-      await tester.tap(find.byKey(const ValueKey('private-media-open')));
+      await tester.tap(find.byKey(const ValueKey('private-media-card-visual')));
       await pumpFrames(tester);
       expect(legacyBuilderCalls, 0);
 

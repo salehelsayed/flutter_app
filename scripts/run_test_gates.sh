@@ -218,6 +218,7 @@ readonly ONE_TO_ONE_TESTS=(
   # 234 Session 05: dedicated private route/lifecycle/native-protection host
   # contract. Native and device proofs stay exact manual commands.
   "test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart"
+  "test/features/conversation/presentation/screens/direct_private_media_tile_tap_test.dart"
   # 259: receiver/sender reassurance copy, name substitution, and RTL safety.
   "test/features/conversation/presentation/screens/direct_private_media_placeholder_body_test.dart"
   # 260 S1: private media is one keyed, no-pixel LetterCard body in both the

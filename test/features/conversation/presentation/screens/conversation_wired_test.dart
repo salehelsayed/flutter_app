@@ -201,6 +201,9 @@ const _tinyGifBytes = <int>[
   0x3B,
 ];
 
+const _gifReplacementPolicyTestName =
+    'replacing a private image draft with GIF resets to keep in chat before optimistic persistence';
+
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
 
@@ -1271,9 +1274,7 @@ void main() {
   });
 
   group('ConversationWired optimistic send', () {
-    testWidgets('selected private policy reaches the injected send seam', (
-      tester,
-    ) async {
+    testWidgets(_gifReplacementPolicyTestName, (tester) async {
       installPrivateMediaProtectionEventChannelStub(tester);
       final tempDir = Directory.systemTemp.createTempSync(
         'private_media_send_',
@@ -1283,10 +1284,10 @@ void main() {
       });
       final image = File('${tempDir.path}/private.png')
         ..writeAsBytesSync(_tinyPngBytes);
-      final nextImage = File('${tempDir.path}/next.png')
-        ..writeAsBytesSync(_tinyPngBytes);
+      final nextGif = File('${tempDir.path}/next.gif')
+        ..writeAsBytesSync(_tinyGifBytes);
       final mediaPicker = FakeMediaPicker()
-        ..multipleMediaResult = [XFile(nextImage.path)];
+        ..multipleMediaResult = [XFile(nextGif.path)];
       final fixture = (await tester.runAsync(
         MediaRepositoryRealDbFixture.create,
       ))!;
@@ -1301,6 +1302,8 @@ void main() {
         contactRepo: FakeContactRepository(),
       );
       final capturedPolicies = <PrivateMediaPolicy>[];
+      final optimisticPoliciesAtSend = <PrivateMediaPolicy>[];
+      final capturedMediaMimes = <List<String>>[];
       var completedSends = 0;
       String? privateMessageId;
       String? privateAttachmentId;
@@ -1382,6 +1385,23 @@ void main() {
               final policy =
                   privateMediaPolicy ?? const PrivateMediaPolicy.ordinary();
               capturedPolicies.add(policy);
+              final optimisticMessage = messageId == null
+                  ? null
+                  : await messageRepo.getMessage(messageId);
+              if (optimisticMessage == null) {
+                throw StateError(
+                  'optimistic message must exist before the injected send seam',
+                );
+              }
+              optimisticPoliciesAtSend.add(
+                optimisticMessage.privateMediaPolicy,
+              );
+              capturedMediaMimes.add(
+                mediaAttachments
+                        ?.map((attachment) => attachment.mime)
+                        .toList(growable: false) ??
+                    const <String>[],
+              );
               latestAttachmentId = mediaAttachments?.singleOrNull?.id;
               if (policy.isPrivate) {
                 privateMessageId = messageId;
@@ -1457,14 +1477,12 @@ void main() {
       tester
           .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
           .onTap!();
-      await pumpUntil(
-        tester,
-        () => find
-            .byKey(const ValueKey('private-media-selector'))
-            .evaluate()
-            .isNotEmpty,
+      await pumpUntil(tester, () => find.text('GIF').evaluate().isNotEmpty);
+      expect(
+        find.byKey(const ValueKey('private-media-selector')),
+        findsNothing,
+        reason: 'a replacement GIF remains ordinary-only in the composer',
       );
-      expect(find.text('Keep in chat'), findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpUntilAsyncIo(tester, () => completedSends == 2);
@@ -1473,7 +1491,15 @@ void main() {
         return attachmentId != null &&
             !mediaUploadInFlightTracker.isInFlight(attachmentId);
       }, timeout: const Duration(seconds: 10));
-      expect(capturedPolicies.last, const PrivateMediaPolicy.ordinary());
+      expect(capturedPolicies, const [
+        PrivateMediaPolicy.protected(),
+        PrivateMediaPolicy.ordinary(),
+      ]);
+      expect(optimisticPoliciesAtSend, const [
+        PrivateMediaPolicy.protected(),
+        PrivateMediaPolicy.ordinary(),
+      ]);
+      expect(capturedMediaMimes.last, const ['image/gif']);
     });
 
     testWidgets('failed private upload restores the exact selected policy', (
@@ -4524,7 +4550,7 @@ void main() {
         await pumpUntil(
           tester,
           () => find
-              .byKey(const ValueKey('private-media-open'))
+              .byKey(const ValueKey('private-media-card-visual'))
               .evaluate()
               .isNotEmpty,
         );
@@ -4563,7 +4589,7 @@ void main() {
           tester,
           () =>
               find
-                  .byKey(const ValueKey('private-media-open'))
+                  .byKey(const ValueKey('private-media-card-visual'))
                   .evaluate()
                   .length ==
               2,
@@ -4592,7 +4618,7 @@ void main() {
         );
 
         expect(
-          find.byKey(const ValueKey('private-media-open')),
+          find.byKey(const ValueKey('private-media-card-visual')),
           findsOneWidget,
           reason: 'the initial active parent remains openable',
         );
@@ -10860,7 +10886,7 @@ void main() {
         );
         expect(visibleProtected.media.single.id, 'att-private-recovery');
         expect(
-          find.byKey(const ValueKey('private-media-open')),
+          find.byKey(const ValueKey('private-media-card-visual')),
           findsOneWidget,
           reason:
               'active private hydration must retain the attachment identity '

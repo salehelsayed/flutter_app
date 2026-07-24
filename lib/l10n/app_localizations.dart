@@ -5519,7 +5519,7 @@ abstract class AppLocalizations {
   /// No description provided for @private_media_invalid_shape.
   ///
   /// In en, this message translates to:
-  /// **'Private media needs one photo, GIF, or video with no caption.'**
+  /// **'Private media needs one photo or video with no caption.'**
   String get private_media_invalid_shape;
 
   /// No description provided for @private_media_notification_body.
@@ -5551,6 +5551,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You can view it again. {name} doesn\'t allow saving or sharing.'**
   String private_media_protected_body_received(String name);
+
+  /// No description provided for @private_media_protected_body_received_compact.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} doesn\'t allow saving or sharing.'**
+  String private_media_protected_body_received_compact(String name);
 
   /// No description provided for @private_media_view_once_body_received.
   ///

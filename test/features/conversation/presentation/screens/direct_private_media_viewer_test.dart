@@ -1363,15 +1363,16 @@ void main() {
   );
 
   testWidgets('view-once placeholder states single view', (tester) async {
+    var opens = 0;
     await tester.pumpWidget(
-      const MaterialApp(
-        locale: Locale('en'),
+      MaterialApp(
+        locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: DirectPrivateMediaOpenPlaceholder(
-            onOpen: null,
-            policy: PrivateMediaPolicy.viewOnce(),
+            onOpen: () => opens++,
+            policy: const PrivateMediaPolicy.viewOnce(),
             contactDisplayName: 'Layla',
           ),
         ),
@@ -1384,6 +1385,28 @@ void main() {
       find.textContaining("doesn't allow saving or sharing"),
       findsNothing,
     );
+    expect(find.text('View-once photo'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('private-media-mode-label')),
+      findsOneWidget,
+    );
+
+    final visual = find.byKey(const ValueKey('private-media-card-visual'));
+    expect(visual, findsOneWidget);
+    expect(tester.getSize(visual).height, 88);
+
+    final confirmation = find.byKey(const ValueKey('private-media-open'));
+    expect(confirmation, findsOneWidget);
+    expect(find.text('View photo'), findsOneWidget);
+    expect(tester.widget<FilledButton>(confirmation).onPressed, isNotNull);
+
+    await tester.tap(visual);
+    await tester.pump();
+    expect(opens, 0, reason: 'view-once keeps the confirmation guard');
+
+    await tester.tap(confirmation);
+    await tester.pump();
+    expect(opens, 1);
   });
 
   testWidgets('private card title renders the protected media kind', (

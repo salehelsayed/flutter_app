@@ -1952,8 +1952,14 @@ void main() {
         expect(message!.media, hasLength(1));
         expect(message.media.single.mime, 'image/gif');
         expect(message.media.single.isAnimated, isTrue);
+        expect(message.privateMediaPolicy, const PrivateMediaPolicy.ordinary());
+        expect(
+          messageRepo.saved.single.privateMediaPolicy,
+          const PrivateMediaPolicy.ordinary(),
+        );
 
         final payload = decodeWirePayload(p2pService.lastSentMessage!);
+        expect(payload.containsKey('privateMedia'), isFalse);
         final media = payload['media'] as List<dynamic>;
         expect(media, hasLength(1));
         expect((media.single as Map<String, dynamic>)['mime'], 'image/gif');

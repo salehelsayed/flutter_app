@@ -1644,13 +1644,21 @@
   "private_media_disappearing_1h": "تختفي بعد ساعة",
   "private_media_disappearing_1d": "تختفي بعد يوم",
   "private_media_disappearing_7d": "تختفي بعد 7 أيام",
-  "private_media_invalid_shape": "تتطلب الوسائط الخاصة صورة أو GIF أو فيديو واحدًا بلا تعليق.",
+  "private_media_invalid_shape": "تتطلب الوسائط الخاصة صورة أو فيديو واحدًا بلا تعليق.",
   "private_media_notification_body": "وسائط خاصة",
   "group_private_media_notification_body": "وسائط خاصة جديدة",
   "private_media_expiry_device_local": "يُحذف من جهازهم بعد هذه المدة.",
   "private_media_view_once_copy": "يختفي بعد أن يفتحوه مرة واحدة.",
   "private_media_protected_body_received": "يمكنك مشاهدته مجددًا. {name} لا يسمح بالحفظ أو المشاركة.",
   "@private_media_protected_body_received": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "private_media_protected_body_received_compact": "{name} لا يسمح بالحفظ أو المشاركة.",
+  "@private_media_protected_body_received_compact": {
     "placeholders": {
       "name": {
         "type": "String"

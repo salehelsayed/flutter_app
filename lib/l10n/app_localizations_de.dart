@@ -3373,7 +3373,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get private_media_invalid_shape =>
-      'Private Medien benötigen ein Foto, GIF oder Video ohne Bildunterschrift.';
+      'Private Medien benötigen ein Foto oder Video ohne Bildunterschrift.';
 
   @override
   String get private_media_notification_body => 'Private Medien';
@@ -3392,6 +3392,11 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String private_media_protected_body_received(String name) {
     return 'Du kannst es erneut ansehen. $name erlaubt kein Speichern oder Teilen.';
+  }
+
+  @override
+  String private_media_protected_body_received_compact(String name) {
+    return '$name erlaubt kein Speichern oder Teilen.';
   }
 
   @override
