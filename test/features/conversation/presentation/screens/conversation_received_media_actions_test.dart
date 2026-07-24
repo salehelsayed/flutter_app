@@ -880,6 +880,72 @@ void main() {
   );
 
   testWidgets(
+    'received view-once tile reaches typed private launcher and never enters ordinary viewers',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final attachment = makeAttachment(
+        id: 'att-view-once-tile',
+        messageId: 'msg-view-once-tile',
+        localPath: writeMediaFile('view-once-tile.jpg'),
+      );
+      final message = makeMessage(
+        id: 'msg-view-once-tile',
+        media: [attachment],
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.available,
+      );
+      final opened = <DirectPrivateMediaViewerIdentity>[];
+      final guardStates = <DirectPrivateMediaContinuityState>[];
+      var ordinaryBuilderCalls = 0;
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [message],
+          onOpenPrivateMediaResult: (identity, continuityGuard) async {
+            opened.add(identity);
+            guardStates.add(continuityGuard.state);
+            return const DirectPrivateMediaOpenResult.displayed(
+              DirectPrivateMediaSettleResult(
+                disposition: DirectPrivateMediaSettleDisposition.noLease,
+                exitReason: DirectPrivateMediaExitReason.close,
+                firstFrameRecorded: true,
+              ),
+            );
+          },
+          mediaViewerBuilder:
+              ({required localPath, required allPaths, required initialIndex}) {
+                ordinaryBuilderCalls++;
+                return const SizedBox.shrink();
+              },
+        ),
+      );
+      await pumpFrames(tester);
+
+      final tile = find.byKey(const ValueKey('private-media-card-visual'));
+      expect(tile, findsOneWidget);
+      await tester.tap(tile);
+      await pumpFrames(tester);
+
+      expect(opened, const <DirectPrivateMediaViewerIdentity>[
+        DirectPrivateMediaViewerIdentity(
+          messageId: 'msg-view-once-tile',
+          attachmentId: 'att-view-once-tile',
+        ),
+      ]);
+      expect(guardStates, const <DirectPrivateMediaContinuityState>[
+        DirectPrivateMediaContinuityState.valid,
+      ]);
+      expect(ordinaryBuilderCalls, 0);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'private terminal and stale parents never enter typed or legacy ordinary viewers',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2160);

@@ -761,7 +761,7 @@ void main() {
   );
 
   test(
-    'view once protects before bytes records one first frame and terminalizes on every non-decode exit',
+    'view once protects before bytes records one first frame and close terminalizes before or after first frame',
     () async {
       final nativeEnterGate = Completer<Object?>();
       final fixture = _fixture(nativeEnterGate: nativeEnterGate);
@@ -806,7 +806,7 @@ void main() {
   );
 
   test(
-    'only proven pre-first-frame decode failure rolls view once back to available',
+    'proven pre-first-frame decode failure rolls view once back to available',
     () async {
       final fixture = _fixture();
       final grant = (await fixture.controller.prepare(identity))!;
@@ -1362,52 +1362,55 @@ void main() {
     },
   );
 
-  testWidgets('view-once placeholder states single view', (tester) async {
-    var opens = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: DirectPrivateMediaOpenPlaceholder(
-            onOpen: () => opens++,
-            policy: const PrivateMediaPolicy.viewOnce(),
-            contactDisplayName: 'Layla',
+  testWidgets(
+    'view-once placeholder uses warned tap tile as its sole open control',
+    (tester) async {
+      var opens = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: DirectPrivateMediaOpenPlaceholder(
+              onOpen: () => opens++,
+              policy: const PrivateMediaPolicy.viewOnce(),
+              contactDisplayName: 'Layla',
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(find.text('You can only view this once.'), findsOneWidget);
-    expect(
-      find.textContaining("doesn't allow saving or sharing"),
-      findsNothing,
-    );
-    expect(find.text('View-once photo'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('private-media-mode-label')),
-      findsOneWidget,
-    );
+      const warning = 'You can only view this once.';
+      expect(find.text(warning), findsOneWidget);
+      expect(
+        find.textContaining("doesn't allow saving or sharing"),
+        findsNothing,
+      );
+      expect(find.text('View-once photo'), findsOneWidget);
 
-    final visual = find.byKey(const ValueKey('private-media-card-visual'));
-    expect(visual, findsOneWidget);
-    expect(tester.getSize(visual).height, 88);
+      final modeLabel = find.byKey(const ValueKey('private-media-mode-label'));
+      expect(modeLabel, findsOneWidget);
 
-    final confirmation = find.byKey(const ValueKey('private-media-open'));
-    expect(confirmation, findsOneWidget);
-    expect(find.text('View photo'), findsOneWidget);
-    expect(tester.widget<FilledButton>(confirmation).onPressed, isNotNull);
+      final visual = find.byKey(const ValueKey('private-media-card-visual'));
+      expect(visual, findsOneWidget);
+      expect(tester.getSize(visual).height, 150);
+      expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
 
-    await tester.tap(visual);
-    await tester.pump();
-    expect(opens, 0, reason: 'view-once keeps the confirmation guard');
+      await tester.tap(modeLabel);
+      await tester.pump();
+      expect(opens, 0, reason: 'the retained title is pointer-inert');
 
-    await tester.tap(confirmation);
-    await tester.pump();
-    expect(opens, 1);
-  });
+      await tester.tap(find.text(warning));
+      await tester.pump();
+      expect(opens, 0, reason: 'the one-view warning is pointer-inert');
+
+      await tester.tap(visual);
+      await tester.pump();
+      expect(opens, 1);
+    },
+  );
 
   testWidgets('private card title renders the protected media kind', (
     tester,
@@ -1456,9 +1459,9 @@ void main() {
         ),
       );
 
-      for (final policy in <PrivateMediaPolicy>[
-        const PrivateMediaPolicy.protected(),
-        const PrivateMediaPolicy.viewOnce(),
+      for (final (policy, expectedOpens) in <(PrivateMediaPolicy, int)>[
+        (const PrivateMediaPolicy.protected(), 1),
+        (const PrivateMediaPolicy.viewOnce(), 2),
       ]) {
         await pump(policy);
         expect(
@@ -1470,17 +1473,19 @@ void main() {
           findsOneWidget,
         );
         await tester.tap(find.byKey(const ValueKey('private-media-open')));
-        expect(opens, greaterThan(0));
+        expect(opens, expectedOpens);
       }
 
       await pump(PrivateMediaPolicy.disappearing(3600));
       expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+      expect(opens, 2);
 
       await pump(
         const PrivateMediaPolicy.protected(),
         localMediaAvailable: false,
       );
       expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+      expect(opens, 2);
       expect(
         find.text("Your sent media can't be reopened on this phone."),
         findsOneWidget,

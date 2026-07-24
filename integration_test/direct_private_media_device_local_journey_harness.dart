@@ -385,10 +385,20 @@ Future<Map<String, Object?>> _runProductionConversationProof(
       _productionOutgoingFixtureId,
       'private-media-open',
     );
-    final incomingActionVisible = visibleAction(
-      _productionIncomingFixtureId,
-      'private-media-open',
+    final incomingTile = find.descendant(
+      of: scopedSlot(_productionIncomingFixtureId),
+      matching: find.byKey(const ValueKey('private-media-card-visual')),
     );
+    final incomingRetiredButton = find.descendant(
+      of: scopedSlot(_productionIncomingFixtureId),
+      matching: find.byKey(const ValueKey('private-media-open')),
+    );
+    expect(incomingTile, findsOneWidget);
+    final incomingTileSize = tester.getSize(incomingTile);
+    expect(incomingTileSize.height, 150);
+    expect(incomingRetiredButton, findsNothing);
+    final incomingActionVisible =
+        incomingTileSize.width > 0 && incomingTileSize.height > 0;
     final terminalActionVisibleAfterRepump = visibleAction(
       _productionTerminalFixtureId,
       'private-action-deleteForMe',

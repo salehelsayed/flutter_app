@@ -760,7 +760,8 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
         kind == PrivateMediaAttachmentKind.video;
     final tapTileMode =
         labeledPolicy?.mode == PrivateMediaMode.protected ||
-        labeledPolicy?.mode == PrivateMediaMode.disappearing;
+        labeledPolicy?.mode == PrivateMediaMode.disappearing ||
+        labeledPolicy?.mode == PrivateMediaMode.viewOnce;
     final usesTapTile = tapTileKind && tapTileMode && onOpen != null;
     final actionLabel = labeledPolicy?.mode == PrivateMediaMode.viewOnce
         ? (privateMediaCardUsesVideoCopy(kind)

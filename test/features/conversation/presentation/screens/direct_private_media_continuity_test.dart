@@ -100,53 +100,54 @@ void main() {
     firstFrameRecorded: true,
   );
 
-  testWidgets('one tap downloads then auto-continues under one single-flight', (
-    tester,
-  ) async {
-    final downloadGate = Completer<void>();
-    var lifecycle = (state: AppLifecycleState.resumed, generation: 0);
-    var downloads = 0;
-    var opens = 0;
-    await pumpConversation(
-      tester,
-      current: message(),
-      lifecycle: () => lifecycle,
-      onDownload: (_, _) async {
-        downloads++;
-        await downloadGate.future;
-      },
-      onOpen: (identity, guard) async {
-        opens++;
-        expect(identity.messageId, messageId);
-        expect(guard.state, DirectPrivateMediaContinuityState.valid);
-        return const DirectPrivateMediaOpenResult.displayed(
-          displayedSettlement,
-        );
-      },
-    );
+  testWidgets(
+    'rapid double tap downloads then auto-continues under one single-flight',
+    (tester) async {
+      final downloadGate = Completer<void>();
+      var lifecycle = (state: AppLifecycleState.resumed, generation: 0);
+      var downloads = 0;
+      var opens = 0;
+      await pumpConversation(
+        tester,
+        current: message(),
+        lifecycle: () => lifecycle,
+        onDownload: (_, _) async {
+          downloads++;
+          await downloadGate.future;
+        },
+        onOpen: (identity, guard) async {
+          opens++;
+          expect(identity.messageId, messageId);
+          expect(guard.state, DirectPrivateMediaContinuityState.valid);
+          return const DirectPrivateMediaOpenResult.displayed(
+            displayedSettlement,
+          );
+        },
+      );
 
-    final open = find.byKey(const ValueKey('private-media-open'));
-    await tester.tap(open);
-    await tester.tap(open);
-    await tester.pump();
+      final tile = find.byKey(const ValueKey('private-media-card-visual'));
+      await tester.tap(tile);
+      await tester.tap(tile);
+      await tester.pump();
 
-    expect(downloads, 1);
-    expect(opens, 0);
-    expect(
-      find.descendant(
-        of: open,
-        matching: find.byType(CircularProgressIndicator),
-      ),
-      findsOneWidget,
-    );
+      expect(downloads, 1);
+      expect(opens, 0);
+      expect(
+        find.descendant(
+          of: tile,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
 
-    downloadGate.complete();
-    await flushFrames(tester);
+      downloadGate.complete();
+      await flushFrames(tester);
 
-    expect(downloads, 1);
-    expect(opens, 1);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-  });
+      expect(downloads, 1);
+      expect(opens, 1);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
 
   testWidgets(
     'download-held route cover invalidates auto-open and a later tap requalifies',
@@ -171,7 +172,8 @@ void main() {
         },
       );
 
-      await tester.tap(find.byKey(const ValueKey('private-media-open')));
+      final tile = find.byKey(const ValueKey('private-media-card-visual'));
+      await tester.tap(tile);
       await tester.pump();
       final navigator = Navigator.of(
         tester.element(find.byType(ConversationScreen)),
@@ -192,7 +194,7 @@ void main() {
       expect(downloads, 1);
       expect(opens, 0);
 
-      await tester.tap(find.byKey(const ValueKey('private-media-open')));
+      await tester.tap(tile);
       await flushFrames(tester);
       expect(downloads, 2);
       expect(opens, 1);
@@ -202,12 +204,16 @@ void main() {
   testWidgets('pause-resume during download cannot auto-open', (tester) async {
     final downloadGate = Completer<void>();
     var lifecycle = (state: AppLifecycleState.resumed, generation: 0);
+    var downloads = 0;
     var opens = 0;
     await pumpConversation(
       tester,
       current: message(),
       lifecycle: () => lifecycle,
-      onDownload: (_, _) => downloadGate.future,
+      onDownload: (_, _) async {
+        downloads++;
+        await downloadGate.future;
+      },
       onOpen: (_, _) async {
         opens++;
         return const DirectPrivateMediaOpenResult.displayed(
@@ -216,15 +222,33 @@ void main() {
       },
     );
 
-    await tester.tap(find.byKey(const ValueKey('private-media-open')));
+    final tile = find.byKey(const ValueKey('private-media-card-visual'));
+    await tester.tap(tile);
     await tester.pump();
+    expect(downloads, 1);
+    expect(
+      find.descendant(
+        of: tile,
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+
     lifecycle = (state: AppLifecycleState.paused, generation: 1);
     lifecycle = (state: AppLifecycleState.resumed, generation: 2);
     downloadGate.complete();
     await flushFrames(tester);
 
+    expect(downloads, 1);
     expect(opens, 0);
-    expect(find.byKey(const ValueKey('private-media-open')), findsOneWidget);
+    expect(tile, findsOneWidget);
+    expect(
+      find.descendant(
+        of: tile,
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('typed pre-frame failure renders truthful retry and clears it', (
@@ -263,7 +287,7 @@ void main() {
       },
     );
 
-    await tester.tap(find.byKey(const ValueKey('private-media-open')));
+    await tester.tap(find.byKey(const ValueKey('private-media-card-visual')));
     await flushFrames(tester);
     expect(
       find.byKey(const ValueKey('private-media-open-failure')),

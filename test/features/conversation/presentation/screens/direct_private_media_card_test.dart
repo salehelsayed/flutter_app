@@ -150,6 +150,19 @@ void main() {
       final decoration = container.decoration! as BoxDecoration;
       expect(decoration.image, isNull);
     }
+
+    final decoratedBoxes = find.descendant(
+      of: scopedSlot,
+      matching: find.byType(DecoratedBox),
+    );
+    for (final decoratedBox in tester.widgetList<DecoratedBox>(
+      decoratedBoxes,
+    )) {
+      final decoration = decoratedBox.decoration;
+      if (decoration is BoxDecoration) {
+        expect(decoration.image, isNull);
+      }
+    }
   }
 
   testWidgets(

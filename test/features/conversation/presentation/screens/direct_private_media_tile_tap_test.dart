@@ -263,50 +263,151 @@ void main() {
     }),
   );
 
+  testWidgets(
+    'view-once tile is one warned semantic button and opening is disabled in tile',
+    (tester) => _withSemantics(tester, () async {
+      var opens = 0;
+      const label = 'View-once photo';
+      const openingLabel = 'Opening private media…';
+
+      await _pumpPlaceholder(
+        tester,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        onOpen: () => opens++,
+      );
+
+      expect(_modeLabel, findsOneWidget);
+      expect(find.text(label), findsOneWidget);
+      expect(find.text('You can only view this once.'), findsOneWidget);
+      expect(_openButton, findsNothing);
+      expect(
+        _semanticsNodesWhere(tester, (data) => data.label == label),
+        hasLength(1),
+        reason: 'the visible View-once title must not be announced twice',
+      );
+      _expectEnabledTileSemantics(tester, label: label);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel(label),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(opens, 1);
+
+      await _pumpPlaceholder(
+        tester,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        onOpen: () => opens++,
+        opening: true,
+      );
+
+      expect(_modeLabel, findsOneWidget);
+      expect(find.text(label), findsOneWidget);
+      expect(_openButton, findsNothing);
+      expect(
+        find.descendant(
+          of: _visual,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      final dimmer = find.ancestor(of: _visual, matching: find.byType(Opacity));
+      expect(dimmer, findsOneWidget);
+      expect(tester.widget<Opacity>(dimmer).opacity, lessThan(1));
+
+      final tileNode = tester.getSemantics(_visual);
+      final data = tileNode.getSemanticsData();
+      expect(data.label, label);
+      expect(data.value, openingLabel);
+      expect(data.flagsCollection.isButton, isTrue);
+      expect(data.flagsCollection.isEnabled, Tristate.isFalse);
+      expect(data.hasAction(SemanticsAction.tap), isFalse);
+      expect(
+        _semanticsNodesWhere(tester, (candidate) => candidate.label == label),
+        hasLength(1),
+        reason: 'the opening tile must retain one title announcement',
+      );
+      expect(
+        _semanticsNodesWhere(
+          tester,
+          (candidate) => candidate.value == openingLabel,
+        ),
+        hasLength(1),
+      );
+      expect(
+        _semanticsNodesWhere(
+          tester,
+          (candidate) => candidate.role == SemanticsRole.loadingSpinner,
+          below: tileNode,
+        ),
+        isEmpty,
+        reason: 'the visual spinner must not create a second a11y node',
+      );
+
+      await tester.tap(_visual);
+
+      expect(opens, 1);
+    }),
+  );
+
   testWidgets('tile tap preserves ancestor long press and swipe to quote', (
     tester,
   ) async {
-    var opens = 0;
-    var longPresses = 0;
-    var quotes = 0;
-    await _pumpPlaceholder(
-      tester,
-      policy: const PrivateMediaPolicy.protected(),
-      onOpen: () => opens++,
-      wrap: (child) => SwipeToQuoteBubble(
-        onQuoteTriggered: () => quotes++,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onLongPress: () => longPresses++,
-          child: child,
+    for (final policy in const [
+      PrivateMediaPolicy.protected(),
+      PrivateMediaPolicy.viewOnce(),
+    ]) {
+      var opens = 0;
+      var longPresses = 0;
+      var quotes = 0;
+      await _pumpPlaceholder(
+        tester,
+        policy: policy,
+        onOpen: () => opens++,
+        wrap: (child) => SwipeToQuoteBubble(
+          onQuoteTriggered: () => quotes++,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPress: () => longPresses++,
+            child: child,
+          ),
         ),
-      ),
-    );
+      );
 
-    await tester.tap(_visual);
-    expect(opens, 1);
-    expect(longPresses, 0);
-    expect(quotes, 0);
+      await tester.tap(_visual);
+      expect(opens, 1, reason: '${policy.mode}: tap opens exactly once');
+      expect(longPresses, 0, reason: '${policy.mode}: tap is not long-press');
+      expect(quotes, 0, reason: '${policy.mode}: tap is not swipe');
 
-    await tester.longPress(_visual);
-    expect(opens, 1);
-    expect(longPresses, 1);
-    expect(quotes, 0);
+      await tester.longPress(_visual);
+      expect(opens, 1, reason: '${policy.mode}: long-press does not open');
+      expect(
+        longPresses,
+        1,
+        reason: '${policy.mode}: ancestor receives one long-press',
+      );
+      expect(quotes, 0, reason: '${policy.mode}: long-press is not swipe');
 
-    final drag = await tester.startGesture(tester.getCenter(_visual));
-    await tester.pump();
-    expect(_tileScale(tester).scale, 0.975);
-    await drag.moveBy(const Offset(40, 0));
-    await tester.pump();
-    expect(_tileScale(tester).scale, 1);
-    await drag.moveBy(const Offset(40, 0));
-    await tester.pump();
-    await drag.up();
-    await tester.pumpAndSettle();
+      final drag = await tester.startGesture(tester.getCenter(_visual));
+      await tester.pump();
+      expect(_tileScale(tester).scale, 0.975);
+      await drag.moveBy(const Offset(40, 0));
+      await tester.pump();
+      expect(_tileScale(tester).scale, 1);
+      await drag.moveBy(const Offset(40, 0));
+      await tester.pump();
+      await drag.up();
+      await tester.pumpAndSettle();
 
-    expect(opens, 1);
-    expect(longPresses, 1);
-    expect(quotes, 1);
+      expect(opens, 1, reason: '${policy.mode}: swipe does not open');
+      expect(
+        longPresses,
+        1,
+        reason: '${policy.mode}: swipe does not add a long-press',
+      );
+      expect(quotes, 1, reason: '${policy.mode}: ancestor receives one swipe');
+    }
   });
 
   testWidgets('tile is 150px only when openable', (tester) async {
@@ -326,53 +427,69 @@ void main() {
   });
 
   testWidgets(
-    'not-openable protected card keeps title 88px tile and disabled button',
+    'not-openable protected and view-once cards keep title 88px tile and disabled button',
     (tester) => _withSemantics(tester, () async {
-      await _pumpPlaceholder(
-        tester,
-        policy: const PrivateMediaPolicy.protected(),
-        onOpen: null,
-      );
+      final cases = <({PrivateMediaPolicy policy, String title, String body})>[
+        (
+          policy: const PrivateMediaPolicy.protected(),
+          title: 'Protected photo',
+          body: "pixel doesn't allow saving or sharing.",
+        ),
+        (
+          policy: const PrivateMediaPolicy.viewOnce(),
+          title: 'View-once photo',
+          body: 'You can only view this once.',
+        ),
+      ];
 
-      expect(_modeLabel, findsOneWidget);
-      expect(find.text('Protected photo'), findsOneWidget);
-      expect(tester.getSize(_visual).height, 88);
-      expect(_openButton, findsOneWidget);
-      expect(tester.widget<FilledButton>(_openButton).onPressed, isNull);
+      for (final testCase in cases) {
+        await _pumpPlaceholder(tester, policy: testCase.policy, onOpen: null);
 
-      final tileData = tester.getSemantics(_visual).getSemanticsData();
-      expect(tileData.flagsCollection.isButton, isFalse);
-      expect(tileData.hasAction(SemanticsAction.tap), isFalse);
+        expect(_modeLabel, findsOneWidget);
+        expect(find.text(testCase.title), findsOneWidget);
+        expect(find.text(testCase.body), findsOneWidget);
+        expect(tester.getSize(_visual).height, 88);
+        expect(_openButton, findsOneWidget);
+        expect(tester.widget<FilledButton>(_openButton).onPressed, isNull);
+
+        final tileData = tester.getSemantics(_visual).getSemanticsData();
+        expect(tileData.flagsCollection.isButton, isFalse);
+        expect(tileData.hasAction(SemanticsAction.tap), isFalse);
+      }
     }),
   );
 
   testWidgets('tap feedback scales to 0.975 and resets on up and cancel', (
     tester,
   ) async {
-    await _pumpPlaceholder(
-      tester,
-      policy: const PrivateMediaPolicy.protected(),
-      onOpen: () {},
-    );
+    for (final policy in const [
+      PrivateMediaPolicy.protected(),
+      PrivateMediaPolicy.viewOnce(),
+    ]) {
+      var opens = 0;
+      await _pumpPlaceholder(tester, policy: policy, onOpen: () => opens++);
 
-    var gesture = await tester.startGesture(tester.getCenter(_visual));
-    await tester.pump();
-    expect(_tileScale(tester).duration, const Duration(milliseconds: 120));
-    expect(_tileScale(tester).scale, 0.975);
+      var gesture = await tester.startGesture(tester.getCenter(_visual));
+      await tester.pump();
+      expect(_tileScale(tester).duration, const Duration(milliseconds: 120));
+      expect(_tileScale(tester).scale, 0.975);
 
-    await gesture.up();
-    await tester.pump();
-    expect(_tileScale(tester).scale, 1);
-    await tester.pump(const Duration(milliseconds: 120));
+      await gesture.up();
+      await tester.pump();
+      expect(_tileScale(tester).scale, 1);
+      expect(opens, 1, reason: '${policy.mode}: pointer-up opens once');
+      await tester.pump(const Duration(milliseconds: 120));
 
-    gesture = await tester.startGesture(tester.getCenter(_visual));
-    await tester.pump();
-    expect(_tileScale(tester).scale, 0.975);
+      gesture = await tester.startGesture(tester.getCenter(_visual));
+      await tester.pump();
+      expect(_tileScale(tester).scale, 0.975);
 
-    await gesture.cancel();
-    await tester.pump();
-    expect(_tileScale(tester).scale, 1);
-    await tester.pump(const Duration(milliseconds: 120));
+      await gesture.cancel();
+      await tester.pump();
+      expect(_tileScale(tester).scale, 1);
+      expect(opens, 1, reason: '${policy.mode}: cancel does not open');
+      await tester.pump(const Duration(milliseconds: 120));
+    }
   });
 
   testWidgets(
@@ -464,6 +581,62 @@ void main() {
         findsOneWidget,
       );
       expect(find.text("pixel doesn't allow saving or sharing."), findsNothing);
+      final legacyTileData = tester.getSemantics(_visual).getSemanticsData();
+      expect(legacyTileData.flagsCollection.isButton, isFalse);
+      expect(legacyTileData.hasAction(SemanticsAction.tap), isFalse);
+
+      await tester.tap(_visual);
+      expect(opens, expectedOpens);
+      await tester.tap(_openButton);
+      expect(opens, expectedOpens + 1);
+    }),
+  );
+
+  testWidgets(
+    'view-once tap tile covers image and video while legacy GIF keeps the old branch',
+    (tester) => _withSemantics(tester, () async {
+      var opens = 0;
+      var expectedOpens = 0;
+
+      for (final testCase in const [
+        (kind: PrivateMediaAttachmentKind.image, label: 'View-once photo'),
+        (kind: PrivateMediaAttachmentKind.video, label: 'View-once video'),
+      ]) {
+        await _pumpPlaceholder(
+          tester,
+          policy: const PrivateMediaPolicy.viewOnce(),
+          kind: testCase.kind,
+          onOpen: () => opens++,
+        );
+
+        expect(
+          tester.getSize(_visual).height,
+          150,
+          reason: 'View once/${testCase.kind}',
+        );
+        expect(_modeLabel, findsOneWidget);
+        expect(find.text(testCase.label), findsOneWidget);
+        expect(find.text('You can only view this once.'), findsOneWidget);
+        expect(_openButton, findsNothing);
+        _expectEnabledTileSemantics(tester, label: testCase.label);
+
+        await tester.tap(_visual);
+        expectedOpens++;
+        expect(opens, expectedOpens);
+      }
+
+      await _pumpPlaceholder(
+        tester,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        kind: PrivateMediaAttachmentKind.gif,
+        onOpen: () => opens++,
+      );
+
+      expect(tester.getSize(_visual).height, 88);
+      expect(_modeLabel, findsOneWidget);
+      expect(find.text('View-once photo'), findsOneWidget);
+      expect(find.text('You can only view this once.'), findsOneWidget);
+      expect(_openButton, findsOneWidget);
       final legacyTileData = tester.getSemantics(_visual).getSemanticsData();
       expect(legacyTileData.flagsCollection.isButton, isFalse);
       expect(legacyTileData.hasAction(SemanticsAction.tap), isFalse);
