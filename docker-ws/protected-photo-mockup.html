@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protected photo bubble — proposed redesign</title>
+<style>
+  :root{
+    --bg:#000;
+    --ink:#fff;
+    --muted:rgba(255,255,255,.70);
+    --faint:rgba(255,255,255,.50);
+    --green:#1DB954;
+    --bubble-bg:rgba(255,255,255,.035);
+    --bubble-br:rgba(255,255,255,.13);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:28px 20px 60px;
+  }
+  .wrap{max-width:940px;margin:0 auto}
+  h1{font-size:19px;font-weight:700;margin:0 0 4px;letter-spacing:-.2px}
+  .sub{font-size:13px;color:var(--faint);margin:0 0 26px}
+
+  .cols{display:flex;gap:22px;flex-wrap:wrap}
+  .col{flex:1 1 300px;min-width:280px}
+  .caption{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:0 0 10px;display:flex;align-items:center;gap:7px}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+  .now{color:rgba(255,255,255,.42)}
+  .next{color:#4ade80}
+
+  /* phone canvas */
+  .phone{
+    background:#000;border:1px solid rgba(255,255,255,.09);border-radius:22px;
+    padding:16px 14px;min-height:330px;
+  }
+  .row{display:flex}
+  .row.in{justify-content:flex-start}
+  .avatar{width:26px;height:26px;border-radius:50%;flex:none;margin:0 8px 4px 0;
+    background:linear-gradient(140deg,#2b6b45,#123);border:1px solid rgba(255,255,255,.14)}
+
+  /* bubble chrome — matches the incoming media bubble */
+  .bubble{
+    background:var(--bubble-bg);border:1px solid var(--bubble-br);
+    border-radius:18px;width:250px;overflow:hidden;
+  }
+  /* PrivateMediaVisualCard padding: EdgeInsets.fromLTRB(12,8,12,10) */
+  .card{padding:8px 12px 10px}
+
+  /* the gradient+lock tile (private pixels never enter this widget) */
+  .tile{
+    height:88px;border-radius:14px;
+    background:linear-gradient(135deg,
+      rgba(29,185,84,.30) 0%,
+      rgba(239,184,200,.14) 52%,
+      rgba(54,52,59,.78) 100%), #000;
+    border:1px solid rgba(202,196,208,.55);
+    display:flex;align-items:center;justify-content:center;
+    position:relative;
+  }
+  .tile svg{width:38px;height:38px;color:#CAC4D0}
+
+  .title{font-size:14.5px;font-weight:700;margin:10px 0 0;letter-spacing:-.1px}
+  .body{font-size:12.5px;line-height:1.35;color:var(--muted);margin:4px 0 0}
+
+  .btn{
+    margin-top:10px;height:40px;border-radius:20px;background:var(--green);
+    color:#fff;font-size:14.5px;font-weight:500;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    border:none;width:100%;
+  }
+  .btn svg{width:17px;height:17px}
+
+  .meta{display:flex;align-items:center;justify-content:flex-end;gap:5px;
+    padding:0 12px 8px;font-size:11px;color:var(--faint)}
+  .meta svg{width:12px;height:12px;opacity:.75}
+
+  /* ---- proposed: tile is the affordance ---- */
+  .tap{cursor:pointer;transition:transform .12s ease, filter .12s ease;
+    -webkit-tap-highlight-color:transparent;user-select:none}
+  .tap:hover{filter:brightness(1.14)}
+  .tap:active{transform:scale(.975);filter:brightness(1.22)}
+  .tap:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+
+  .strike{position:relative}
+  .removed{
+    position:relative;opacity:.34;
+  }
+  .removed::after{
+    content:"";position:absolute;left:-4px;right:-4px;top:50%;height:1.5px;
+    background:#ff6b6b;opacity:.85;
+  }
+  .tag{
+    display:inline-block;font-size:10px;font-weight:600;letter-spacing:.06em;
+    color:#ff8f8f;border:1px solid rgba(255,107,107,.45);border-radius:5px;
+    padding:1px 5px;margin-left:6px;vertical-align:middle;text-transform:uppercase;
+  }
+
+  /* variants strip */
+  .variants{margin-top:34px}
+  .vgrid{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px}
+  .v{flex:0 1 250px}
+  .vlabel{font-size:12px;color:var(--muted);margin:9px 0 0;font-weight:600}
+  .vnote{font-size:11.5px;color:var(--faint);margin:2px 0 0;line-height:1.35}
+  .tall{height:150px}
+  .hint{
+    position:absolute;bottom:8px;left:0;right:0;text-align:center;
+    font-size:11px;color:rgba(255,255,255,.72);letter-spacing:.02em;
+  }
+
+  /* notes */
+  .notes{margin-top:36px;border-top:1px solid rgba(255,255,255,.10);padding-top:18px}
+  .notes h2{font-size:13px;margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .notes ul{margin:0;padding-left:18px}
+  .notes li{font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:6px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+    background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#dcdcdc}
+  .ok{color:#4ade80}
+  .no{color:#ff8f8f}
+
+  /* opened overlay */
+  .overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.94);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:16px;z-index:50;
+  }
+  .overlay.on{display:flex}
+  .photo{
+    width:min(74vw,300px);aspect-ratio:3/4;border-radius:16px;
+    background:linear-gradient(150deg,#1b4d33,#0d2a1d 55%,#101014);
+    border:1px solid rgba(255,255,255,.12);
+    display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.34);
+    font-size:12.5px;letter-spacing:.05em;
+  }
+  .oclose{font-size:12.5px;color:var(--faint)}
+  @media (max-width:640px){ .cols{gap:26px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Protected photo — received bubble</h1>
+  <p class="sub">Rendered with the app's real dark tokens (<code>#1DB954</code> primary, the 88px gradient tile, tonal pill). Tap the proposed tile to feel the interaction.</p>
+
+  <div class="cols">
+
+    <!-- ============ CURRENT ============ -->
+    <div class="col">
+      <p class="caption now"><span class="dot"></span>Current</p>
+      <div class="phone">
+        <div class="row in">
+          <div class="avatar"></div>
+          <div class="bubble">
+            <div class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="10.5" width="16" height="11" rx="3"/>
+                  <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                  <circle cx="12" cy="15.6" r="1.35" fill="currentColor" stroke="none"/>
+                  <path d="M12 16.6v1.6"/>
+                </svg>
+              </div>
+              <p class="title">Protected photo</p>
+              <p class="body">You can view it again. pixel doesn't allow saving or sharing.</p>
+              <div class="btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="10.5" width="16" height="11" rx="3"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                </svg>
+                Open photo
+              </div>
+            </div>
+            <div class="meta">
+              1:53 PM
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>
+                <path d="M12 8v3M12 11 7.5 16M12 11l4.5 5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ PROPOSED ============ -->
+    <div class="col">
+      <p class="caption next"><span class="dot"></span>Proposed</p>
+      <div class="phone">
+        <div class="row in">
+          <div class="avatar"></div>
+          <div class="bubble">
+            <div class="card">
+              <div class="tile tap" tabindex="0" role="button" aria-label="Protected photo from pixel. Open." onclick="openPhoto()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPhoto()}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="10.5" width="16" height="11" rx="3"/>
+                  <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                  <circle cx="12" cy="15.6" r="1.35" fill="currentColor" stroke="none"/>
+                  <path d="M12 16.6v1.6"/>
+                </svg>
+              </div>
+              <p class="body" style="margin-top:8px">pixel doesn't allow saving or sharing.</p>
+            </div>
+            <div class="meta">
+              1:53 PM
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>
+                <path d="M12 8v3M12 11 7.5 16M12 11l4.5 5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:22px;padding-left:34px">
+          <div class="removed" style="display:inline-block"><span class="title" style="font-size:13px">Protected photo</span></div><span class="tag">removed</span><br>
+          <div class="removed" style="display:inline-block;margin-top:9px"><span class="body">You can view it again.</span></div><span class="tag">removed</span><br>
+          <div class="removed" style="display:inline-block;margin-top:9px;width:150px;height:28px;border-radius:14px;background:var(--green)"></div><span class="tag">removed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ VARIANTS ============ -->
+  <div class="variants">
+    <p class="caption" style="color:var(--faint)"><span class="dot"></span>Two open calls — pick one per column</p>
+    <div class="vgrid">
+
+      <div class="v">
+        <div class="bubble">
+          <div class="card">
+            <div class="tile tap" onclick="openPhoto()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="10.5" width="16" height="11" rx="3"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                <circle cx="12" cy="15.6" r="1.35" fill="currentColor" stroke="none"/><path d="M12 16.6v1.6"/>
+              </svg>
+            </div>
+            <p class="body" style="margin-top:8px">pixel doesn't allow saving or sharing.</p>
+          </div>
+        </div>
+        <p class="vlabel">A · Tile stays 88px</p>
+        <p class="vnote">Literal minimum change. Tap target is 88×226 — fine, but it still reads like a label strip, not a photo.</p>
+      </div>
+
+      <div class="v">
+        <div class="bubble">
+          <div class="card">
+            <div class="tile tall tap" onclick="openPhoto()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="10.5" width="16" height="11" rx="3"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                <circle cx="12" cy="15.6" r="1.35" fill="currentColor" stroke="none"/><path d="M12 16.6v1.6"/>
+              </svg>
+            </div>
+            <p class="body" style="margin-top:8px">pixel doesn't allow saving or sharing.</p>
+          </div>
+        </div>
+        <p class="vlabel">B · Tile grows to 150px <span style="color:#4ade80">← recommended</span></p>
+        <p class="vnote">Photo-shaped, so "this is the picture, touch it" is self-evident once the button is gone.</p>
+      </div>
+
+      <div class="v">
+        <div class="bubble">
+          <div class="card">
+            <div class="tile tall tap" onclick="openPhoto()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:14px">
+                <rect x="4" y="10.5" width="16" height="11" rx="3"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+                <circle cx="12" cy="15.6" r="1.35" fill="currentColor" stroke="none"/><path d="M12 16.6v1.6"/>
+              </svg>
+              <span class="hint">Tap to open</span>
+            </div>
+            <p class="body" style="margin-top:8px">pixel doesn't allow saving or sharing.</p>
+          </div>
+        </div>
+        <p class="vlabel">C · Tile + "Tap to open" hint</p>
+        <p class="vnote">Discoverability insurance without a button. Costs one extra string; can be dropped after first open.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ NOTES ============ -->
+  <div class="notes">
+    <h2>What this changes in code</h2>
+    <ul>
+      <li><span class="ok">Tap target</span> — the <code>private-media-card-visual</code> tile gets wrapped in an <code>InkWell</code>; <code>PrivateMediaVisualCard</code> takes an <code>onTap</code> and the <code>action:</code> slot goes unused for this state.</li>
+      <li><span class="no">Gone</span> — the <code>private-media-open</code> button, the <code>Protected photo</code> title (<code>private_media_card_title_protected_photo</code>), and the <code>You can view it again.</code> lead-in.</li>
+      <li><span class="ok">New string</span> — <code>"{name} doesn't allow saving or sharing."</code> replaces <code>private_media_protected_body_received</code>. Trailing period kept to match the rest of the private-media copy — say the word and I'll drop it.</li>
+      <li><span class="ok">Spinner</span> — while opening, the tile dims and the lock swaps to a spinner in place (the button used to carry that state).</li>
+      <li><span class="ok">Accessibility</span> — the removed title still lives on as the <code>Semantics</code> label, so screen readers keep announcing "Protected photo".</li>
+    </ul>
+
+    <h2 style="margin-top:20px">Two things worth flagging</h2>
+    <ul>
+      <li><strong>The tile can't become a real blurred thumbnail.</strong> That gradient is deliberate — <code>direct_private_media_viewer.dart:455</code> guarantees "private pixels never enter this widget through a path, provider, attachment, or byte payload." A blurred preview of the actual photo would mean decrypting it before the recipient opens it, which breaks the protected-media contract. The mockup keeps the gradient+lock.</li>
+      <li><strong>Same card, four other states.</strong> <code>PrivateMediaVisualCard</code> also renders view-once, disappearing, the sender-side bubble, and the open-failure card — plus the group copy at <code>group_conversation_screen.dart:1088</code>. Tell me whether tap-the-tile applies to all of them or to protected-only, and I'll scope it that way.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="overlay" id="ov" onclick="closePhoto()">
+  <div class="photo">PROTECTED · SCREENSHOTS BLOCKED</div>
+  <div class="oclose">tap anywhere to close</div>
+</div>
+
+<script>
+  function openPhoto(){ document.getElementById('ov').classList.add('on'); }
+  function closePhoto(){ document.getElementById('ov').classList.remove('on'); }
+  document.addEventListener('keydown', e => { if(e.key === 'Escape') closePhoto(); });
+</script>
+</body>
+</html>
