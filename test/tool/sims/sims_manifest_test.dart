@@ -260,6 +260,80 @@ void main() {
     );
   });
 
+  test('runtime-root guard has exact required host execution contract', () {
+    final capability = manifest.capabilityById('runtime.roots.advisory');
+
+    expect(capability, isNotNull);
+    expect(capability!.owner, 'flutter-app');
+    expect(capability.proofBoundaryId, 'host.runtime-roots.advisory');
+    expect(capability.assertionIds, <String>[
+      'runtime_roots.inventory_accounted',
+    ]);
+    expect(capability.lane, 'host-dart');
+    expect(capability.modes, <SimsMode>{SimsMode.major});
+    expect(capability.families, <String>{'infra'});
+    expect(capability.required, isTrue);
+    expect(capability.command, <String>[
+      './scripts/run_test_gates.sh',
+      'runtime-roots',
+    ]);
+    expect(capability.buildProfileId, 'host.flutter_tester');
+    expect(capability.dependencies, isEmpty);
+    expect(capability.resources, hasLength(1));
+    expect(capability.resources.single.name, 'host.cpu');
+    expect(capability.resources.single.access, ResourceAccess.read);
+    expect(capability.targetCapabilities, <String>[
+      'host.flutter-tester',
+      'host.bash',
+      'host.git',
+    ]);
+    expect(capability.artifactRequired, isFalse);
+    expect(capability.artifactValidators, isEmpty);
+    expect(capability.allowedNaReason, isNull);
+    expect(capability.active, isTrue);
+    expect(capability.automationReady, isTrue);
+    expect(capability.declaredBuildException, isFalse);
+  });
+
+  test(
+    'analyzer capability runs strict analysis and production unused suppression ratchet',
+    () {
+      final capability = manifest.capabilityById('analyzer.flutter');
+
+      expect(capability, isNotNull);
+      expect(capability!.owner, 'platform');
+      expect(capability.proofBoundaryId, 'host.analyzer.repo');
+      expect(capability.assertionIds, <String>[
+        'analyzer.no_errors',
+        'analyzer.no_warnings_or_infos',
+        'analyzer.production_unused_suppressions_ratcheted',
+      ]);
+      expect(capability.lane, 'analyzer');
+      expect(capability.modes, <SimsMode>{SimsMode.major});
+      expect(capability.families, <String>{'infra'});
+      expect(capability.required, isTrue);
+      expect(capability.command, <String>[
+        './scripts/check_flutter_analyze_strict.sh',
+      ]);
+      expect(capability.buildProfileId, 'host.process');
+      expect(capability.dependencies, isEmpty);
+      expect(capability.resources, hasLength(1));
+      expect(capability.resources.single.name, 'host.cpu');
+      expect(capability.resources.single.access, ResourceAccess.read);
+      expect(capability.targetCapabilities, <String>[
+        'host.flutter-sdk',
+        'host.bash',
+        'host.git',
+      ]);
+      expect(capability.artifactRequired, isFalse);
+      expect(capability.artifactValidators, isEmpty);
+      expect(capability.allowedNaReason, isNull);
+      expect(capability.active, isTrue);
+      expect(capability.automationReady, isTrue);
+      expect(capability.declaredBuildException, isFalse);
+    },
+  );
+
   test('major plan has every required lane once and complete typed rows', () {
     final plan = SimsPlanner(manifest).compile(mode: SimsMode.major);
     const requiredLanes = <String>{

@@ -1139,13 +1139,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_move_account_title => 'Move account to new phone';
 
   @override
-  String get settings_move_account_desc =>
-      'Scan the migration QR shown on your new phone to move this account.';
-
-  @override
-  String get settings_move_account_action => 'Start move';
-
-  @override
   String get settings_recovery_title => 'RECOVERY PHRASE';
 
   @override
@@ -2755,9 +2748,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_peer_id_title => 'PEER ID';
-
-  @override
-  String get settings_peer_id_desc => 'Your unique identifier on the network';
 
   @override
   String intro_and_more(String names, int count) {

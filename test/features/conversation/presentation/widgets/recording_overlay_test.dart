@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/shared/widgets/media/amplitude_bars.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
 void main() {
   Widget buildTestWidget({

@@ -57,7 +57,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';

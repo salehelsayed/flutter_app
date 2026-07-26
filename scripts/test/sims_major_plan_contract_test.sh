@@ -104,6 +104,97 @@ require(nested_row.get("command") == [
     "cd packages/background_push_crypto && flutter test && dart analyze",
 ], "nested package row does not run both tests and analyzer")
 
+analyzer_rows = [row for row in rows if row.get("id") == "analyzer.flutter"]
+require(len(analyzer_rows) == 1,
+        "major plan must contain analyzer.flutter exactly once")
+analyzer_row = analyzer_rows[0]
+require(analyzer_row.get("owner") == "platform",
+        "analyzer row owner drifted")
+require(analyzer_row.get("proofBoundary") == "host.analyzer.repo",
+        "analyzer proof boundary drifted")
+require(analyzer_row.get("assertions") == [
+    "analyzer.no_errors",
+    "analyzer.no_warnings_or_infos",
+    "analyzer.production_unused_suppressions_ratcheted",
+], "analyzer assertion contract drifted")
+require(analyzer_row.get("lane") == "analyzer",
+        "analyzer lane drifted")
+require(analyzer_row.get("modes") == ["major"],
+        "analyzer modes drifted")
+require(analyzer_row.get("families") == ["infra"],
+        "analyzer families drifted")
+require(analyzer_row.get("required") is True,
+        "analyzer row is not required")
+require(analyzer_row.get("command") == [
+    "./scripts/check_flutter_analyze_strict.sh",
+], "analyzer command is not the strict gate")
+require(analyzer_row.get("buildProfile") == "host.process",
+        "analyzer build profile drifted")
+require(analyzer_row.get("dependencies") == [],
+        "analyzer dependencies must remain empty")
+require(analyzer_row.get("resources") == [
+    {"name": "host.cpu", "access": "read"},
+], "analyzer resource contract drifted")
+require(analyzer_row.get("targetCapabilities") == [
+    "host.flutter-sdk", "host.bash", "host.git",
+], "analyzer target requirements drifted")
+require(analyzer_row.get("artifactRequired") is False,
+        "analyzer row must not require an artifact")
+require(analyzer_row.get("artifactValidators", []) == [],
+        "analyzer row must not declare artifact validators")
+require(analyzer_row.get("allowedNaReason") is None,
+        "analyzer row must not allow N/A")
+require(analyzer_row.get("active") is True,
+        "analyzer row is inactive")
+require(analyzer_row.get("automationReady", True) is True,
+        "analyzer row is not automation-ready")
+require(analyzer_row.get("declaredBuildException") is False,
+        "analyzer row declared an unexpected build exception")
+
+runtime_rows = [row for row in rows if row.get("id") == "runtime.roots.advisory"]
+require(len(runtime_rows) == 1,
+        "major plan must contain runtime.roots.advisory exactly once")
+runtime_row = runtime_rows[0]
+require(runtime_row.get("owner") == "flutter-app",
+        "runtime-root row owner drifted")
+require(runtime_row.get("proofBoundary") == "host.runtime-roots.advisory",
+        "runtime-root proof boundary drifted")
+require(runtime_row.get("assertions") == ["runtime_roots.inventory_accounted"],
+        "runtime-root assertion contract drifted")
+require(runtime_row.get("lane") == "host-dart",
+        "runtime-root lane drifted")
+require(runtime_row.get("modes") == ["major"],
+        "runtime-root modes drifted")
+require(runtime_row.get("families") == ["infra"],
+        "runtime-root families drifted")
+require(runtime_row.get("required") is True,
+        "runtime-root row is not required")
+require(runtime_row.get("command") == [
+    "./scripts/run_test_gates.sh", "runtime-roots",
+], "runtime-root command drifted")
+require(runtime_row.get("buildProfile") == "host.flutter_tester",
+        "runtime-root build profile drifted")
+require(runtime_row.get("dependencies") == [],
+        "runtime-root dependencies must remain empty")
+require(runtime_row.get("resources") == [
+    {"name": "host.cpu", "access": "read"},
+], "runtime-root resource contract drifted")
+require(runtime_row.get("targetCapabilities") == [
+    "host.flutter-tester", "host.bash", "host.git",
+], "runtime-root target requirements drifted")
+require(runtime_row.get("artifactRequired") is False,
+        "runtime-root row must not require an artifact")
+require(runtime_row.get("artifactValidators", []) == [],
+        "runtime-root row must not declare artifact validators")
+require(runtime_row.get("allowedNaReason") is None,
+        "runtime-root row must not allow N/A")
+require(runtime_row.get("active") is True,
+        "runtime-root row is inactive")
+require(runtime_row.get("automationReady") is True,
+        "runtime-root row is not automation-ready")
+require(runtime_row.get("declaredBuildException") is False,
+        "runtime-root row declared an unexpected build exception")
+
 device_perf = next((row for row in rows if row.get("id") == "performance.device.critical"), None)
 require(device_perf is not None, "major plan omitted device performance boundary")
 require(device_perf.get("required") is True and device_perf.get("automationReady") is True,

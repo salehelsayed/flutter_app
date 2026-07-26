@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "policy": "production-unused-suppressions",
+  "entries": [
+    {
+      "path": "lib/features/conversation/application/send_chat_message_use_case.dart",
+      "directiveKind": "ignore",
+      "diagnostic": "unused_element",
+      "targetFingerprint": {
+        "kind": "function",
+        "ownerChain": [],
+        "name": "_tryRelayProbeSend",
+        "signature": "Future < _RaceResult > _tryRelayProbeSend ( P2PService p2pService , String targetPeerId , String jsonString , { required String failureReason , required String messageId , } )"
+      },
+      "count": 1,
+      "sourceKind": "handwritten",
+      "owner": {
+        "kind": "roadmap",
+        "id": "DTR-05"
+      },
+      "reason": "The relay-probe helper is retained under the DTR-05 ownership boundary while its in-race replacement is completed.",
+      "evidence": [
+        "The immediately preceding unused_element directive binds to the exact owner-aware helper signature."
+      ],
+      "removalCondition": "DTR-05 removes or rewires the exact helper and deletes this entry in the same change."
+    },
+    {
+      "path": "lib/l10n/app_localizations_ar.dart",
+      "directiveKind": "ignore",
+      "diagnostic": "unused_import",
+      "targetFingerprint": {
+        "kind": "import",
+        "ownerChain": [],
+        "name": "package:intl/intl.dart",
+        "signature": "uri=package:intl/intl.dart;prefix=intl;deferred=false;combinators=[]"
+      },
+      "count": 1,
+      "sourceKind": "generated",
+      "owner": {
+        "kind": "generator",
+        "id": "flutter.gen-l10n"
+      },
+      "reason": "Flutter localization generation currently emits the locale import and its exact suppression.",
+      "evidence": [
+        "pubspec.yaml retains flutter.generate true and the generated import identity is exact."
+      ],
+      "removalCondition": "Remove only when flutter gen-l10n stops emitting this exact suppression and import."
+    },
+    {
+      "path": "lib/l10n/app_localizations_de.dart",
+      "directiveKind": "ignore",
+      "diagnostic": "unused_import",
+      "targetFingerprint": {
+        "kind": "import",
+        "ownerChain": [],
+        "name": "package:intl/intl.dart",
+        "signature": "uri=package:intl/intl.dart;prefix=intl;deferred=false;combinators=[]"
+      },
+      "count": 1,
+      "sourceKind": "generated",
+      "owner": {
+        "kind": "generator",
+        "id": "flutter.gen-l10n"
+      },
+      "reason": "Flutter localization generation currently emits the locale import and its exact suppression.",
+      "evidence": [
+        "pubspec.yaml retains flutter.generate true and the generated import identity is exact."
+      ],
+      "removalCondition": "Remove only when flutter gen-l10n stops emitting this exact suppression and import."
+    },
+    {
+      "path": "lib/l10n/app_localizations_en.dart",
+      "directiveKind": "ignore",
+      "diagnostic": "unused_import",
+      "targetFingerprint": {
+        "kind": "import",
+        "ownerChain": [],
+        "name": "package:intl/intl.dart",
+        "signature": "uri=package:intl/intl.dart;prefix=intl;deferred=false;combinators=[]"
+      },
+      "count": 1,
+      "sourceKind": "generated",
+      "owner": {
+        "kind": "generator",
+        "id": "flutter.gen-l10n"
+      },
+      "reason": "Flutter localization generation currently emits the locale import and its exact suppression.",
+      "evidence": [
+        "pubspec.yaml retains flutter.generate true and the generated import identity is exact."
+      ],
+      "removalCondition": "Remove only when flutter gen-l10n stops emitting this exact suppression and import."
+    }
+  ]
+}

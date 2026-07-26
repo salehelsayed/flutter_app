@@ -1162,13 +1162,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_move_account_title => 'Konto auf neues Handy umziehen';
 
   @override
-  String get settings_move_account_desc =>
-      'Scanne den Migrations-QR, der auf deinem neuen Handy angezeigt wird, um dieses Konto umzuziehen.';
-
-  @override
-  String get settings_move_account_action => 'Umzug starten';
-
-  @override
   String get settings_recovery_title => 'WIEDERHERSTELLUNGSPHRASE';
 
   @override
@@ -2813,9 +2806,6 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_peer_id_title => 'PEER-ID';
-
-  @override
-  String get settings_peer_id_desc => 'Deine eindeutige Kennung im Netzwerk';
 
   @override
   String intro_and_more(String names, int count) {

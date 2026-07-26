@@ -268,7 +268,7 @@ Cross-cutting:
 ### Presentation — widgets
 - `letter_card_test.dart` — Core message bubble.
 - `compose_area_test.dart` / `attachment_preview_strip_test.dart` — Composer.
-- `voice_record_button_test.dart` / `recording_overlay_test.dart` / `amplitude_bars_test.dart` — Voice recording UI.
+- `voice_record_button_test.dart` / `recording_overlay_test.dart` — Voice recording UI.
 - `reaction_bar_test.dart` / `reaction_display_test.dart` / `full_emoji_picker_test.dart` — Reactions UI.
 - `message_context_overlay_test.dart` — Long-press context.
 - `compact_origin_marker_test.dart` / `empty_conversation_state_test.dart` / `date_separator_test.dart` / `conversation_header_test.dart` / `blocked_banner_test.dart` — Misc states/widgets.
@@ -457,7 +457,7 @@ Cross-cutting:
 - `startup_router_test.dart` / `startup_router_recovery_test.dart` / `startup_router_notification_open_test.dart` — Top-level startup router flows.
 
 ### Presentation — widgets
-- `ambient_background_test.dart` / `brand_header_test.dart` / `choice_card_test.dart` / `identity_loading_card_test.dart` / `startup_loading_gate_test.dart` — UI bits.
+- `ambient_background_test.dart` / `brand_header_test.dart` / `choice_card_test.dart` / `startup_loading_gate_test.dart` — UI bits.
 
 ### Go (`go-mknoon/identity/`)
 - `identity_test.go` — libp2p identity generation/marshal roundtrip.
@@ -701,8 +701,8 @@ Cross-cutting:
 - `settings_screen_test.dart` / `settings_wired_test.dart` / `settings_wired_posts_nearby_test.dart` — Screens (with nearby variant).
 
 ### Presentation — widgets
-- `image_quality_toggle_test.dart` / `background_choice_control_test.dart` / `posts_nearby_settings_card_test.dart` — Pref widgets.
-- `settings_peer_id_card_test.dart` / `settings_recovery_phrase_card_test.dart` / `settings_profile_section_test.dart` — Identity surfacing.
+- `image_quality_toggle_test.dart` / `background_choice_control_test.dart` — Pref widgets.
+- `settings_recovery_phrase_card_test.dart` / `settings_profile_section_test.dart` — Identity surfacing.
 
 ---
 

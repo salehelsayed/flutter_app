@@ -1157,13 +1157,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_move_account_title => 'نقل الحساب إلى هاتف جديد';
 
   @override
-  String get settings_move_account_desc =>
-      'امسح رمز QR للنقل المعروض على هاتفك الجديد لنقل هذا الحساب.';
-
-  @override
-  String get settings_move_account_action => 'بدء النقل';
-
-  @override
   String get settings_recovery_title => 'عبارة الاسترداد';
 
   @override
@@ -2798,9 +2791,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_peer_id_title => 'معرّف النظير';
-
-  @override
-  String get settings_peer_id_desc => 'معرّفك الفريد على الشبكة';
 
   @override
   String intro_and_more(String names, int count) {

@@ -86,7 +86,7 @@ void main() {
       await tester.pump();
 
       // One UserAvatar per run, each sized 32 and bare. On HEAD the runs wire
-      // FeedRingAvatar -> no UserAvatar -> red.
+      // The group sender avatar is rendered by UserAvatar.
       final size32Avatars = find.byWidgetPredicate(
         (w) => w is UserAvatar && w.size == 32,
       );
@@ -107,13 +107,15 @@ void main() {
 
       // Every unread line is rendered as a LetterBubble (no "N more").
       expect(find.byType(LetterBubble), findsNWidgets(3));
-      final bubbles =
-          tester.widgetList<LetterBubble>(find.byType(LetterBubble)).toList();
+      final bubbles = tester
+          .widgetList<LetterBubble>(find.byType(LetterBubble))
+          .toList();
       expect(bubbles.every((b) => b.role == LetterBubbleRole.incoming), isTrue);
-      expect(
-        bubbles.map((b) => b.text).toList(),
-        ['mara one', 'mara two', 'bob one'],
-      );
+      expect(bubbles.map((b) => b.text).toList(), [
+        'mara one',
+        'mara two',
+        'bob one',
+      ]);
 
       // The sender-name span for each run is coloured with the per-peer accent.
       final spans = tester
@@ -139,10 +141,7 @@ void main() {
       );
 
       // The group name appears in a meta span alongside the sender.
-      expect(
-        spans.any((s) => (s.text ?? '').contains('The Crew')),
-        isTrue,
-      );
+      expect(spans.any((s) => (s.text ?? '').contains('The Crew')), isTrue);
     },
   );
 

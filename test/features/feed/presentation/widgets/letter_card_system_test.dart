@@ -57,11 +57,13 @@ void main() {
     'connection renders a size-40 UserAvatar (no glow/frame), a Connected '
     'label, and a single system green LetterBubble (B1/TC-18)',
     (tester) async {
-      await tester.pumpWidget(mount(const LetterCardSystem(letter: connection)));
+      await tester.pumpWidget(
+        mount(const LetterCardSystem(letter: connection)),
+      );
       await tester.pump();
 
       // A photo-capable UserAvatar keyed on the contact peerId, sized 40, bare.
-      // On HEAD the card wires FeedRingAvatar (glyph only) -> no UserAvatar.
+      // The system sender avatar is rendered by UserAvatar.
       final avatar = tester.widget<UserAvatar>(find.byType(UserAvatar));
       expect(avatar.peerId, 'peer-sys');
       expect(avatar.size, 40);
@@ -72,8 +74,9 @@ void main() {
       expect(find.text('Connected'), findsOneWidget);
 
       // Exactly one system bubble.
-      final bubbles =
-          tester.widgetList<LetterBubble>(find.byType(LetterBubble)).toList();
+      final bubbles = tester
+          .widgetList<LetterBubble>(find.byType(LetterBubble))
+          .toList();
       expect(bubbles.length, 1);
       expect(bubbles.single.role, LetterBubbleRole.system);
       expect(bubbles.single.text, 'tap to say hi');
@@ -89,7 +92,9 @@ void main() {
     '(B1/TC-3)',
     (tester) async {
       seedAvatar('peer-sys');
-      await tester.pumpWidget(mount(const LetterCardSystem(letter: connection)));
+      await tester.pumpWidget(
+        mount(const LetterCardSystem(letter: connection)),
+      );
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
@@ -101,40 +106,38 @@ void main() {
   );
 
   // TC-18: introduction variant.
-  testWidgets(
-    'introduction renders an "Introduced by Alice" label (TC-18)',
-    (tester) async {
-      await tester.pumpWidget(
-        mount(const LetterCardSystem(letter: introduction)),
-      );
-      await tester.pump();
+  testWidgets('introduction renders an "Introduced by Alice" label (TC-18)', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      mount(const LetterCardSystem(letter: introduction)),
+    );
+    await tester.pump();
 
-      expect(find.text('Introduced by Alice'), findsOneWidget);
-      // Not the plain-connection label.
-      expect(find.text('Connected'), findsNothing);
-    },
-  );
+    expect(find.text('Introduced by Alice'), findsOneWidget);
+    // Not the plain-connection label.
+    expect(find.text('Connected'), findsNothing);
+  });
 
   // TC-18b: tapping the system bubble fires onSendMessage.
-  testWidgets(
-    'tapping the system bubble invokes onSendMessage (TC-18b)',
-    (tester) async {
-      var called = false;
-      await tester.pumpWidget(
-        mount(
-          LetterCardSystem(
-            letter: connection,
-            onSendMessage: () => called = true,
-          ),
+  testWidgets('tapping the system bubble invokes onSendMessage (TC-18b)', (
+    tester,
+  ) async {
+    var called = false;
+    await tester.pumpWidget(
+      mount(
+        LetterCardSystem(
+          letter: connection,
+          onSendMessage: () => called = true,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(called, isFalse);
-      await tester.tap(find.text('tap to say hi'));
-      await tester.pump();
+    expect(called, isFalse);
+    await tester.tap(find.text('tap to say hi'));
+    await tester.pump();
 
-      expect(called, isTrue);
-    },
-  );
+    expect(called, isTrue);
+  });
 }

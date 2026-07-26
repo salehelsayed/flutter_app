@@ -1,7 +1,7 @@
 # Session 12 CI Gate Handoff
 
-**Date:** 2026-03-26  
-**Mode:** External Handoff Mode  
+**Date:** 2026-03-26
+**Mode:** External Handoff Mode
 **Scope:** named gate wiring and push hardening invocation contract only
 
 ## Status
@@ -42,6 +42,7 @@ Required commands:
 ./scripts/run_test_gates.sh groups
 ./scripts/run_test_gates.sh posts
 FLUTTER_DEVICE_ID=<device-id> ./scripts/run_test_gates.sh transport
+./scripts/run_test_gates.sh runtime-roots
 ./scripts/run_test_gates.sh completeness-check
 ```
 
@@ -55,6 +56,20 @@ Canonical transport name:
 
 - Use `transport`
 - Do not introduce or preserve `startup_transport`
+
+The `runtime-roots` command is the canonical repository admission check for the
+advisory runtime-root inventory. CI must invoke the named gate rather than copy
+manifest paths or classifier logic. The report surface remains non-blocking for
+reviewed candidates:
+
+```bash
+./scripts/check_runtime_root_inventory.sh report --format json
+```
+
+The named gate runs the focused unit contract and the read-only `check` mode.
+`check` exits `1` for unreviewed classification/evidence drift and `2` when the
+scan cannot be trusted. The absent external repository, workflow path, and
+owner recorded above remain a Release/CI follow-up.
 
 ## Companion Trigger Rules
 

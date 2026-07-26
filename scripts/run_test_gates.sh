@@ -791,6 +791,7 @@ Usage:
   ./scripts/run_test_gates.sh performance-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim-host
+  ./scripts/run_test_gates.sh runtime-roots
   ./scripts/run_test_gates.sh completeness-check
 
 Notes:
@@ -1231,6 +1232,16 @@ run_completeness_check() {
   printf 'Completeness check PASS.\n'
 }
 
+run_runtime_roots_gate() {
+  if (($# > 0)); then
+    printf 'runtime-roots does not accept arguments.\n' >&2
+    return 2
+  fi
+
+  flutter test test/unit/runtime_root_inventory_test.dart || return $?
+  ./scripts/check_runtime_root_inventory.sh check --format text
+}
+
 has_host_batch_control() {
   local arg
   for arg in "$@"; do
@@ -1545,6 +1556,13 @@ main() {
       ;;
     group-lifecycle-sim-host)
       run_group_lifecycle_sim_gate host
+      ;;
+    runtime-roots)
+      if ((${#gate_args[@]} == 0)); then
+        run_runtime_roots_gate
+      else
+        run_runtime_roots_gate "${gate_args[@]}"
+      fi
       ;;
     completeness-check)
       run_completeness_check

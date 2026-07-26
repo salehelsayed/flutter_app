@@ -55,9 +55,7 @@ lib/
 │   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams, offline inbox drain, local WiFi discovery (mDNS/Bonsoir), periodic health check (30s)
 │   │   ├── incoming_message_router.dart        # Routes P2P messages by type to streams
 │   │   ├── pending_message_retrier.dart        # PendingMessageRetrier: subscribes to stateStream, retries failed messages on reconnect (5s debounce)
-│   │   ├── chat_message_listener.dart          # Stub ChatMessageListener (core-level; real impl in features/conversation)
-│   │   ├── contact_request_listener.dart       # Stub ContactRequestListener (core-level; real impl in features/contact_request)
-│   │   └── chat_message.dart                   # ChatMessage type re-export
+│   │   └── chat_message_listener.dart          # Stub ChatMessageListener (core-level; real impl in features/conversation)
 │   ├── media/
 │   │   ├── image_processor.dart                # ImageProcessor: EXIF strip, quality compress (injectable CompressFileFn)
 │   │   ├── media_file_manager.dart             # MediaFileManager: local file path management for attachments

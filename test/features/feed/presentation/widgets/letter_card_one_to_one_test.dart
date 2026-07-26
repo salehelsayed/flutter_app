@@ -57,7 +57,7 @@ void main() {
       await tester.pump();
 
       // A photo-capable UserAvatar keyed on the contact peerId, sized 40, with
-      // the bare Feed look. On HEAD the card wires FeedRingAvatar (glyph only)
+      // the bare Feed look. The card wires UserAvatar directly
       // -> no UserAvatar -> red.
       final avatar = tester.widget<UserAvatar>(find.byType(UserAvatar));
       expect(avatar.peerId, 'peer-1to1');
@@ -67,11 +67,14 @@ void main() {
 
       // One LetterBubble per unread text.
       expect(find.byType(LetterBubble), findsNWidgets(2));
-      final bubbles =
-          tester.widgetList<LetterBubble>(find.byType(LetterBubble)).toList();
+      final bubbles = tester
+          .widgetList<LetterBubble>(find.byType(LetterBubble))
+          .toList();
       expect(bubbles.every((b) => b.role == LetterBubbleRole.incoming), isTrue);
-      expect(bubbles.map((b) => b.text).toList(),
-          ['first unread', 'second unread']);
+      expect(bubbles.map((b) => b.text).toList(), [
+        'first unread',
+        'second unread',
+      ]);
 
       // No contact-name header Text.
       expect(find.text('Contact Name'), findsNothing);
@@ -89,13 +92,15 @@ void main() {
     (tester) async {
       seedAvatar('peer-photo');
       await tester.pumpWidget(
-        mount(const LetterCardOneToOne(
-          letter: OneToOneLetter(
-            peerId: 'peer-photo',
-            displayName: 'Has Photo',
-            lines: [LetterLine(messageId: 'm1', text: 'hi')],
+        mount(
+          const LetterCardOneToOne(
+            letter: OneToOneLetter(
+              peerId: 'peer-photo',
+              displayName: 'Has Photo',
+              lines: [LetterLine(messageId: 'm1', text: 'hi')],
+            ),
           ),
-        )),
+        ),
       );
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -115,13 +120,15 @@ void main() {
     (tester) async {
       seedAvatar('peer-live');
       await tester.pumpWidget(
-        mount(const LetterCardOneToOne(
-          letter: OneToOneLetter(
-            peerId: 'peer-live',
-            displayName: 'Live',
-            lines: [LetterLine(messageId: 'm1', text: 'hi')],
+        mount(
+          const LetterCardOneToOne(
+            letter: OneToOneLetter(
+              peerId: 'peer-live',
+              displayName: 'Live',
+              lines: [LetterLine(messageId: 'm1', text: 'hi')],
+            ),
           ),
-        )),
+        ),
       );
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -154,8 +161,9 @@ void main() {
     );
     await tester.pump();
 
-    final bubbles =
-        tester.widgetList<LetterBubble>(find.byType(LetterBubble)).toList();
+    final bubbles = tester
+        .widgetList<LetterBubble>(find.byType(LetterBubble))
+        .toList();
     expect(bubbles.every((b) => b.focused), isTrue);
   });
 }

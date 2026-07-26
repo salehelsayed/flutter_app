@@ -42,6 +42,54 @@ void main() {
       }
     });
 
+    test(
+      'DTR-04 retired settings keys are absent from every locale and generated API',
+      () {
+        const retiredKeys = <String>{
+          'settings_move_account_desc',
+          'settings_move_account_action',
+          'settings_peer_id_desc',
+        };
+        const retainedKeys = <String>{
+          'settings_move_account_title',
+          'settings_peer_id_title',
+        };
+        final violations = <String>[];
+
+        for (final locale in locales) {
+          final keys = _messageKeys(_loadArb(locale));
+          violations.addAll(
+            retiredKeys.intersection(keys).map((key) => 'app_$locale.arb:$key'),
+          );
+          expect(keys, containsAll(retainedKeys));
+        }
+
+        final generatedFiles = <File>[
+          File('lib/l10n/app_localizations.dart'),
+          ...locales.map(
+            (locale) => File('lib/l10n/app_localizations_$locale.dart'),
+          ),
+        ];
+        for (final file in generatedFiles) {
+          final source = file.readAsStringSync();
+          violations.addAll(
+            retiredKeys
+                .where((key) => RegExp('\\b$key\\b').hasMatch(source))
+                .map((key) => '${file.path}:$key'),
+          );
+          for (final key in retainedKeys) {
+            expect(source, contains(key), reason: '${file.path}:$key missing');
+          }
+        }
+
+        expect(
+          violations,
+          isEmpty,
+          reason: 'DTR04-L10N-RED: retired settings keys remain',
+        );
+      },
+    );
+
     test('simple hardcoded UI literals stay out of feature/shared widgets', () {
       final roots = <Directory>[
         Directory('lib/features'),

@@ -519,8 +519,6 @@
   "settings_share_nearby_off": "معطّل",
   "settings_share_nearby_desc": "يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.",
   "settings_move_account_title": "نقل الحساب إلى هاتف جديد",
-  "settings_move_account_desc": "امسح رمز QR للنقل المعروض على هاتفك الجديد لنقل هذا الحساب.",
-  "settings_move_account_action": "بدء النقل",
   "settings_recovery_title": "عبارة الاسترداد",
   "settings_recovery_warning": "لا تشارك هذه العبارة أبدًا مع أي شخص. فهي تمنح وصولًا كاملًا إلى حسابك.",
   "settings_recovery_tap": "اضغط للكشف",
@@ -1400,7 +1398,6 @@
   "startup_failed_title": "فشل التهيئة",
   "identity_restore_action": "استعادة الهوية",
   "settings_peer_id_title": "معرّف النظير",
-  "settings_peer_id_desc": "معرّفك الفريد على الشبكة",
   "intro_and_more": "{names} و{count} آخرون",
   "@intro_and_more": {
     "placeholders": {

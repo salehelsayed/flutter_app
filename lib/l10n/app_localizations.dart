@@ -1990,18 +1990,6 @@ abstract class AppLocalizations {
   /// **'Move account to new phone'**
   String get settings_move_account_title;
 
-  /// No description provided for @settings_move_account_desc.
-  ///
-  /// In en, this message translates to:
-  /// **'Scan the migration QR shown on your new phone to move this account.'**
-  String get settings_move_account_desc;
-
-  /// No description provided for @settings_move_account_action.
-  ///
-  /// In en, this message translates to:
-  /// **'Start move'**
-  String get settings_move_account_action;
-
   /// No description provided for @settings_recovery_title.
   ///
   /// In en, this message translates to:
@@ -4651,12 +4639,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'PEER ID'**
   String get settings_peer_id_title;
-
-  /// No description provided for @settings_peer_id_desc.
-  ///
-  /// In en, this message translates to:
-  /// **'Your unique identifier on the network'**
-  String get settings_peer_id_desc;
 
   /// No description provided for @intro_and_more.
   ///

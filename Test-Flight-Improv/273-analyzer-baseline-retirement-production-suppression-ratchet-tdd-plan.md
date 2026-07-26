@@ -1,13 +1,13 @@
 # 273 - DTR-02 stale analyzer baseline retirement and production suppression ratchet
 
-Status: execution-ready
+Status: Plan-green
 Type: Modification
 Spec: `Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md`
 (`DTR-02`)
-Classification: implementation-ready
+Classification: implementation-complete
 Closure tier: host
 Roadmap ID / wave: `DTR-02` / Wave 0 — Safety rails
-Date: 2026-07-24
+Date: 2026-07-25
 
 ## Planning Progress
 
@@ -119,6 +119,8 @@ Date: 2026-07-24
     environment overrides, or comparison behavior.
 - Affected implementation, test, and gate files:
   `pubspec.yaml`, `pubspec.lock`,
+  `packages/background_push_crypto/pubspec.yaml`,
+  `packages/background_push_crypto/pubspec.lock`,
   `tool/analyzer_guard/**`, `scripts/check_flutter_analyze_strict.sh`,
   `scripts/check_flutter_analyze_baseline.sh`,
   `test/unit/analyzer_suppression_ratchet_test.dart`,
@@ -172,6 +174,12 @@ In scope:
   syntax, relevant section shapes, and the applicable scalar/list include
   graph; do not reimplement option merging/glob semantics, import
   `package:analyzer/src/**`, or directly import transitive `glob`.
+- Preserve strict per-session include validation across repo-contained package
+  roots. Because `packages/background_push_crypto` inherits the root
+  `analysis_options.yaml`, declare the existing `flutter_lints: ^6.0.0` as a
+  dev dependency in that package and resolve only its tracked lockfile plus
+  ignored package config. This is analyzer-topology closure, not a production
+  dependency or lint relaxation.
 - Build one NUL-safe Git-visible path set from cached plus non-ignored untracked
   files and subtract Git-reported working-tree deletions. Filter that set to
   Dart files below the root `lib/` and every repo-contained package root
@@ -345,11 +353,13 @@ Dependencies:
    `flutter analyze --no-pub --fatal-infos --fatal-warnings` before edits.
    Stop if it is nonzero: assign the issue to its owning change; do not revive,
    regenerate, or expand a baseline.
-2. Add direct dev dependencies `analyzer: ^9.0.0` and `yaml: ^3.1.3`, then
-   intentionally run `flutter pub get` once. Verify the lock resolves analyzer
-   9.0.0 under the current SDK, `flutter.generate: true` remains intact, and no
-   generated/app source changed. Every later analyzer command remains
-   `--no-pub`.
+2. Reuse the root `analyzer: ^9.0.0` / `yaml: ^3.1.3` dependency resolution
+   already landed by DTR-01 and verify DTR-02 produces no additional root
+   solver delta. Resolve `packages/background_push_crypto` once offline after
+   declaring its existing inherited `flutter_lints: ^6.0.0` dev dependency;
+   require only `flutter_lints` plus `lints` in its tracked lock delta. Verify
+   `flutter.generate: true` remains intact and no generated/app source changed.
+   Every later analyzer command remains `--no-pub`.
 3. Add `scripts/test/flutter_analyze_strict_contract_test.sh`,
    `test/unit/analyzer_suppression_ratchet_test.dart`, the exact new
    `sims_manifest_test.dart` case, and the analyzer-row assertions in
@@ -417,6 +427,7 @@ Dependencies:
   proof leg.
 - After an emergency revert, run
   `flutter pub get`,
+  `(cd packages/background_push_crypto && flutter pub get --offline)`,
   `flutter test test/unit/analyzer_baseline_parser_test.dart`,
   `./scripts/check_flutter_analyze_baseline.sh`,
   `dart tool/sims/sims.dart major --list --only analyzer.flutter`, and
@@ -491,10 +502,12 @@ git status --short
 # not be baselined or suppressed here.
 flutter analyze --no-pub --fatal-infos --fatal-warnings
 
-# After declaring analyzer/yaml direct dev dependencies: the one intentional
-# resolution step. Inspect pubspec/lock and require no generated/app source diff.
-flutter pub get
+# DTR-01 already resolved the shared root analyzer/yaml dependencies. Verify
+# no additional DTR-02 root solver delta, then resolve the nested package's
+# inherited lint include offline and prove its analyzer remains clean.
 git diff --check -- pubspec.yaml pubspec.lock
+(cd packages/background_push_crypto && flutter pub get --offline)
+(cd packages/background_push_crypto && dart analyze)
 
 # After adding tests plus the compile-only checker API scaffold: causal
 # assertion REDs for permissive invocation, both absent ratchet status paths,
@@ -584,18 +597,18 @@ git diff --check
   app family requirement, or non-clean prerequisite analyzer result blocks
   completion and requires reassignment/replanning.
 
-- [ ] Every behavior row has its named causal or preservation evidence.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are
+- [x] Every behavior row has its named causal or preservation evidence.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are
       recorded with the documented failure reason.
-- [ ] Exact four-entry production inventory across all three package roots,
+- [x] Exact four-entry production inventory across all three package roots,
       analyzer-semantic source/config bypass checks, and fail-closed include
       validation pass; legacy artifacts/callers are retired or strictly
       delegated, and migrated helpers propagate failure.
-- [ ] Unit, process, typed manifest, `sims-contracts`, focused capability,
+- [x] Unit, process, typed manifest, `sims-contracts`, focused capability,
       completeness, strict analyzer, and diff-hygiene gates pass.
-- [ ] Harness registration is selected by both list commands and then executed;
+- [x] Harness registration is selected by both list commands and then executed;
       Wave 0/final, not this plan, own full `host-all`.
-- [ ] Scope Contract And Guard is respected.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -626,4 +639,9 @@ git diff --check
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-07-25 | Inherited dependency and prerequisite | Root pubspec/lock; current legacy gate; protected source set | DTR-01 had already resolved analyzer 9/yaml with no DTR-02 root solver delta; exact `flutter analyze --no-pub --fatal-infos --fatal-warnings` reported no issues; the legacy gate reproduced 0 current findings versus 1,609 stale baseline findings | DTR-02 began from DTR-01 Plan-green and a zero-issue tree; no finding was baselined or suppressed | None | Replace the stale policy atomically |
+| 2026-07-25 | Shell/caller retirement GREEN | Strict and compatibility wrappers; three Docker callers; shell process contract; legacy tool/TSV/parser | Three artifacts totaling 1,179 lines were deleted together; the strict gate runs ratchet first then exact no-pub/fatal analysis; the old path is a zero-argument delegate; caller helpers propagate child and evidence-I/O failure | Initial process GREEN was reopened by five independent false-green findings; NUL-safe caller census, exact child invocation, full-prefix retirement, fail-closed temp/persist paths, and post-delta nonmutation now all pass | No remaining TC-DTR02-01/02/08/11 blocker after independent re-audit | Close checker counterexamples |
+| 2026-07-25 | Checker mutation closure | Analyzer guard, exact four-entry inventory, unit fixtures, nested analyzer topology | First compiled unit run re-red on path canonicalization, wildcard identity, and SDK discovery; subsequent audits re-red nested options, per-session include caching, unnamed-owner identity, Git redirection, and index canonicalization. Final exact unit file passed 5/5; canonical CLI reports 4 reviewed occurrences across 3 roots | Public analyzer APIs own parsing/effective options; nearest and per-session include graphs fail closed; Git worktree/index identity is pinned; target fingerprints are owner-aware | Strict per-session validation exposed an unresolved inherited lint include in the nested package | Add the existing dev-only lint dependency, resolve offline, and re-run |
+| 2026-07-25 | Nested analyzer-topology closure | `packages/background_push_crypto/pubspec.yaml`; tracked lock | Offline resolution added only `flutter_lints 6.0.0` and transitive `lints 6.1.0`; package `dart analyze` reports no issues; canonical ratchet returned to trustworthy 4/3 GREEN | Production dependencies/code are unchanged and the inherited root lint include now resolves in the package's own session | No lint relaxation or runtime scope change | Run registrations and preservation sentinels |
+| 2026-07-25 | Focused/registration closure | Analyzer Sims row/contracts; strict capability; completeness; full affected shell lane | Typed analyzer test and major-plan contract passed; both list commands selected the strict contract/capability exactly once; completeness passed 1,358/1,358; required `analyzer.flutter` passed all 3 assertions; final `sims-contracts` passed 36/36; independent strict analysis reported no issues | Only `analyzer.flutter` changed in the Sims manifest; all other rows, including `runtime.roots.advisory`, remained byte-for-behavior | Full `host-all` intentionally deferred to Wave 0 | Prove DTR-01 and protected-source preservation |
+| 2026-07-25 | Preservation and Plan-green closure | DTR-05 helper; generated l10n/config; root analyzer policy; DTR-01 runtime/Sims sentinels; full diff | Protected source hashes and exact diff guard matched; runtime-roots passed 13/13 with trustworthy/no-drift 1,056-file inventory and 17/17 restricted roots; runtime Sims typed test/list and joint major contract passed; format, Bash/JSON syntax, executable modes, and diff hygiene passed | No `lib/`, generated l10n, `l10n.yaml`, `analysis_options.yaml`, schema, wire, native, or runtime-root capability change; no Graphify refresh was required because no app-owned source changed | None; DTR-02 is Plan-green | Complete DTR-08 ledger state, then run the single Wave 0 `host-all` with concurrency 8 |

@@ -470,7 +470,7 @@
 │  │  │                          │  callP2PRelayReconnect,                 │ │
 │  │  │                          │  callP2PRelayProbe                      │ │
 │  │  │                          │  In bridge_group_helpers.dart:          │ │
-│  │  │                          │  callGroupCreate, callGroupJoin,        │ │
+│  │  │                          │  callGroupCreate,                       │ │
 │  │  │                          │  callGroupJoinWithConfig,               │ │
 │  │  │                          │  callGroupLeave, callGroupPublish,      │ │
 │  │  │                          │  callGroupUpdateConfig,                 │ │
@@ -1111,7 +1111,7 @@
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
 | Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest |
 | P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken, callP2PRelayReconnect, callP2PRelayProbe; also exports defaultRendezvousAddress constant |
-| Group Bridge Helper Functions (in bridge_group_helpers.dart) | Bridge Helpers | Group-specific helper functions: callGroupCreate, callGroupJoin, callGroupJoinWithConfig, callGroupLeave, callGroupPublish, callGroupUpdateConfig, callGroupRotateKey, callGroupUpdateKey, callGroupInboxStore, callGroupInboxRetrieve, callGroupKeygen, callGroupEncrypt, callGroupDecrypt; also exports BridgeCommandException |
+| Group Bridge Helper Functions (in bridge_group_helpers.dart) | Bridge Helpers | Group-specific helper functions: callGroupCreate, callGroupJoinWithConfig, callGroupLeave, callGroupPublish, callGroupUpdateConfig, callGroupRotateKey, callGroupUpdateKey, callGroupInboxStore, callGroupInboxRetrieve, callGroupKeygen, callGroupEncrypt, callGroupDecrypt; also exports BridgeCommandException |
 | P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, sendMessageWithReply() for ACK-based chat, offline inbox fallback + registerPushToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle; startNodeCore() / warmBackground() split for deferred startup; isLocalPeer() / sendLocalMessage() for WiFi-first delivery; local WiFi discovery via Bonsoir mDNS |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | LocalDiscoveryService | Interface | Abstract mDNS service discovery for local WiFi peers |
@@ -1161,4 +1161,3 @@
 | Platform Wrappers | GoBridge.swift (iOS) + GoBridge.kt (Android) — bridge MethodChannel/EventChannel to Go library |
 
 ---
-

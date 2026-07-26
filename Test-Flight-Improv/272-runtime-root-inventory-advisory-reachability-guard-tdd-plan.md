@@ -1,13 +1,13 @@
 # 272 - DTR-01 runtime-root inventory and advisory reachability guard
 
-Status: execution-ready
+Status: Plan-green
 Type: Modification
 Spec: `Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md`
 (`DTR-01`)
-Classification: implementation-ready
+Classification: implementation-complete
 Closure tier: host
 Roadmap ID / wave: `DTR-01` / Wave 0 — Safety rails
-Date: 2026-07-24
+Date: 2026-07-25
 
 ## Planning Progress
 
@@ -877,28 +877,28 @@ cmp "$DTR01_AUDIT_DIR/out-of-scope-before.digest" \
   database/schema, asset, protocol/wire, candidate source edit, or automatic
   disposition promotion blocks closure and requires re-planning.
 
-- [ ] Every behavior has a named causal test or exact preservation proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red evidence are
+- [x] Every behavior has a named causal test or exact preservation proof.
+- [x] Causal RED, focused GREEN, and representative mutation re-red evidence are
       recorded for parser, evidence, advisory, ratchet, non-mutation, and
       registration contracts.
-- [ ] Every current non-main-reachable Dart path and relevant external
+- [x] Every current non-main-reachable Dart path and relevant external
       entrypoint candidate has an exact reviewed declaration; candidate,
       deferred-review, and retained-unresolved rows remain visible and
       non-deletion-ready.
-- [ ] The real report is deterministic/read-only and the real check passes with
+- [x] The real report is deterministic/read-only and the real check passes with
       contracted `0/1/2` semantics.
-- [ ] `runtime-roots`, `completeness-check`, the affected Sims/nested-capability
+- [x] `runtime-roots`, `completeness-check`, the affected Sims/nested-capability
       contracts, and `sims-contracts` pass with zero failures.
-- [ ] The complete typed `runtime.roots.advisory` host contract is active,
+- [x] The complete typed `runtime.roots.advisory` host contract is active,
       required, and selected exactly once by the major/infra manifest.
-- [ ] Offline dependency resolution changes only the three reviewed direct dev
+- [x] Offline dependency resolution changes only the three reviewed direct dev
       dependencies and their required transitive lockfile closure; the current
       analyzer-baseline gate has no new debt/errors and scoped diff/whitespace
       hygiene is clean.
-- [ ] The out-of-scope baseline digest is byte-equal at closure; no
+- [x] The out-of-scope baseline digest is byte-equal at closure; no
       app/native/local-package/schema/wire/asset/generated-output change or
       automatic candidate disposition occurred.
-- [ ] Scope Contract And Guard and rollback order are respected.
+- [x] Scope Contract And Guard and rollback order are respected.
 
 ## Handoff
 
@@ -940,4 +940,9 @@ cmp "$DTR01_AUDIT_DIR/out-of-scope-before.digest" \
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-07-25 | RED and dependency closure | Unit/process/Sims contracts; `pubspec.yaml`; `pubspec.lock` | The three pre-implementation contracts failed for the missing classifier, wrapper, and named gate; `flutter pub get --offline` then resolved the three reviewed direct dev dependencies and required transitive closure only | RED was causal and the dependency cache was sufficient | No environment blocker | Implement only the host-side inventory surface |
+| 2026-07-25 | Initial GREEN | `tool/runtime_roots/**`; wrapper; named gate; manifest; docs/tests | Focused unit and process contracts, `runtime-roots`, completeness, Sims manifest/major contract, and registration listing passed | Canonical report accounted for 1,056 files and the required typed capability selected exactly once | Independent counterexample audit still required | Refute false-green paths |
+| 2026-07-25 | Independent counterexample audit | Classifier, manifest, process contract | Six false-green classes were reproduced: omitted restricted roots, comment/string evidence, deleted tracked source, invalid descendant packages, incompatible evidence kinds, and loose manual-root evidence | Audit reopened implementation despite the initial green suite | Closure blocked until every mutation re-red | Harden parser, Git deletion channel, root schema, and fixtures |
+| 2026-07-25 | Hardened GREEN | Classifier, canonical manifest, unit/process contracts | Unit suite passed 13/13; the process contract passed its report/check `0/1/2`, NUL-safe, deterministic, non-mutating, deletion/rename, malformed-package, structural-evidence, and argument-boundary mutations | All 17 required restricted roots validate; removing or corrupting each reviewed root re-reds | No remaining classifier counterexample | Run affected gate and analyzer closure |
+| 2026-07-25 | Focused and affected closure | Named gates; Sims registration/contracts; current analyzer ratchet | `runtime-roots`, `completeness-check`, Sims manifest, major-plan contract, and `sims-contracts` all passed; the legacy analyzer gate reported 0 errors, 0 current warning/info findings, and 0 new debt | `runtime.roots.advisory` remains active/required and its exact typed row is pinned | Full `host-all` intentionally deferred to Wave 0 after DTR-02/DTR-08 | Prove real-tree determinism and hygiene |
+| 2026-07-25 | Real-tree preservation and Plan-green closure | Full Git-visible tree; Plan 272; DTR roadmap | Two full JSON reports were byte-identical (`94d66a0ed28ba6b3c9e7db228d8be7473ad3baf32c3e694de32bbb7c302c2d57`); real check was trustworthy/no-drift; pre/post complete status, patch, and path-byte digests matched; diff/format/shell hygiene passed | Census: 986 main-reachable, 3 manual-root, 60 test/integration-reachable, 7 reviewed unrooted; 17/17 restricted roots validated; no app-owned production source changed | None; DTR-01 is Plan-green | Start DTR-02 from this exact state; preserve runtime-root/Sims sentinels |

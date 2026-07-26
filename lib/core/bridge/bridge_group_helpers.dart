@@ -101,37 +101,6 @@ Future<Map<String, dynamic>> callGroupCreate(
   }
 }
 
-/// Legacy topic-name-only group joins are not valid private-group onboarding.
-@Deprecated(
-  'Topic-name-only group joins do not carry private group config/key material. '
-  'Use callGroupJoinWithConfig instead.',
-)
-Future<void> callGroupJoin(
-  Bridge bridge, {
-  required String groupId,
-  required String topicName,
-  Duration timeout = const Duration(seconds: 30),
-}) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_FL_BRIDGE_JOIN_REQUEST',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
-  );
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_FL_BRIDGE_JOIN_RESPONSE',
-    details: {'ok': false, 'errorCode': 'LEGACY_JOIN_UNSUPPORTED'},
-  );
-
-  throw BridgeCommandException(
-    'group:join',
-    'LEGACY_JOIN_UNSUPPORTED',
-    'Topic-name-only group joins are unsupported; use full group config, key, and epoch material.',
-  );
-}
 
 /// Calls the bridge to join an existing group with full config.
 ///

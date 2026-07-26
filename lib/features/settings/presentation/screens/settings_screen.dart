@@ -327,7 +327,7 @@ class SettingsScreen extends StatelessWidget {
 }
 
 /// The peer-id row's trailing copy affordance — same check-for-2s feedback the
-/// retired SettingsPeerIdCard carried (the full ID lands on the clipboard via
+/// identity row carries (the full ID lands on the clipboard via
 /// the host's onCopyPeerId).
 class _PeerIdCopyButton extends StatelessWidget {
   final bool isCopied;

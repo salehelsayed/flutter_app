@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +5,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 class _TestAppLocalizationsDelegate
@@ -572,6 +572,7 @@ void main() {
       VoidCallback? onRecordCancel,
       VoiceRecordingState recordingState = VoiceRecordingState.idle,
       Duration recordingDuration = Duration.zero,
+      List<double> amplitudeValues = const <double>[],
     }) {
       return MaterialApp(
         locale: const Locale('en'),
@@ -595,6 +596,7 @@ void main() {
               onRecordCancel: onRecordCancel,
               recordingState: recordingState,
               recordingDuration: recordingDuration,
+              amplitudeValues: amplitudeValues,
             ),
           ),
         ),
@@ -702,6 +704,34 @@ void main() {
 
       expect(cancelled, isTrue);
     });
+
+    testWidgets(
+      'DTR08-COMP-002 shared recording overlay keeps elapsed amplitudes and cancel wiring',
+      (tester) async {
+        var cancelled = false;
+        const amplitudes = <double>[0.1, 0.5, 0.9];
+        await tester.pumpWidget(
+          buildVoiceWidget(
+            recordingState: VoiceRecordingState.recording,
+            recordingDuration: const Duration(minutes: 2, seconds: 7),
+            amplitudeValues: amplitudes,
+            onRecordStart: () {},
+            onRecordStop: () {},
+            onRecordCancel: () => cancelled = true,
+          ),
+        );
+
+        final overlay = tester.widget<RecordingOverlay>(
+          find.byType(RecordingOverlay),
+        );
+        expect(overlay.elapsed, const Duration(minutes: 2, seconds: 7));
+        expect(overlay.amplitudeValues, amplitudes);
+        expect(find.text('2:07'), findsOneWidget);
+
+        overlay.onCancel();
+        expect(cancelled, isTrue);
+      },
+    );
 
     testWidgets('text field hidden during recording', (tester) async {
       await tester.pumpWidget(

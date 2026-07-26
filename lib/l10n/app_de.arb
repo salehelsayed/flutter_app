@@ -519,8 +519,6 @@
   "settings_share_nearby_off": "Aus",
   "settings_share_nearby_desc": "Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karte und nie mit Fremden.",
   "settings_move_account_title": "Konto auf neues Handy umziehen",
-  "settings_move_account_desc": "Scanne den Migrations-QR, der auf deinem neuen Handy angezeigt wird, um dieses Konto umzuziehen.",
-  "settings_move_account_action": "Umzug starten",
   "settings_recovery_title": "WIEDERHERSTELLUNGSPHRASE",
   "settings_recovery_warning": "Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.",
   "settings_recovery_tap": "Zum Anzeigen tippen",
@@ -1400,7 +1398,6 @@
   "startup_failed_title": "Initialisierung fehlgeschlagen",
   "identity_restore_action": "Identität wiederherstellen",
   "settings_peer_id_title": "PEER-ID",
-  "settings_peer_id_desc": "Deine eindeutige Kennung im Netzwerk",
   "intro_and_more": "{names} und {count} weitere",
   "@intro_and_more": {
     "placeholders": {

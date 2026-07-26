@@ -264,21 +264,6 @@ void main() {
       bridge.responses['group:join'] = notInitialized();
 
       await expectLater(
-        callGroupJoin(
-          bridge,
-          groupId: 'group-bb002-join',
-          topicName: '/mknoon/group/group-bb002-join',
-        ),
-        throwsA(
-          _bridgeCommandError(
-            command: 'group:join',
-            errorCode: 'LEGACY_JOIN_UNSUPPORTED',
-          ),
-        ),
-      );
-      expect(bridge.sendCallCount, 0);
-
-      await expectLater(
         callGroupJoinWithConfig(
           bridge,
           groupId: 'group-bb002-join',
@@ -1185,50 +1170,6 @@ void main() {
           timeout: const Duration(milliseconds: 1),
         ),
         throwsA(isA<TimeoutException>()),
-      );
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // callGroupJoin
-  // ---------------------------------------------------------------------------
-  group('callGroupJoin', () {
-    test('BB-006 rejects topic-name-only helper before bridge send', () async {
-      bridge.responses['group:join'] = {'ok': true};
-
-      await expectLater(
-        callGroupJoin(
-          bridge,
-          groupId: 'grp-join-001',
-          topicName: '/mknoon/group/grp-join-001',
-        ),
-        throwsA(
-          _bridgeCommandError(
-            command: 'group:join',
-            errorCode: 'LEGACY_JOIN_UNSUPPORTED',
-          ),
-        ),
-      );
-      expect(bridge.sendCallCount, 0);
-      expect(bridge.lastSentMessage, isNull);
-    });
-
-    test('fails locally instead of waiting on a slow bridge', () async {
-      final slowBridge = _SlowBridge();
-
-      expect(
-        () => callGroupJoin(
-          slowBridge,
-          groupId: 'grp-slow',
-          topicName: '/mknoon/group/grp-slow',
-          timeout: const Duration(milliseconds: 1),
-        ),
-        throwsA(
-          _bridgeCommandError(
-            command: 'group:join',
-            errorCode: 'LEGACY_JOIN_UNSUPPORTED',
-          ),
-        ),
       );
     });
   });
@@ -2265,28 +2206,6 @@ void main() {
   // Bridge error propagation (Finding 5)
   // ---------------------------------------------------------------------------
   group('BridgeCommandException on ok:false', () {
-    test(
-      'throws BridgeCommandException when legacy group:join is used',
-      () async {
-        bridge.responses['group:join'] = {
-          'ok': false,
-          'errorCode': 'TOPIC_ERROR',
-          'errorMessage': 'failed',
-        };
-
-        expect(
-          () => callGroupJoin(bridge, groupId: 'grp-1', topicName: '/t/grp-1'),
-          throwsA(
-            _bridgeCommandError(
-              command: 'group:join',
-              errorCode: 'LEGACY_JOIN_UNSUPPORTED',
-            ),
-          ),
-        );
-        expect(bridge.sendCallCount, 0);
-      },
-    );
-
     test(
       'throws BridgeCommandException when group:join (with config) returns ok:false',
       () async {

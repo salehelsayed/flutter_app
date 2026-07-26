@@ -7,7 +7,7 @@ import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/shared/widgets/private_media_policy_picker_sheet.dart';
 

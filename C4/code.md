@@ -1999,7 +1999,6 @@
   FLUTTER BRIDGE HELPERS - GROUPS:
   ─────────────────────────────────
   callGroupCreate(bridge, {name, type, creatorPeerId, creatorPublicKey, creatorMlKemPublicKey?, description?, timeout?}): Future<Map>
-  callGroupJoin(bridge, {groupId, topicName, timeout?}): Future<void>
   callGroupJoinWithConfig(bridge, {groupId, groupConfig, groupKey, keyEpoch, timeout?}): Future<void>
   callGroupLeave(bridge, groupId, {timeout?}): Future<void>
   callGroupPublish(bridge, {groupId, text, senderPeerId, senderPublicKey, senderPrivateKey, senderUsername?, media?, timeout?}): Future<Map>
@@ -2541,4 +2540,3 @@
 ```
 
 ---
-

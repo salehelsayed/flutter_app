@@ -80,9 +80,7 @@ flutter_app/
 │   │   │   └── local_media_sender.dart            # HTTP PUT media to local WiFi peers
 │   │   │
 │   │   ├── services/
-│   │   │   ├── chat_message.dart               # ChatMessage canonical model (from, to, content, timestamp, isIncoming)
 │   │   │   ├── chat_message_listener.dart      # ChatMessageListener: listens to routed chat messages, broadcasts to UI
-│   │   │   ├── contact_request_listener.dart   # ContactRequestListener: listens to routed contact request messages, broadcasts to UI
 │   │   │   ├── p2p_service.dart                # P2PService abstract interface (incl. inbox, registerInboxToken, performImmediateHealthCheck, drainOfflineInbox, warmBackground, probeRelay, sendLocalMedia)
 │   │   │   ├── p2p_service_impl.dart           # P2PServiceImpl with reactive streams + offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox
 │   │   │   ├── incoming_message_router.dart    # Routes P2P messages by type to typed streams + onError/onDone stream handlers
@@ -653,9 +651,7 @@ flutter_app/
 | P2P service | `p2p_service.dart`, `p2p_service_impl.dart` | Reactive P2P interface + implementation with offline inbox + registerInboxToken + performImmediateHealthCheck + drainOfflineInbox + warmBackground + probeRelay + sendLocalMedia |
 | P2P bridge | `p2p_bridge_client.dart` | Low-level Go bridge calls for P2P + inbox store/retrieve + callP2PInboxRegisterToken + callP2PRelayReconnect + callP2PRelayProbe |
 | Message router | `incoming_message_router.dart` | Routes P2P messages by envelope type to typed streams + onError/onDone stream handlers |
-| Chat message (core) | `core/services/chat_message.dart` | ChatMessage canonical model (from, to, content, timestamp, isIncoming) with factory constructors |
 | Chat message listener | `core/services/chat_message_listener.dart` | Listens to routed chat messages, broadcasts to UI layer |
-| Contact request listener | `core/services/contact_request_listener.dart` | Listens to routed contact request messages, broadcasts to UI layer |
 | Pending message retrier | `pending_message_retrier.dart` | Auto-retries failed outgoing messages on P2P reconnect (5s debounce) |
 | Node state | `node_state.dart` | P2P node state model |
 | Connection state | `connection_state.dart` | Active connection model |

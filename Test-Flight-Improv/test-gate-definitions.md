@@ -150,6 +150,43 @@ diagnostic and never replaces the final clean major.
 compatibility surface while callers migrate. It is not equivalent to `sims
 major`, and a green legacy run must not be reported as major-update closure.
 
+## Runtime Root Inventory Gate
+
+The production-source inventory is advisory and classifying only. It keeps
+computed Dart reachability separate from reviewed callback, manual, native,
+generated, tooling, compatibility, resource, candidate, deferred, and
+retained-unresolved metadata. No finding is deletion authority.
+
+Canonical admission command:
+
+```bash
+./scripts/run_test_gates.sh runtime-roots
+```
+
+The named gate runs
+`test/unit/runtime_root_inventory_test.dart` and then the real repository
+inventory check. It does not invoke its shell process contract recursively;
+`sims-contracts` discovers that contract independently.
+
+Read-only diagnostic commands:
+
+```bash
+./scripts/check_runtime_root_inventory.sh report --format text
+./scripts/check_runtime_root_inventory.sh report --format json
+./scripts/check_runtime_root_inventory.sh check --format text
+```
+
+- `report` exits `0` whenever scanning and configuration parsing are
+  trustworthy, including when it reports unreviewed or stale drift.
+- `check` exits `0` only when every current non-main source and reviewed
+  restricted root is accounted for, `1` for classification/evidence drift, and
+  `2` for usage, configuration, parse, Git, or I/O failure that prevents a
+  trustworthy result.
+- Both modes are deterministic and non-mutating. There is no update, fix,
+  acceptance, deletion, or manifest-writing mode.
+- The required major/infra capability is `runtime.roots.advisory`; CI and Sims
+  must call the named gate instead of maintaining a second inventory.
+
 ## Session 1 Decisions
 
 - Canonical loading-state baseline file: `integration_test/loading_states_smoke_test.dart`

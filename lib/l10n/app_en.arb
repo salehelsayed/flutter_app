@@ -561,8 +561,6 @@
   "settings_share_nearby_off": "Off",
   "settings_share_nearby_desc": "Shares only an approximate location with direct friends. No live maps, and never strangers.",
   "settings_move_account_title": "Move account to new phone",
-  "settings_move_account_desc": "Scan the migration QR shown on your new phone to move this account.",
-  "settings_move_account_action": "Start move",
   "settings_recovery_title": "RECOVERY PHRASE",
   "settings_recovery_warning": "Never share this phrase with anyone. It grants full access to your account.",
   "settings_recovery_tap": "Tap to reveal",
@@ -1449,7 +1447,6 @@
   "startup_failed_title": "Failed to initialize",
   "identity_restore_action": "Restore identity",
   "settings_peer_id_title": "PEER ID",
-  "settings_peer_id_desc": "Your unique identifier on the network",
   "intro_and_more": "{names} and {count} more",
   "@intro_and_more": {
     "placeholders": {
