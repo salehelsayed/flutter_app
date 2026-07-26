@@ -943,6 +943,13 @@ void main() {
     messageRepo = FakeMessageRepository();
   });
 
+  test(
+    'relayProbeSendAttempts remains one for live introduction and delete consumers',
+    () {
+      expect(relayProbeSendAttempts, 1);
+    },
+  );
+
   group('sendChatMessage', () {
     test(
       'valid private policy is encrypted-inner-only and persists on parent',
@@ -2942,9 +2949,9 @@ void main() {
   // race-fail send to an unknown-presence peer takes durable INBOX custody
   // (probeRelayCallCount == 0 throughout — the probe never runs); LIVE relay
   // recovery is FDC-02's IN-RACE staggered relay-live leg, exercised by the
-  // seeded-circuit case below (and the FDC-02 group). The general mutation for
-  // these: restoring the `if (raceResult.relayProbeEligible) { _tryRelayProbeSend
-  // (...) }` block makes probeRelayCallCount == 1 and these RED.
+  // seeded-circuit case below (and the FDC-02 group). TC-03/FDC-03-03b is the
+  // canonical probe-tail mutation because it alone reaches the former probe
+  // seam; custody-success fixtures return before that seam.
   group('Phase 3 — race-fail recovery (FDC-03: probe tail removed)', () {
     test('circuit-only peer recovers LIVE via the FDC-02 in-race relay leg '
         '(state-inferred relay label)', () async {
@@ -4568,40 +4575,58 @@ void main() {
         expect(names, isNot(contains('CHAT_MSG_SEND_RELAY_PROBE_CONNECTED')));
       });
 
-      test('FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the '
-          'former probe location WITHOUT running the probe (invariant #4 lock)', () async {
-        // The concurrent copy FAILS (storeInInboxResult: false), so the custody
-        // short-circuit does NOT fire and control reaches the spot where the
-        // serial relay-probe tail used to sit. The probe is gone, so it never
-        // runs even though the race is relay-eligible (peer_not_found). This is
-        // the ONLY test that actually exercises the removed-probe location.
-        // RED on HEAD: there concurrentInbox was null → the probe ran → count 1
-        // and the message was delivered live. Mutation: restore the
-        // `if (raceResult.relayProbeEligible) { _tryRelayProbeSend(...) }` block →
-        // probeRelayCallCount == 1 (and result success) → RED.
-        p2pService = FakeP2PService(
-          useNullDiscover:
-              true, // direct misses → peer_not_found (relay-eligible)
-          storeInInboxResult: false, // concurrent copy fails → no short-circuit
-        )..probeRelayResult = RelayProbeResult.connected;
+      test(
+        'FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the '
+        'former probe location WITHOUT running the probe (invariant #4 lock)',
+        () async {
+          // The concurrent copy FAILS (storeInInboxResult: false), so the custody
+          // short-circuit does NOT fire and control reaches the spot where the
+          // serial relay-probe tail used to sit. The probe is gone, so it never
+          // runs even though the race is relay-eligible (peer_not_found). This is
+          // the ONLY test that actually exercises the removed-probe location.
+          // RED on the pre-FDC-03 implementation: concurrentInbox was null, so
+          // the probe ran and delivered live. Mutation recipe: temporarily
+          // restore the helper, then immediately before the offline-inbox
+          // fallback insert:
+          // if (raceResult.relayProbeEligible) {
+          //   await _tryRelayProbeSend(
+          //     p2pService,
+          //     targetPeerId,
+          //     jsonString,
+          //     failureReason: failureReason,
+          //     messageId: resolvedMessageId,
+          //   );
+          // }
+          // That makes probeRelayCallCount == 1 and this assertion RED.
+          p2pService = FakeP2PService(
+            useNullDiscover:
+                true, // direct misses → peer_not_found (relay-eligible)
+            storeInInboxResult:
+                false, // concurrent copy fails → no short-circuit
+          )..probeRelayResult = RelayProbeResult.connected;
 
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'concurrent fails → reach the removed probe location',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'concurrent fails → reach the removed probe location',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
 
-        // The probe never runs (invariant #4: no serial relay-probe carrier)...
-        expect(p2pService.probeRelayCallCount, 0);
-        // ...and control reached the serial tail past the probe spot: the inbox
-        // was attempted twice (concurrent + serial retry), both failing.
-        expect(p2pService.storeInInboxCallCount, 2);
-        expect(result, SendChatMessageResult.peerNotFound);
-        expect(message!.status, 'failed');
-      });
+          // The probe never runs (invariant #4: no serial relay-probe carrier)...
+          expect(
+            p2pService.probeRelayCallCount,
+            0,
+            reason: 'DTR05-MUTATION serial-probe-count',
+          );
+          // ...and control reached the serial tail past the probe spot: the inbox
+          // was attempted twice (concurrent + serial retry), both failing.
+          expect(p2pService.storeInInboxCallCount, 2);
+          expect(result, SendChatMessageResult.peerNotFound);
+          expect(message!.status, 'failed');
+        },
+      );
 
       test(
         'FDC-03-04 concurrent custody writes storeInInbox EXACTLY once',

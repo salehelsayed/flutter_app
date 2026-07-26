@@ -1,19 +1,23 @@
 # 276 - Remove the dormant chat-only relay-probe helper (DTR-05)
 
-Status: execution-ready
+Status: Plan-green
 Type: Modification
 Spec: free-text intent (no formal spec). Roadmap owner row:
 `Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md` — DTR-05
 (registry row, Wave 1) and ledger row `DTR08-COMP-003`.
-Classification: implementation-ready
+Classification: implementation-complete
 Closure tier: host
 
-`DTR05-AUTH-01` now records the sole project authority's exact chat-helper
-approval and leaf-only two-peer waiver, and both categorical proof floors are
-reconciled. The completed DTR-01 through DTR-04 tree and this planning state are
-landed as the clean prerequisite baseline before the first DTR-05 edit. Closure
-is host-causal, with the roadmap-required transport preservation gate run on a
-live pinned Android target when one is available.
+`DTR05-AUTH-01` remains the authorization of record for the chat-helper-only
+removal and leaf-only two-peer waiver. Plan 276 atomically removed the
+unreachable chat `_tryRelayProbeSend` helper, its `unused_element` suppression,
+the ratchet's only handwritten entry, and stale serial-probe prose. Causal
+RED/GREEN and mutation re-reds, TC-02 through TC-08, `1to1`, strict analysis,
+discovery, the physical Pixel 6 transport preservation gate, the 821-path
+`feature-host-all` sweep, and Graphify closure are green. The live shared relay
+protocol is retained; protected protocol files and executable
+`relayProbeEligible` plumbing are unchanged. Wave 1 aggregate `host-all`
+remains the wave-level next gate, not a per-plan claim.
 
 ## Planning Progress
 | Time | Role | Files inspected | Decision/blocker | Next action |
@@ -31,14 +35,17 @@ live pinned Android target when one is available.
 ## Source Of Truth
 - Roadmap / disposition: `Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md` (DTR-05 row; `DTR08-COMP-003`)
 - Retention condition of record: `Test-Flight-Improv/Network-Transport-libp2p-Feature/fast-direct-connection/FDC-03-concurrent-durable-inbox-safety-net-tdd-plan.md:240` and `:326`
-- Machine-readable removal condition: `tool/analyzer_guard/production_unused_suppressions.json` (`removalCondition` field of the DTR-05 entry)
+- Historical removal condition: the DTR-05 entry in
+  `tool/analyzer_guard/production_unused_suppressions.json` at prerequisite
+  commit `ec86247eb`; the current inventory intentionally contains only the
+  three generated l10n entries.
 - Gate definitions: `scripts/run_test_gates.sh`, `scripts/run_host_test_gates.sh` (script wins over prose)
 - Numbering / index: `Test-Flight-Improv/00-INDEX.md`
 
-## Problem And Evidence
+## Problem And Pre-Edit Evidence
 
 `lib/features/conversation/application/send_chat_message_use_case.dart:2025-2159`
-holds `_tryRelayProbeSend`, a ~135-line private helper (including its comment
+held `_tryRelayProbeSend`, a ~135-line private helper (including its comment
 block) that **no code calls**. FDC-03 removed the serial relay-probe→inbox tail
 from the 1:1 send path; live relay recovery became FDC-02's in-race staggered
 relay-live leg. Rather than delete the helper, FDC-03 retained it behind
@@ -46,22 +53,20 @@ relay-live leg. Rather than delete the helper, FDC-03 retained it behind
 pinned that suppression as the **single handwritten entry** in the production
 suppression ratchet, owned by `roadmap:DTR-05`.
 
-The cost is not runtime — the symbol is unreachable — it is comprehension and
-gate weight: ~135 lines of plausible-looking relay logic sit inside the live
-send path's file, eight production comment blocks describe a serial probe/tail
-that does not run or claim the helper remains retained, and two test files carry
-three mutation recipes that reference a block which no longer exists or
-overstate which fixture reaches it. The analyzer ratchet also carries a
-permanent handwritten exception that its own `removalCondition` says should now
-be gone.
+The cost was not runtime — the symbol was unreachable — but comprehension and
+gate weight: ~135 lines of plausible-looking relay logic sat inside the live
+send path's file, eight production comment blocks described a serial probe/tail
+that did not run or claimed the helper remained retained, and two test files
+carried three stale mutation recipes. The analyzer ratchet also carried a
+handwritten exception whose own `removalCondition` required this atomic cleanup.
 
-**What must improve.** The dormant chat-only helper, its suppression, its ratchet
-inventory entry, and every comment that describes it as "retained" are removed
-together, atomically, leaving the production suppression ratchet with only its
+**Implemented change.** The dormant chat-only helper, its suppression, its
+ratchet inventory entry, and every stale retention/serial-probe comment were
+removed together, leaving the production suppression ratchet with only its
 three generated l10n entries.
 
-**What must stay unchanged** (→ preserved-green sentinels):
-- `relayProbeSendAttempts` (`send_chat_message_use_case.dart:69`) — **live**, consumed by `introduction_outbound_delivery.dart:580` and `delete_message_use_case.dart:985`.
+**What remained unchanged** (→ preserved-green sentinels):
+- `relayProbeSendAttempts` (`send_chat_message_use_case.dart:55`) — **live**, consumed by `introduction_outbound_delivery.dart:580` and `delete_message_use_case.dart:985`.
 - The **identically named, live** `_tryRelayProbeSend` in `introduction_outbound_delivery.dart:559` (called at `:347`).
 - `P2PService.probeRelay`, its `p2p_service_impl.dart` implementation,
   `p2p_bridge_client.dart`, `go_bridge_client.dart` `relay:probe`, Android/iOS/
@@ -69,9 +74,12 @@ three generated l10n entries.
 - `_RaceResult.relayProbeEligible` plumbing in the edited file.
 - FDC-03 invariant 4 ("no serial relay-probe carrier") — behaviourally asserted today by `probeRelayCallCount == 0` sentinels, which must remain green.
 
-**Confirmed:** the chat helper has no invocation; its suppression and the
-`roadmap:DTR-05` inventory entry still exist; the same-named introduction helper
-is live; the current ratchet baseline exits 0 with four reviewed occurrences.
+**Pre-edit confirmation (`ec86247eb`):** the chat helper had no invocation; its
+suppression and `roadmap:DTR-05` inventory entry existed; the same-named
+introduction helper was live; and the ratchet exited 0 with four reviewed
+occurrences. **Post-edit confirmation:** the chat helper/call/event surface and
+handwritten entry are absent, the ratchet exits 0 with three generated
+occurrences, and the live introduction twin remains.
 
 **Refuted:** the roadmap selector
 `relay:probe calls relayProbe with payload JSON` is not missing. It is generated
@@ -87,7 +95,8 @@ attributable clean target/protected baseline.
 
 ## Graph Grounding Snapshot
 
-- Graph fingerprint / freshness: `d97359e0fa25bc6b`; `freshness=current`.
+- Pre-edit planning graph fingerprint / freshness: `d97359e0fa25bc6b`;
+  `freshness=current` at planning time.
 - Query / profile: `python3 graphify-arch/tdd_context.py query "Plan 276 remove dormant _tryRelayProbeSend send_chat_message_use_case.dart analyzer_suppression_ratchet_test.dart go_bridge_client_test.dart run_host_test_gates.sh" --profile tdd --budget 700`.
 - Anchors: `_tryRelayProbeSend` ->
   `lib/features/conversation/application/send_chat_message_use_case.dart:2030`;
@@ -105,10 +114,15 @@ attributable clean target/protected baseline.
 - Counterexample query / profile:
   `python3 graphify-arch/tdd_context.py query "_tryRelayProbeSend send_chat_message_use_case.dart exact deletion counterexample" --profile review --budget 800`.
   The compact result surfaced the introduction twin but not the same-named chat
-  node even though both exact nodes currently exist in `graph.json`. Therefore
+  node even though both exact nodes existed in the pre-edit `graph.json`. Therefore
   compact-query output is navigation only. The post-refresh graph gate checks
   the two exact node IDs, while TC-01 and the literal source scan are the
   authoritative deletion proof.
+- Closure refresh: `./graphify-arch/refresh_arch_graph.sh --incremental` exited
+  0 with 4 changed code paths, 2,899 unchanged, and 0 deleted. The current
+  fingerprint is `a79b2f04386f2be9`; the exact chat node is absent, the exact
+  introduction node remains once at line 559, and only `graph.json` plus
+  `manifest.json` changed as tracked Graphify outputs.
 - Reuse rule: these anchors may be handed to review/execution, but current
   source and literal command output remain the proof.
 
@@ -175,7 +189,8 @@ plan.
    independently from the decision-ledger row.
 
 **Approved two-peer proof waiver.** The roadmap otherwise requires "a named availability-bounded
-two-peer proof" before removing the dormant helper (roadmap:314, roadmap:595).
+two-peer proof" before removing the dormant helper (the Wave-1 DTR-05 waiver
+paragraph and `DTR08-COMP-003`).
 That bar is correct for a **protocol** change and disproportionate here: the
 target is a library-private symbol whose fail-closed pre-edit census requires
 one declaration, zero executable references/tear-offs, no Dart `part` linkage,
@@ -190,11 +205,12 @@ N/A by its own condition (no protocol boundary is touched).
 
 ## Execution Preconditions
 
-1. **Satisfied by the prerequisite baseline: `DTR05-AUTH-01` and its proof-floor reconciliation are landed.** Roadmap
-   row 569 records the decision, and roadmap `:307-314` plus
-   `DTR08-COMP-003`'s exact removal-proof floor already record the approved
-   leaf-only waiver. A row-569 approval that leaves either categorical
-   two-peer requirement intact is contradictory and does not authorize E1.
+1. **Satisfied by the prerequisite baseline: `DTR05-AUTH-01` and its proof-floor
+   reconciliation are landed.** The decision-ledger row beginning
+   `Disposition the dormant chat relay-probe helper` records the decision, and
+   the Wave-1 DTR-05 waiver paragraph plus `DTR08-COMP-003` record the approved
+   leaf-only waiver. An approval that leaves either categorical two-peer
+   requirement intact is contradictory and does not authorize E1.
 2. **Satisfied by the prerequisite baseline: DTR-04 and the planning artifacts
    are landed.** DTR-04 is Plan-green. Before the first implementation edit,
    Gate 0 still independently requires every DTR-05 target and protected
@@ -229,9 +245,9 @@ N/A by its own condition (no protocol boundary is touched).
 | E3 | Rewrite all eight stale production comment blocks; prose only | same file: `:51-68` (the **dartdoc of the live `relayProbeSendAttempts` constant**), `:1005-1009`, `:1372-1379`, `:1395-1405`, `:1881-1891`, `:1922-1936`, `:1977-1981`, and `:2436-2442`. State the current truth: FDC-02 owns the in-race relay-live leg; an all-fail race uses concurrent custody or one sequential inbox fallback; `relayProbeEligible` remains classification plumbing but does not trigger a serial probe; the success funnel covers relay-live race wins, not relay-probe wins. |
 | E4 | Correct three stale mutation recipes, add stable RED discriminators, and add the shared-constant value sentinel | At `send_chat_message_use_case_test.dart:2946`, point the broad group comment to TC-03 as the canonical probe-tail mutation; keep/correct the TC-03 recipe at `:4580` using the exact temporary call block in the RED Catalog; add reason `DTR05-MUTATION serial-probe-count` to the existing `probeRelayCallCount == 0` assertion at `:4598`. At `p2p_service_fault_injection_test.dart:556`, replace the false probe-tail claim with the exact one-line TC-04 short-circuit mutation and a TC-03 cross-reference; add reason `DTR05-MUTATION concurrent-custody-store-count` to the existing one-store assertion at `:559`. Add `relayProbeSendAttempts remains one for live introduction and delete consumers` to `send_chat_message_use_case_test.dart` before production edits. |
 | E5 | Rewrite the canonical inventory/source-removal assertions (the RED) | `test/unit/analyzer_suppression_ratchet_test.dart:866-949` — rename the test to `canonical inventory has three generated l10n identities and no dormant chat relay helper`; edit the count assertions at `:887-888`, adding reason `DTR05-RED inventory-count-3` to the first; reduce the path set at `:893-899`; replace the handwritten-entry block at `:913-929` with an `expect(inventory.entries.where((entry) => entry.sourceKind == 'handwritten'), isEmpty)` assertion; keep the generated-entry loop at `:930-948`; then read the exact chat source and assert it contains none of `_tryRelayProbeSend`, `RegExp(r'\.probeRelay\s*\(')`, or `CHAT_MSG_SEND_RELAY_PROBE_`, adding reason `DTR05-M4 helper-absent` to the symbol assertion. |
-| E6 | Roadmap bookkeeping | Verify row 569 and the categorical proof-floor waiver are already resolved in the landed baseline; update rows 213 ("four-entry" → three), 216 (DTR-05 state), 520 (Wave 1), and 595 (`DTR08-COMP-003` implementation outcome without weakening its retained-protocol floor). Preserve the runnable dynamic Dart `relay:probe calls relayProbe with payload JSON` selector and replace only the vacuous escaped-pipe Go regex with four exact single-test Go commands. |
-| E7 | Reconcile the three affected index rows after GREEN closure | `Test-Flight-Improv/00-INDEX.md` — correct plan 273's stale four-identity wording (`:465`); update plan 275 from its stale evidence-gated summary to its landed `Plan-green` / `implementation-complete` state (`:467`); only after every DTR-05 gate passes, promote plan 276 to `Plan-green` / `implementation-complete` and cite the resolved `DTR05-AUTH-01` plus its approved waiver (or the amended paired-device proof if the waiver branch was denied) (`:468`). Never leave the final row authorization-gated after successful execution. |
-| E8 | Keep the current `execution-ready` / `implementation-ready` state until implementation evidence exists, then atomically reconcile this plan's final state after GREEN closure | This plan's header `Status` / `Classification` and opening synopsis, `Device/Relay Proof Profile`, `Arbiter Decision`, `Handoff`, and `Execution Progress`. Do not pre-populate a success verdict. Only after every gate passes, change the plan itself to `Plan-green` / `implementation-complete`, retain the approved waiver record, replace pre-execution text with actual closure evidence, and append the bounded final heartbeat. |
+| E6 | Roadmap bookkeeping | Verify the decision-ledger authorization and categorical proof-floor waiver are resolved in the landed baseline; reconcile the DTR-02 and DTR-05 registry rows, the Wave-1 gate-ledger row, and `DTR08-COMP-003` without weakening its retained-protocol floor. Preserve the runnable dynamic Dart `relay:probe calls relayProbe with payload JSON` selector and the four exact single-test Go commands. |
+| E7 | Reconcile the affected index rows after GREEN closure | `Test-Flight-Improv/00-INDEX.md` — preserve Plan 273's historical four-identity landing while recording the current three-generated state; verify Plan 275 remains `Plan-green`; only after every DTR-05 gate passes, promote Plan 276 to `Plan-green` / `implementation-complete` and cite the resolved `DTR05-AUTH-01` plus its approved waiver. Never leave the final row authorization-gated after successful execution. |
+| E8 | Preserve the pre-execution `execution-ready` / `implementation-ready` state until implementation evidence exists, then atomically reconcile this plan's final state after GREEN closure | This plan's header `Status` / `Classification` and opening synopsis, `Device/Relay Proof Profile`, `Arbiter Decision`, `Handoff`, and `Execution Progress`. Do not pre-populate a success verdict. Only after every gate passes, change the plan itself to `Plan-green` / `implementation-complete`, retain the approved waiver record, replace pre-execution text with actual closure evidence, and append the bounded final heartbeat. |
 
 **E3 is the trap:** `:51-68` is the dartdoc of a **live** constant, and four
 other blocks describe still-live `relayProbeEligible` classification sites.
@@ -335,7 +351,7 @@ a registration break would surface.
 
 | Test | Covers | Status |
 |---|---|---|
-| `analyzer_suppression_ratchet_test.dart::canonical repository inventory is the three generated l10n identities plus the DTR-05 relay helper` (`:866`) | Real-tree ratchet scan; entry count, occurrence count, path set, handwritten fingerprint | **exists** — becomes the RED |
+| `analyzer_suppression_ratchet_test.dart::canonical inventory has three generated l10n identities and no dormant chat relay helper` | Real-tree ratchet scan; entry count, occurrence count, path set, handwritten fingerprint, and exact chat-source absence | **causal RED → GREEN** |
 | `analyzer_suppression_ratchet_test.dart::rejects unexpected relocated duplicate and stale identities` (`:253`) | `unexpected-suppression`, `stale-inventory-entry`, `duplicate-suppression` | **exists** — atomicity already tool-tested; no new test needed |
 | `send_chat_message_use_case_test.dart::FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the former probe location WITHOUT running the probe (invariant #4 lock)` (`:4571`) | reaches the removed-probe location and asserts `probeRelayCallCount == 0` | **exists** — preservation |
 | `p2p_service_fault_injection_test.dart::discover-miss send to an online peer takes durable inbox custody without the relay probe, and drains to the recipient` (`:533`) | custody, not live delivery; `probeRelayCallCount == 0` | **exists** — preservation |
@@ -344,10 +360,9 @@ a registration break would surface.
 | `delete_message_use_case_test.dart::deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure` (`:704`) | compiles and traverses the delete-message consumer of the live constant | **exists** — preservation |
 | `p2p_bridge_client_test.dart::callP2PRelayProbe timeout / successful probe still works (no regression)` and `… / bridge hang triggers TimeoutException after 5s`; `go_bridge_client_test.dart::command routing - with payload / relay:probe calls relayProbe with payload JSON` | Dart relay-probe wrapper, its five-second timeout boundary, and command dispatch remain | **exists** — preservation |
 
-**Missing coverage addressed by this plan:** no current test pins the shared
-constant's value at `1`, and the ratchet only scans suppression directives — it
-does not prove the helper body disappeared. E4 adds the value GREEN sentinel;
-E5 adds path-specific helper/call/event absence assertions to TC-01. The
+**Coverage added by this plan:** E4 added the shared constant's value-`1` GREEN
+sentinel, and E5 added path-specific helper/call/event absence assertions to
+TC-01 because the ratchet scan alone cannot prove a helper body disappeared. The
 over-broad-delete risk for the identically named introduction twin is already
 covered by two existing sentinels and is not duplicated.
 
@@ -379,7 +394,8 @@ The **tool** contract is separately gated everywhere:
 **1. `test/unit/analyzer_suppression_ratchet_test.dart::canonical inventory has three generated l10n identities and no dormant chat relay helper`**
 - **Tier:** unit (tool + source-removal contract). `AnalyzerSuppressionRatchet(repoRoot: …, inventory: …).check()` performs a real AST scan of suppression directives in the real tree. Separate path-specific source assertions prove the body/call/event surface is absent; the ratchet alone cannot prove that.
 - **Shape/setup:** unchanged from `:866` — load the real `production_unused_suppressions.json`, run `.check()` against `Directory.current`.
-- **RED on HEAD because:** after E5 changes the expectations, HEAD still has
+- **RED on pre-edit baseline `ec86247eb` because:** after E5 changed the
+  expectations, the baseline still had
   `inventory.entries` length **4**, so the first new `hasLength(3)` assertion
   fails with stable reason `DTR05-RED inventory-count-3`. The source also still
   has four occurrences, the send-path entry, and one handwritten entry; those
@@ -450,14 +466,14 @@ immediately after the red.
 
 ## Test Contract
 
-| Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
+| Case | Behavior | Named test/proof | Tier / fixture | Pre-edit baseline -> GREEN | Mutation | Gate / registration |
 |---|---|---|---|---|---|---|
 | **TC-01** | Helper body/call/events, suppression, and inventory entry disappear atomically | `test/unit/analyzer_suppression_ratchet_test.dart::canonical inventory has three generated l10n identities and no dormant chat relay helper` | unit/tool + exact chat-source contract; real repository AST suppression scan and path-specific source assertions | causal RED: edited expectations see 4 entries/occurrences first with `DTR05-RED inventory-count-3` -> GREEN: 3 generated entries/occurrences, three l10n paths, zero handwritten, and no chat helper/call/event tokens | M-1 restores E1+E2 -> same count discriminator; M-4 restores only the unsuppressed helper body -> `DTR05-M4 helper-absent` while ratchet stays 3/3 | `flutter test test/unit/analyzer_suppression_ratchet_test.dart --plain-name 'canonical inventory has three generated l10n identities and no dormant chat relay helper'`; AUTO (`host-all` glob), exact direct per-plan gate |
 | **TC-02** | One-sided removal fails closed | `test/unit/analyzer_suppression_ratchet_test.dart::rejects unexpected relocated duplicate and stale identities` | unit/tool fixture | GREEN sentinel -> GREEN sentinel | M-2 restore E2 only -> `stale-inventory-entry`; M-3 restore E1 only -> `unexpected-suppression` | `flutter test test/unit/analyzer_suppression_ratchet_test.dart --plain-name 'rejects unexpected relocated duplicate and stale identities'` plus `dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check` under each mutation; AUTO (`host-all` glob), exact direct per-plan gate, and strict-analyze tool gate |
 | **TC-03** | FDC-03 invariant 4 remains: reaching the former probe location performs zero serial probes | `test/features/conversation/application/send_chat_message_use_case_test.dart::FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the former probe location WITHOUT running the probe (invariant #4 lock)` | application host; fake P2P/inbox | GREEN sentinel -> GREEN sentinel | restore the helper and insert the exact RED-Catalog call block before `CHAT_MSG_SEND_RACE_ALL_FAILED` -> `probeRelayCallCount == 1` with `DTR05-MUTATION serial-probe-count` | `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart --plain-name 'FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the former probe location WITHOUT running the probe (invariant #4 lock)'`; AUTO feature glob + `ONE_TO_ONE_TESTS` |
 | **TC-04** | Discover-miss still takes durable inbox custody rather than live probe delivery | `test/core/services/p2p_service_fault_injection_test.dart::discover-miss send to an online peer takes durable inbox custody without the relay probe, and drains to the recipient` | host fault-injection; fake network | GREEN sentinel -> GREEN sentinel | replace `return persistInboxAccepted(recordInboxAttempt: false);` with `await persistInboxAccepted(recordInboxAttempt: false);` -> fall-through reds with `DTR05-MUTATION concurrent-custody-store-count` | `flutter test test/core/services/p2p_service_fault_injection_test.dart --plain-name 'discover-miss send to an online peer takes durable inbox custody without the relay probe, and drains to the recipient'`; AUTO core glob, direct per-plan gate |
 | **TC-05 — PROD-CRITICAL** | Same-named live introduction helper and shared attempt constant survive | `test/features/introduction/application/introduction_outbound_delivery_test.dart::relay-probe fallback delivers after the direct path fails`; `test/features/introduction/application/introduction_outbound_delivery_test.dart::retryPendingIntroductionDeliveries delivers a failed row through relay probe when inbox storage fails` | application host; relay-probe fake | GREEN sentinel -> GREEN sentinel | delete the introduction helper or shared constant -> both tests red/compile red | `flutter test test/features/introduction/application/introduction_outbound_delivery_test.dart --plain-name 'relay-probe fallback delivers after the direct path fails'`; `flutter test test/features/introduction/application/introduction_outbound_delivery_test.dart --plain-name 'retryPendingIntroductionDeliveries delivers a failed row through relay probe when inbox storage fails'`; AUTO feature glob, direct per-plan gates |
-| **TC-06** | Shared attempt constant stays present with value `1`, and its delete-message consumer survives | planned `test/features/conversation/application/send_chat_message_use_case_test.dart::relayProbeSendAttempts remains one for live introduction and delete consumers`; existing `test/features/conversation/application/delete_message_use_case_test.dart::deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure` | unit/application host; constant assertion + fake P2P | new GREEN sentinel on HEAD -> GREEN sentinel after deletion | change constant to `2` -> value sentinel red; delete it -> both proofs compile red | `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart --plain-name 'relayProbeSendAttempts remains one for live introduction and delete consumers'`; `flutter test test/features/conversation/application/delete_message_use_case_test.dart --plain-name 'deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure'`; AUTO feature glob + `ONE_TO_ONE_TESTS` |
+| **TC-06** | Shared attempt constant stays present with value `1`, and its delete-message consumer survives | added `test/features/conversation/application/send_chat_message_use_case_test.dart::relayProbeSendAttempts remains one for live introduction and delete consumers`; existing `test/features/conversation/application/delete_message_use_case_test.dart::deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure` | unit/application host; constant assertion + fake P2P | GREEN sentinel before production edit -> GREEN sentinel after deletion | change constant to `2` -> value sentinel red; delete it -> both proofs compile red | `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart --plain-name 'relayProbeSendAttempts remains one for live introduction and delete consumers'`; `flutter test test/features/conversation/application/delete_message_use_case_test.dart --plain-name 'deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure'`; AUTO feature glob + `ONE_TO_ONE_TESTS` |
 | **TC-07** | Dart relay-probe wrapper, its timeout boundary, and `relay:probe` command dispatch remain | `test/core/bridge/p2p_bridge_client_test.dart::callP2PRelayProbe timeout / successful probe still works (no regression)`; `… / bridge hang triggers TimeoutException after 5s`; `test/core/bridge/go_bridge_client_test.dart::command routing - with payload / relay:probe calls relayProbe with payload JSON` | unit/application host; fake/hanging bridge | GREEN sentinel -> GREEN sentinel | remove the wrapper invocation/timeout or the `relay:probe` map entry -> corresponding exact test red | two exact `p2p_bridge_client_test.dart` selectors (`successful probe…`, `bridge hang…`) plus `flutter test test/core/bridge/go_bridge_client_test.dart --plain-name 'relay:probe calls relayProbe with payload JSON'`; AUTO core glob + existing `ONE_TO_ONE_TESTS` entries |
 | **TC-08** | Existing Go active-send timing/config and relay-selector smoke coverage remains green; `go-mknoon/node` remains byte-unchanged | `go-mknoon/node/config_test.go::TestForegroundRelayProbeIsNotRequiredForActiveSendPath`; `go-mknoon/node/node_test.go::TestDialPeerViaRelayTriesAllAddresses`; `go-mknoon/node/multi_relay_test.go::TestDialPeerViaRelay_TriesSecondRelayWhenFirstFails`; `go-mknoon/node/multi_relay_test.go::TestDialPeerViaRelay_SingleRelayStillWorks` | Go host; duration assertions plus selector/error-path smoke fixtures | GREEN sentinel -> GREEN sentinel | the config test can red on exceeded interactive dial/discover ceilings; the three relay tests are smoke selectors and do **not** causally prove every dial/failover attempt. Any Go implementation edit is rejected by the clean-baseline and staged/unstaged source-diff guards. | four exact single-test `go test ./node -v -run '^TestName$' -count=1` commands in Acceptance Gate 6; DIRECT existing Go selectors, N/A — no new harness registration |
 
@@ -512,17 +528,17 @@ requires it for a feature-code change, and it is always run in batch-parallel fo
 ## Implementation Steps
 
 1. **Contract extraction.** Record `git status --short`. Confirm
-   `DTR05-AUTH-01`, roadmap `:307-314`, and `DTR08-COMP-003` contain one
-   consistent landed leaf-only waiver; DTR-04/planning artifacts have landed;
-   and every DTR-05 target/protected path is tracked and clean. Run the exact
-   Gate 0 dormancy census and stop on any count, library-boundary, entrypoint, or
-   target-path drift. Preserve unrelated dirty paths. Separately record the
-   pre-existing status and diff stat of the two exact tracked Graphify outputs
-   named in the scope contract; their dirt is expected and does not waive any
-   source-path precondition.
+   `DTR05-AUTH-01`, the Wave-1 DTR-05 waiver paragraph, and
+   `DTR08-COMP-003` contain one consistent landed leaf-only waiver;
+   DTR-04/planning artifacts have landed; and every DTR-05 target/protected path
+   is tracked and clean. Run the exact Gate 0 dormancy census and stop on any
+   count, library-boundary, entrypoint, or target-path drift. Preserve unrelated
+   dirty paths. Separately record the pre-existing status and diff stat of the
+   two exact tracked Graphify outputs named in the scope contract; their dirt is
+   expected and does not waive any source-path precondition.
 2. **Baseline.** Run `dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check` — **must exit 0** before any edit. **Stop-if** non-zero: that is pre-existing drift (likely l10n regeneration); resolve it in its own change, not here.
 3. **Test-first contracts (E4, E5).** Add TC-06's exact value-`1` GREEN
-   sentinel and run it successfully on HEAD. Then rewrite
+   sentinel and run it successfully on the pre-edit baseline. Then rewrite
    `analyzer_suppression_ratchet_test.dart:866-949` to the
    three-generated-entry contract: rename the test; change the two count
    assertions at `:887-888`; reduce the path set at `:893-899`; replace
@@ -558,21 +574,20 @@ requires it for a feature-code change, and it is always run in batch-parallel fo
    documented in the RED Catalog.
 10. **Preservation and family sweeps.** Run Acceptance sections 4 through 8 in
     order and require every applicable gate green.
-11. **Non-verdict bookkeeping (E6, E7).** Verify the landed row 569
-    authorization and categorical proof-floor reconciliation; update roadmap
-    row 213 and the literal selector commands; reconcile index rows 273/275;
-    preserve the already-runnable dynamic
+11. **Non-verdict bookkeeping (E6, E7).** Verify the landed decision-ledger
+    authorization and categorical proof-floor reconciliation; reconcile the
+    DTR-02 registry and index entries; preserve the already-runnable dynamic
     `relay:probe calls relayProbe with payload JSON` selector; and replace the
     escaped-pipe Go regex with the same four exact single-test commands used
-    below. Do not promote DTR-05 or index row 276 yet. **Stop-if** row 569 is
-    missing or open.
+    below. Do not promote DTR-05 or its index row yet. **Stop-if** the named
+    decision-ledger authorization is missing or open.
 12. **Graphify refresh.** `./graphify-arch/refresh_arch_graph.sh --incremental`
     once — an app-owned symbol was removed. Check the exact graph IDs: the chat
     node must be absent and the introduction node present. Treat the compact
     query as navigation only because its same-name ranking omitted the live chat
     node during review. The ignored `tdd-overlay.json` rebuild is expected.
     (Authoring this plan needed no refresh; documentation-only changes are
-    exempt, roadmap:502.)
+    exempt under the roadmap's Graph Maintenance policy.)
 13. **Diff scope review.** Review staged, unstaged, and untracked paths. The
     DTR-05 allowlist contains eight base paths: one production Dart file, one
     inventory JSON file, three test files, the roadmap, `00-INDEX.md`, and this
@@ -582,15 +597,17 @@ requires it for a feature-code change, and it is always run in batch-parallel fo
     blocking scope drift. The ignored `graphify-arch/tdd-overlay.json` is
     expected scratch output and is not a tracked/unignored changed path.
 14. **Final-state bookkeeping (E6, E7, E8).** Only after steps 1-13 are green,
-    promote roadmap rows 216/520/595, index row 276, and this plan's own header
+    promote the roadmap DTR-05 registry, Wave-1 gate-ledger, and
+    `DTR08-COMP-003` rows; the Plan 276 index row; and this plan's own header
     status/classification to `Plan-green` / `implementation-complete`, citing
-    the resolved authorization and waiver-or-device evidence. Reconcile the
-    opening synopsis, `Device/Relay Proof Profile`, `Arbiter Decision`,
-    `Handoff` status/unresolved-evidence fields, and `Execution Progress` in
-    the same edit so no blocked-state prose survives successful closure. Rerun
-    `git diff --check`, `git diff --cached --check`, both protected-path
-    `--exit-code` guards, and the staged/unstaged/untracked path-list checks so
-    this final documentation edit cannot bypass hygiene or scope closure.
+    the resolved authorization and waiver plus device-preservation evidence.
+    Reconcile the opening synopsis, `Device/Relay Proof Profile`,
+    `Arbiter Decision`, `Handoff` status/unresolved-evidence fields, and
+    `Execution Progress` in the same edit so no blocked-state prose survives
+    successful closure. Rerun `git diff --check`, `git diff --cached --check`,
+    both protected-path `--exit-code` guards, and the
+    staged/unstaged/untracked path-list checks so this final documentation edit
+    cannot bypass hygiene or scope closure.
 
 ## Execution Hazards
 
@@ -638,16 +655,12 @@ forward-fix obligation.
   an unreachable private symbol.
 - Live availability check:
   `flutter devices --machine; adb devices; xcrun simctl list devices available`
-  -> revalidated 2026-07-26: physical Android `21071FDF600CSC` and Android
-  emulators `emulator-5554` / `emulator-5556` were available. Rediscover at
-  execution.
-- Required setup: pin the conditional transport gate to an explicitly
-  rediscovered Android target that appears both as `device` in `adb devices` and
-  as `isSupported: true` / `targetPlatform: android-*` in the same captured
-  `flutter devices --machine` snapshot. Prefer a physical Android device; if
-  none is attached, fall back to an available Android emulator. Do not fall
-  back to iOS for this non-iOS-specific preservation gate. The current
-  preferred target is physical Android `21071FDF600CSC`.
+  -> captured 2026-07-26: physical Pixel 6 Android `21071FDF600CSC` (API 36)
+  and Android emulators `emulator-5554` / `emulator-5556` were available. The
+  physical Android appeared as ADB-ready and Flutter-supported and was selected.
+- Executed setup/result:
+  `FLUTTER_DEVICE_ID=21071FDF600CSC ./scripts/run_test_gates.sh transport`
+  exited 0; every host and physical-device transport suite passed.
 - Two-peer default for any future scope expansion: one rediscovered USB
   physical Android plus one Android emulator with fully automated interaction
   and no user taps. It is not a DTR-05 helper-deletion closure leg under the
@@ -657,10 +670,10 @@ forward-fix obligation.
 - `FLUTTER_DEVICE_ID`: sufficient only for the single-target transport gate.
 - Registration: existing `transport` array in `scripts/run_test_gates.sh`; no
   new `classify_path`, dart-define, or orchestrator scenario.
-- Discovery command: the live availability command above -> record exact IDs.
-- Closure command: the conditional transport block below -> exit 0/zero
-  failures when a target is available; otherwise record
-  `N/A (target unavailable by project policy)`.
+- Discovery command/result: the live availability command above recorded the
+  exact IDs and selected the physical Pixel 6.
+- Closure command/result: the pinned transport command above exited 0 with zero
+  failures. The policy-defined target-unavailable N/A branch was not used.
 - Deferred device work: none for the approved helper-only scope.
 
 ## Gate Cadence
@@ -1123,60 +1136,55 @@ git status --short
 
 ## Execution Interpretation And Done Criteria
 
-- Expected RED: TC-01 after E5 and M-1; ratchet-tool failures under M-2/M-3;
-  TC-01's source assertion under M-4; and the exact TC-03/TC-04 mutation
-  failures. Any compile error or unrelated failing test is not the expected RED.
-- Green sentinel: TC-02 through TC-08 remain green before and after the
-  production deletion.
-- Pre-existing dirty tree / known failure: unrelated dirty paths are recorded
-  and preserved. Any dirty DTR-05 target path is a precondition failure.
-- Environment blocker: no discoverable device makes the conditional
-  `transport` row `N/A (target unavailable by project policy)`. The helper-only
-  two-peer waiver is approved; any live-protocol scope expansion is a new plan
-  blocker.
-- Scope drift: a protected source change, generated interop-vector change, or
-  newly changed path outside the eight base allowlist paths and the two exact
-  snapshotted Graphify outputs blocks completion.
+- Observed REDs: TC-01 first failed with
+  `DTR05-RED inventory-count-3`; M-1 through M-4 failed with their documented
+  count/tool/source discriminators; TC-03 observed one probe call with
+  `DTR05-MUTATION serial-probe-count`; and TC-04 observed two custody stores
+  with `DTR05-MUTATION concurrent-custody-store-count`. No compile or unrelated
+  failure was accepted as a causal RED.
+- Observed GREEN: TC-01 through TC-08; `1to1` (2,441 tests plus its relay
+  notification/Go tail); strict analysis (three reviewed suppressions, zero
+  issues); all four exact Go selectors; discovery with zero unclassified paths;
+  physical Pixel 6 transport; and `feature-host-all` (`+8550 ~1`, one skipped,
+  all others passed across 821 paths).
+- Scope result: the five implementation/test/tool paths, three closure docs,
+  and two snapshotted Graphify outputs are the complete changed set. Protected
+  protocol sources and the generated interop vector are unchanged.
 
-- [ ] `DTR05-AUTH-01` records the exact disposition and either approves the
-      two-peer waiver or this plan is amended before implementation; the landed
-      authorization also reconciles roadmap `:307-314` and `DTR08-COMP-003`
-      before E1.
-- [ ] The pre-edit dormancy census proves exactly one declaration plus two
+- [x] `DTR05-AUTH-01` records the exact disposition, approves the helper-only
+      two-peer waiver, and is reconciled in the decision ledger, Wave-1 waiver
+      paragraph, and `DTR08-COMP-003`.
+- [x] The pre-edit dormancy census proved exactly one declaration plus two
       comment tokens, no other executable reference/tear-off, no Dart part
       linkage, and no VM entrypoint.
-- [ ] Ratchet baseline is green before the first edit.
-- [ ] TC-01 fails first at the documented 4-vs-3 count assertion and then
-      emits `DTR05-RED inventory-count-3`, then passes with zero failures; its
-      GREEN assertions also pin the path set and zero handwritten entries plus
+- [x] The four-occurrence ratchet baseline was green before the first edit.
+- [x] TC-01 emitted `DTR05-RED inventory-count-3` first, then passed with
+      exactly three generated identities, zero handwritten identities, and
       helper/call/event absence.
-- [ ] M-1, M-2, M-3, and M-4 re-red with the documented, correctly directed
+- [x] M-1, M-2, M-3, and M-4 re-red with the documented, correctly directed
       results.
-- [ ] The corrected E4 recipes are executed once: TC-03 reds with
-      `DTR05-MUTATION serial-probe-count` / `probeRelayCallCount == 1`, and
-      TC-04 reds with `DTR05-MUTATION concurrent-custody-store-count`.
-- [ ] TC-02…TC-08, `1to1`, strict analysis, discovery, and
-      `feature-host-all` pass with zero failures.
-- [ ] The conditional transport row passes on its pinned target or records the
-      policy-defined target-unavailable N/A.
-- [ ] The pre-existing two-file Graphify baseline is recorded; Graphify is
-      refreshed incrementally; the exact chat node disappears, the exact
-      introduction node remains, no third tracked/unignored graph-output path
-      changes, and the ignored TDD overlay is treated as expected scratch.
-- [ ] Staged and unstaged whitespace checks pass; protected sources remain
-      unchanged; the final path set matches the explicit allowlist.
-- [ ] Landed roadmap row 569 plus the categorical proof-floor reconciliation
-      are verified; rows 213/216/520/595 and index rows
-      273/275/276 are updated; final row 276 is
-      `Plan-green` / `implementation-complete` and cites the resolved
-      authorization plus approved waiver or amended device proof; the valid
-      dynamic Dart `relay:probe` selector is retained and the vacuous Go regex
-      is replaced by four exact commands.
-- [ ] This plan's header, opening synopsis, device profile, Arbiter Decision,
-      Handoff, and Execution Progress all reconcile to the same final
-      `Plan-green` / `implementation-complete` verdict; no prerequisite-blocked
-      or unresolved-evidence claim survives successful closure.
-- [ ] Migration: N/A — no schema change.
+- [x] The corrected E4 recipes re-red: TC-03 observed
+      `probeRelayCallCount == 1`, and TC-04 observed two stores, each with its
+      stable DTR-05 discriminator.
+- [x] TC-02 through TC-08, `1to1`, strict analysis, four exact Go selectors,
+      discovery, and the 821-path `feature-host-all` sweep passed.
+- [x] The pinned physical Pixel 6
+      `FLUTTER_DEVICE_ID=21071FDF600CSC` transport gate exited 0; the
+      target-unavailable N/A branch was not used.
+- [x] Graphify was refreshed once incrementally; current fingerprint
+      `a79b2f04386f2be9` has no chat helper node and exactly one live
+      introduction helper node, with only the two expected tracked graph
+      outputs changed.
+- [x] Staged and unstaged whitespace checks pass; protected sources remain
+      unchanged; the final path set matches the ten-path allowlist.
+- [x] The DTR-02/DTR-05 registry rows, Wave-1 gate ledger,
+      `DTR08-COMP-003`, and index Plans 273/276 reflect current state; Plan 275
+      remains Plan-green. The dynamic Dart `relay:probe` selector and four exact
+      Go commands are retained.
+- [x] This plan's header, opening synopsis, device profile, Arbiter Decision,
+      Handoff, and Execution Progress reconcile to
+      `Plan-green` / `implementation-complete`.
+- [x] Migration: N/A — no schema change.
 
 ## Reviewer Findings
 
@@ -1202,8 +1210,9 @@ revision applied only its source-backed contract deltas:
    Android, iOS, and macOS relay dispatch files; INV-5 distinguishes those
    byte-unchanged files from legitimate prose edits in the chat file.
 6. The waiver premise now fails closed on a private-library source census, and
-   execution requires row 569 plus both categorical two-peer proof floors to be
-   reconciled before E1; Gate 0 checks all three locations independently.
+   execution requires the named decision-ledger authorization plus both
+   categorical two-peer proof floors to be reconciled before E1; Gate 0 checks
+   all three locations independently.
 7. Device selection intersects ADB-ready IDs with Flutter-supported Android
    targets and prefers physical Android before emulator.
 8. Rollback reverts E1-E8 in lockstep, including E5 and outcome metadata, while
@@ -1212,39 +1221,47 @@ revision applied only its source-backed contract deltas:
    expected ignored TDD overlay; the compact same-name query is not treated as
    deletion proof.
 
-No implementation evidence is claimed by this planning revision.
+Execution then validated those review corrections: the causal first RED,
+M-1 through M-4, and both behavioral mutation recipes re-red with their stable
+discriminators; all direct preservation selectors, four Go selectors, `1to1`,
+strict analysis, discovery, pinned Pixel transport, `feature-host-all`, and
+Graphify closure passed.
 
 ## Arbiter Decision
 
-Current disposition: `execution-ready / implementation-ready`.
-`DTR05-AUTH-01` and both categorical proof-floor reconciliations are recorded;
-DTR-01 through DTR-04 plus the planning artifacts are landed as the prerequisite
-baseline. Gate 0 must still prove that exact baseline clean and rerun the
-dormancy census immediately before E4/E5. Current-source read-only validation
-and the critical post-patch counterexample pass found no intrinsic
-plan-structure or literal-command blocker.
+Current disposition: `Plan-green / implementation-complete`.
+`DTR05-AUTH-01` and both categorical proof-floor reconciliations remain
+recorded. The helper-only atomic removal passed its causal RED/GREEN, all six
+mutation re-reds, exact preservation tests, `1to1`, strict analysis, four Go
+selectors, discovery, physical Pixel 6 transport preservation, the 821-path
+`feature-host-all` sweep, Graphify, protected-scope, and diff gates. No DTR-05
+blocker remains. The live protocol-retirement floor remains UNKNOWN and
+retirement is not authorized. Wave 1 aggregate acceptance is not claimed until
+its separate full `host-all`.
 
 ## Handoff
 
 - Plan: `Test-Flight-Improv/276-dormant-chat-relay-probe-helper-removal-tdd-plan.md`.
-- Classification/status: `implementation-ready` / `execution-ready`.
+- Classification/status: `implementation-complete` / `Plan-green`.
 - Test Contract: eight rows; Dart unit/application host plus direct Go host
   preservation; fake P2P/bridge fixtures; no SQLCipher or migration.
-- First causal RED:
+- Observed causal RED:
   `flutter test test/unit/analyzer_suppression_ratchet_test.dart --plain-name 'canonical inventory has three generated l10n identities and no dormant chat relay helper'`.
-- Primary preservation:
+- Primary preservation passed:
   `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart --plain-name 'FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the former probe location WITHOUT running the probe (invariant #4 lock)'`.
 - Manual registration: TC-01/TC-02 run directly per plan and auto-register in
   aggregate `host-all`; TC-08 uses four direct existing Go selectors. No new
   test registration is added.
 - Boundary closure: host-causal closure plus the conditional single-target
   Android preservation gate under the recorded helper-only waiver.
-- Full `host-all`: Wave 1 aggregate closure, then final rollout/release closure.
-- Pre-execution evidence: rerun Gate 0 from the landed clean baseline; no
-  owner-decision blocker remains.
+- Remaining work: one Wave 1 aggregate full `host-all` after constituent
+  landing, then final-rollout `host-all` at release closure. Neither is a
+  per-plan DTR-05 gate.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| 2026-07-26 | prerequisite landing | Roadmap registry/proof floors/decision ledger/compatibility row; index; Plan 276; completed DTR-01 through DTR-04 tree | Owner approval recorded as `DTR05-AUTH-01`; coherent predecessor/planning baseline prepared for landing | Critical review is plan-clean; exact census is 3 tokens = 1 declaration + 2 comments, with no part/VM entrypoint | No decision blocker; implementation evidence not started | Verify clean Gate 0 from landed baseline, then add E4/E5 tests |
+| 2026-07-26 | prerequisite landing | Roadmap registry/proof floors/decision ledger/compatibility row; index; Plan 276; completed DTR-01 through DTR-04 tree | Commit `ec86247eb`; clean Gate 0 exited 0 | `DTR05-AUTH-01` recorded; exact census was 3 tokens = 1 declaration + 2 comments, with no part/VM entrypoint; four-occurrence ratchet baseline green | No decision blocker | Add E4/E5 tests and establish the causal RED |
+| 2026-07-26 | causal implementation and mutation verification | Chat send source; suppression inventory; ratchet, chat-send, and P2P fault-injection tests | TC-01 emitted `DTR05-RED inventory-count-3` then GREEN; M-1 through M-4 re-red; TC-03 observed one probe; TC-04 observed two stores | Helper/suppression/handwritten identity removed atomically; all six mutation recipes discriminated the intended fault and were immediately reversed | No causal-evidence blocker | Run preservation, family, device, and graph closure |
+| 2026-07-26 | preservation and closure | Eight Test Contract rows; `1to1`; analyzer; Go; discovery; Pixel transport; feature family; Graphify; protected scope | TC-02 through TC-08 GREEN; `1to1` 2,441; strict 3/0; Go 4/4; Pixel `21071FDF600CSC` transport exit 0; `feature-host-all` `+8550 ~1` across 821 paths; Graph fingerprint `a79b2f04386f2be9` | Exact chat node absent, introduction node present once; live shared protocol and protected files unchanged; final ten-path allowlist clean | `Plan-green`; no DTR-05 blocker | Wave 1 aggregate `host-all`, then final-rollout `host-all` |

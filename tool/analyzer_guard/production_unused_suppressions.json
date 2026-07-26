@@ -3,28 +3,6 @@
   "policy": "production-unused-suppressions",
   "entries": [
     {
-      "path": "lib/features/conversation/application/send_chat_message_use_case.dart",
-      "directiveKind": "ignore",
-      "diagnostic": "unused_element",
-      "targetFingerprint": {
-        "kind": "function",
-        "ownerChain": [],
-        "name": "_tryRelayProbeSend",
-        "signature": "Future < _RaceResult > _tryRelayProbeSend ( P2PService p2pService , String targetPeerId , String jsonString , { required String failureReason , required String messageId , } )"
-      },
-      "count": 1,
-      "sourceKind": "handwritten",
-      "owner": {
-        "kind": "roadmap",
-        "id": "DTR-05"
-      },
-      "reason": "The relay-probe helper is retained under the DTR-05 ownership boundary while its in-race replacement is completed.",
-      "evidence": [
-        "The immediately preceding unused_element directive binds to the exact owner-aware helper signature."
-      ],
-      "removalCondition": "DTR-05 removes or rewires the exact helper and deletes this entry in the same change."
-    },
-    {
       "path": "lib/l10n/app_localizations_ar.dart",
       "directiveKind": "ignore",
       "diagnostic": "unused_import",

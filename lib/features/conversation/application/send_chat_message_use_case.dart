@@ -48,24 +48,10 @@ const Duration interactiveInboxBudget = Duration(seconds: 3);
 /// cache for the next send. Consulted ONLY on the not-live-reachable path.
 const Duration _presenceHintBudget = Duration(milliseconds: 400);
 
-/// FDC-03: the serial relay-probe tail was REMOVED from the send path, so the
-/// `NO_RESERVATION` fast-offline signal described below is no longer CONSUMED on
-/// a 1:1 send — an unknown-presence offline peer now takes durable inbox custody
-/// directly. This constant + `_tryRelayProbeSend` are retained (// ignore:
-/// unused_element) per the FDC-03 scope guard for a later FDC plan that re-wires
-/// the probe in-race; the historical rationale follows.
-///
-/// NET-REL-05 U-P5 (relay consolidation, Dart-only): after a successful relay
-/// probe, make a SINGLE post-probe send attempt before inbox fallback.
-/// Consolidated from 2 → 1: the direct race leg already invokes the same
-/// relay-capable `message:send` (Go rides `WithAllowLimitedConn`), so the
-/// second post-probe attempt was the redundant layer. The single retained
-/// attempt still covers the online-relay-only peer whose address the direct
-/// leg didn't discover (`peer_not_found` → relayProbeEligible) but who becomes
-/// reachable once the probe establishes the circuit.
-/// (Moving full relay ownership into Go is OUT OF SCOPE this run: it requires
-/// `make all` + `pod install` and is not host-verifiable; see
-/// `05-send-orchestration-IMPLEMENTATION-PLAN.md` U-P5.)
+/// Shared single-attempt cap for the live relay recovery owned by introduction
+/// outbound delivery and delete-for-everyone. The conversation send path has no
+/// serial probe step: FDC-02 owns its in-race relay-live leg, and an all-fail
+/// race proceeds to durable inbox custody.
 const int relayProbeSendAttempts = 1;
 
 /// NET-REL-05 P2 (grace window): after a non-preferred leg succeeds, wait this
@@ -1005,8 +991,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       // FDC-01: the OUTER cap is the aggregate (serial) ceiling, decoupled from
       // the per-step budget so a slow-but-progressing step can't be starved.
       // When it does fire the leg is genuinely stuck mid-progress on an online
-      // peer, so the aggregate direct_timeout is relay-probe-eligible (the live
-      // relay tail still runs instead of demoting to the durable inbox).
+      // peer, so the aggregate direct_timeout retains relay eligibility as
+      // failure-classification plumbing. It does not launch another serial
+      // recovery step; FDC-02's relay-live leg already participates in-race.
       interactiveDirectAggregateBudget,
       onTimeout: () =>
           _RaceResult.failed('direct_timeout', relayProbeEligible: true),
@@ -1370,13 +1357,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   // NET-REL-05 P1/P4: the live race failed. If a concurrent durable copy was
-  // fired for this unknown-presence send, wait for it before paying for the
-  // sequential relay-probe + inbox tail. If it already took custody, commit
-  // 'delivered'/'inbox' and SKIP the redundant tail entirely (no relay probe,
-  // no second `storeInInbox`) — this is the latency win: durable custody lands
-  // at ~inbox budget instead of after the full sequential tail. The inbox
-  // `recordAttempt` already fired inside the concurrent future, so we do NOT
-  // record it again here.
+  // fired for this unknown-presence send, wait for it before the single
+  // sequential inbox fallback. If it already took custody, commit
+  // 'inboxed'/'inbox' and skip the redundant `storeInInbox`; durable custody
+  // lands at about the inbox budget. The inbox `recordAttempt` already fired
+  // inside the concurrent future, so do not record it again here.
   if (concurrentInbox != null) {
     final concurrentOk = await concurrentInbox;
     if (concurrentOk) {
@@ -1400,9 +1385,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // fired above (already awaited at the `concurrentInbox != null` short-circuit);
   // if that copy was null (the connected/local fall-through) or returned false,
   // the SINGLE sequential `storeInInbox` fallback below is the lone carrier —
-  // preserving "exactly one relay write per message". `_tryRelayProbeSend` is
-  // retained (it may be wired in-race by a later FDC plan; per the scope guard we
-  // do not delete cross-plan symbols) but is no longer consumed on the send path.
+  // preserving "exactly one relay write per message". `relayProbeEligible`
+  // remains failure-classification plumbing and does not add another carrier.
 
   // All active paths failed — try offline inbox fallback once.
   emitFlowEvent(
@@ -1884,11 +1868,11 @@ Future<_RaceResult> _tryDirectSend(
   // BEFORE any discover/dial AND before recording a 'direct' attempt (the leg
   // never actually attempted). The leg stays PRESENT in raceFutures[1], so the
   // completer's leg-index / directLegPending / pendingCount coupling is
-  // untouched; it simply resolves fast to a NON-eligible failure —
-  // relayProbeEligible:false because a keepalive-dropped peer is durably-
-  // inboxed, not live-relay-recoverable, so this must NOT trigger the live relay
-  // probe. The distinct discriminator event proves the skip fired for the
-  // KEEPALIVE-DROP reason (not presence, not a budget timeout).
+  // untouched; it simply resolves fast to a NON-eligible failure.
+  // `relayProbeEligible:false` classifies a keepalive-dropped peer for durable
+  // inbox custody; there is no separate conversation probe step. The distinct
+  // discriminator event proves the skip fired for the KEEPALIVE-DROP reason
+  // (not presence, not a budget timeout).
   if (skipForKeepaliveDrop) {
     final shortTarget = targetPeerId.length > 10
         ? '${targetPeerId.substring(0, 10)}…'
@@ -1927,13 +1911,14 @@ Future<_RaceResult> _tryDirectSendInner(
   // `.timeout` in the race assembly.
   //
   // Discover — per-step bounded so a slow-but-online discover yields an
-  // *eligible* peer_not_found (the relay tail runs) instead of being swallowed
-  // by the aggregate ceiling. discoverPeer returns a NULLABLE DiscoveredPeer?,
-  // so onTimeout: () => null type-checks and a timed-out discover collapses into
-  // the existing null-discover branch below (already eligible). Against the real
-  // impl discoverPeer honors its own timeoutMs and returns null on timeout, so
-  // this .timeout is a hang-guard layered atop it; against the test fake (which
-  // ignores timeoutMs) it IS the deterministic cut.
+  // *eligible* peer_not_found instead of being swallowed by the aggregate
+  // ceiling. Eligibility remains failure classification; FDC-02's in-race
+  // relay-live leg is the live recovery path. discoverPeer returns a NULLABLE
+  // DiscoveredPeer?, so onTimeout: () => null type-checks and a timed-out
+  // discover collapses into the existing null-discover branch below (already
+  // eligible). Against the real impl discoverPeer honors its own timeoutMs and
+  // returns null on timeout, so this .timeout is a hang-guard layered atop it;
+  // against the test fake (which ignores timeoutMs) it is the deterministic cut.
   final discoverStopwatch = Stopwatch()..start();
   final peer = await p2pService
       .discoverPeer(
@@ -1974,11 +1959,12 @@ Future<_RaceResult> _tryDirectSendInner(
     );
   }
 
-  // Send — per-step bounded. A send that OVERRUNS its budget becomes an
-  // *eligible* direct_timeout (the relay probe runs), distinct from a definitive
-  // sent:false which stays a NON-eligible send_failed → inbox (preserved). The
-  // sendTimedOut flag keeps the two failure classes separate. (Hang-guard vs the
-  // real impl; deterministic cut vs the test fake — same as discover above.)
+  // Send — per-step bounded. A send that overruns its budget becomes an
+  // *eligible* direct_timeout for failure classification, distinct from a
+  // definitive sent:false which stays a NON-eligible send_failed → inbox.
+  // FDC-02's relay-live leg already races independently. The sendTimedOut flag
+  // keeps the two failure classes separate. (Hang-guard vs the real impl;
+  // deterministic cut vs the test fake — same as discover above.)
   final sendStepStopwatch = Stopwatch()..start();
   SendMessageResult? sendResult;
   var sendTimedOut = false;
@@ -2020,142 +2006,6 @@ Future<_RaceResult> _tryDirectSendInner(
     acknowledged: sendResult.acknowledged,
     stepTimings: timings,
   );
-}
-
-// FDC-03: no longer consumed on the send path (the serial relay-probe→inbox tail
-// was removed — live relay recovery is FDC-02's in-race relay-live leg). Retained
-// rather than deleted per the FDC-03 scope guard ("do not delete cross-plan
-// symbols speculatively" — a later FDC plan may wire it in-race).
-// ignore: unused_element
-Future<_RaceResult> _tryRelayProbeSend(
-  P2PService p2pService,
-  String targetPeerId,
-  String jsonString, {
-  required String failureReason,
-  required String messageId,
-}) async {
-  final relayProbeStopwatch = Stopwatch()..start();
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'CHAT_MSG_SEND_RELAY_PROBE_BEGIN',
-    details: {'reason': failureReason},
-  );
-
-  RelayProbeResult probeResult;
-  try {
-    probeResult = await p2pService.probeRelay(targetPeerId);
-  } catch (e) {
-    relayProbeStopwatch.stop();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_RELAY_PROBE_ERROR',
-      details: {'error': e.toString()},
-    );
-    return _RaceResult.failed(
-      failureReason,
-      stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
-    );
-  }
-
-  switch (probeResult) {
-    case RelayProbeResult.connected:
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED',
-        details: {'id': messageId.substring(0, 8)},
-      );
-      try {
-        final dialed = await p2pService.dialPeer(
-          targetPeerId,
-          timeoutMs: interactiveDirectBudget.inMilliseconds,
-        );
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_RELAY_PROBE_DIAL',
-          details: {'dialed': dialed},
-        );
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_RELAY_PROBE_DIAL_ERROR',
-          details: {'error': e.toString()},
-        );
-      }
-      for (var attempt = 1; attempt <= relayProbeSendAttempts; attempt++) {
-        try {
-          final sendResult = await p2pService.sendMessageWithReply(
-            targetPeerId,
-            jsonString,
-            timeoutMs: interactiveDirectBudget.inMilliseconds,
-          );
-          if (sendResult.sent) {
-            relayProbeStopwatch.stop();
-            return _RaceResult.succeeded(
-              via: _resolveGoSendTransport(
-                p2pService,
-                targetPeerId,
-                sendResult,
-              ),
-              acknowledged: sendResult.acknowledged,
-              stepTimings: {
-                'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds,
-                if (sendResult.streamOpenMs != null)
-                  'streamOpenMs': sendResult.streamOpenMs!,
-                if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
-                if (sendResult.ackWaitMs != null)
-                  'ackWaitMs': sendResult.ackWaitMs!,
-              },
-            );
-          }
-
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_RELAY_PROBE_SEND_RETRY',
-            details: {
-              'attempt': attempt,
-              'maxAttempts': relayProbeSendAttempts,
-            },
-          );
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_RELAY_PROBE_SEND_ERROR',
-            details: {
-              'attempt': attempt,
-              'maxAttempts': relayProbeSendAttempts,
-              'error': e.toString(),
-            },
-          );
-        }
-      }
-      relayProbeStopwatch.stop();
-      return _RaceResult.failed(
-        'send_failed',
-        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
-      );
-    case RelayProbeResult.noReservation:
-      relayProbeStopwatch.stop();
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_RELAY_PROBE_NO_RESERVATION',
-        details: {},
-      );
-      return _RaceResult.failed(
-        'peer_not_found',
-        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
-      );
-    case RelayProbeResult.error:
-      relayProbeStopwatch.stop();
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_RELAY_PROBE_FALLBACK',
-        details: {'reason': failureReason},
-      );
-      return _RaceResult.failed(
-        failureReason,
-        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
-      );
-  }
 }
 
 Future<void> _persistOutgoingMedia({
@@ -2438,7 +2288,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   // start consumed in U-P2). Only acked LIVE deliveries qualify — 'inbox' is a
   // custody handoff, not a live transport, and `recordSuccessfulTransport`
   // ignores it anyway. This single success funnel covers connection reuse,
-  // race-win, and relay-probe-win; the dedicated inbox tail and the
+  // direct/local wins, and relay-live race wins; the inbox custody path and
   // unacked->inbox handoff intentionally do not record.
   if (message.status == 'delivered' && message.transport != 'inbox') {
     p2pService.recordSuccessfulTransport(targetPeerId, message.transport ?? '');

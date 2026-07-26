@@ -530,50 +530,55 @@ void main() {
     // FDC-02's in-race relay-live leg (covered in the send-orchestration suite).
     // This consolidated lock pins the fault-injection recovery contract: a
     // discover-miss send is never lost and reaches the recipient on drain.
-    test(
-      'discover-miss send to an online peer takes durable inbox custody '
-      'without the relay probe, and drains to the recipient',
-      () async {
-        final staleRelayPath = _DiscoverMissProbeConnectedP2PService(
-          alice.p2pService,
-        );
+    test('discover-miss send to an online peer takes durable inbox custody '
+        'without the relay probe, and drains to the recipient', () async {
+      final staleRelayPath = _DiscoverMissProbeConnectedP2PService(
+        alice.p2pService,
+      );
 
-        final (result, message) = await sendChatMessage(
-          p2pService: staleRelayPath,
-          messageRepo: alice.messageRepo,
-          targetPeerId: bob.peerId,
-          text: 'phase4 discover-miss durable inbox custody',
-          senderPeerId: alice.peerId,
-          senderUsername: alice.username,
-          bridge: alice.bridge,
-          recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',
-        );
+      final (result, message) = await sendChatMessage(
+        p2pService: staleRelayPath,
+        messageRepo: alice.messageRepo,
+        targetPeerId: bob.peerId,
+        text: 'phase4 discover-miss durable inbox custody',
+        senderPeerId: alice.peerId,
+        senderUsername: alice.username,
+        bridge: alice.bridge,
+        recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',
+      );
 
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        // Custody, not live delivery — the probe tail is gone.
-        expect(message!.transport, equals('inbox'));
-        // Mutation (prod): restore the `if (raceResult.relayProbeEligible)
-        // { _tryRelayProbeSend(...) }` block → probeRelayCallCount == 1 → RED.
-        expect(staleRelayPath.probeRelayCallCount, 0);
-        expect(network.storeInInboxCallCount, 1);
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // Custody, not live delivery — the probe tail is gone.
+      expect(message!.transport, equals('inbox'));
+      // TC-03 owns the probe-tail mutation. This fixture short-circuits on
+      // concurrent custody. Its production mutation is the exact one-line
+      // replacement:
+      // `return persistInboxAccepted(recordInboxAttempt: false);`
+      // → `await persistInboxAccepted(recordInboxAttempt: false);`
+      // so control falls through to the sequential inbox store.
+      expect(staleRelayPath.probeRelayCallCount, 0);
+      expect(
+        network.storeInInboxCallCount,
+        1,
+        reason: 'DTR05-MUTATION concurrent-custody-store-count',
+      );
 
-        // The recipient receives exactly one copy on drain.
-        await bob.drainOfflineInbox();
-        await Future<void>.delayed(Duration.zero);
-        final deliveredToBob = await bob.messageRepo.getMessagesForContact(
-          alice.peerId,
-        );
-        expect(
-          deliveredToBob.where(
-            (msg) =>
-                msg.isIncoming &&
-                msg.text == 'phase4 discover-miss durable inbox custody',
-          ),
-          hasLength(1),
-        );
-      },
-    );
+      // The recipient receives exactly one copy on drain.
+      await bob.drainOfflineInbox();
+      await Future<void>.delayed(Duration.zero);
+      final deliveredToBob = await bob.messageRepo.getMessagesForContact(
+        alice.peerId,
+      );
+      expect(
+        deliveredToBob.where(
+          (msg) =>
+              msg.isIncoming &&
+              msg.text == 'phase4 discover-miss durable inbox custody',
+        ),
+        hasLength(1),
+      );
+    });
   });
 
   group('Fault injection: LAN durable staging', () {

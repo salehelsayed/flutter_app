@@ -864,7 +864,7 @@ void _testOnlySuppression() {}
   );
 
   test(
-    'canonical repository inventory is the three generated l10n identities plus the DTR-05 relay helper',
+    'canonical inventory has three generated l10n identities and no dormant chat relay helper',
     () async {
       final repoRoot = Directory.current.absolute.path;
       final inventoryFile = File(
@@ -884,8 +884,12 @@ void _testOnlySuppression() {}
         'packages/background_push_crypto',
         'third_party/bonsoir_darwin',
       ]);
-      expect(inventory.entries, hasLength(4));
-      expect(result.occurrences, hasLength(4));
+      expect(
+        inventory.entries,
+        hasLength(3),
+        reason: 'DTR05-RED inventory-count-3',
+      );
+      expect(result.occurrences, hasLength(3));
       expect(
         result.occurrences.map((entry) => entry.identityKey).toSet(),
         inventory.entries.map((entry) => entry.identityKey).toSet(),
@@ -894,8 +898,6 @@ void _testOnlySuppression() {}
         'lib/l10n/app_localizations_ar.dart',
         'lib/l10n/app_localizations_de.dart',
         'lib/l10n/app_localizations_en.dart',
-        'lib/features/conversation/application/'
-            'send_chat_message_use_case.dart',
       });
       expect(
         inventory.entries
@@ -910,22 +912,9 @@ void _testOnlySuppression() {}
             .length,
         3,
       );
-      final handwritten = inventory.entries.singleWhere(
-        (entry) => entry.sourceKind == 'handwritten',
-      );
       expect(
-        '${handwritten.ownerKind}:${handwritten.ownerId}',
-        'roadmap:DTR-05',
-      );
-      expect(handwritten.diagnostic, 'unused_element');
-      expect(handwritten.targetFingerprint.kind, 'function');
-      expect(handwritten.targetFingerprint.ownerChain, isEmpty);
-      expect(handwritten.targetFingerprint.name, '_tryRelayProbeSend');
-      expect(
-        handwritten.targetFingerprint.signature,
-        'Future < _RaceResult > _tryRelayProbeSend ( P2PService p2pService , '
-        'String targetPeerId , String jsonString , { required String '
-        'failureReason , required String messageId , } )',
+        inventory.entries.where((entry) => entry.sourceKind == 'handwritten'),
+        isEmpty,
       );
       for (final entry in inventory.entries.where(
         (entry) => entry.sourceKind == 'generated',
@@ -940,6 +929,18 @@ void _testOnlySuppression() {}
           'combinators=[]',
         );
       }
+
+      final chatSource = File(
+        '$repoRoot/lib/features/conversation/application/'
+        'send_chat_message_use_case.dart',
+      ).readAsStringSync();
+      expect(
+        chatSource,
+        isNot(contains('_tryRelayProbeSend')),
+        reason: 'DTR05-M4 helper-absent',
+      );
+      expect(RegExp(r'\.probeRelay\s*\(').hasMatch(chatSource), isFalse);
+      expect(chatSource, isNot(contains('CHAT_MSG_SEND_RELAY_PROBE_')));
 
       final pubspec =
           loadYaml(File('$repoRoot/pubspec.yaml').readAsStringSync())
