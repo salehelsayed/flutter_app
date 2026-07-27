@@ -1479,33 +1479,6 @@ void main() {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // callGroupRotateKey
-  // ---------------------------------------------------------------------------
-  group('callGroupRotateKey legacy helper', () {
-    test(
-      'KE-014 fails closed locally without sending bridge command',
-      () async {
-        bridge.responses['group:rotateKey'] = {
-          'ok': true,
-          'groupKey': 'newKeyBase64==',
-          'keyEpoch': 2,
-        };
-
-        final result = await callGroupRotateKey(bridge, 'grp-rotate-001');
-
-        expect(result['ok'], isFalse);
-        expect(result['errorCode'], equals('LEGACY_ROTATE_KEY_UNSUPPORTED'));
-        expect(result['errorMessage'], contains('rotateAndDistributeGroupKey'));
-        expect(result.containsKey('groupKey'), isFalse);
-        expect(result.containsKey('keyEpoch'), isFalse);
-        expect(bridge.sendCallCount, 0);
-        expect(bridge.lastSentMessage, isNull);
-        expect(bridge.commandLog, isEmpty);
-      },
-    );
-  });
-
   group('callGroupSendReliable', () {
     test('uses a 40s default timeout above the native publish budget', () {
       expect(groupSendReliableDefaultTimeout.inSeconds, 40);

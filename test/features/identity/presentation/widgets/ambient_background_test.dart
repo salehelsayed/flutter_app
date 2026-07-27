@@ -258,7 +258,7 @@ void main() {
       );
     }
 
-    // None of the other 14 AmbientBackground call sites may opt in (no leakage —
+    // None of the other 13 AmbientBackground call sites may opt in (no leakage —
     // their living glow must keep animating with motion enabled).
     const nonChatAmbientSurfaceFiles = <String>[
       'lib/features/account_migration/presentation/screens/account_migration_journey_screen.dart',
@@ -266,7 +266,6 @@ void main() {
       'lib/features/groups/presentation/screens/contact_picker_screen.dart',
       'lib/features/groups/presentation/screens/create_group_picker_screen.dart',
       'lib/features/groups/presentation/screens/group_info_screen.dart',
-      'lib/features/groups/presentation/screens/group_list_screen.dart',
       'lib/features/home/presentation/screens/first_time_experience_screen.dart',
       'lib/features/identity/presentation/screens/identity_choice_screen.dart',
       'lib/features/introduction/presentation/screens/sent_confirmation_screen.dart',
@@ -665,7 +664,6 @@ void main() {
       'lib/features/identity/presentation/screens/identity_choice_screen.dart',
       'lib/features/groups/presentation/screens/create_group_picker_screen.dart',
       'lib/features/groups/presentation/screens/contact_picker_screen.dart',
-      'lib/features/groups/presentation/screens/group_list_screen.dart',
       'lib/features/groups/presentation/screens/group_conversation_screen.dart',
       'lib/features/groups/presentation/screens/group_info_screen.dart',
     ];

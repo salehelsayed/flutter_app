@@ -710,10 +710,15 @@ The Dart `GoBridgeClient._cmdMap` maps command strings (used by Dart callers) to
 | `group:leave` | `groupLeaveTopic` | PubSub module | Leave group topic: cancel subscription, discovery, unregister validator |
 | `group:publish` | `groupPublish` | PubSub module | Encrypt + sign + publish v3 envelope to group GossipSub topic |
 | `group:updateConfig` | `groupUpdateConfig` | PubSub module | Update stored group config (member list, name, type) |
-| `group:rotateKey` | `groupRotateKey` | PubSub module | Generate new group key, increment epoch |
 | `group:updateKey` | `groupUpdateKey` | PubSub module | Update stored group key (non-admin receiving key rotation) |
 | `group:inboxStore` | `groupInboxStore` | PubSub module | Store group message in relay inbox (offline delivery) |
 | `group:inboxRetrieve` | `groupInboxRetrieve` | PubSub module | Retrieve group messages from relay inbox |
 | `group.keygen` | `generateGroupKey` | Crypto module | Generate AES-256 symmetric group key |
 | `group.encrypt` | `groupEncryptMessage` | Crypto module | Encrypt plaintext with group key (AES-256-GCM) |
 | `group.decrypt` | `groupDecryptMessage` | Crypto module | Decrypt ciphertext with group key (AES-256-GCM) |
+
+The Dart registry intentionally no longer accepts `group:rotateKey`. The
+platform `groupRotateKey` handlers and generated `BridgeGroupRotateKey` export
+remain as a compatibility-only boundary to Go `GroupRotateKey`, which fails
+closed with `LEGACY_ROTATE_KEY_UNSUPPORTED`. Live Dart rotation uses
+`rotateAndDistributeGroupKey` with generate, distribute, and update commands.

@@ -59,7 +59,6 @@ import 'package:flutter_app/features/groups/application/group_pending_broadcast_
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
@@ -3478,11 +3477,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final observation = await runDeleteDissolvedGroupShellPresentationAction(
         groupId: groupId,
         legacyTestCallback: (groupId) => deleteGroupAndMessages(
-          bridge: widget.bridge,
           groupRepo: groupRepository,
           groupMessageRepo: groupMessageRepository,
           groupId: groupId,
-          deleteLocallyIfDissolved: true,
         ),
       );
       if (observation.status ==

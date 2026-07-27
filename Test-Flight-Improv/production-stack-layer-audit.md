@@ -225,7 +225,13 @@ _Each section: grade · what exists (with file:line evidence) · gaps by severit
 - Introduction key-mismatch guard: accepting an introduction is aborted (`ACCEPT_INTRO_STRANGER_KEY_MISMATCH`) when the other party is **already a contact** and their stored ML-KEM key differs from the introducer-vouched key — adequate (covers known-contact case only) — `lib/features/introduction/application/accept_introduction_use_case.dart:84-95,217-233`
 - Multi-device / account migration: ML-KEM-768 encap + HKDF-SHA256 session key bound to `sessionId|bundleId|direction`, AES-256-GCM per chunk with canonical AAD as real GCM AAD (anti-reorder/replay/truncation), 5-min QR TTL + 6-digit SHA256 confirmation code for channel binding — strong — `go-mknoon/crypto/migration.go:33-58,107-151`, `lib/features/account_migration/application/migration_qr_payload_use_case.dart:35,53,83-89`
 - Zero-trust relay: retrieve/ack/register-token authorized by the libp2p-authenticated `RemotePeer`; group_store enforces `from==remotePeer`; relay never sees plaintext or keys — strong — `go-relay-server/inbox.go:1508,1576,1608,1620,1638`
-- Recovery: restore-from-mnemonic with local 12-word + BIP39-checksum validation, auto secure-store restore on startup; recovery phrase viewable in settings (blur-to-reveal card) — adequate — `lib/features/identity/application/restore_identity_use_case.dart:32-237`, `recover_identity_from_secure_store_use_case.dart:15-67`, `lib/features/settings/presentation/widgets/settings_recovery_phrase_card.dart`
+- Recovery: explicit restore-from-mnemonic with local 12-word +
+  BIP39-checksum validation; startup deliberately does not auto-restore from a
+  surviving secure-store mnemonic; the recovery phrase remains viewable in
+  settings (blur-to-reveal card) — adequate —
+  `lib/features/identity/application/restore_identity_use_case.dart`,
+  `lib/features/identity/presentation/startup_router.dart`,
+  `lib/features/settings/presentation/widgets/settings_recovery_phrase_card.dart`
 
 **Gaps / what is missing**
 - **[high]** Recoverability hard floor: lost device **and** lost 12-word mnemonic = permanent, unrecoverable account loss. There is no encrypted-cloud backup, no social/escrow recovery, and nothing forces the user to record the phrase before relying on the account — the recovery phrase is only an opt-in card (`SettingsRecoveryPhraseCard`, used solely in `settings_screen.dart`); the new-identity onboarding path (`identity_choice_screen` / `first_time_experience_wired`) has no write-down-and-verify step. Central recovery is correctly N/A, but the total absence of any fallback is a real consumer-retention/support risk.

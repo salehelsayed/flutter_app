@@ -59,7 +59,6 @@ lib/features/introduction/
       intro_system_message.dart            # System message card in timeline
       intro_group_header.dart              # "From [username]" group header
       intro_row.dart                       # Single intro row with accept/pass
-      intros_tab.dart                      # Orbit screen intros tab
 
 lib/core/database/helpers/
   introductions_db_helpers.dart                  # SQL ops on introductions table
@@ -1427,19 +1426,33 @@ Container (dark background, rounded top corners)
 
 `SentConfirmationWired` is a **StatelessWidget** (not StatefulWidget), acting as a pure pass-through to `SentConfirmationScreen` -- an exception to the usual Wired/Screen pattern where Wired components are stateful. Shown after introductions are sent. Displays confirmation with the list of introductions sent.
 
-### 10.3 IntrosTab (Orbit screen tab) -- NOT used in active rendering path
+### 10.3 OrbitScreen intro sliver + IntroRow (active review path)
 
-**File:** `lib/features/introduction/presentation/widgets/intros_tab.dart`
+**Files:**
+- `lib/features/orbit/presentation/screens/orbit_wired.dart`
+- `lib/features/orbit/presentation/screens/orbit_screen.dart`
+- `lib/features/introduction/presentation/widgets/intro_row.dart`
+- `lib/features/introduction/presentation/widgets/intro_group_header.dart`
 
-`IntrosTab` exists as a standalone widget and is still covered by widget tests, but it is **not used in the active production rendering path**. `OrbitWired` manages `_groupedIntros` state and passes `OrbitIntrosViewData` (grouped intros, introducer usernames, callbacks, blocked peers) to `OrbitScreen` for rendering.
+`OrbitWired` owns the loaded/folded review state and passes
+`OrbitIntrosViewData` through `OrbitViewProjection` to `OrbitScreen`.
+`OrbitScreen._buildIntroSliver()` and `_buildIntroEntries()` are the active
+production renderers. They render pending group-invite rows, grouped legacy
+intro rows, or one folded `IntroRow` per target peer. `IntroRow` owns the
+visible target, introducer attribution, Accept/Pass actions, processing state,
+and post-response status.
 
 ```dart
-class IntrosTab extends StatelessWidget {
-  final Map<String, List<IntroductionModel>> groupedIntros;  // grouped by introducerId
+class OrbitIntrosViewData {
+  final Map<String, List<IntroductionModel>> groupedIntros;
+  final List<FoldedIntroductionReviewItem>? foldedReviewItems;
   final Map<String, String> introducerUsernames;
+  final String ownPeerId;
+  final List<PendingGroupInvite> pendingGroupInvites;
+  final Set<String> processingIntroductionIds;
   final void Function(String introductionId) onAccept;
   final void Function(String introductionId) onPass;
-  final String ownPeerId;
+  final void Function(String introductionId)? onDelete;
   final void Function(String peerId)? onSendMessage;
   final Set<String> blockedPeerIds;
 }
@@ -1447,18 +1460,22 @@ class IntrosTab extends StatelessWidget {
 
 **Widget tree:**
 ```
-Column
-  Explanatory text ("These are people your friends know well...")
-  for each introducer group:
-    IntroGroupHeader ("From [username]")
-    for each intro in group:
-      IntroRow
-        displayUsername (the other party, not the introducer)
-        showActions (only if own status == pending && overall == pending)
-        Accept button / Pass button
-        "Waiting for [name]" status (if own status == accepted)
-        "Send Message" button (if mutualAccepted)
+OrbitScreen CustomScrollView
+  _buildIntroSliver(OrbitIntrosViewData)
+    SliverList
+      explanatory context row
+      [optional] pending group invite header + invite rows
+      [folded mode] IntroRow per target peer
+        target display name (peer-id fallback when blank)
+        all introducer attribution names
+        Accept / Pass while the viewer decision is pending
+        processing or post-response status
+      [legacy grouped mode] IntroGroupHeader + IntroRow per introduction
 ```
+
+Historical note: the standalone `IntrosTab` test-only leaf and its two
+dedicated widget-test files were retired by DTR-11. Its unique folded
+blank-name/long-name proof now runs against this live Orbit sliver.
 
 ### 10.4 IntroBanner (in-conversation widget)
 
@@ -1502,12 +1519,28 @@ classDiagram
         +onClose()
     }
 
-    class IntrosTab {
+    class OrbitWired {
+        -Map groupedIntros
+        -List foldedReviewItems
+        -acceptIntroduction()
+        -passIntroduction()
+        -deleteIntroduction()
+    }
+
+    class OrbitScreen {
+        +ValueListenable listProjectionListenable
+        -buildIntroSliver()
+        -buildIntroEntries()
+    }
+
+    class OrbitIntrosViewData {
         +Map groupedIntros
+        +List foldedReviewItems
         +Map introducerUsernames
+        +String ownPeerId
         +onAccept()
         +onPass()
-        +String ownPeerId
+        +onDelete()
         +onSendMessage()
         +Set blockedPeerIds
     }
@@ -1536,11 +1569,13 @@ classDiagram
     }
 
     FriendPickerWired --> FriendPickerScreen : "renders"
-    IntrosTab --> IntroRow : "renders per intro (test-covered standalone widget)"
+    OrbitWired --> OrbitIntrosViewData : "projects review state"
+    OrbitScreen --> OrbitIntrosViewData : "renders intro sliver"
+    OrbitScreen --> IntroRow : "renders grouped/folded rows"
     FriendPickerWired ..> sendIntroductions : "calls use case"
-    IntrosTab ..> acceptIntroduction : "calls on accept (test-covered path)"
-    IntrosTab ..> passIntroduction : "calls on pass (test-covered path)"
-    Note over IntrosTab: "IntrosTab is a retained standalone/test widget. OrbitWired passes OrbitIntrosViewData to OrbitScreen for active production rendering."
+    OrbitWired ..> acceptIntroduction : "calls on accept"
+    OrbitWired ..> passIntroduction : "calls on pass"
+    Note over OrbitScreen: "Active intro review owner; live widget proofs exercise its CustomScrollView/SliverList path."
 ```
 
 ---

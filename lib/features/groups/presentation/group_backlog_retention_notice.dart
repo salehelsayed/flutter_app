@@ -7,14 +7,12 @@ enum GroupBacklogRetentionNoticeKind { fullyExpired, mixedWindow }
 
 class GroupBacklogRetentionNotice {
   final GroupBacklogRetentionNoticeKind kind;
-  final String listSummary;
   final String bannerText;
   final String emptyTitle;
   final String emptySubtitle;
 
   const GroupBacklogRetentionNotice({
     required this.kind,
-    required this.listSummary,
     required this.bannerText,
     required this.emptyTitle,
     required this.emptySubtitle,
@@ -33,7 +31,6 @@ GroupBacklogRetentionNotice? groupBacklogRetentionNoticeFor(
   if (group.lastBacklogRetainedAt != null) {
     return GroupBacklogRetentionNotice(
       kind: GroupBacklogRetentionNoticeKind.mixedWindow,
-      listSummary: l10n.group_backlog_mixed_list_summary(windowDays),
       bannerText: l10n.group_backlog_mixed_banner(windowDays),
       emptyTitle: l10n.group_backlog_mixed_empty_title,
       emptySubtitle: l10n.group_backlog_mixed_empty_subtitle(windowDays),
@@ -42,7 +39,6 @@ GroupBacklogRetentionNotice? groupBacklogRetentionNoticeFor(
 
   return GroupBacklogRetentionNotice(
     kind: GroupBacklogRetentionNoticeKind.fullyExpired,
-    listSummary: l10n.group_backlog_expired_list_summary(windowDays),
     bannerText: l10n.group_backlog_expired_banner(windowDays),
     emptyTitle: l10n.group_backlog_expired_empty_title,
     emptySubtitle: l10n.group_backlog_expired_empty_subtitle(windowDays),

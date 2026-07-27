@@ -266,22 +266,23 @@ class AccountMigrationProductionBundleSource {
           sha256: metadataSha256,
         ),
       ];
-      final bundle = await MigrationEntryStreamSource(
-        fileReader: fileReader,
-        chunkSize: segmentSize,
-      ).build(
-        sessionId: request.sessionId,
-        bundleId: bundleId,
-        entries: entryInputs,
-        cleanupAfterSuccess: () async {
-          for (final path in [snapshot.destinationPath, metadataPath]) {
-            final file = File(path);
-            if (await file.exists()) {
-              await file.delete();
-            }
-          }
-        },
-      );
+      final bundle =
+          await MigrationEntryStreamSource(
+            fileReader: fileReader,
+            chunkSize: segmentSize,
+          ).build(
+            sessionId: request.sessionId,
+            bundleId: bundleId,
+            entries: entryInputs,
+            cleanupAfterSuccess: () async {
+              for (final path in [snapshot.destinationPath, metadataPath]) {
+                final file = File(path);
+                if (await file.exists()) {
+                  await file.delete();
+                }
+              }
+            },
+          );
       emitFlowEvent(
         layer: 'FL',
         event: 'ACCOUNT_MIGRATION_BUNDLE_SOURCE_BUILT',
@@ -292,10 +293,13 @@ class AccountMigrationProductionBundleSource {
           'totalBytes': bundle.manifest.totalBytes,
         },
       );
-      migrationBreadcrumb('ASSEMBLY_OK', fields: {
-        'segments': bundle.manifest.totalChunkCount,
-        'entries': bundle.manifest.entries.length,
-      });
+      migrationBreadcrumb(
+        'ASSEMBLY_OK',
+        fields: {
+          'segments': bundle.manifest.totalChunkCount,
+          'entries': bundle.manifest.entries.length,
+        },
+      );
       return bundle;
     } catch (error) {
       emitFlowEvent(
@@ -312,12 +316,15 @@ class AccountMigrationProductionBundleSource {
       // emitFlowEvent above is gated off in release builds, so this names the
       // failing assembly phase + reason in the device console for field
       // diagnostics. detail is value-redacted by the primitive.
-      migrationBreadcrumb('ASSEMBLY_FAIL', fields: {
-        'phase': phase,
-        'type': accountMigrationTransferErrorType(error),
-        'reason': accountMigrationBundleSourceFailureReason(error),
-        'detail': error,
-      });
+      migrationBreadcrumb(
+        'ASSEMBLY_FAIL',
+        fields: {
+          'phase': phase,
+          'type': accountMigrationTransferErrorType(error),
+          'reason': accountMigrationBundleSourceFailureReason(error),
+          'detail': error,
+        },
+      );
       rethrow;
     }
   }
@@ -1291,7 +1298,8 @@ class AccountMigrationProductionBundleReceiver
     final expectedLength = remaining < descriptor.chunkSize
         ? remaining
         : descriptor.chunkSize;
-    final expectedIsFinal = chunk.offset + expectedLength >= descriptor.sizeBytes;
+    final expectedIsFinal =
+        chunk.offset + expectedLength >= descriptor.sizeBytes;
     if (chunk.isFinal != expectedIsFinal) {
       return await _chunkOutcome(
         session,
@@ -1561,7 +1569,24 @@ class AccountMigrationProductionBundleReceiver
 
       stageTracker.begin('secureStaging');
       final metadata = await _readBundleMetadata(session, manifest);
-      for (final entry in metadata.secureStorageEntries) {
+      final stageableEntries = metadata.secureStorageEntries
+          .where((entry) => secureStorageStaging.supportsScope(entry.key.scope))
+          .toList(growable: false);
+      final droppedSharedEntryCount =
+          metadata.secureStorageEntries.length - stageableEntries.length;
+      if (droppedSharedEntryCount > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event:
+              'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_SHARED_SCOPE_ENTRIES_DROPPED',
+          details: {
+            'sessionId': manifest.sessionId,
+            'scope': MigrationSecureStoreScope.iosSharedAccessGroup.name,
+            'droppedCount': droppedSharedEntryCount,
+          },
+        );
+      }
+      for (final entry in stageableEntries) {
         await secureStorageStaging.stageValue(
           sessionId: manifest.sessionId,
           key: entry.key,
@@ -1572,9 +1597,7 @@ class AccountMigrationProductionBundleReceiver
 
       stageTracker.begin('stagedDbOpen');
       final databaseEntry = manifest.entries
-          .where(
-            (entry) => entry.kind == MigrationTransferEntryKind.database,
-          )
+          .where((entry) => entry.kind == MigrationTransferEntryKind.database)
           .single;
       final stagedDbPath = p.join(
         session.sessionDirectoryPath,
@@ -1607,10 +1630,8 @@ class AccountMigrationProductionBundleReceiver
       stageTracker.begin('authorityRecord');
       session.verifiedImport = _VerifiedBundleImport(
         staged: staged,
-        promotionKeys: _promotionKeysForSecureEntries(
-          metadata.secureStorageEntries,
-        ),
-        stagedKeys: metadata.secureStorageEntries
+        promotionKeys: _promotionKeysForSecureEntries(stageableEntries),
+        stagedKeys: stageableEntries
             .map((entry) => entry.key)
             .toList(growable: false),
       );
@@ -1692,13 +1713,27 @@ class AccountMigrationProductionBundleReceiver
         return null;
       }
       stageTracker.begin('cleanup');
-      await _closeVerifiedImport(verifiedImport);
-      await _deleteStagingValuesBestEffort(
+      Object? cleanupError;
+      try {
+        await _closeVerifiedImport(verifiedImport);
+      } on Object catch (error) {
+        cleanupError = error;
+      }
+      final secureStagingCleanupError = await _deleteStagingValuesBestEffort(
         sessionId: manifest.sessionId,
         keys: verifiedImport.stagedKeys,
       );
-      await _deleteSessionStagingBestEffort(session, manifest);
-      stageTracker.done();
+      final sessionStagingCleanupError = await _deleteSessionStagingBestEffort(
+        session,
+        manifest,
+      );
+      cleanupError ??= secureStagingCleanupError;
+      cleanupError ??= sessionStagingCleanupError;
+      if (cleanupError == null) {
+        stageTracker.done();
+      } else {
+        stageTracker.failed(cleanupError);
+      }
       return newActiveProof;
     } on Object catch (error) {
       stageTracker.failed(error);
@@ -1857,7 +1892,7 @@ class AccountMigrationProductionBundleReceiver
     );
   }
 
-  Future<void> _deleteStagingValuesBestEffort({
+  Future<Object?> _deleteStagingValuesBestEffort({
     required String sessionId,
     required Iterable<MigrationSecureStorageKey> keys,
   }) async {
@@ -1866,14 +1901,25 @@ class AccountMigrationProductionBundleReceiver
         sessionId: sessionId,
         registryKeys: keys,
       );
-    } catch (_) {
+      return null;
+    } on Object catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event:
+            'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_SECURE_STAGING_CLEANUP_FAILED',
+        details: {
+          'sessionId': sessionId,
+          'errorType': accountMigrationTransferErrorType(error),
+        },
+      );
       // Staging cleanup must not hide the already durable new-active proof.
+      return error;
     }
   }
 
   /// P2-8: after the cutover proof is durable, the session staging dir
   /// (entry files, staged DB, ledger, manifest copy) is residue — delete it.
-  Future<void> _deleteSessionStagingBestEffort(
+  Future<Object?> _deleteSessionStagingBestEffort(
     _BundleReceiveSession session,
     MigrationTransferManifest manifest,
   ) async {
@@ -1891,7 +1937,8 @@ class AccountMigrationProductionBundleReceiver
         event: 'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_STAGING_CLEANED',
         details: {'sessionId': manifest.sessionId},
       );
-    } catch (error) {
+      return null;
+    } on Object catch (error) {
       emitFlowEvent(
         layer: 'FL',
         event: 'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_STAGING_CLEANUP_FAILED',
@@ -1900,6 +1947,7 @@ class AccountMigrationProductionBundleReceiver
           'errorType': accountMigrationTransferErrorType(error),
         },
       );
+      return error;
     }
   }
 }

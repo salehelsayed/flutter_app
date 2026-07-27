@@ -1744,9 +1744,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get group_saved_safety => 'Gespeicherte Sicherheit';
 
   @override
-  String get group_card_no_messages => 'Noch keine Nachrichten';
-
-  @override
   String get group_security_encrypted => 'Ende-zu-Ende verschlüsselt';
 
   @override
@@ -1872,11 +1869,6 @@ class AppLocalizationsDe extends AppLocalizations {
       'Senden nicht möglich: Wir konnten keine sichere Einladung für diesen Freund vorbereiten.';
 
   @override
-  String group_backlog_mixed_list_summary(int days) {
-    return 'Älterer Rückstand nach $days Tagen abgelaufen';
-  }
-
-  @override
   String group_backlog_mixed_banner(int days) {
     return 'Ältere verpasste Nachrichten sind nach $days Tagen abgelaufen. Aktuelle Nachrichten wurden wiederhergestellt.';
   }
@@ -1888,11 +1880,6 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String group_backlog_mixed_empty_subtitle(int days) {
     return 'Ältere verpasste Nachrichten sind nach $days Tagen während deiner Abwesenheit abgelaufen.';
-  }
-
-  @override
-  String group_backlog_expired_list_summary(int days) {
-    return 'Verpasster Rückstand nach $days Tagen abgelaufen';
   }
 
   @override
@@ -1996,28 +1983,6 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get group_info_sign_metadata_failed =>
       'Aktualisierung der Gruppendaten konnte nicht signiert werden';
-
-  @override
-  String get groups_title => 'Gruppen';
-
-  @override
-  String get groups_empty_title => 'Noch keine Gruppen';
-
-  @override
-  String get groups_empty_desc => 'Erstelle eine Gruppe, um loszulegen';
-
-  @override
-  String get groups_pending_invites => 'Ausstehende Einladungen';
-
-  @override
-  String get groups_joined => 'Beigetretene Gruppen';
-
-  @override
-  String get groups_unknown_sender => 'Unbekannt';
-
-  @override
-  String get groups_no_joined =>
-      'Noch keine beigetretenen Gruppen. Nimm eine Einladung an, um sie hier hinzuzufügen.';
 
   @override
   String get group_type_discussion => 'Diskussion';
@@ -3294,6 +3259,14 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get account_migration_blocked_message =>
       'Dieses Telefon ist nach der Migration für das Öffnen des Kontos gesperrt. Lösche die lokale Kopie erst, wenn du sicher bist, dass das neue Telefon funktioniert.';
+
+  @override
+  String get account_migration_unfinished_move_title =>
+      'Kontoumzug nicht abgeschlossen';
+
+  @override
+  String get account_migration_unfinished_move_message =>
+      'Dieses Telefon hat dein Konto importiert, aber die endgültige Übergabe mit dem alten Telefon wurde nicht abgeschlossen. Behalte beide Telefone und lösche keine der beiden Kopien.';
 
   @override
   String get contact_profile_verified_peer => 'Verifizierter Kontakt';

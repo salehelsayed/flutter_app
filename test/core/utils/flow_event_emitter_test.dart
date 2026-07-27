@@ -276,41 +276,6 @@ KeyMaterialShouldNeverAppearInDiagnostics
           ),
           (
             path:
-                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
-            event: 'GROUP_ACTIVE_EXIT_SNAPSHOT_FAILED',
-            code: 'EX01',
-            phase: 'authority',
-          ),
-          (
-            path:
-                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
-            event: 'GROUP_ACTIVE_EXIT_PREWORK_FAILED',
-            code: 'EX03',
-            phase: 'notice',
-          ),
-          (
-            path:
-                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
-            event: 'GROUP_ACTIVE_EXIT_NATIVE_UNCERTAIN',
-            code: 'EX06',
-            phase: 'native',
-          ),
-          (
-            path:
-                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
-            event: 'GROUP_ACTIVE_EXIT_CLEANUP_INCOMPLETE',
-            code: 'EX07',
-            phase: 'cleanup',
-          ),
-          (
-            path:
-                'lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart',
-            event: 'GROUP_ACTIVE_EXIT_ROLLBACK_FAILED',
-            code: 'EX03',
-            phase: 'notice',
-          ),
-          (
-            path:
                 'lib/features/groups/application/group_exit_terminal_diagnostics.dart',
             event: 'GROUP_EXIT_DIAGNOSTIC_WRITE_FAILED',
             code: 'EX01',
@@ -341,27 +306,6 @@ KeyMaterialShouldNeverAppearInDiagnostics
             path:
                 'lib/features/groups/presentation/screens/group_info_wired.dart',
             event: 'GROUP_INFO_FL_DELETE_LOCAL_DISSOLVED_ERROR',
-            code: 'EX10',
-            phase: 'local_delete',
-          ),
-          (
-            path:
-                'lib/features/groups/presentation/screens/group_list_wired.dart',
-            event: 'GROUP_LIST_FL_STUCK_EXIT_CLASSIFY_ERROR',
-            code: 'EX01',
-            phase: 'authority',
-          ),
-          (
-            path:
-                'lib/features/groups/presentation/screens/group_list_wired.dart',
-            event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
-            code: 'EX99',
-            phase: 'authority',
-          ),
-          (
-            path:
-                'lib/features/groups/presentation/screens/group_list_wired.dart',
-            event: 'GROUP_LIST_FL_DELETE_SELF_REMOVED_GROUP_ERROR',
             code: 'EX10',
             phase: 'local_delete',
           ),

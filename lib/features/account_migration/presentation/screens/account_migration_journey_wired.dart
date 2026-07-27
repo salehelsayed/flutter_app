@@ -46,6 +46,7 @@ class AccountMigrationJourneyWired extends StatefulWidget {
   final AccountMigrationReceiverStopFn? stopReceiver;
   final AccountMigrationReceiverEvents? receiverEvents;
   final Future<void> Function()? onReceiverActivated;
+  final bool receiverActivationOwnedByParent;
   final BackgroundPreference backgroundPreference;
 
   /// Holds the platform keep-alive (Android foreground service / iOS
@@ -62,6 +63,7 @@ class AccountMigrationJourneyWired extends StatefulWidget {
     this.stopReceiver,
     this.receiverEvents,
     this.onReceiverActivated,
+    this.receiverActivationOwnedByParent = false,
     this.transferKeepAlive,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   }) : role = AccountMigrationRole.newPhone,
@@ -89,7 +91,8 @@ class AccountMigrationJourneyWired extends StatefulWidget {
        startReceiver = null,
        stopReceiver = null,
        receiverEvents = null,
-       onReceiverActivated = null;
+       onReceiverActivated = null,
+       receiverActivationOwnedByParent = false;
 
   @override
   State<AccountMigrationJourneyWired> createState() =>
@@ -112,6 +115,7 @@ class _AccountMigrationJourneyWiredState
   var _transferRunId = 0;
   var _transferCancellationRequested = false;
   var _transferRunning = false;
+  var _receiverFinalizationLocked = false;
   String? _activeReceiverSessionId;
   StreamSubscription<AccountMigrationReceiverEvent>? _receiverEventsSub;
   late final MigrationTransferKeepAlive _transferKeepAlive =
@@ -595,6 +599,9 @@ class _AccountMigrationJourneyWiredState
   }
 
   void _retryTransfer() {
+    if (_receiverFinalizationLocked) {
+      return;
+    }
     _transferRunId += 1;
     _transferRunning = false;
     _transferCancellationRequested = false;
@@ -615,6 +622,9 @@ class _AccountMigrationJourneyWiredState
   }
 
   void _handleClose() {
+    if (_receiverFinalizationLocked) {
+      return;
+    }
     // Leaving the journey must cancel an in-flight old-phone transfer run so
     // its export network pause is restored at the next checkpoint instead of
     // gating the whole account until the run times out on its own.
@@ -634,33 +644,40 @@ class _AccountMigrationJourneyWiredState
       _transferCancellationRequested = true;
     }
     unawaited(_receiverEventsSub?.cancel());
-    _stopActiveReceiver();
+    if (_receiverFinalizationLocked) {
+      _releaseReceiverKeepAlive();
+    } else {
+      _stopActiveReceiver();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AccountMigrationJourneyScreen(
-      role: widget.role,
-      qrState: _qrState,
-      oldPhoneState: _oldPhoneState,
-      progressStage: _progressStage,
-      progressErrorText: _progressErrorText,
-      transferProgressFraction:
-          _progressStage == AccountMigrationProgressStage.transferringDatabase
-          ? _transferProgressFraction
-          : null,
-      transferProgressDetail:
-          _progressStage == AccountMigrationProgressStage.transferringDatabase
-          ? _transferProgressDetail
-          : null,
-      onClose: _handleClose,
-      onRetryQr: _loadNewPhoneQr,
-      onScanQr: _handleScanQr,
-      onStartTransfer: _startTransfer,
-      onCancelTransfer: _cancelTransfer,
-      onRetryTransfer: _retryTransfer,
-      backgroundPreference: widget.backgroundPreference,
+    return PopScope(
+      canPop: !_receiverFinalizationLocked,
+      child: AccountMigrationJourneyScreen(
+        role: widget.role,
+        qrState: _qrState,
+        oldPhoneState: _oldPhoneState,
+        progressStage: _progressStage,
+        progressErrorText: _progressErrorText,
+        transferProgressFraction:
+            _progressStage == AccountMigrationProgressStage.transferringDatabase
+            ? _transferProgressFraction
+            : null,
+        transferProgressDetail:
+            _progressStage == AccountMigrationProgressStage.transferringDatabase
+            ? _transferProgressDetail
+            : null,
+        onClose: _receiverFinalizationLocked ? null : _handleClose,
+        onRetryQr: _receiverFinalizationLocked ? null : _loadNewPhoneQr,
+        onScanQr: _handleScanQr,
+        onStartTransfer: _startTransfer,
+        onCancelTransfer: _cancelTransfer,
+        onRetryTransfer: _receiverFinalizationLocked ? null : _retryTransfer,
+        backgroundPreference: widget.backgroundPreference,
+      ),
     );
   }
 
@@ -752,10 +769,7 @@ class _AccountMigrationJourneyWiredState
   }
 
   void _stopActiveReceiver() {
-    if (_receiverKeepAliveHeld) {
-      _receiverKeepAliveHeld = false;
-      unawaited(_transferKeepAlive.release(reason: 'new_phone_receiver'));
-    }
+    _releaseReceiverKeepAlive();
     final sessionId = _activeReceiverSessionId;
     final stopReceiver = widget.stopReceiver;
     if (sessionId == null || stopReceiver == null) {
@@ -763,6 +777,13 @@ class _AccountMigrationJourneyWiredState
     }
     _activeReceiverSessionId = null;
     unawaited(stopReceiver(sessionId));
+  }
+
+  void _releaseReceiverKeepAlive() {
+    if (_receiverKeepAliveHeld) {
+      _receiverKeepAliveHeld = false;
+      unawaited(_transferKeepAlive.release(reason: 'new_phone_receiver'));
+    }
   }
 
   void _handleTransferProgress(int runId, AccountMigrationTransferStep step) {
@@ -835,6 +856,7 @@ class _AccountMigrationJourneyWiredState
             return;
           }
           setState(() {
+            _receiverFinalizationLocked = true;
             _progressStage = AccountMigrationProgressStage.checking;
             _progressErrorText = null;
           });
@@ -842,19 +864,28 @@ class _AccountMigrationJourneyWiredState
         }
       case AccountMigrationReceiverEventType.importVerified:
         setState(() {
+          _receiverFinalizationLocked = true;
           _progressStage = AccountMigrationProgressStage.checking;
           _progressErrorText = null;
         });
         return;
       case AccountMigrationReceiverEventType.activated:
-        _stopActiveReceiver();
+        if (widget.receiverActivationOwnedByParent) {
+          _activeReceiverSessionId = null;
+          _releaseReceiverKeepAlive();
+        } else {
+          _stopActiveReceiver();
+        }
         setState(() {
+          _receiverFinalizationLocked = widget.receiverActivationOwnedByParent;
           _progressStage = AccountMigrationProgressStage.completed;
           _progressErrorText = null;
         });
-        final callback = widget.onReceiverActivated;
-        if (callback != null) {
-          unawaited(callback());
+        if (!widget.receiverActivationOwnedByParent) {
+          final callback = widget.onReceiverActivated;
+          if (callback != null) {
+            unawaited(callback());
+          }
         }
         return;
       case AccountMigrationReceiverEventType.failed:

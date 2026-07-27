@@ -10,9 +10,9 @@
 /// a booted simulator and asserts those behaviors under real iOS.
 ///
 /// Proves:
-///   * Item 3 — GroupConversationScreen AND GroupListScreen render time-of-day
-///     per the active locale: de → 24h "14:05" (no AM/PM), en → "2:05 PM",
-///     ar → Eastern-Arabic digits — on real iOS ICU data.
+///   * Item 3 — GroupConversationScreen renders time-of-day per the active
+///     locale: de → 24h "14:05" (no AM/PM), en → "2:05 PM", ar →
+///     Eastern-Arabic digits — on real iOS ICU data.
 ///   * Item 5a — on the real device viewport, `jumpTo(0)` on the reversed list
 ///     (what `_scrollToLiveEdge` performs) lands the newest message at the live
 ///     edge, on-screen.
@@ -31,7 +31,6 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
@@ -147,29 +146,6 @@ void main() {
       expect(expected, isNot(contains('14:05')));
       expect(find.textContaining(expected), findsOneWidget);
     });
-
-    testWidgets('de group-list row renders 24-hour time, no AM/PM', (
-      tester,
-    ) async {
-      final group = chatGroup();
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('de'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: GroupListScreen(
-            groups: [group],
-            latestMessages: {group.id: messageAt('msg-list', localAfternoon)},
-            onGroupTap: (_) {},
-            onBack: () {},
-          ),
-        ),
-      );
-      await pumpFrames(tester);
-
-      expect(find.textContaining('14:05'), findsOneWidget);
-      expect(find.textContaining('PM'), findsNothing);
-    });
   });
 
   group('Finding 11 items 5a & 2 — scroll geometry (real device viewport)', () {
@@ -183,38 +159,39 @@ void main() {
       ),
     );
 
-    testWidgets('item 5a — jumpTo(0) lands the newest message at the live edge', (
-      tester,
-    ) async {
-      final controller = ScrollController();
-      addTearDown(controller.dispose);
+    testWidgets(
+      'item 5a — jumpTo(0) lands the newest message at the live edge',
+      (tester) async {
+        final controller = ScrollController();
+        addTearDown(controller.dispose);
 
-      await tester.pumpWidget(
-        conversationApp(
-          locale: const Locale('en'),
-          messages: fortyMessages(),
-          scrollController: controller,
-        ),
-      );
-      await pumpFrames(tester);
+        await tester.pumpWidget(
+          conversationApp(
+            locale: const Locale('en'),
+            messages: fortyMessages(),
+            scrollController: controller,
+          ),
+        );
+        await pumpFrames(tester);
 
-      // Scroll up into history.
-      controller.jumpTo(controller.position.maxScrollExtent / 2);
-      await pumpFrames(tester);
-      expect(controller.offset, greaterThan(32));
+        // Scroll up into history.
+        controller.jumpTo(controller.position.maxScrollExtent / 2);
+        await pumpFrames(tester);
+        expect(controller.offset, greaterThan(32));
 
-      // What _scrollToLiveEdge ultimately performs.
-      controller.jumpTo(0);
-      await pumpFrames(tester);
+        // What _scrollToLiveEdge ultimately performs.
+        controller.jumpTo(0);
+        await pumpFrames(tester);
 
-      expect(controller.offset, closeTo(0, 1.0));
-      final newest = find.text('Message 39');
-      expect(newest, findsOneWidget);
-      final listRect = tester.getRect(
-        find.byKey(const ValueKey('group-messages')),
-      );
-      expect(rectWithin(tester.getRect(newest), listRect), isTrue);
-    });
+        expect(controller.offset, closeTo(0, 1.0));
+        final newest = find.text('Message 39');
+        expect(newest, findsOneWidget);
+        final listRect = tester.getRect(
+          find.byKey(const ValueKey('group-messages')),
+        );
+        expect(rectWithin(tester.getRect(newest), listRect), isTrue);
+      },
+    );
 
     testWidgets(
       'item 2 — ensureVisible on the highlighted anchor brings an off-screen row into view',
@@ -251,7 +228,10 @@ void main() {
         // Instant (Duration.zero) so the await completes without needing
         // concurrent frame pumps — an animated ensureVisible deadlocks the
         // live integration binding. Geometry verification is unaffected.
-        await Scrollable.ensureVisible(anchorKey.currentContext!, alignment: 0.5);
+        await Scrollable.ensureVisible(
+          anchorKey.currentContext!,
+          alignment: 0.5,
+        );
         await pumpFrames(tester);
 
         final highlight = find.byKey(const ValueKey('grp-highlight-msg-0'));

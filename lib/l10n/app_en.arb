@@ -839,7 +839,6 @@
   "group_identity_changed": "Identity changed",
   "group_current_safety": "Current safety",
   "group_saved_safety": "Saved safety",
-  "group_card_no_messages": "No messages yet",
   "group_security_encrypted": "End-to-end encrypted",
   "group_security_pending": "Encryption pending",
   "group_security_no_key": "No group key on this device",
@@ -920,14 +919,6 @@
   "invite_cannot_send_group_key_missing_snackbar": "Cannot send: this group is missing the secure invite key.",
   "invite_cannot_send_invalid_payload_snackbar": "Cannot send: this invite could not be prepared.",
   "invite_cannot_send_generic_snackbar": "Cannot send: we could not prepare a secure invite for this friend.",
-  "group_backlog_mixed_list_summary": "Older backlog expired after {days} days",
-  "@group_backlog_mixed_list_summary": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
   "group_backlog_mixed_banner": "Older missed messages expired after {days} days. Recent messages were recovered.",
   "@group_backlog_mixed_banner": {
     "placeholders": {
@@ -939,14 +930,6 @@
   "group_backlog_mixed_empty_title": "Recent messages recovered",
   "group_backlog_mixed_empty_subtitle": "Older missed messages expired after {days} days while you were away.",
   "@group_backlog_mixed_empty_subtitle": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
-  "group_backlog_expired_list_summary": "Missed backlog expired after {days} days",
-  "@group_backlog_expired_list_summary": {
     "placeholders": {
       "days": {
         "type": "int"
@@ -993,13 +976,6 @@
   "group_info_member_not_found": "Member not found",
   "group_info_upload_photo_failed": "Failed to upload group photo",
   "group_info_sign_metadata_failed": "Failed to sign group metadata update",
-  "groups_title": "Groups",
-  "groups_empty_title": "No groups yet",
-  "groups_empty_desc": "Create a group to get started",
-  "groups_pending_invites": "Pending Invites",
-  "groups_joined": "Joined Groups",
-  "groups_unknown_sender": "Unknown",
-  "groups_no_joined": "No joined groups yet. Accept an invite to add it here.",
   "group_type_discussion": "Discussion",
   "group_type_announce": "Announce",
   "group_type_qa": "Q&A",
@@ -1735,6 +1711,8 @@
   },
   "account_migration_blocked_title": "Account moved to another phone",
   "account_migration_blocked_message": "This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.",
+  "account_migration_unfinished_move_title": "Account move not finished",
+  "account_migration_unfinished_move_message": "This phone imported your account, but the final handoff with the old phone did not finish. Keep both phones and do not erase either copy.",
   "contact_profile_verified_peer": "Verified peer",
   "contact_profile_blocked": "Blocked",
   "contact_profile_archived": "Archived",

@@ -1,6 +1,6 @@
 # MessageContextOverlay Feature -- Test Inventory
 
-**Date:** 2026-04-10 (reconciled)
+**Date:** 2026-04-10 (DTR-11 current-owner reconciliation: 2026-07-27)
 **Scope:** All overlay-focused widget and screen tests, plus adjacent reaction/reply/delete/edit application and integration tests used to close row-owned MessageContextOverlay matrix gaps.
 
 ---
@@ -19,10 +19,12 @@ flutter test --no-pub test/features/conversation/presentation/widgets/message_co
 flutter test --no-pub test/features/conversation/presentation/widgets/reaction_bar_test.dart
 ```
 
-**Reaction display widget tests:**
+**Inline reaction-chip widget tests (live LetterCard owner):**
 
 ```sh
-flutter test --no-pub test/features/conversation/presentation/widgets/reaction_display_test.dart
+flutter test --no-pub \
+  test/features/conversation/presentation/widgets/letter_card_test.dart \
+  --plain-name 'inline reactions'
 ```
 
 **Full emoji picker widget tests:**
@@ -111,7 +113,6 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 |----------|------:|-----------:|
 | Widget (MessageContextOverlay) | 1 | 14 |
 | Widget (ReactionBar) | 1 | 6 |
-| Widget (ReactionDisplay) | 1 | 5 |
 | Widget (FullEmojiPicker) | 1 | 3 |
 | Widget (MessageBubble — overlay-adjacent) | 1 | 14 of 35 |
 | Widget (LetterCard — overlay-adjacent) | 1 | 13 of 46 |
@@ -125,7 +126,7 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 | Group Conversation Screen (overlay integration) | 1 | 6 |
 | Group Conversation Wired (overlay + reaction/quote) | 1 | 7 of 62 |
 | Notification Open Integration | 1 | 8 |
-| **Primary Total** | **16** | **183** |
+| **Primary Total** | **15** | **178** |
 | Adjacent application & integration tests (1:1) | 22 | see §9 |
 | Adjacent application & integration tests (group) | 16 | see §10 |
 
@@ -165,16 +166,14 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 | 5 | fires onDismiss on barrier tap | Barrier tap invokes `onDismiss` |
 | 6 | scale animation runs (0.8→1.0, 200ms) | Entry animation timing and scale range verified |
 
-### 1.3 ReactionDisplay
-**File:** `test/features/conversation/presentation/widgets/reaction_display_test.dart`
+### 1.3 Inline reaction chips (live LetterCard owner)
+**File:** `test/features/conversation/presentation/widgets/letter_card_test.dart`
 
-| # | Test | What it covers |
-|---|------|----------------|
-| 1 | renders nothing when reactions empty | No chip widgets rendered for empty list |
-| 2 | renders emoji chips grouped by emoji with counts | Same-emoji reactions collapse into one chip with the grouped count |
-| 3 | highlights chip when ownPeerId matches sender | Own-reaction chip shows highlight styling |
-| 4 | fires onReactionTap with emoji string on tap | Chip tap emits the correct emoji string |
-| 5 | renders non-preset emoji chips inline without fallback | Non-preset emoji renders inline without fallback text or loss |
+DTR-11 retired the former standalone, test-only reaction renderer and its five
+dedicated tests. The live `LetterCard._buildReactionChipWidgets()` proofs are
+listed in §1.6: empty-reaction footer behavior, emoji grouping/counts,
+own-reaction highlighting, chip taps, and arbitrary emoji rendering all execute
+on the production conversation-card path.
 
 ### 1.4 FullEmojiPicker
 **File:** `test/features/conversation/presentation/widgets/full_emoji_picker_test.dart`
@@ -198,9 +197,9 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 | 5 | Arabic quote text drives RTL on quote bar | RTL directionality for Arabic quoted text |
 | 6 | English quote text drives LTR on quote bar | LTR directionality for English quoted text |
 | 7 | renders inline reaction chips when reactions provided | Inline reaction chips render below message text |
-| 8 | no ReactionDisplay when reactions empty | No chip widgets when reactions list is empty |
+| 8 | no reaction chips when reactions empty | No chip widgets when reactions list is empty |
 | 9 | long-press fires onLongPress callback | Long-press gesture invokes the callback that opens the overlay |
-| 10 | no ReactionDisplay widget when reactions provided | Standalone ReactionDisplay absent in inline layout |
+| 10 | reaction chips render inline when reactions are provided | Inline chip ownership stays on the message bubble |
 | 11 | onReactionTap fires with emoji when chip tapped | Inline chip tap emits emoji to shared reaction state machine |
 | 12 | no reactions still keeps timestamp in footer | Timestamp stays in footer row when reactions are absent |
 | 13 | multiple reaction emojis render inline with counts | Multiple grouped emoji chips render with correct counts |
@@ -221,7 +220,7 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 | 7 | fires onReactionTap when chip tapped | Inline chip tap emits emoji to shared reaction state machine |
 | 8 | reactions and timestamp share the same Row | Reaction chips and timestamp coexist in the footer row |
 | 9 | no reactions still right-aligns timestamp in footer Row | Timestamp alignment preserved when reactions are absent |
-| 10 | no standalone ReactionDisplay when reactions provided | Standalone display absent in inline layout |
+| 10 | reactions render inline in the footer | Live LetterCard chip owner renders reactions in the footer |
 | 11 | multiple reaction emojis render inline with counts | Multiple grouped emoji chips render with correct counts |
 | 12 | own reaction chip has teal border inline | Own-reaction chip shows teal highlight border |
 | 13 | shows retry and delete controls when callbacks are wired | Failed-message retry/delete inline controls render |
@@ -233,11 +232,11 @@ flutter test --no-pub integration_test/notification_open_ui_smoke_test.dart -d m
 | # | Test | What it covers |
 |---|------|----------------|
 | 1 | active quote preview is rendered in collapsed mode | Quote preview bar renders inside collapsed feed card |
-| 2 | open-mode card renders ReactionDisplay when reactions exist | Reaction chips render in open-mode card body |
+| 2 | open-mode card renders reaction chips when reactions exist | Reaction chips render in open-mode card body |
 | 3 | long-press on message in open-mode fires onMessageLongPress | Long-press gesture invokes the callback that opens the overlay |
 | 4 | long-press on message in expanded collapsed card provides message and bubble context | Long-press in expanded collapsed card forwards message + bubble context |
 | 5 | onReactionTap fires with message ID and emoji | Inline chip tap emits emoji to shared reaction state machine |
-| 6 | expanded collapsed card renders ReactionDisplay when reactions exist | Reaction chips render in expanded collapsed card body |
+| 6 | expanded collapsed card renders reaction chips when reactions exist | Reaction chips render in expanded collapsed card body |
 
 ### 1.8 ScrollableMessagePreview (overlay-adjacent)
 **File:** `test/features/feed/presentation/widgets/scrollable_message_preview_test.dart`

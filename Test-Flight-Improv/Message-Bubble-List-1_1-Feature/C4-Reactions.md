@@ -8,6 +8,11 @@ in `ConversationWired`. Tapping the same emoji again toggles it off (removes
 the reaction). One reaction per user per message (UNIQUE constraint on
 `message_id + sender_peer_id`).
 
+`LetterCard._buildReactionChipWidgets()` is the sole live inline reaction-chip
+owner. DTR-11 retired the former standalone, test-only reaction renderer after
+its grouping, count, own-highlight, and tap contracts were confirmed on the
+active LetterCard path.
+
 ---
 
 ## Level 1 -- System Context
@@ -86,7 +91,6 @@ graph TB
             RB["ReactionBar"]
             FEP["showFullEmojiPicker()"]
             LC["LetterCard"]
-            RD["ReactionDisplay (standalone)"]
             CS["ConversationScreen"]
             CW["ConversationWired"]
         end
@@ -167,7 +171,6 @@ graph TB
 | **ReactionBar** | StatefulWidget | `presentation/widgets/reaction_bar.dart` | 6 preset emojis + "+" button. Scale animation 0.8->1.0 (200ms, easeOut). Glassmorphic styling. `inline: true` mode is what the overlay uses. |
 | **showFullEmojiPicker()** | Top-level function (internal `_FullEmojiPicker` StatefulWidget is private) | `presentation/widgets/full_emoji_picker.dart` | Modal bottom sheet with 7 categories (Smileys, People, Animals, Food, Travel, Objects, Symbols). GridView of emojis. Returns `Future<String?>` via `showModalBottomSheet<String>`. |
 | **LetterCard** | StatelessWidget | `presentation/widgets/letter_card.dart` | Full-width glassmorphic card. Renders inline reaction chips in footer via `_buildReactionChipWidgets()`. Groups by emoji, shows count, own-reaction teal border. |
-| **ReactionDisplay** | StatelessWidget | `presentation/widgets/reaction_display.dart` | Standalone reaction chip renderer. Groups reactions by emoji and highlights own reactions with teal border RGBA(78,205,196,0.30). It is currently not used by the active `ConversationScreen -> LetterCard` path. |
 | **ConversationScreen** | StatefulWidget | `presentation/screens/conversation_screen.dart` | Screen-level overlay orchestration. `_showMessageContextOverlay()` resolves `ownReaction` from `widget.reactions[message.id]`, computes action availability, shows the dialog, and passes `message.id` back through callbacks. |
 | **ConversationWired** | StatefulWidget | `presentation/screens/conversation_wired.dart` | State management. Owns `_reactions: Map<String, List<MessageReaction>>`. `_onReactionSelected()` implements optimistic update + toggle logic with no rollback on failure. `_loadReactions()` is only called after `_loadInitialPage()`. |
 
@@ -226,7 +229,6 @@ graph TD
 
     subgraph "Inline Presentation"
         LC_chips["LetterCard._buildReactionChipWidgets()"]
-        RD_build["ReactionDisplay.build()"]
     end
 
     subgraph "Send Path"
@@ -642,7 +644,7 @@ List<Widget> _buildReactionChipWidgets() {
 }
 ```
 
-Rendered inside the LetterCard's footer area as a `Wrap(spacing: 6, runSpacing: 4, ...)`. This path does not instantiate `ReactionDisplay`; `LetterCard` renders the chips directly. Tapping an inline chip invokes `onReactionTap(emoji)`, and `ConversationScreen` then forwards that to `widget.onReactionSelected(message.id, emoji)` -- the same upstream toggle logic used by the overlay path.
+Rendered inside the LetterCard's footer area as a `Wrap(spacing: 6, runSpacing: 4, ...)`. `LetterCard` is the live inline-chip owner. Tapping a chip invokes `onReactionTap(emoji)`, and `ConversationScreen` then forwards that to `widget.onReactionSelected(message.id, emoji)` -- the same upstream toggle logic used by the overlay path.
 
 ### 4.7 Wire Format -- Reaction Payload
 
@@ -1015,13 +1017,6 @@ classDiagram
         +inline: bool
     }
 
-    class ReactionDisplay {
-        +reactions: List~MessageReaction~
-        +ownPeerId: String
-        +onReactionTap: Function?
-        +padding: EdgeInsetsGeometry
-    }
-
     class SendReactionResult {
         <<enumeration>>
         success
@@ -1061,7 +1056,6 @@ classDiagram
     ReactionChange --> MessageReaction : contains?
     ReactionChange --> ReactionChangeType
     ReactionPayload --> MessageReaction : toMessageReaction()
-    ReactionDisplay --> MessageReaction : renders
 ```
 
 ---
@@ -1083,10 +1077,13 @@ classDiagram
 | Application | `lib/features/conversation/application/reaction_listener.dart` | ReactionListener |
 | Application | `lib/features/conversation/application/handle_incoming_reaction_use_case.dart` | handleIncomingReaction() |
 | Presentation | `lib/features/conversation/presentation/widgets/reaction_bar.dart` | ReactionBar (6 emojis + plus) |
-| Presentation | `lib/features/conversation/presentation/widgets/reaction_display.dart` | Standalone reaction chip widget; not wired into the active `LetterCard` path |
 | Presentation | `lib/features/conversation/presentation/widgets/full_emoji_picker.dart` | FullEmojiPicker (modal bottom sheet) |
 | Presentation | `lib/features/conversation/presentation/widgets/letter_card.dart` | LetterCard (inline chips via _buildReactionChipWidgets) |
 | Presentation | `lib/features/conversation/presentation/widgets/message_context_overlay.dart` | MessageContextOverlay (hosts ReactionBar) |
 | Presentation | `lib/features/conversation/presentation/screens/conversation_screen.dart` | ConversationScreen (_showMessageContextOverlay, action gating, messageId callback handoff) |
 | Presentation | `lib/features/conversation/presentation/screens/conversation_wired.dart` | ConversationWired (_onReactionSelected, _reactions state, initial-page-only reaction preload) |
 | Router | `lib/core/services/incoming_message_router.dart` | IncomingMessageRouter (routes 'message_reaction' type) |
+
+Historical note: DTR-11 removed the former standalone reaction-chip source and
+its dedicated SUT-only test. Live presentation and proof remain on
+`LetterCard._buildReactionChipWidgets()` and `letter_card_test.dart`.

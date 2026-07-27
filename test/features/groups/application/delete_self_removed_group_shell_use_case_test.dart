@@ -796,14 +796,6 @@ class _FakeShellRepository implements SelfRemovedGroupShellRepository {
   }) => throw UnimplementedError();
 
   @override
-  Future<void> commitFreshDirectJoin({
-    required GroupModel group,
-    required GroupMember selfMember,
-    required GroupKeyInfo key,
-    required Future<void> Function() joinNative,
-  }) => throw UnimplementedError();
-
-  @override
   Future<SelfRemovedAcceptedRollbackOutcome>
   rollbackFreshAcceptedMaterialization({
     required String groupId,

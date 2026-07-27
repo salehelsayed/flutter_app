@@ -8498,15 +8498,161 @@ void main() {
       expect(verdict.detail, contains('gm014 verdicts valid'));
     });
 
-    test('accepts valid GM-015 admin self-removal policy verdicts', () {
-      final verdict = evaluateGroupMultiPartyVerdicts(
-        scenario: 'gm015',
-        relayAddresses: expectedMultiPartyRelayAddresses,
-        verdicts: _validGm015Verdicts(),
-      );
+    group('DTR-10 durable group exit criteria', () {
+      test('accepts H-01 exact durable exit evidence', () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_voluntary_leave_convergence',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validH01Verdicts(),
+        );
 
-      expect(verdict.ok, isTrue);
-      expect(verdict.detail, contains('gm015 verdicts valid'));
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_voluntary_leave_convergence verdicts valid'),
+        );
+      });
+
+      test('rejects H-01 missing or duplicate durable exit phases', () {
+        final invalid = _validH01Verdicts();
+        final charlieProof = Map<String, Object?>.from(
+          invalid[2]['h01VoluntaryLeaveConvergenceProof'] as Map,
+        );
+        final evidence =
+            Map<String, Object?>.from(
+                charlieProof['durableExitEvidence'] as Map,
+              )
+              ..remove('sourceEventId')
+              ..['requestCount'] = 2
+              ..['noticeAttemptCount'] = 2
+              ..['nativeLeaveCount'] = 0
+              ..['pendingBroadcastPresentAfter'] = true;
+        charlieProof['durableExitEvidence'] = evidence;
+        invalid[2] = {
+          ...invalid[2],
+          'h01VoluntaryLeaveConvergenceProof': charlieProof,
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_voluntary_leave_convergence',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: invalid,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: h01VoluntaryLeaveConvergenceProof.durableExitEvidence.'
+            'sourceEventId must be non-empty',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: h01VoluntaryLeaveConvergenceProof.durableExitEvidence.'
+            'requestCount must be 1',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: h01VoluntaryLeaveConvergenceProof.durableExitEvidence.'
+            'noticeAttemptCount must be 1',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: h01VoluntaryLeaveConvergenceProof.durableExitEvidence.'
+            'nativeLeaveCount must be 1',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: h01VoluntaryLeaveConvergenceProof.durableExitEvidence.'
+            'pendingBroadcastPresentAfter must be false',
+          ),
+        );
+      });
+
+      test('accepts GM-015 durable last-admin refusal evidence', () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'gm015',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validGm015Verdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(verdict.detail, contains('gm015 verdicts valid'));
+      });
+
+      test('rejects GM-015 post-authority durable or native work', () {
+        final invalid = _validGm015Verdicts();
+        final aliceProof = Map<String, Object?>.from(
+          invalid[0]['gm015AdminSelfRemovalPolicyProof'] as Map,
+        );
+        final evidence =
+            Map<String, Object?>.from(aliceProof['durableExitEvidence'] as Map)
+              ..['actionId'] = 'forbidden-gm015-action'
+              ..['retryCount'] = 1
+              ..['noticePrepareCount'] = 1
+              ..['rotationAttemptCount'] = 1
+              ..['rotationOutcome'] = 'completed'
+              ..['nativeLeaveCount'] = 1
+              ..['intentPresentAfter'] = true
+              ..['bridgeGroupLeaveCountAfter'] = 1
+              ..['bridgeGroupLeaveCountDelta'] = 1;
+        aliceProof['durableExitEvidence'] = evidence;
+        invalid[0] = {
+          ...invalid[0],
+          'gm015AdminSelfRemovalPolicyProof': aliceProof,
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'gm015',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: invalid,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: gm015AdminSelfRemovalPolicyProof.durableExitEvidence.'
+            'actionId must be absent',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'alice: gm015AdminSelfRemovalPolicyProof.durableExitEvidence.'
+            'retryCount must be 0',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'alice: gm015AdminSelfRemovalPolicyProof.durableExitEvidence.'
+            'noticePrepareCount must be 0',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'alice: gm015AdminSelfRemovalPolicyProof.durableExitEvidence.'
+            'nativeLeaveCount must be 0',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'alice: gm015AdminSelfRemovalPolicyProof.durableExitEvidence.'
+            'bridgeGroupLeaveCountDelta must be 0',
+          ),
+        );
+      });
     });
 
     test('accepts valid GM-016 removed member unsubscribe verdicts', () {
@@ -10489,58 +10635,6 @@ void main() {
       expect(
         rejected.detail,
         contains('alice: GM-015 writerless zombie group has no active admin'),
-      );
-    });
-
-    test('rejects GM-015 ambiguous success and missing clear reasons', () {
-      final invalid = _validGm015Verdicts();
-      final aliceProof =
-          Map<String, Object?>.from(
-              invalid[0]['gm015AdminSelfRemovalPolicyProof'] as Map,
-            )
-            ..['selfRemovalOutcome'] = 'success'
-            ..['selfRemovalReason'] = ''
-            ..['voluntaryLeaveBroadcastOutcome'] = 'success'
-            ..['voluntaryLeaveBroadcastSkipReason'] = ''
-            ..['leaveOutcome'] = 'success'
-            ..['leaveReason'] = '';
-      invalid[0] = {
-        ...invalid[0],
-        'gm015AdminSelfRemovalPolicyProof': aliceProof,
-      };
-
-      final rejected = evaluateGroupMultiPartyVerdicts(
-        scenario: 'gm015',
-        relayAddresses: expectedMultiPartyRelayAddresses,
-        verdicts: invalid,
-      );
-
-      expect(rejected.ok, isFalse);
-      expect(
-        rejected.detail,
-        contains(
-          'alice: gm015AdminSelfRemovalPolicyProof.selfRemovalOutcome must be blocked',
-        ),
-      );
-      expect(
-        rejected.detail,
-        contains('alice: missing GM-015 clear self-removal block reason'),
-      );
-      expect(
-        rejected.detail,
-        contains(
-          'alice: gm015AdminSelfRemovalPolicyProof.leaveOutcome must be blocked',
-        ),
-      );
-      expect(
-        rejected.detail,
-        contains('alice: missing GM-015 clear leave block reason'),
-      );
-      expect(
-        rejected.detail,
-        contains(
-          'alice: gm015AdminSelfRemovalPolicyProof.voluntaryLeaveBroadcastSkipReason must be lastAdmin',
-        ),
       );
     });
 
@@ -30947,6 +31041,107 @@ List<Map<String, dynamic>> _validGm014Verdicts() {
   ];
 }
 
+List<Map<String, dynamic>> _validH01Verdicts() {
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  const sharedProof = <String, Object?>{
+    'rowId': 'H-01',
+    'scenario': 'private_voluntary_leave_convergence',
+    'charlieExcludedFromRoster': true,
+    'leaveWasSilent': true,
+  };
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'private_voluntary_leave_convergence',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'h01-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      extra: const <String, Object?>{
+        'h01VoluntaryLeaveConvergenceProof': <String, Object?>{
+          ...sharedProof,
+          'proofRole': 'alice',
+          'leaveTimelineRendered': true,
+          'leaveTimelineRowCount': 1,
+          'keyEpochAdvanced': true,
+          'rotationDeferred': false,
+          'groupHardDeletedLocally': false,
+          'initialKeyEpoch': 1,
+          'finalKeyEpoch': 2,
+          'leaveTimelineText': 'Charlie left the group',
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_voluntary_leave_convergence',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'h01-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      extra: const <String, Object?>{
+        'h01VoluntaryLeaveConvergenceProof': <String, Object?>{
+          ...sharedProof,
+          'proofRole': 'bob',
+          'leaveTimelineRendered': true,
+          'leaveTimelineRowCount': 1,
+          'keyEpochAdvanced': true,
+          'rotationDeferred': false,
+          'groupHardDeletedLocally': false,
+          'initialKeyEpoch': 1,
+          'finalKeyEpoch': 2,
+          'leaveTimelineText': 'Charlie left the group',
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_voluntary_leave_convergence',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'h01-group',
+      memberPeerIds: const <String>[],
+      keyEpoch: 0,
+      extra: const <String, Object?>{
+        'h01VoluntaryLeaveConvergenceProof': <String, Object?>{
+          ...sharedProof,
+          'proofRole': 'charlie',
+          'leaveTimelineRendered': false,
+          'leaveTimelineRowCount': 0,
+          'keyEpochAdvanced': false,
+          'rotationDeferred': true,
+          'groupHardDeletedLocally': true,
+          'durableExitEvidence': <String, Object?>{
+            'coordinatorStatus': 'started',
+            'actionId': 'h01-exit-action',
+            'sourceEventId': 'h01-exit-source',
+            'pendingBroadcastId': 'h01-exit-pending',
+            'requestCount': 1,
+            'retryCount': 0,
+            'noticePrepareCount': 1,
+            'noticeAttemptCount': 1,
+            'rotationAttemptCount': 1,
+            'rotationOutcome': 'deferred',
+            'nativeLeaveCount': 1,
+            'intentPresentAfter': false,
+            'pendingBroadcastPresentAfter': false,
+            'terminalIntentState': null,
+            'bridgeGroupLeaveCountBefore': 0,
+            'bridgeGroupLeaveCountAfter': 1,
+            'bridgeGroupLeaveCountDelta': 1,
+            'targetGroupPresentBefore': true,
+            'targetGroupPresentAfter': false,
+            'targetMessageCountAfter': 0,
+            'unrelatedMarkerId': 'h01-unrelated-marker',
+            'unrelatedMarkerPresentBefore': true,
+            'unrelatedMarkerPresentAfter': true,
+          },
+        },
+      },
+    ),
+  ];
+}
+
 List<Map<String, dynamic>> _validGm015Verdicts() {
   const allMembers = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
   const sharedProof = <String, Object?>{
@@ -30993,14 +31188,29 @@ List<Map<String, dynamic>> _validGm015Verdicts() {
       extra: const <String, Object?>{
         'gm015AdminSelfRemovalPolicyProof': <String, Object?>{
           ...sharedProof,
-          'selfRemovalOutcome': 'blocked',
-          'selfRemovalReason':
-              "You can't remove the last admin from this group.",
-          'voluntaryLeaveBroadcastOutcome': 'skipped',
-          'voluntaryLeaveBroadcastSkipReason': 'lastAdmin',
-          'leaveOutcome': 'blocked',
-          'leaveReason':
-              "You can't leave this group because you're the only admin.",
+          'durableExitEvidence': <String, Object?>{
+            'coordinatorStatus': 'blockedLastAdmin',
+            'actionId': null,
+            'sourceEventId': null,
+            'pendingBroadcastId': null,
+            'requestCount': 1,
+            'retryCount': 0,
+            'noticePrepareCount': 0,
+            'noticeAttemptCount': 0,
+            'rotationAttemptCount': 0,
+            'rotationOutcome': null,
+            'nativeLeaveCount': 0,
+            'intentPresentAfter': false,
+            'pendingBroadcastPresentAfter': false,
+            'terminalIntentState': null,
+            'bridgeGroupLeaveCountBefore': 0,
+            'bridgeGroupLeaveCountAfter': 0,
+            'bridgeGroupLeaveCountDelta': 0,
+            'targetGroupPresentBefore': true,
+            'targetGroupPresentAfter': true,
+            'leaveTimelineRowCountBefore': 0,
+            'leaveTimelineRowCountAfter': 0,
+          },
           'receivedBobPostAttemptSend': true,
           'receivedCharliePostAttemptSend': true,
         },

@@ -465,6 +465,7 @@ classify_path() {
       ;;
     integration_test/foreground_group_push_simulator_harness.dart|\
     integration_test/group_invite_status_matrix_harness.dart|\
+    integration_test/group_multi_party_device_real_android_harness.dart|\
     integration_test/group_multi_party_device_real_harness.dart|\
     integration_test/group_multi_device_real_harness.dart)
       record "support" "$path" "support" "group simulator harness"

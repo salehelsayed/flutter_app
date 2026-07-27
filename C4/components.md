@@ -56,13 +56,10 @@
 │  │                                                                        │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
 │  │  │                CONTACT REQUEST FEATURE                           │  │ │
-│  │  │  ┌──────────────────────┐  ┌──────────────────────────────────┐ │  │ │
-│  │  │  │ContactRequestDialog  │  │PendingRequestsBadge              │ │  │ │
-│  │  │  │[Widget]              │  │[Widget]                          │ │  │ │
-│  │  │  │                      │  │                                  │ │  │ │
-│  │  │  │ Accept/Decline modal │  │ Circular count badge (99+ max)  │ │  │ │
-│  │  │  │ with RingAvatar      │  │                                  │ │  │ │
-│  │  │  └──────────────────────┘  └──────────────────────────────────┘ │  │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐   │  │ │
+│  │  │  │ ContactRequestDialog [Widget]                            │   │  │ │
+│  │  │  │ Accept/Decline modal with RingAvatar                     │   │  │ │
+│  │  │  └──────────────────────────────────────────────────────────┘   │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                        │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
@@ -144,14 +141,14 @@
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
 │  │  │                    GROUPS FEATURE                                │  │ │
 │  │  │  ┌──────────────────────────────────────────────────────────┐   │  │ │
-│  │  │  │       GroupConversationScreen / GroupListScreen           │   │  │ │
+│  │  │  │       GroupConversationScreen                             │   │  │ │
 │  │  │  │       CreateGroupScreen / GroupInfoScreen                 │   │  │ │
 │  │  │  │       CreateGroupPickerScreen / ContactPickerScreen      │   │  │ │
 │  │  │  │                                                           │   │  │ │
-│  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
-│  │  │  │  │GroupCard       │  │GroupComposeArea│  │GroupMember │  │   │  │ │
-│  │  │  │  │(group preview) │  │(text+send)     │  │Row         │  │   │  │ │
-│  │  │  │  └────────────────┘  └────────────────┘  └────────────┘  │   │  │ │
+│  │  │  │  ┌────────────────┐  ┌────────────────┐                  │   │  │ │
+│  │  │  │  │GroupComposeArea│  │GroupMember     │                  │   │  │ │
+│  │  │  │  │(text+send)     │  │Row             │                  │   │  │ │
+│  │  │  │  └────────────────┘  └────────────────┘                  │   │  │ │
 │  │  │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │   │  │ │
 │  │  │  │  │GroupNamePanel  │  │GroupTypeBadge  │  │ContactPick.│  │   │  │ │
 │  │  │  │  │               │  │(chat/ann./qa)  │  │Row         │  │   │  │ │
@@ -213,19 +210,15 @@
 │  │                                                                        │ │
 │  │  ── QR Code ───────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
-│  │  │ buildQRPayload() │  │ parseQRPayload() │  │ handleScannedQR()    │ │ │
-│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
+│  │  │ buildQRPayload() │  │ parseQRPayload() │  │ QRScannerWired       │ │ │
+│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Live orchestrator]  │ │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── P2P ──────────────────────────────────────────────────────────── │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
-│  │  │ startP2PNode()   │  │ stopP2PNode()    │  │ sendP2PMessage()     │ │ │
-│  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
-│  │  ┌──────────────────┐                                                 │ │
-│  │  │ discoverP2PPeer()│  + dialP2PPeer()                                │ │
-│  │  │ [Use Case]       │                                                 │ │
-│  │  └──────────────────┘                                                 │ │
+│  │  ┌──────────────────┐  ┌────────────────────────────────────────────┐ │ │
+│  │  │ startP2PNode()   │  │ P2PService live send/discover/dial/stop  │ │ │
+│  │  │ [Use Case]       │  │ [Service boundary + owning live flows]   │ │ │
+│  │  └──────────────────┘  └────────────────────────────────────────────┘ │ │
 │  │                                                                        │ │
 │  │  ── Contacts ──────────────────────────────────────────────────────── │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
@@ -283,11 +276,11 @@
 │  │  └──────────────────┘  └──────────────────┘                          │ │
 │  │                                                                        │ │
 │  │  ── Groups ──────────────────────────────────────────────────────── │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
-│  │  │ createGroup()    │  │ createGroupWith  │  │ joinGroup()          │ │ │
-│  │  │ [Use Case]       │  │ Members()        │  │ [Use Case]           │ │ │
-│  │  │                  │  │ [Use Case]       │  │                      │ │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐                          │ │
+│  │  │ createGroup()    │  │ createGroupWith  │                          │ │
+│  │  │ [Use Case]       │  │ Members()        │                          │ │
+│  │  │                  │  │ [Use Case]       │                          │ │
+│  │  └──────────────────┘  └──────────────────┘                          │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
 │  │  │ leaveGroup()     │  │ addGroupMember() │  │ removeGroupMember()  │ │ │
 │  │  │ [Use Case]       │  │ [Use Case]       │  │ [Use Case]           │ │ │
@@ -302,11 +295,11 @@
 │  │  │ [Use Case]       │  │ Topics()         │  │ Inbox()              │ │ │
 │  │  │                  │  │ [Use Case]       │  │ [Use Case]           │ │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
-│  │  │ rotateGroupKey() │  │ rotateAndDistrib │  │ archiveGroup()       │ │ │
-│  │  │ [Use Case]       │  │ uteGroupKey()    │  │ [Use Case]           │ │ │
-│  │  │                  │  │ [Use Case]       │  │                      │ │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
+│  │  ┌──────────────────┐  ┌──────────────────────┐                       │ │
+│  │  │ rotateAndDistrib │  │ archiveGroup()       │                       │ │
+│  │  │ uteGroupKey()    │  │ [Use Case]           │                       │ │
+│  │  │ [Use Case]       │  │                      │                       │ │
+│  │  └──────────────────┘  └──────────────────────┘                       │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐                          │ │
 │  │  │ unarchiveGroup() │  │ deleteGroupAnd   │                          │ │
 │  │  │ [Use Case]       │  │ Messages()       │                          │ │
@@ -377,8 +370,8 @@
 │  │  │  [P2P Model]     │  │ [P2P Model]      │  │ [P2P Model]          │ │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
-│  │  │  ChatMessage     │  │ QRPayloadModel   │  │ FeedItem (abstract)  │ │ │
-│  │  │  [P2P Model]     │  │ [QR Model]       │  │ [Feed Model]         │ │ │
+│  │  │  ChatMessage     │  │ Signed QR map    │  │ FeedItem (abstract)  │ │ │
+│  │  │  [P2P Model]     │  │ [Wire data]      │  │ [Feed Model]         │ │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │ │
 │  │  │ ConnectionFeed   │  │ MessageFeedItem  │  │ CardThreadFeedItem   │ │ │
@@ -474,7 +467,7 @@
 │  │  │                          │  callGroupJoinWithConfig,               │ │
 │  │  │                          │  callGroupLeave, callGroupPublish,      │ │
 │  │  │                          │  callGroupUpdateConfig,                 │ │
-│  │  │                          │  callGroupRotateKey, callGroupUpdateKey,│ │
+│  │  │                          │  callGroupUpdateKey,                    │ │
 │  │  │                          │  callGroupInboxStore,                   │ │
 │  │  │                          │  callGroupInboxRetrieve,                │ │
 │  │  │                          │  callGroupKeygen, callGroupEncrypt,     │ │
@@ -680,7 +673,6 @@
 │  │  group:leave               │  │  │                                      │
 │  │  group:publish             │  │  │                                      │
 │  │  group:updateConfig        │  │  │                                      │
-│  │  group:rotateKey           │  │  │                                      │
 │  │  group:updateKey           │  │  │                                      │
 │  │  group:inboxStore          │  │  │                                      │
 │  │  group:inboxRetrieve       │  │  │                                      │
@@ -876,7 +868,6 @@
 | ScanOverlay | Widget | Canvas overlay with corner markers for scan area |
 | **Contact Request Feature** | | |
 | ContactRequestDialog | Widget | Accept/Decline modal with RingAvatar |
-| PendingRequestsBadge | Widget | Circular count badge (shows 99+ max) |
 | **Feed Feature** | | |
 | FeedScreen | Widget | Main feed UI displaying connection and message cards |
 | FeedWired | Widget | Feed orchestration: loads identity, builds initial feed, listens for contact requests and messages; orbit tab pushes OrbitWired via Navigator.push; P2P node start |
@@ -936,8 +927,6 @@
 | OrbitSearchTrigger | Widget | Floating glass pill with search button + close button |
 | OrbitSearchDock | Widget | Bottom-docked search TextField with native keyboard |
 | **Groups Feature** | | |
-| GroupListScreen | Widget | List of all groups with group cards |
-| GroupListWired | Widget | Group list business logic: load groups, listen for updates |
 | GroupConversationScreen | Widget | Pure UI: group message list, compose area, group header |
 | GroupConversationWired | Widget | Group conversation business logic: load messages, send messages via GossipSub, listen for incoming |
 | CreateGroupScreen | Widget | Group creation UI with name input and type selection |
@@ -948,7 +937,6 @@
 | ContactPickerWired | Widget | Contact picker business logic |
 | GroupInfoScreen | Widget | Group details: members list, group settings |
 | GroupInfoWired | Widget | Group info business logic: load members, manage group |
-| GroupCard | Widget | Group preview card with name, type badge, latest message |
 | GroupComposeArea | Widget | Text input with send button for group messages |
 | GroupMemberRow | Widget | Row displaying a group member with avatar, name, and role |
 | GroupNamePanel | Widget | Group name display panel |
@@ -998,13 +986,9 @@
 | **QR Use Cases** | | |
 | buildQRPayload() | Use Case | Creates signed QR payload |
 | parseQRPayload() | Use Case | Validates scanned QR: JSON parse, field check, expiry, signature verify, self-scan |
-| handleScannedQR() | Use Case | Validates scanned QR, adds contact, sends contact request |
 | **P2P Use Cases** | | |
 | startP2PNode() | Use Case | Loads identity, converts key, starts node |
-| stopP2PNode() | Use Case | Stops running P2P node |
-| sendP2PMessage() | Use Case | Sends message to peer via P2P |
-| discoverP2PPeer() | Use Case | Discovers peer via rendezvous |
-| dialP2PPeer() | Use Case | Establishes connection to peer |
+| P2PService live operations | Service boundary | Live feature flows own discovery, dialing, durable send/fallback, and lifecycle stop semantics |
 | **Contact Use Cases** | | |
 | addContact() | Use Case | Adds contact with duplicate check |
 | archiveContact() | Use Case | Archives a contact |
@@ -1034,7 +1018,6 @@
 | **Groups Use Cases** | | |
 | createGroup() | Use Case | Creates a group via Go bridge, persists GroupModel + admin member + key |
 | createGroupWithMembers() | Use Case | Creates group, adds members, sends invites to all members |
-| joinGroup() | Use Case | Joins an existing group: persists group, joins GossipSub topic |
 | leaveGroup() | Use Case | Leaves a group: unsubscribes from topic, removes local data |
 | addGroupMember() | Use Case | Adds a member to a group, updates Go config |
 | removeGroupMember() | Use Case | Removes a member from a group, rotates key, updates Go config |
@@ -1044,7 +1027,6 @@
 | sendGroupInvite() | Use Case | Builds GroupInvitePayload, encrypts with ML-KEM if available, sends via P2P |
 | rejoinGroupTopics() | Use Case | On app restart, iterates active groups and calls callGroupJoinWithConfig to re-subscribe |
 | drainGroupOfflineInbox() | Use Case | Retrieves missed group messages from relay inbox for all active groups |
-| rotateGroupKey() | Use Case | Generates new symmetric key via Go bridge, persists new key epoch |
 | rotateAndDistributeGroupKey() | Use Case | Rotates key and sends key update to all group members via P2P |
 | archiveGroup() | Use Case | Archives a group |
 | unarchiveGroup() | Use Case | Unarchives a group |
@@ -1095,7 +1077,6 @@
 | GroupMember | Entity | Group member (groupId, peerId, username?, role, publicKey?, mlKemPublicKey?, joinedAt); roles: admin/writer/reader |
 | GroupKeyInfo | Entity | Group encryption key (groupId, keyGeneration, encryptedKey, createdAt) |
 | GroupInvitePayload | Wire Model | Group invite envelope: v1 plaintext or v2 encrypted (ML-KEM); contains groupId, groupKey, keyEpoch, groupConfig, senderPeerId, senderUsername |
-| GroupMessagePayload | Wire Model | Group message wire format (text, timestamp, username?, extra?) |
 | GroupType | Enum | Group types: chat, announcement, qa |
 | GroupRole | Enum | Local user's role in group: admin, member |
 | MemberRole | Enum | Member role within group: admin, writer, reader |
@@ -1111,7 +1092,7 @@
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
 | Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest |
 | P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken, callP2PRelayReconnect, callP2PRelayProbe; also exports defaultRendezvousAddress constant |
-| Group Bridge Helper Functions (in bridge_group_helpers.dart) | Bridge Helpers | Group-specific helper functions: callGroupCreate, callGroupJoinWithConfig, callGroupLeave, callGroupPublish, callGroupUpdateConfig, callGroupRotateKey, callGroupUpdateKey, callGroupInboxStore, callGroupInboxRetrieve, callGroupKeygen, callGroupEncrypt, callGroupDecrypt; also exports BridgeCommandException |
+| Group Bridge Helper Functions (in bridge_group_helpers.dart) | Bridge Helpers | Group-specific helper functions: callGroupCreate, callGroupJoinWithConfig, callGroupLeave, callGroupPublish, callGroupUpdateConfig, callGroupGenerateNextKey, callGroupUpdateKey, callGroupInboxStore, callGroupInboxRetrieve, callGroupKeygen, callGroupEncrypt, callGroupDecrypt; also exports BridgeCommandException |
 | P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, sendMessageWithReply() for ACK-based chat, offline inbox fallback + registerPushToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle; startNodeCore() / warmBackground() split for deferred startup; isLocalPeer() / sendLocalMessage() for WiFi-first delivery; local WiFi discovery via Bonsoir mDNS |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | LocalDiscoveryService | Interface | Abstract mDNS service discovery for local WiFi peers |

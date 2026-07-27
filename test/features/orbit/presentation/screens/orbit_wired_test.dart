@@ -32,6 +32,7 @@ import 'package:flutter_app/features/groups/application/delete_self_removed_grou
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -50,6 +51,7 @@ import 'package:flutter_app/features/groups/domain/models/pending_group_invite.d
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
@@ -86,7 +88,6 @@ import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dar
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../../shared/helpers/durable_group_exit_surface_harness.dart';
-import '../../../../shared/helpers/legacy_group_exit_coordinator_fixture.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -1505,14 +1506,25 @@ void main() {
           );
         }
         var unexpectedLocalDeleteCalls = 0;
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: ordinaryRepo,
-          messageRepository: ordinaryMessages,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
+        final ordinaryExitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: ordinaryGroupId,
+            bridge: bridge,
+            groupRepository: ordinaryRepo,
+            messageRepository: ordinaryMessages,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(ordinaryExitHarness.close);
+        });
+        expect(
+          ordinaryExitHarness.coordinator.groupRepository,
+          isA<GroupRepositoryImpl>(),
         );
+        ordinaryExitHarness.install();
         await tester.pumpWidget(
           buildOrbitWired(
             orbitKey: const ValueKey('tc14-ordinary-control'),
@@ -1527,10 +1539,25 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
         await switchToAllChats(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find
+              .byKey(
+                const ValueKey(
+                  'orbit-group-stuck-leave-g-ordinary-stuck-control',
+                ),
+              )
+              .evaluate()
+              .isNotEmpty,
+        );
         await tester.tap(
           find.byKey(
             const ValueKey('orbit-group-stuck-leave-g-ordinary-stuck-control'),
           ),
+        );
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => ordinaryExitHarness.requestLeaveCompletions >= 1,
         );
         await pumpOrbitFrames(tester, count: 8);
 
@@ -1540,6 +1567,11 @@ void main() {
           hasLength(1),
         );
         expect(await ordinaryRepo.getGroup(ordinaryGroupId), isNull);
+        expect(ordinaryExitHarness.noticePrepareAttempts, 1);
+        expect(ordinaryExitHarness.noticeAttemptAttempts, 1);
+        expect(ordinaryExitHarness.rotationAttempts, 1);
+        expect(ordinaryExitHarness.nativeLeaveAttempts, 1);
+        expect(ordinaryExitHarness.surfaceCleanupProjections, 1);
       },
     );
 
@@ -2825,6 +2857,58 @@ void main() {
       );
     });
 
+    testWidgets(
+      'DTR-07 the all-chats group row renders relative activity time, not clock time',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final activityTimestamp = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'dtr-07-relative-time-group',
+            name: 'DTR-07 Relative Time Group',
+            type: GroupType.chat,
+            topicName: 'topic-dtr-07-relative-time',
+            createdAt: activityTimestamp,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
+
+        final groupRow = find.ancestor(
+          of: find.text('DTR-07 Relative Time Group'),
+          matching: find.byType(GroupRow),
+        );
+        expect(groupRow, findsOneWidget);
+        expect(
+          find.descendant(of: groupRow, matching: find.text('2h ago')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: groupRow,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Text &&
+                  RegExp(
+                    r'^\d{1,2}:\d{2}(?:\s*[AP]M)?$',
+                  ).hasMatch(widget.data ?? ''),
+              description: 'clock-formatted Text in the DTR-07 group row',
+            ),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
     testWidgets('refreshes only the affected group on incoming group message', (
       tester,
     ) async {
@@ -3705,23 +3789,39 @@ void main() {
             createdAt: now,
           ),
         );
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: groupMsgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: groupId,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: groupMsgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
         await switchToAllChats(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text(groupName).evaluate().isNotEmpty,
+        );
 
         final center = tester.getCenter(find.text(groupName));
         await tester.flingFrom(center, const Offset(-350, 0), 1000);
         await pumpOrbitFrames(tester, count: 6);
         await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpDurableGroupExitUntil(
+          tester,
+          () =>
+              find.text(l10n.group_exit_only_admin_title).evaluate().isNotEmpty,
+        );
         await pumpOrbitFrames(tester, count: 6);
 
         expect(find.text(l10n.orbit_leave_group), findsNothing);
@@ -3742,12 +3842,173 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:publish')));
         expect(await groupRepo.getGroup(groupId), isNotNull);
         expect(await groupMsgRepo.getMessage('gm-sole-admin-exit'), isNotNull);
+        expect(exitHarness.noticePrepareAttempts, 0);
+        expect(exitHarness.noticeAttemptAttempts, 0);
+        expect(exitHarness.rotationAttempts, 0);
+        expect(exitHarness.nativeLeaveAttempts, 0);
+        expect(exitHarness.surfaceCleanupProjections, 0);
 
         await tester.tap(find.text(l10n.group_exit_keep_group));
         await pumpOrbitFrames(tester, count: 4);
         expect(find.text(l10n.group_exit_only_admin_title), findsNothing);
         expect(await groupRepo.getGroup(groupId), isNotNull);
         expect(await groupMsgRepo.getMessage('gm-sole-admin-exit'), isNotNull);
+      },
+    );
+
+    testWidgets(
+      'DTR-10 recovery-sheet retry last-admin keeps compatibility message',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final l10n = AppLocalizationsEn();
+        final now = DateTime.utc(2026, 7, 26, 10);
+        const groupId = 'dtr10-orbit-last-admin-retry';
+        const groupName = 'DTR-10 Last Admin';
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: groupName,
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: testIdentity.peerId,
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'dtr10-writer',
+            username: 'Writer',
+            role: MemberRole.writer,
+            publicKey: 'dtr10-writer-pk',
+            mlKemPublicKey: 'dtr10-writer-mlkem',
+            joinedAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'dtr10-retained-history',
+            groupId: groupId,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            text: 'History remains after blocked retry',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: false,
+          ),
+        );
+
+        final pendingRole = GroupPendingBroadcast(
+          id: 'dtr10-pending-role',
+          groupId: groupId,
+          kind: groupPendingBroadcastKindMemberRoleUpdated,
+          sysText: '{"kind":"member_role_updated"}',
+          recipientPeerIds: const <String>['dtr10-writer'],
+          eventAt: now,
+          sourceMessageId: 'dtr10-role-source',
+          createdAt: now,
+          updatedAt: now,
+        );
+        setGroupPendingBroadcastAccessSinks(
+          loadForGroup: (requestedGroupId) async => requestedGroupId == groupId
+              ? <GroupPendingBroadcast>[pendingRole]
+              : const <GroupPendingBroadcast>[],
+        );
+        addTearDown(() => setGroupPendingBroadcastAccessSinks());
+
+        var requestCalls = 0;
+        var retryCalls = 0;
+        setGroupExitIntentActionSinks(
+          requestLeave: (requestedGroupId) async {
+            expect(requestedGroupId, groupId);
+            requestCalls++;
+            return const GroupExitIntentRequestResult(
+              status: GroupExitIntentRequestStatus.pendingRoleSync,
+            );
+          },
+          retry: (requestedGroupId) async {
+            expect(requestedGroupId, groupId);
+            retryCalls++;
+            return const GroupExitIntentRequestResult(
+              status: GroupExitIntentRequestStatus.blockedLastAdmin,
+            );
+          },
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text(groupName).evaluate().isNotEmpty,
+        );
+
+        final center = tester.getCenter(find.text(groupName));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.text(l10n.orbit_leave_action));
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('group-exit-try-again'))
+              .evaluate()
+              .isNotEmpty,
+        );
+
+        expect(requestCalls, 1);
+        expect(
+          find.byKey(const ValueKey('group-exit-try-again')),
+          findsOneWidget,
+        );
+
+        final retryButton = find.byKey(const ValueKey('group-exit-try-again'));
+        await tester.ensureVisible(retryButton);
+        await pumpOrbitFrames(tester, count: 2);
+        await tester.tap(retryButton);
+        await pumpDurableGroupExitUntil(tester, () => retryCalls == 1);
+        await pumpOrbitFrames(tester, count: 3);
+
+        expect(find.text(lastAdminLeaveBlockedMessage), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-exit-try-again')),
+          findsOneWidget,
+          reason: 'a blocked retry must keep the recovery sheet actionable',
+        );
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await groupMsgRepo.getMessage('dtr10-retained-history'),
+          isNotNull,
+        );
+        expect(
+          bridge.commandLog,
+          isNot(
+            contains(
+              anyOf(
+                'payload.sign',
+                'group:updateConfig',
+                'group:publish',
+                'group:leave',
+              ),
+            ),
+          ),
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
       },
     );
 
@@ -4672,18 +4933,29 @@ void main() {
           createdAt: now.subtract(const Duration(minutes: 1)),
         ),
       );
-      installLegacyGroupExitCoordinatorFixture(
-        bridge: bridge,
-        groupRepository: groupRepo,
-        messageRepository: groupMsgRepo,
-        identityRepository: identityRepo,
-        sendP2PMessage: p2pService.sendMessage,
-        storeP2PMessageInInbox: p2pService.storeInInbox,
-      );
+      final exitHarness = (await tester.runAsync(
+        () => DurableGroupExitSurfaceHarness.createForSurface(
+          groupId: 'g-delete-one',
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: groupMsgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        ),
+      ))!;
+      addTearDown(() async {
+        await tester.runAsync(exitHarness.close);
+      });
+      exitHarness.install();
 
       await tester.pumpWidget(buildOrbitWired());
       await pumpOrbitFrames(tester, count: 6);
       await switchToAllChats(tester);
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => find.text('Delete One Group').evaluate().isNotEmpty,
+      );
 
       expect(find.text('Delete One Group'), findsOneWidget);
       expect(find.text('Keep One Group'), findsOneWidget);
@@ -4696,10 +4968,21 @@ void main() {
 
       final l10n = AppLocalizationsEn();
       await tester.tap(find.text(l10n.orbit_leave_action));
-      await tester.pump();
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => find.text(l10n.orbit_leave_group_action).evaluate().isNotEmpty,
+      );
       expect(find.text(l10n.orbit_leave_group), findsOneWidget);
       await tester.tap(find.text(l10n.orbit_leave_group_action));
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => exitHarness.requestLeaveCompletions >= 1,
+      );
       await pumpOrbitFrames(tester, count: 8);
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => find.text('Delete One Group').evaluate().isEmpty,
+      );
 
       expect(find.text('Delete One Group'), findsNothing);
       expect(find.text('Keep One Group'), findsOneWidget);
@@ -4714,6 +4997,11 @@ void main() {
         bridge.commandLog.where((command) => command == 'group:leave'),
         hasLength(1),
       );
+      expect(exitHarness.noticePrepareAttempts, 1);
+      expect(exitHarness.noticeAttemptAttempts, 1);
+      expect(exitHarness.rotationAttempts, 1);
+      expect(exitHarness.nativeLeaveAttempts, 1);
+      expect(exitHarness.surfaceCleanupProjections, 1);
     });
 
     testWidgets(
@@ -4872,18 +5160,29 @@ void main() {
             createdAt: now.add(const Duration(minutes: 1)),
           ),
         );
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: groupMsgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: 'game-night',
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: groupMsgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
         await switchToAllChats(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text('Game Night').evaluate().isNotEmpty,
+        );
 
         // Sanity: Orbit shows the friends and the group before delete.
         expect(find.text('Alice'), findsWidgets);
@@ -4907,10 +5206,21 @@ void main() {
 
         final l10n = AppLocalizationsEn();
         await tester.tap(find.text(l10n.orbit_leave_action));
-        await tester.pump();
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text(l10n.orbit_leave_group_action).evaluate().isNotEmpty,
+        );
         // Confirmation dialog appears; tap its destructive leave action.
         await tester.tap(find.text(l10n.orbit_leave_group_action));
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
         await pumpOrbitFrames(tester, count: 8);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => find.text('Game Night').evaluate().isEmpty,
+        );
 
         // -- assert UI: group is gone, friends still visible.
         expect(find.text('Game Night'), findsNothing);
@@ -4954,6 +5264,11 @@ void main() {
           bridge.commandLog.where((command) => command == 'group:leave'),
           hasLength(1),
         );
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 1);
       },
     );
 

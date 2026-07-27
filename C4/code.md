@@ -306,19 +306,6 @@
   └─────────────────────────────────────┘
 
   ┌─────────────────────────────────────┐
-  │       GroupMessagePayload          │
-  │       (v3 wire format)             │
-  ├─────────────────────────────────────┤
-  │ + text: String                     │
-  │ + timestamp: String                │
-  │ + username: String?                │
-  │ + extra: Map?                      │
-  ├─────────────────────────────────────┤
-  │ + fromJson(Map): Payload           │
-  │ + toJson(): Map                    │
-  └─────────────────────────────────────┘
-
-  ┌─────────────────────────────────────┐
   │       GroupInvitePayload           │
   │       (v1/v2 wire format)          │
   ├─────────────────────────────────────┤
@@ -1321,7 +1308,6 @@
   │  group:leave       → groupLeaveTopic│
   │  group:publish     → groupPublish   │
   │  group:updateConfig→ groupUpdateCfg │
-  │  group:rotateKey   → groupRotateKey │
   │  group:updateKey   → groupUpdateKey │
   │  group:inboxStore  → groupInboxStore│
   │  group:inboxRetrieve → groupInboxRt │
@@ -1468,14 +1454,8 @@
     {maxAge: Duration = 24h}
   ): Future<(ParseQRResult, ContactModel?)>
 
-  handleScannedQR(
-    qrString: String,
-    bridge: Bridge,
-    ownPeerId: String,
-    contactRepo: ContactRepository,
-    identityRepo: IdentityRepository,
-    p2pService: P2PService
-  ): Future<void>
+  // QRScannerWired owns the live parse → contact → encrypted request/profile
+  // side-effect sequence. There is no duplicate handle-scanned use case.
 
 
   FLUTTER USE CASES - P2P:
@@ -1485,26 +1465,8 @@
     p2pService: P2PService
   ): Future<StartNodeResult>
 
-  stopP2PNode(
-    p2pService: P2PService
-  ): Future<StopNodeResult>
-
-  sendP2PMessage(
-    p2pService: P2PService,
-    peerId: String,
-    message: String
-  ): Future<SendMessageResult>
-
-  discoverP2PPeer(
-    p2pService: P2PService,
-    peerId: String
-  ): Future<(DiscoverPeerResult, DiscoveredPeer?)>
-
-  dialP2PPeer(
-    p2pService: P2PService,
-    peerId: String,
-    {addresses: List<String>?}
-  ): Future<bool>
+  // Live feature flows call the P2PService boundary for bounded discovery,
+  // dialing, durable send/fallback, and lifecycle stop behavior.
 
 
   FLUTTER USE CASES - CONVERSATION:
@@ -1702,17 +1664,6 @@
     {name?: String, description?: String}
   ): Future<CreateGroupWithMembersResult>
 
-  joinGroup(
-    bridge: Bridge,
-    groupRepo: GroupRepository,
-    group: GroupModel,
-    groupKey: String,
-    keyEpoch: int,
-    selfPeerId: String,
-    selfPublicKey: String,
-    selfRole: MemberRole
-  ): Future<void>
-
   leaveGroup(
     bridge: Bridge,
     groupRepo: GroupRepository,
@@ -1811,12 +1762,6 @@
     recipients: List<({peerId, mlKemPublicKey?})>
   ): Future<int>
 
-  rotateGroupKey(
-    bridge: Bridge,
-    groupRepo: GroupRepository,
-    groupId: String
-  ): Future<GroupKeyInfo>
-
   rotateAndDistributeGroupKey(
     bridge: Bridge,
     groupRepo: GroupRepository,
@@ -1826,7 +1771,7 @@
     senderPrivateKey: String,
     senderUsername: String,
     {sendP2PMessage?: (peerId, msg) => bool}
-  ): Future<GroupKeyInfo?>
+  ): Future<RotateGroupKeyOutcome>
 
   rejoinGroupTopics(
     bridge: Bridge,
@@ -2003,7 +1948,6 @@
   callGroupLeave(bridge, groupId, {timeout?}): Future<void>
   callGroupPublish(bridge, {groupId, text, senderPeerId, senderPublicKey, senderPrivateKey, senderUsername?, media?, timeout?}): Future<Map>
   callGroupUpdateConfig(bridge, {groupId, groupConfig, timeout?}): Future<void>
-  callGroupRotateKey(bridge, groupId, {timeout?}): Future<Map>
   callGroupUpdateKey(bridge, {groupId, groupKey, keyEpoch, timeout?}): Future<void>
   callGroupInboxStore(bridge, groupId, message, {timeout?}): Future<void>
   callGroupInboxRetrieve(bridge, groupId, sinceTimestamp, {timeout?}): Future<List<Map>>
@@ -2152,7 +2096,9 @@
   handleGroupLeaveTopic(payload) → {ok}                  // Unsubscribe from pubsub topic
   handleGroupPublish(payload) → {ok, messageId}          // Encrypt + sign + publish to topic
   handleGroupUpdateConfig(payload) → {ok}                // Update topic validator config
-  handleGroupRotateKey(payload) → {ok, groupKey, keyEpoch}
+  GroupRotateKey(payload) → {ok: false, errorCode: LEGACY_ROTATE_KEY_UNSUPPORTED}
+    // compatibility-only platform groupRotateKey → generated BridgeGroupRotateKey;
+    // live Dart rotation uses generateNextKey + distribution + updateKey
   handleGroupUpdateKey(payload) → {ok}                   // Update stored key (non-admin)
   handleGroupInboxStore(payload) → {ok}                  // Store-and-forward via relay
   handleGroupInboxRetrieve(payload) → {ok, messages}     // Retrieve from relay inbox
@@ -2185,7 +2131,6 @@
   Node.GroupLeaveTopic(groupId) error                      // Unsubscribe pubsub topic
   Node.GroupPublish(groupId, text, senderKeys, ...) error  // Encrypt + sign + publish
   Node.GroupUpdateConfig(groupId, config) error             // Update topic validator
-  Node.GroupRotateKey(groupId) (key, epoch, error)         // Generate new symmetric key
   Node.GroupUpdateKey(groupId, key, epoch) error            // Store key (non-admin path)
   Node.GroupInboxStore(groupId, message) error              // Store in relay group inbox
   Node.GroupInboxRetrieve(groupId, since) ([]Msg, error)   // Retrieve from relay inbox

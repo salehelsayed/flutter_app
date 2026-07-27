@@ -50,7 +50,7 @@ Date: 2026-07-25
   - “all ten roadmap anchors are ordinary dead leaves” is refuted. The durable
     group inbox cursor tables/helpers/repository path is live and the exact model
     remains owned by `DTR-10 / groups`; the post follow-on helper remains behind
-    the `DTR-06 / posts` product-decision condition.
+    the accepted-retention boundary recorded by `DTR06-AUTH-01`.
   - “the recording overlay facade has zero importers” is refuted. One production
     and two test imports must move to the shared implementation first.
 - Highest-risk bet and fallback: directly importing the shared overlay is
@@ -226,8 +226,10 @@ Deferred / accepted difference:
 - `group_inbox_cursor.dart` -> owner `DTR-10 / groups`, because its manifest
   condition requires group compatibility ownership to be resolved before
   removal while the durable cursor boundary remains live.
-- `post_pass_follow_on_support.dart` -> owner `DTR-06 / posts`, because its
-  manifest condition requires the Posts product decision before removal.
+- `post_pass_follow_on_support.dart` -> owner `DTR-06 / posts`; the Posts
+  product decision is now accepted retention under `DTR06-AUTH-01`, so removal
+  remains unauthorized until Social Posts implementation resumes and a new
+  source-verified disposition supersedes that decision.
 - The retired feature-local `AmplitudeBarsPainter` was public only through the
   dead duplicate and its SUT-only test. Direct painter-construction/repaint tests
   are intentionally retired; the shared widget's private painter is preserved
@@ -1051,10 +1053,22 @@ git diff --name-status
   UI baseline but do not waive the execution-time pre-delete and post-delete
   repeats.
 
+## Wave 1 Acceptance Addendum
+
+Plan 275 remains `Plan-green`; its DTR-04 registry row was promoted separately
+to `Wave-accepted` on 2026-07-26. After DTR-03 through DTR-05 were all
+Plan-green, the complete Wave 1 `host-all` retry passed at concurrency 1:
+1,265 exact Dart paths, 12,863 tests passed and 1 skipped, and all eight Go
+tails passed. The failed first attempt, test-only assertion correction, accepted
+retry, original-log hashes, and stable archives are recorded in the
+[master roadmap](dead-code-and-technical-debt-removal-roadmap.md#wave-gate-ledger).
+No production source changed between the two Wave 1 attempts.
+
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-25 | ready before execution | Plan 275; roadmap summary | sole-owner authorization recorded; structural approval gate expected green | source/test contract and five bounded approvals complete | none; stop only if re-grounding finds drift | run `--ensure-fresh` Graphify/importer/root census, snapshot the dirty tree, then begin the first causal RED |
 | 2026-07-25T13:04:04+02:00 | DTR08 checkpoint B1 | `compose_area.dart`; `recording_overlay_test.dart`; `conversation_wired_test.dart`; facade and manifest records | exact zero-old-import proof exit 0; full three-file parity 180/180 green | facade hash `31ac89f37c2bdc1339d08fabceeaca4595c1e860`; required record count 1; restricted record count 1; shared UI and existing direct-importer hashes unchanged | checkpoint B1 green with wrapper and both records present | proceed to B2 facade/record retirement |
-| 2026-07-25T14:10:00+02:00 | plan closure | twelve retired paths; direct imports; runtime/l10n policy; replacement/deferred surfaces; gates | causal policies green; runtime-roots 16/16 and trustworthy/no-drift under isolated final-tree index; completeness 1354/1354; `1to1`, `feed`, `groups`, 821-file `feature-host-all`, and strict analysis green | shared recording sources and existing Posts/performance direct importers retain baseline hashes; exact deferred owner/condition rows remain; Graphify incremental refresh reports 12 deletions | Plan 275 complete with no scope blocker | Wave 1 aggregate `host-all` remains deferred to wave closure by cadence policy |
+| 2026-07-25T14:10:00+02:00 | plan closure | twelve retired paths; direct imports; runtime/l10n policy; replacement/deferred surfaces; gates | causal policies green; runtime-roots 16/16 and trustworthy/no-drift under isolated final-tree index; completeness 1354/1354; `1to1`, `feed`, `groups`, 821-file `feature-host-all`, and strict analysis green | shared recording sources and existing Posts/performance direct importers retain baseline hashes; exact deferred owner/condition rows remain; Graphify incremental refresh reports 12 deletions | Plan 275 complete with no scope blocker | await the cadence-owned Wave 1 aggregate gate |
+| 2026-07-26 | Wave 1 acceptance | DTR-03, DTR-04, DTR-05 integrated tree | accepted full `host-all`: Flutter `+12863 ~1`; Go 8/8 PASS; exit 0 | complete attempt history and stable log archives recorded in the master roadmap | DTR-04 promoted to `Wave-accepted`; no remaining wave blocker | final-rollout `host-all` remains a separate later gate |

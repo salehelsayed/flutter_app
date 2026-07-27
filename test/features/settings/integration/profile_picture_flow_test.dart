@@ -68,7 +68,6 @@ class _MockBridge extends Bridge {
     }
     return jsonEncode(nextResponse);
   }
-
 }
 
 class _FakeIdentityRepository implements IdentityRepository {
@@ -107,6 +106,22 @@ AvatarNormalizationHelper _makeAvatarNormalizer(Uint8List bytes) {
           },
     ),
   );
+}
+
+Future<ContactModel?> _waitForContactAvatarVersion({
+  required InMemoryContactRepository contactRepo,
+  required String peerId,
+  required String avatarVersion,
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  ContactModel? contact;
+  do {
+    contact = await contactRepo.getContact(peerId);
+    if (contact?.avatarVersion == avatarVersion) return contact;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  } while (DateTime.now().isBefore(deadline));
+  return contact;
 }
 
 ChatMessage buildProfileUpdateMessage({
@@ -378,9 +393,11 @@ void main() {
           buildProfileUpdateMessage(fromPeerId: bobPeerId, avatarVersion: 'v2'),
         );
 
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        final contact = await contactRepo.getContact(bobPeerId);
+        final contact = await _waitForContactAvatarVersion(
+          contactRepo: contactRepo,
+          peerId: bobPeerId,
+          avatarVersion: 'v2',
+        );
         expect(contact, isNotNull);
         expect(contact!.avatarVersion, 'v2');
 

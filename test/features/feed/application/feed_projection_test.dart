@@ -11,7 +11,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/application/feed_pending_projection.dart';
-import 'package:flutter_app/features/feed/application/feed_projection.dart';
+import 'package:flutter_app/features/feed/application/feed_store.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_use_case.dart';
@@ -112,6 +112,39 @@ GroupMessage _groupMessage({
     readAt: readAt,
     createdAt: timestamp,
   );
+}
+
+List<FeedItem> _replaceContactSnapshot({
+  required List<FeedItem> currentItems,
+  required String contactPeerId,
+  ConnectionFeedItem? connectionItem,
+  ThreadFeedItem? threadItem,
+}) {
+  final store = FeedStore()..replaceAll(currentItems);
+  try {
+    store.replaceContactSnapshot(
+      contactPeerId: contactPeerId,
+      connectionItem: connectionItem,
+      threadItem: threadItem,
+    );
+    return List<FeedItem>.of(store.items);
+  } finally {
+    store.dispose();
+  }
+}
+
+List<FeedItem> _replaceGroupSnapshot({
+  required List<FeedItem> currentItems,
+  required String groupId,
+  GroupThreadFeedItem? threadItem,
+}) {
+  final store = FeedStore()..replaceAll(currentItems);
+  try {
+    store.replaceGroupSnapshot(groupId: groupId, threadItem: threadItem);
+    return List<FeedItem>.of(store.items);
+  } finally {
+    store.dispose();
+  }
 }
 
 List<Map<String, Object?>> _summaries(List<FeedItem> items) {
@@ -268,7 +301,7 @@ void main() {
           mediaFileManager: mediaFileManager,
         );
 
-        final incrementallyUpdated = applyContactFeedSnapshot(
+        final incrementallyUpdated = _replaceContactSnapshot(
           currentItems: initial,
           contactPeerId: 'peer-A',
           connectionItem: snapshot.connectionItem,
@@ -276,7 +309,12 @@ void main() {
         );
         final fullReload = await loadFullFeed();
 
-        expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+        expect(
+          _summaries(incrementallyUpdated),
+          _summaries(
+            projectPendingFeed(fullReload, const <(String, String), int>{}),
+          ),
+        );
         expect(incrementallyUpdated.whereType<ThreadFeedItem>(), hasLength(1));
       },
     );
@@ -338,7 +376,7 @@ void main() {
           mediaFileManager: mediaFileManager,
         );
 
-        final incrementallyUpdated = applyContactFeedSnapshot(
+        final incrementallyUpdated = _replaceContactSnapshot(
           currentItems: initial,
           contactPeerId: 'peer-A',
           connectionItem: snapshot.connectionItem,
@@ -346,7 +384,12 @@ void main() {
         );
         final fullReload = await loadFullFeed();
 
-        expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+        expect(
+          _summaries(incrementallyUpdated),
+          _summaries(
+            projectPendingFeed(fullReload, const <(String, String), int>{}),
+          ),
+        );
         expect(
           (incrementallyUpdated.firstWhere((item) => item is ThreadFeedItem)
                   as ThreadFeedItem)
@@ -399,7 +442,7 @@ void main() {
           mediaFileManager: mediaFileManager,
         );
 
-        final incrementallyUpdated = applyContactFeedSnapshot(
+        final incrementallyUpdated = _replaceContactSnapshot(
           currentItems: initial,
           contactPeerId: 'peer-A',
           connectionItem: snapshot.connectionItem,
@@ -407,7 +450,12 @@ void main() {
         );
         final fullReload = await loadFullFeed();
 
-        expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+        expect(
+          _summaries(incrementallyUpdated),
+          _summaries(
+            projectPendingFeed(fullReload, const <(String, String), int>{}),
+          ),
+        );
       },
     );
 
@@ -442,7 +490,7 @@ void main() {
         mediaFileManager: mediaFileManager,
       );
 
-      final incrementallyUpdated = applyContactFeedSnapshot(
+      final incrementallyUpdated = _replaceContactSnapshot(
         currentItems: initial,
         contactPeerId: 'peer-A',
         connectionItem: snapshot.connectionItem,
@@ -450,7 +498,12 @@ void main() {
       );
       final fullReload = await loadFullFeed();
 
-      expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+      expect(
+        _summaries(incrementallyUpdated),
+        _summaries(
+          projectPendingFeed(fullReload, const <(String, String), int>{}),
+        ),
+      );
       expect(incrementallyUpdated, isEmpty);
     });
 
@@ -485,7 +538,7 @@ void main() {
         mediaFileManager: mediaFileManager,
       );
 
-      final incrementallyUpdated = applyContactFeedSnapshot(
+      final incrementallyUpdated = _replaceContactSnapshot(
         currentItems: initial,
         contactPeerId: 'peer-A',
         connectionItem: snapshot.connectionItem,
@@ -493,25 +546,16 @@ void main() {
       );
       final fullReload = await loadFullFeed();
 
-      // 160 pending-filter: a cold load of an all-read contact loads ZERO
-      // messages, so `fullReload` carries no read ThreadFeedItem while the
-      // incremental snapshot path still materializes one. Both render the SAME
-      // feed (the read thread is filtered out by projectPendingFeed; the
-      // connection letter is suppressed either by the materialized thread or by
-      // `hasConversationHistory`). Parity therefore holds at the PROJECTED
-      // (rendered) layer, which is the real contract — not the raw item list.
+      // 160 pending-filter: the single-contact loader still materializes the
+      // read thread, but the live FeedStore projects it away. A cold load of an
+      // all-read contact loads zero messages and projects to the same rendered
+      // feed; its connection letter stays suppressed by hasConversationHistory.
       const noWatermarks = <(String, String), int>{};
       expect(
-        _summaries(projectPendingFeed(incrementallyUpdated, noWatermarks)),
+        _summaries(incrementallyUpdated),
         _summaries(projectPendingFeed(fullReload, noWatermarks)),
       );
-      expect(
-        incrementallyUpdated
-            .whereType<ThreadFeedItem>()
-            .single
-            .conversationState,
-        ConversationState.read,
-      );
+      expect(snapshot.threadItem!.conversationState, ConversationState.read);
     });
 
     test('group message upsert and reorder matches cold load', () async {
@@ -567,14 +611,19 @@ void main() {
         groupId: 'group-1',
       );
 
-      final incrementallyUpdated = applyGroupFeedSnapshot(
+      final incrementallyUpdated = _replaceGroupSnapshot(
         currentItems: initial,
         groupId: 'group-1',
         threadItem: snapshot,
       );
       final fullReload = await loadFullFeed();
 
-      expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+      expect(
+        _summaries(incrementallyUpdated),
+        _summaries(
+          projectPendingFeed(fullReload, const <(String, String), int>{}),
+        ),
+      );
       expect(
         incrementallyUpdated.whereType<GroupThreadFeedItem>().single.groupId,
         'group-1',
@@ -650,14 +699,19 @@ void main() {
         groupId: 'group-1',
       );
 
-      final incrementallyUpdated = applyGroupFeedSnapshot(
+      final incrementallyUpdated = _replaceGroupSnapshot(
         currentItems: initial,
         groupId: 'group-1',
         threadItem: snapshot,
       );
       final fullReload = await loadFullFeed();
 
-      expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+      expect(
+        _summaries(incrementallyUpdated),
+        _summaries(
+          projectPendingFeed(fullReload, const <(String, String), int>{}),
+        ),
+      );
       expect(incrementallyUpdated.whereType<GroupThreadFeedItem>(), isEmpty);
     });
 

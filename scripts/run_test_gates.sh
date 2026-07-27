@@ -348,6 +348,9 @@ readonly INTRO_TESTS=(
 
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  # 282: the duplicate Dart GroupMessagePayload is retired while the live Go
+  # v3 envelope/parser/publish/receive boundary remains protected.
+  "test/features/groups/domain/models/group_message_payload_removal_contract_test.dart"
   "test/features/conversation/integration/media_eviction_redownload_test.dart"
   "test/features/groups/integration/group_admin_metadata_convergence_test.dart"
   "test/features/groups/integration/group_resume_recovery_test.dart"
@@ -361,11 +364,12 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/group_key_repair_request_sender_test.dart"
   "test/features/groups/application/group_key_repair_responder_listener_test.dart"
   "test/features/groups/application/group_key_repair_wiring_test.dart"
+  # 281: obsolete Dart group-key rotation leaf and raw dispatch retirement.
+  "test/features/groups/application/legacy_group_key_rotation_removal_contract_test.dart"
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
   "test/features/groups/presentation/group_conversation_wired_test.dart"
-  "test/features/groups/presentation/group_list_wired_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
   # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
@@ -427,7 +431,6 @@ readonly GROUP_TESTS=(
   "test/features/groups/domain/repositories/group_repository_impl_test.dart"
   "test/features/groups/application/handle_incoming_group_invite_use_case_test.dart"
   "test/features/groups/application/accept_pending_group_invite_use_case_test.dart"
-  "test/features/groups/application/join_group_use_case_test.dart"
   "test/features/groups/application/delete_self_removed_group_shell_use_case_test.dart"
   "test/features/groups/integration/group_notification_projection_lifecycle_test.dart"
   "test/features/groups/application/self_removed_group_lifecycle_guard_test.dart"

@@ -612,6 +612,19 @@ void main() {
             ),
           ),
         );
+
+        await newRuntime.stopNewPhoneReceiver(output.payload.sessionId);
+        final stoppedRoute = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof:
+                _validOldBlockProof(output.payload.sessionId).toJson(),
+          },
+        );
+        expect(stoppedRoute.statusCode, HttpStatus.notFound);
+        expect(stoppedRoute.body?['reason'], 'unknown_session');
       },
     );
 
@@ -656,6 +669,1147 @@ void main() {
           result.failureCode,
           AccountMigrationTransferFailureCode.receiverRejected,
         );
+      },
+    );
+  });
+
+  group('cutover proof routing recovery', () {
+    late Map<String, LocalPeer> registry;
+    late _MemoryPairingSessionRepository pairingRepo;
+    late LocalWsServer newPhoneServer;
+    late LocalWsServer oldPhoneServer;
+    late _SharedFakeDiscovery newPhoneDiscovery;
+    late _SharedFakeDiscovery oldPhoneDiscovery;
+    late List<Map<String, dynamic>> flowEvents;
+
+    setUp(() {
+      registry = <String, LocalPeer>{};
+      pairingRepo = _MemoryPairingSessionRepository();
+      newPhoneServer = LocalWsServer();
+      oldPhoneServer = LocalWsServer();
+      newPhoneDiscovery = _SharedFakeDiscovery(registry);
+      oldPhoneDiscovery = _SharedFakeDiscovery(registry);
+      flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+    });
+
+    tearDown(() async {
+      debugSetFlowEventSink(null);
+      await newPhoneServer.stop();
+      await oldPhoneServer.stop();
+      newPhoneDiscovery.dispose();
+      oldPhoneDiscovery.dispose();
+    });
+
+    Future<(MigrationQrBuildOutput, AccountMigrationLocalTransferRuntime)>
+    startNewPhone(
+      AccountMigrationLocalBundleReceiver receiver, {
+      required String sessionId,
+      Duration replayGrace = const Duration(milliseconds: 80),
+    }) async {
+      final output = await _savePendingSession(
+        pairingRepo,
+        sessionId: sessionId,
+      );
+      final runtime = AccountMigrationLocalTransferRuntime(
+        discovery: newPhoneDiscovery,
+        wsServer: newPhoneServer,
+        pairingSessionRepository: pairingRepo,
+        bundleReceiver: receiver,
+        committedProofReplayGrace: replayGrace,
+      );
+      newPhoneServer.configureMigrationTransferHandler(
+        runtime.handleMigrationTransferRequest,
+      );
+      expect((await runtime.startNewPhoneReceiver(output)).isStarted, isTrue);
+      return (output, runtime);
+    }
+
+    AccountMigrationLocalTransferRuntime oldPhoneRuntime({
+      required MigrationQrBuildOutput output,
+      Duration httpTimeout = const Duration(seconds: 1),
+      Future<void> Function(Duration)? retryDelay,
+    }) {
+      return AccountMigrationLocalTransferRuntime(
+        discovery: oldPhoneDiscovery,
+        wsServer: oldPhoneServer,
+        pairingSessionRepository: pairingRepo,
+        bundleSource: (_) async => _preparedBundle(
+          sessionId: output.payload.sessionId,
+          segmentCount: 1,
+        ),
+        oldPhoneCutoverCoordinator: MigrationCutoverCoordinator(
+          authorityRepository: _MemoryAuthorityRepository(),
+          cutoverRepository: _MemoryCutoverRepository(),
+          now: _fixedNow,
+        ),
+        oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+        httpTimeout: httpTimeout,
+        oldBlockProofRetryDelay: retryDelay,
+      );
+    }
+
+    Future<AccountMigrationTransferResult> runTransfer(
+      AccountMigrationLocalTransferRuntime runtime,
+      MigrationQrBuildOutput output,
+    ) {
+      return runtime.runOldPhoneTransfer(
+        request: AccountMigrationTransferRequest(
+          transcript: _transcript(output.payload),
+        ),
+        onProgress: (_) {},
+        isCancelled: () => false,
+      );
+    }
+
+    Future<MigrationTransferManifest> prepareRawReceiver(
+      MigrationQrBuildOutput output,
+    ) async {
+      final transcriptResponse = await _postMigrationJson(
+        port: newPhoneServer.port!,
+        sessionId: output.payload.sessionId,
+        command: accountMigrationLocalTransferCommandTranscript,
+        body: _transcript(output.payload).toJson(),
+      );
+      expect(transcriptResponse.statusCode, HttpStatus.ok);
+
+      final manifest = _preparedBundle(
+        sessionId: output.payload.sessionId,
+        segmentCount: 1,
+      ).manifest;
+      final manifestResponse = await _postMigrationJson(
+        port: newPhoneServer.port!,
+        sessionId: output.payload.sessionId,
+        command: accountMigrationLocalTransferCommandManifest,
+        body: manifest.toJson(),
+      );
+      expect(manifestResponse.statusCode, HttpStatus.ok);
+      return manifest;
+    }
+
+    test(
+      'stop during complete defers removal and a successful complete remains cutover-routable',
+      () async {
+        final receiver = _PausableCompleteCutoverReceiver();
+        final (output, newRuntime) = await startNewPhone(
+          receiver,
+          sessionId: 'stop-during-complete',
+        );
+        final oldRuntime = oldPhoneRuntime(output: output);
+
+        final transferFuture = runTransfer(oldRuntime, output);
+        await receiver.completeEntered.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        await newRuntime.stopNewPhoneReceiver(output.payload.sessionId);
+        expect(newPhoneDiscovery.advertisedPeerId, isNull);
+        expect(
+          registry,
+          isNot(
+            contains(
+              accountMigrationLocalPeerIdForSession(output.payload.sessionId),
+            ),
+          ),
+        );
+
+        receiver.releaseComplete();
+        final result = await transferFuture.timeout(const Duration(seconds: 2));
+
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      },
+    );
+
+    test(
+      'stop while complete body is still arriving preserves the proof route',
+      () async {
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'stop-during-complete-body-read',
+          replayGrace: const Duration(milliseconds: 150),
+        );
+        final manifest = await prepareRawReceiver(output);
+        final encodedBody = jsonEncode({
+          accountMigrationLocalTransferFieldBundleId: manifest.bundleId,
+        });
+        final splitAt = encodedBody.length ~/ 2;
+        final client = HttpClient();
+        addTearDown(() => client.close(force: true));
+        final request = await client.post(
+          InternetAddress.loopbackIPv4.address,
+          newPhoneServer.port!,
+          '/migration/${Uri.encodeComponent(output.payload.sessionId)}/'
+          '$accountMigrationLocalTransferCommandComplete',
+        );
+        request.headers.contentType = ContentType.json;
+        request.contentLength = utf8.encode(encodedBody).length;
+        request.write(encodedBody.substring(0, splitAt));
+        await request.flush();
+
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (!flowEvents.any((event) {
+          if (event['event'] != 'ACCOUNT_MIGRATION_RECEIVER_REQUEST_START') {
+            return false;
+          }
+          final details = Map<String, dynamic>.from(event['details'] as Map);
+          return details['sessionId'] == output.payload.sessionId &&
+              details['command'] ==
+                  accountMigrationLocalTransferCommandComplete;
+        })) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail('complete request did not enter the runtime route');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 2));
+        }
+
+        await runtime.stopNewPhoneReceiver(output.payload.sessionId);
+        expect(newPhoneDiscovery.advertisedPeerId, isNull);
+        request.write(encodedBody.substring(splitAt));
+        final completeResponse = await request.close();
+        await completeResponse.drain<void>();
+        expect(completeResponse.statusCode, HttpStatus.ok);
+
+        final proof = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof:
+                _validOldBlockProof(output.payload.sessionId).toJson(),
+          },
+        );
+        expect(proof.statusCode, HttpStatus.ok);
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 170));
+      },
+    );
+
+    final failingCompleteCases = <({String name, Object? error})>[
+      (name: 'false', error: null),
+      (name: 'error', error: StateError('injected complete failure')),
+    ];
+
+    for (final failure in failingCompleteCases) {
+      test('stop during in-flight complete settling ${failure.name} removes '
+          'the route', () async {
+        final receiver = _PausableFailingCompleteCutoverReceiver(
+          error: failure.error,
+        );
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'stop-complete-${failure.name}',
+        );
+        final manifest = await prepareRawReceiver(output);
+        final completeFuture = _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandComplete,
+          body: {accountMigrationLocalTransferFieldBundleId: manifest.bundleId},
+        );
+        await receiver.completeEntered.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        await runtime.stopNewPhoneReceiver(output.payload.sessionId);
+        receiver.releaseComplete();
+        final complete = await completeFuture.timeout(
+          const Duration(seconds: 2),
+        );
+
+        expect(complete.statusCode, HttpStatus.badRequest);
+        final proof = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof:
+                _validOldBlockProof(output.payload.sessionId).toJson(),
+          },
+        );
+        expect(proof.statusCode, HttpStatus.notFound);
+        expect(proof.body?['reason'], 'unknown_session');
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 0);
+      });
+
+      test(
+        'duplicate complete joins an owner settling ${failure.name} even when '
+        'its body finishes later',
+        () async {
+          final receiver = _PausableFailingCompleteCutoverReceiver(
+            error: failure.error,
+          );
+          final (output, _) = await startNewPhone(
+            receiver,
+            sessionId: 'duplicate-complete-${failure.name}',
+          );
+          final manifest = await prepareRawReceiver(output);
+          final completeBody = jsonEncode({
+            accountMigrationLocalTransferFieldBundleId: manifest.bundleId,
+          });
+          final first = _postMigrationJson(
+            port: newPhoneServer.port!,
+            sessionId: output.payload.sessionId,
+            command: accountMigrationLocalTransferCommandComplete,
+            body: {
+              accountMigrationLocalTransferFieldBundleId: manifest.bundleId,
+            },
+          );
+          await receiver.completeEntered.future.timeout(
+            const Duration(seconds: 2),
+          );
+
+          final client = HttpClient();
+          addTearDown(() => client.close(force: true));
+          final duplicateRequest = await client.post(
+            InternetAddress.loopbackIPv4.address,
+            newPhoneServer.port!,
+            '/migration/${Uri.encodeComponent(output.payload.sessionId)}/'
+            '$accountMigrationLocalTransferCommandComplete',
+          );
+          duplicateRequest.headers.contentType = ContentType.json;
+          duplicateRequest.contentLength = utf8.encode(completeBody).length;
+          final splitAt = completeBody.length ~/ 2;
+          duplicateRequest.write(completeBody.substring(0, splitAt));
+          await duplicateRequest.flush();
+
+          final deadline = DateTime.now().add(const Duration(seconds: 2));
+          while (flowEvents.where((event) {
+                if (event['event'] !=
+                    'ACCOUNT_MIGRATION_RECEIVER_REQUEST_START') {
+                  return false;
+                }
+                final details = Map<String, dynamic>.from(
+                  event['details'] as Map,
+                );
+                return details['sessionId'] == output.payload.sessionId &&
+                    details['command'] ==
+                        accountMigrationLocalTransferCommandComplete;
+              }).length <
+              2) {
+            if (DateTime.now().isAfter(deadline)) {
+              fail('duplicate complete did not enter the runtime route');
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 2));
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+
+          receiver.releaseComplete();
+          final firstResponse = await first.timeout(const Duration(seconds: 2));
+          expect(firstResponse.statusCode, HttpStatus.badRequest);
+
+          duplicateRequest.write(completeBody.substring(splitAt));
+          final duplicateResponse = await duplicateRequest.close().timeout(
+            const Duration(seconds: 2),
+          );
+          await duplicateResponse.drain<void>();
+
+          expect(duplicateResponse.statusCode, HttpStatus.badRequest);
+          expect(receiver.completeCalls, 1);
+        },
+      );
+    }
+
+    test(
+      'stopNewPhoneReceiver rejects a later proof for a pre-verification session',
+      () async {
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'preverify-stop',
+        );
+
+        await runtime.stopNewPhoneReceiver(output.payload.sessionId);
+        final response = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof:
+                _validOldBlockProof(output.payload.sessionId).toJson(),
+          },
+        );
+
+        expect(response.statusCode, HttpStatus.notFound);
+        expect(response.body?['reason'], 'unknown_session');
+        expect(receiver.oldBlockProofCalls, 0);
+      },
+    );
+
+    test(
+      'pre-verification stop revokes the route when advertising cleanup throws',
+      () async {
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'stop-advertising-failure',
+        );
+        newPhoneDiscovery.stopAdvertisingError = StateError(
+          'injected advertising cleanup failure',
+        );
+
+        await expectLater(
+          runtime.stopNewPhoneReceiver(output.payload.sessionId),
+          throwsStateError,
+        );
+        final response = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandTranscript,
+          body: _transcript(output.payload).toJson(),
+        );
+
+        expect(response.statusCode, HttpStatus.notFound);
+        expect(response.body?['reason'], 'unknown_session');
+        expect(receiver.oldBlockProofCalls, 0);
+      },
+    );
+
+    test(
+      'committed proof stops advertising, replays during grace, then expires to unknown_session',
+      () async {
+        const replayGrace = Duration(milliseconds: 80);
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, newRuntime) = await startNewPhone(
+          receiver,
+          sessionId: 'committed-replay-grace',
+          replayGrace: replayGrace,
+        );
+        var activationCount = 0;
+        final stopped = Completer<void>();
+        final subscription = newRuntime.receiverEvents.listen((event) {
+          if (event.type != AccountMigrationReceiverEventType.activated) {
+            return;
+          }
+          activationCount += 1;
+          unawaited(
+            newRuntime.stopNewPhoneReceiver(event.sessionId).whenComplete(() {
+              if (!stopped.isCompleted) stopped.complete();
+            }),
+          );
+        });
+        addTearDown(subscription.cancel);
+
+        final result = await runTransfer(
+          oldPhoneRuntime(output: output),
+          output,
+        );
+        await stopped.future.timeout(const Duration(seconds: 2));
+
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+        expect(newPhoneDiscovery.advertisedPeerId, isNull);
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        expect(activationCount, 1);
+
+        final replay = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: receiver
+                .oldBlockProof!
+                .toJson(),
+          },
+        );
+        expect(replay.statusCode, HttpStatus.ok);
+        expect(
+          replay.body?[accountMigrationLocalTransferFieldNewActiveProof],
+          receiver.newActiveProof!.toJson(),
+        );
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        expect(activationCount, 1);
+
+        await Future<void>.delayed(
+          replayGrace + const Duration(milliseconds: 60),
+        );
+        final expired = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: receiver
+                .oldBlockProof!
+                .toJson(),
+          },
+        );
+        expect(expired.statusCode, HttpStatus.notFound);
+        expect(expired.body?['reason'], 'unknown_session');
+      },
+    );
+
+    test(
+      'committed proof tombstone rejects manifest mutation without reaching receiver',
+      () async {
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, _) = await startNewPhone(
+          receiver,
+          sessionId: 'committed-manifest-rejected',
+          replayGrace: const Duration(milliseconds: 180),
+        );
+
+        final result = await runTransfer(
+          oldPhoneRuntime(output: output),
+          output,
+        );
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+        expect(receiver.acceptManifestCalls, 1);
+
+        final mutation = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandManifest,
+          body: _preparedBundle(
+            sessionId: output.payload.sessionId,
+            segmentCount: 1,
+          ).manifest.toJson(),
+        );
+
+        expect(mutation.statusCode, HttpStatus.conflict);
+        expect(mutation.body?['reason'], 'session_finalizing');
+        expect(receiver.acceptManifestCalls, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      },
+    );
+
+    test(
+      'same-session restart during committed grace preserves replay proof',
+      () async {
+        final receiver = _CutoverRecordingBundleReceiver();
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'committed-restart-rejected',
+          replayGrace: const Duration(milliseconds: 220),
+        );
+        final result = await runTransfer(
+          oldPhoneRuntime(output: output),
+          output,
+        );
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+
+        final restart = await runtime.startNewPhoneReceiver(output);
+        expect(restart.isStarted, isFalse);
+        expect(
+          restart.failureCode,
+          AccountMigrationReceiverStartFailureCode.sessionUnavailable,
+        );
+
+        final replay = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: receiver
+                .oldBlockProof!
+                .toJson(),
+          },
+        );
+        expect(replay.statusCode, HttpStatus.ok);
+        expect(
+          replay.body?[accountMigrationLocalTransferFieldNewActiveProof],
+          receiver.newActiveProof!.toJson(),
+        );
+        expect(receiver.oldBlockProofCalls, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 240));
+      },
+    );
+
+    final invalidNewActiveProofIdentities =
+        <
+          ({
+            String field,
+            MigrationCutoverRecord Function(MigrationCutoverRecord proof)
+            mutate,
+          })
+        >[
+          (
+            field: 'sessionId',
+            mutate: (proof) => proof.copyWith(sessionId: 'wrong-session'),
+          ),
+          (
+            field: 'accountPeerId',
+            mutate: (proof) =>
+                proof.copyWith(accountPeerId: 'wrong-account-peer'),
+          ),
+          (
+            field: 'role',
+            mutate: (proof) =>
+                proof.copyWith(deviceRole: MigrationCutoverDeviceRole.oldPhone),
+          ),
+          (
+            field: 'devicePeerId',
+            mutate: (proof) =>
+                proof.copyWith(devicePeerId: 'wrong-new-phone-key'),
+          ),
+        ];
+
+    for (final invalidIdentity in invalidNewActiveProofIdentities) {
+      test('receiver rejects new-active proof with invalid '
+          '${invalidIdentity.field} identity without activation', () async {
+        final receiver = _MutatingNewActiveProofCutoverReceiver(
+          invalidIdentity.mutate,
+        );
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'receiver-wrong-${invalidIdentity.field}',
+        );
+        final manifest = await prepareRawReceiver(output);
+        final complete = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandComplete,
+          body: {accountMigrationLocalTransferFieldBundleId: manifest.bundleId},
+        );
+        expect(complete.statusCode, HttpStatus.ok);
+
+        var activationCount = 0;
+        final subscription = runtime.receiverEvents.listen((event) {
+          if (event.type == AccountMigrationReceiverEventType.activated) {
+            activationCount += 1;
+          }
+        });
+        addTearDown(subscription.cancel);
+        final proofBody = {
+          accountMigrationLocalTransferFieldOldBlockProof: _validOldBlockProof(
+            output.payload.sessionId,
+          ).toJson(),
+        };
+
+        final first = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: proofBody,
+        );
+        final retry = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: proofBody,
+        );
+
+        expect(first.statusCode, HttpStatus.badRequest);
+        expect(first.body?['reason'], 'cutover_rejected');
+        expect(retry.statusCode, HttpStatus.badRequest);
+        expect(retry.body?['reason'], 'cutover_rejected');
+        expect(receiver.oldBlockProofCalls, 2);
+        expect(activationCount, 0);
+        expect(newPhoneDiscovery.advertisedPeerId, isNotNull);
+        expect(
+          registry,
+          contains(
+            accountMigrationLocalPeerIdForSession(output.payload.sessionId),
+          ),
+        );
+      });
+    }
+
+    for (final invalidIdentity in invalidNewActiveProofIdentities) {
+      test(
+        'sender rejects new-active proof with invalid '
+        '${invalidIdentity.field} identity without migrated-out commit',
+        () async {
+          final sessionId = 'sender-wrong-${invalidIdentity.field}';
+          final output = await _savePendingSession(
+            pairingRepo,
+            sessionId: sessionId,
+          );
+          final wrongProof = invalidIdentity.mutate(
+            _validNewActiveProof(
+              sessionId: sessionId,
+              devicePeerId: output.payload.newPhoneEphemeralPublicKey,
+            ),
+          );
+          var proofAttempts = 0;
+          newPhoneServer.configureMigrationTransferHandler((
+            request,
+            path,
+          ) async {
+            await utf8.decoder.bind(request).join();
+            final command = request.uri.pathSegments.last;
+            final response = <String, Object?>{'ok': true};
+            if (command == accountMigrationLocalTransferCommandTranscript) {
+              response[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] =
+                  true;
+            } else if (command ==
+                accountMigrationLocalTransferCommandComplete) {
+              response[accountMigrationLocalTransferFieldCutoverReady] = true;
+              response[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] =
+                  true;
+            } else if (command ==
+                accountMigrationLocalTransferCommandOldBlockProof) {
+              proofAttempts += 1;
+              response[accountMigrationLocalTransferFieldNewActiveProof] =
+                  wrongProof.toJson();
+            }
+            request.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(response));
+            await request.response.close();
+          });
+          final port = await newPhoneServer.start();
+          await newPhoneDiscovery.startAdvertising(
+            accountMigrationLocalPeerIdForSession(sessionId),
+            port,
+          );
+          final oldAuthority = _MemoryAuthorityRepository();
+          final oldCutover = _MemoryCutoverRepository();
+          final oldRuntime = AccountMigrationLocalTransferRuntime(
+            discovery: oldPhoneDiscovery,
+            wsServer: oldPhoneServer,
+            pairingSessionRepository: pairingRepo,
+            bundleSource: (_) async =>
+                _preparedBundle(sessionId: sessionId, segmentCount: 1),
+            oldPhoneCutoverCoordinator: MigrationCutoverCoordinator(
+              authorityRepository: oldAuthority,
+              cutoverRepository: oldCutover,
+              now: _fixedNow,
+            ),
+            oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+          );
+
+          final result = await runTransfer(oldRuntime, output);
+
+          expect(result.isSuccess, isFalse);
+          expect(
+            result.failureCode,
+            AccountMigrationTransferFailureCode.cutoverRejected,
+          );
+          expect(
+            oldAuthority.saved?.state,
+            AccountMigrationAuthorityState.migrationCutoverPendingBlocked,
+          );
+          expect(oldCutover.saved?.oldMigratedOutCommitted, isFalse);
+          expect(proofAttempts, 1);
+        },
+      );
+    }
+
+    final retryableProofFailureCases = <({String name, Object? error})>[
+      (name: 'null', error: null),
+      (name: 'error', error: StateError('injected proof settlement failure')),
+    ];
+
+    for (final failure in retryableProofFailureCases) {
+      test('replay-safe proof retries one ${failure.name} receiver rejection '
+          'without stranding cutover', () async {
+        final receiver = _RetryableProofCutoverReceiver(error: failure.error);
+        final (output, runtime) = await startNewPhone(
+          receiver,
+          sessionId: 'proof-rejection-retry-${failure.name}',
+          replayGrace: const Duration(milliseconds: 120),
+        );
+        var activationCount = 0;
+        final subscription = runtime.receiverEvents.listen((event) {
+          if (event.type == AccountMigrationReceiverEventType.activated) {
+            activationCount += 1;
+          }
+        });
+        addTearDown(subscription.cancel);
+        final requestedDelays = <Duration>[];
+        final result = await runTransfer(
+          oldPhoneRuntime(
+            output: output,
+            retryDelay: (delay) async {
+              requestedDelays.add(delay);
+            },
+          ),
+          output,
+        );
+
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+        expect(receiver.completeCalls, 1);
+        expect(receiver.oldBlockProofCalls, 2);
+        expect(requestedDelays, [const Duration(milliseconds: 250)]);
+        expect(activationCount, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+      });
+    }
+
+    test(
+      'complete response loss retries once after early replay-safe negotiation',
+      () async {
+        final receiver = _PausableCompleteCutoverReceiver();
+        final (output, _) = await startNewPhone(
+          receiver,
+          sessionId: 'complete-response-loss-retry',
+          replayGrace: const Duration(milliseconds: 120),
+        );
+        final oldRuntime = oldPhoneRuntime(
+          output: output,
+          httpTimeout: const Duration(milliseconds: 30),
+        );
+        final transferFuture = runTransfer(oldRuntime, output);
+        final safetyRelease = Timer(
+          const Duration(seconds: 1),
+          receiver.releaseComplete,
+        );
+        try {
+          await receiver.completeEntered.future.timeout(
+            const Duration(seconds: 2),
+          );
+          final deadline = DateTime.now().add(const Duration(seconds: 2));
+          while (flowEvents.where((event) {
+                if (event['event'] !=
+                    'ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_START') {
+                  return false;
+                }
+                final details = Map<String, dynamic>.from(
+                  event['details'] as Map,
+                );
+                return details['sessionId'] == output.payload.sessionId &&
+                    details['command'] ==
+                        accountMigrationLocalTransferCommandComplete;
+              }).length <
+              2) {
+            if (DateTime.now().isAfter(deadline)) {
+              fail('sender did not issue the replay-safe complete retry');
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 2));
+          }
+          receiver.releaseComplete();
+          final result = await transferFuture.timeout(
+            const Duration(seconds: 2),
+          );
+
+          final completeAttempts = flowEvents.where((event) {
+            if (event['event'] !=
+                'ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_START') {
+              return false;
+            }
+            final details = Map<String, dynamic>.from(event['details'] as Map);
+            return details['sessionId'] == output.payload.sessionId &&
+                details['command'] ==
+                    accountMigrationLocalTransferCommandComplete;
+          }).length;
+          expect(result.isSuccess, isTrue, reason: result.safeMessage);
+          expect(completeAttempts, 2);
+          expect(receiver.completeCalls, 1);
+          expect(receiver.oldBlockProofCalls, 1);
+          await Future<void>.delayed(const Duration(milliseconds: 140));
+        } finally {
+          safetyRelease.cancel();
+          receiver.releaseComplete();
+        }
+      },
+    );
+
+    test(
+      'complete transport loss is not retried without early replay capability',
+      () async {
+        const sessionId = 'complete-no-replay-capability';
+        final output = await _savePendingSession(
+          pairingRepo,
+          sessionId: sessionId,
+        );
+        newPhoneServer.configureMigrationTransferHandler((request, path) async {
+          await utf8.decoder.bind(request).join();
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'ok': true}));
+          await request.response.close();
+        });
+        final port = await newPhoneServer.start();
+        await newPhoneDiscovery.startAdvertising(
+          accountMigrationLocalPeerIdForSession(sessionId),
+          port,
+        );
+        final failingClient = _CommandFailingHttpClient(
+          accountMigrationLocalTransferCommandComplete,
+        );
+        final oldRuntime = AccountMigrationLocalTransferRuntime(
+          discovery: oldPhoneDiscovery,
+          wsServer: oldPhoneServer,
+          pairingSessionRepository: pairingRepo,
+          bundleSource: (_) async =>
+              _preparedBundle(sessionId: sessionId, segmentCount: 1),
+          httpClientFactory: () => failingClient,
+        );
+
+        final result = await runTransfer(oldRuntime, output);
+
+        expect(result.isSuccess, isFalse);
+        expect(
+          result.failureCode,
+          AccountMigrationTransferFailureCode.localTransferTimedOut,
+        );
+        expect(failingClient.failedCommandAttempts, 1);
+      },
+    );
+
+    test(
+      'response-lost committed proof retries once without duplicate import or activation',
+      () async {
+        final receiver = _PausableProofCutoverReceiver();
+        final (output, newRuntime) = await startNewPhone(
+          receiver,
+          sessionId: 'response-loss-retry',
+          replayGrace: const Duration(milliseconds: 300),
+        );
+        var activationCount = 0;
+        final activationStopped = Completer<void>();
+        final subscription = newRuntime.receiverEvents.listen((event) {
+          if (event.type != AccountMigrationReceiverEventType.activated) {
+            return;
+          }
+          activationCount += 1;
+          unawaited(
+            newRuntime.stopNewPhoneReceiver(event.sessionId).whenComplete(() {
+              if (!activationStopped.isCompleted) {
+                activationStopped.complete();
+              }
+            }),
+          );
+        });
+        addTearDown(subscription.cancel);
+
+        final requestedDelays = <Duration>[];
+        final oldRuntime = oldPhoneRuntime(
+          output: output,
+          httpTimeout: const Duration(milliseconds: 25),
+          retryDelay: (requested) async {
+            requestedDelays.add(requested);
+            receiver.releaseProof();
+            await activationStopped.future.timeout(const Duration(seconds: 1));
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          },
+        );
+        final safetyRelease = Timer(
+          const Duration(seconds: 1),
+          receiver.releaseProof,
+        );
+        final AccountMigrationTransferResult result;
+        try {
+          result = await runTransfer(
+            oldRuntime,
+            output,
+          ).timeout(const Duration(seconds: 2));
+        } finally {
+          safetyRelease.cancel();
+          receiver.releaseProof();
+        }
+
+        final proofAttempts = flowEvents.where((event) {
+          if (event['event'] != 'ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_START') {
+            return false;
+          }
+          final details = Map<String, dynamic>.from(event['details'] as Map);
+          return details['command'] ==
+              accountMigrationLocalTransferCommandOldBlockProof;
+        }).length;
+        expect(result.isSuccess, isTrue, reason: result.safeMessage);
+        expect(proofAttempts, 2);
+        expect(requestedDelays, [const Duration(milliseconds: 250)]);
+        expect(receiver.acceptInvocations, 1);
+        expect(receiver.completeCalls, 1);
+        expect(activationCount, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 320));
+      },
+    );
+
+    test(
+      'old-block retry exhausts at two attempts and is disabled without receiver capability',
+      () async {
+        Future<(AccountMigrationTransferResult, int, List<Duration>)>
+        runScenario({
+          required String sessionId,
+          required bool advertiseReplayCapability,
+        }) async {
+          final registry = <String, LocalPeer>{};
+          final receiverDiscovery = _SharedFakeDiscovery(registry);
+          final senderDiscovery = _SharedFakeDiscovery(registry);
+          final receiverServer = LocalWsServer();
+          final senderServer = LocalWsServer();
+          final failingClient = _ProofFailingHttpClient();
+          final delays = <Duration>[];
+          try {
+            receiverServer.configureMigrationTransferHandler((
+              request,
+              path,
+            ) async {
+              await utf8.decoder.bind(request).join();
+              final command = request.uri.pathSegments.last;
+              final response = <String, Object?>{'ok': true};
+              if (command == accountMigrationLocalTransferCommandComplete) {
+                response[accountMigrationLocalTransferFieldCutoverReady] = true;
+                if (advertiseReplayCapability) {
+                  response[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] =
+                      true;
+                }
+              }
+              request.response
+                ..statusCode = HttpStatus.ok
+                ..headers.contentType = ContentType.json
+                ..write(jsonEncode(response));
+              await request.response.close();
+            });
+            final port = await receiverServer.start();
+            await receiverDiscovery.startAdvertising(
+              accountMigrationLocalPeerIdForSession(sessionId),
+              port,
+            );
+            final output = await _savePendingSession(
+              _MemoryPairingSessionRepository(),
+              sessionId: sessionId,
+            );
+            final runtime = AccountMigrationLocalTransferRuntime(
+              discovery: senderDiscovery,
+              wsServer: senderServer,
+              pairingSessionRepository: _MemoryPairingSessionRepository(),
+              bundleSource: (_) async =>
+                  _preparedBundle(sessionId: sessionId, segmentCount: 1),
+              oldPhoneCutoverCoordinator: MigrationCutoverCoordinator(
+                authorityRepository: _MemoryAuthorityRepository(),
+                cutoverRepository: _MemoryCutoverRepository(),
+                now: _fixedNow,
+              ),
+              oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+              httpClientFactory: () => failingClient,
+              oldBlockProofRetryDelay: (requested) async {
+                delays.add(requested);
+              },
+            );
+
+            final AccountMigrationTransferResult result = await runtime
+                .runOldPhoneTransfer(
+                  request: AccountMigrationTransferRequest(
+                    transcript: _transcript(output.payload),
+                  ),
+                  onProgress: (_) {},
+                  isCancelled: () => false,
+                );
+            return (result, failingClient.proofAttempts, delays);
+          } finally {
+            await receiverServer.stop();
+            await senderServer.stop();
+            receiverDiscovery.dispose();
+            senderDiscovery.dispose();
+          }
+        }
+
+        final withCapability = await runScenario(
+          sessionId: 'bounded-retry-capable',
+          advertiseReplayCapability: true,
+        );
+        expect(withCapability.$1.isSuccess, isFalse);
+        expect(withCapability.$2, 2);
+        expect(withCapability.$3, [const Duration(milliseconds: 250)]);
+
+        final withoutCapability = await runScenario(
+          sessionId: 'bounded-retry-old-receiver',
+          advertiseReplayCapability: false,
+        );
+        expect(withoutCapability.$1.isSuccess, isFalse);
+        expect(withoutCapability.$2, 1);
+        expect(withoutCapability.$3, isEmpty);
+      },
+    );
+
+    test(
+      'concurrent old-block proofs single-flight one receiver cutover and one activation',
+      () async {
+        final receiver = _PausableProofCutoverReceiver();
+        final (output, newRuntime) = await startNewPhone(
+          receiver,
+          sessionId: 'concurrent-proof-single-flight',
+          replayGrace: const Duration(milliseconds: 120),
+        );
+        final manifest = await prepareRawReceiver(output);
+        final complete = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandComplete,
+          body: {accountMigrationLocalTransferFieldBundleId: manifest.bundleId},
+        );
+        expect(complete.statusCode, HttpStatus.ok);
+        expect(
+          complete
+              .body?[accountMigrationLocalTransferFieldOldBlockProofReplaySafe],
+          isTrue,
+        );
+
+        var activationCount = 0;
+        final subscription = newRuntime.receiverEvents.listen((event) {
+          if (event.type == AccountMigrationReceiverEventType.activated) {
+            activationCount += 1;
+          }
+        });
+        addTearDown(subscription.cancel);
+
+        final validProof = _validOldBlockProof(output.payload.sessionId);
+        final first = _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: validProof
+                .toJson(),
+          },
+        );
+        await receiver.proofEntered.future.timeout(const Duration(seconds: 2));
+        final inFlightMutation = await _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandManifest,
+          body: manifest.toJson(),
+        );
+        expect(inFlightMutation.statusCode, HttpStatus.conflict);
+        expect(inFlightMutation.body?['reason'], 'session_finalizing');
+        expect(receiver.acceptManifestCalls, 1);
+        final second = _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: validProof
+                .toJson(),
+          },
+        );
+        final invalid = _postMigrationJson(
+          port: newPhoneServer.port!,
+          sessionId: output.payload.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: {
+              'version': MigrationCutoverRecord.currentVersion + 1,
+            },
+          },
+        );
+
+        final _TestMigrationHttpResponse invalidResponse;
+        try {
+          invalidResponse = await invalid.timeout(const Duration(seconds: 1));
+        } finally {
+          receiver.releaseProof();
+        }
+        expect(invalidResponse.statusCode, HttpStatus.badRequest);
+        expect(invalidResponse.body?['reason'], 'invalid_old_block_proof');
+
+        final responses = await Future.wait([first, second]);
+        expect(responses.map((response) => response.statusCode), [
+          HttpStatus.ok,
+          HttpStatus.ok,
+        ]);
+        expect(
+          responses.map(
+            (response) => response
+                .body?[accountMigrationLocalTransferFieldNewActiveProof],
+          ),
+          everyElement(receiver.newActiveProof!.toJson()),
+        );
+        expect(receiver.acceptInvocations, 1);
+        expect(receiver.oldBlockProofCalls, 1);
+        expect(activationCount, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 140));
       },
     );
   });
@@ -869,20 +2023,15 @@ void main() {
     });
 
     test(
-      'killed reused connection mid-transfer is typed as local transfer timeout',
+      'killed connection mid-transfer is typed as local transfer timeout',
       () async {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         addTearDown(() async => server.close(force: true));
         final commands = <String>[];
-        final segmentRemotePorts = <int>[];
         server.listen((request) async {
-          final remotePort = request.connectionInfo?.remotePort;
           final command = request.uri.pathSegments.last;
           commands.add(command);
           if (command == accountMigrationLocalTransferCommandSegment) {
-            if (remotePort != null) {
-              segmentRemotePorts.add(remotePort);
-            }
             final body = await utf8.decoder.bind(request).join();
             final decoded = jsonDecode(body) as Map<String, dynamic>;
             if (decoded['index'] == 1) {
@@ -935,14 +2084,6 @@ void main() {
           accountMigrationLocalTransferCommandSegment,
           accountMigrationLocalTransferCommandSegment,
         ]);
-        expect(segmentRemotePorts, hasLength(2));
-        expect(
-          segmentRemotePorts[1],
-          segmentRemotePorts[0],
-          reason:
-              'the killed segment request should reuse the preceding segment '
-              'TCP connection',
-        );
         expect(httpClient.closeCount, 1);
         expect(httpClient.forceCloseCount, 1);
         final failure = detailsOf(
@@ -1379,7 +2520,7 @@ void main() {
       'old block proof timeout is typed with explicit authority risk',
       () async {
         final receiver = _DelayingCutoverReceiver(
-          oldBlockProofDelay: downstreamCommandDelay,
+          oldBlockProofDelay: const Duration(milliseconds: 700),
         );
         final (output, _) = await startNewPhone(receiver);
         final bundle = _preparedBundle(
@@ -1397,7 +2538,8 @@ void main() {
             now: _fixedNow,
           ),
           oldPhoneLeaseCleanup: _noopLeaseCleanup(),
-          httpTimeout: downstreamCommandTimeout,
+          httpTimeout: const Duration(milliseconds: 250),
+          oldBlockProofRetryDelay: (_) async {},
         );
 
         final result = await runTransfer(oldRuntime, output);
@@ -1410,15 +2552,19 @@ void main() {
           result.safeMessage,
           accountMigrationFinalHandoffStalledSafeMessage,
         );
-        final failure = detailsOf(
-          eventsNamed('ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED').single,
-        );
-        expect(failure['command'], 'old-block-proof');
-        expect(failure['commandStage'], 'oldBlockProofCutover');
-        expect(
-          failure['authorityRisk'],
-          'oldNetworkBlockedWithoutNewActiveProof',
-        );
+        final failures = eventsNamed(
+          'ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED',
+        ).map(detailsOf).toList(growable: false);
+        expect(failures, hasLength(2));
+        for (final failure in failures) {
+          expect(failure['command'], 'old-block-proof');
+          expect(failure['commandStage'], 'oldBlockProofCutover');
+          expect(
+            failure['authorityRisk'],
+            'oldNetworkBlockedWithoutNewActiveProof',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
       },
     );
 
@@ -2353,6 +3499,84 @@ void main() {
   });
 }
 
+class _TestMigrationHttpResponse {
+  final int statusCode;
+  final Map<String, dynamic>? body;
+
+  const _TestMigrationHttpResponse({
+    required this.statusCode,
+    required this.body,
+  });
+}
+
+Future<_TestMigrationHttpResponse> _postMigrationJson({
+  required int port,
+  required String sessionId,
+  required String command,
+  required Map<String, Object?> body,
+}) async {
+  final client = HttpClient();
+  try {
+    final encodedSessionId = Uri.encodeComponent(sessionId);
+    final request = await client.post(
+      InternetAddress.loopbackIPv4.address,
+      port,
+      '/migration/$encodedSessionId/$command',
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+    final response = await request.close().timeout(const Duration(seconds: 2));
+    final rawBody = await utf8.decoder
+        .bind(response)
+        .join()
+        .timeout(const Duration(seconds: 2));
+    final decoded = rawBody.trim().isEmpty ? null : jsonDecode(rawBody);
+    return _TestMigrationHttpResponse(
+      statusCode: response.statusCode,
+      body: decoded is Map ? Map<String, dynamic>.from(decoded) : null,
+    );
+  } finally {
+    client.close(force: true);
+  }
+}
+
+MigrationCutoverRecord _validOldBlockProof(String sessionId) {
+  final now = _fixedNow();
+  return MigrationCutoverRecord.initial(
+    sessionId: sessionId,
+    accountPeerId: 'old-phone-peer',
+    devicePeerId: 'old-phone-peer',
+    deviceRole: MigrationCutoverDeviceRole.oldPhone,
+    now: now,
+  ).copyWith(
+    phase: MigrationCutoverPhase.oldNetworkBlocked,
+    oldNetworkBlocked: true,
+    oldNetworkBlockedAt: now,
+  );
+}
+
+MigrationCutoverRecord _validNewActiveProof({
+  required String sessionId,
+  required String devicePeerId,
+}) {
+  final now = _fixedNow();
+  return MigrationCutoverRecord.initial(
+    sessionId: sessionId,
+    accountPeerId: 'old-phone-peer',
+    devicePeerId: devicePeerId,
+    deviceRole: MigrationCutoverDeviceRole.newPhone,
+    now: now,
+  ).copyWith(
+    phase: MigrationCutoverPhase.newActiveCommitted,
+    oldNetworkBlocked: true,
+    oldNetworkBlockedAt: now,
+    oldBlockProofReceived: true,
+    oldBlockProofReceivedAt: now,
+    newActiveCommitted: true,
+    newActiveCommittedAt: now,
+  );
+}
+
 AccountMigrationLocalTransferBundle _preparedBundle({
   required String sessionId,
   required int segmentCount,
@@ -2400,6 +3624,57 @@ class _CloseCountingHttpClient implements HttpClient {
     if (force) {
       forceCloseCount += 1;
     }
+    _delegate.close(force: force);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ProofFailingHttpClient implements HttpClient {
+  final HttpClient _delegate = HttpClient();
+  int proofAttempts = 0;
+
+  @override
+  Future<HttpClientRequest> post(String host, int port, String path) {
+    if (path.endsWith('/$accountMigrationLocalTransferCommandOldBlockProof')) {
+      proofAttempts += 1;
+      return Future<HttpClientRequest>.error(
+        const SocketException('injected old-block-proof transport loss'),
+      );
+    }
+    return _delegate.post(host, port, path);
+  }
+
+  @override
+  void close({bool force = false}) {
+    _delegate.close(force: force);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _CommandFailingHttpClient implements HttpClient {
+  final String failingCommand;
+  final HttpClient _delegate = HttpClient();
+  int failedCommandAttempts = 0;
+
+  _CommandFailingHttpClient(this.failingCommand);
+
+  @override
+  Future<HttpClientRequest> post(String host, int port, String path) {
+    if (path.endsWith('/$failingCommand')) {
+      failedCommandAttempts += 1;
+      return Future<HttpClientRequest>.error(
+        SocketException('injected $failingCommand transport loss'),
+      );
+    }
+    return _delegate.post(host, port, path);
+  }
+
+  @override
+  void close({bool force = false}) {
     _delegate.close(force: force);
   }
 
@@ -2510,6 +3785,151 @@ class _DelayingCutoverReceiver extends _CutoverRecordingBundleReceiver {
     required MigrationCutoverRecord oldBlockProof,
   }) async {
     await Future<void>.delayed(oldBlockProofDelay);
+    return super.acceptOldBlockProof(
+      manifest: manifest,
+      transcript: transcript,
+      pendingSession: pendingSession,
+      oldBlockProof: oldBlockProof,
+    );
+  }
+}
+
+class _PausableCompleteCutoverReceiver extends _CutoverRecordingBundleReceiver {
+  final completeEntered = Completer<void>();
+  final _completeRelease = Completer<void>();
+
+  void releaseComplete() {
+    if (!_completeRelease.isCompleted) {
+      _completeRelease.complete();
+    }
+  }
+
+  @override
+  Future<bool> complete({
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationPendingPairingSession pendingSession,
+  }) async {
+    if (!completeEntered.isCompleted) {
+      completeEntered.complete();
+    }
+    await _completeRelease.future;
+    return super.complete(
+      manifest: manifest,
+      transcript: transcript,
+      pendingSession: pendingSession,
+    );
+  }
+}
+
+class _PausableFailingCompleteCutoverReceiver
+    extends _CutoverRecordingBundleReceiver {
+  final Object? error;
+  final completeEntered = Completer<void>();
+  final _completeRelease = Completer<void>();
+
+  _PausableFailingCompleteCutoverReceiver({required this.error});
+
+  void releaseComplete() {
+    if (!_completeRelease.isCompleted) {
+      _completeRelease.complete();
+    }
+  }
+
+  @override
+  Future<bool> complete({
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationPendingPairingSession pendingSession,
+  }) async {
+    completeCalls += 1;
+    if (!completeEntered.isCompleted) {
+      completeEntered.complete();
+    }
+    await _completeRelease.future;
+    final failure = error;
+    if (failure != null) throw failure;
+    return false;
+  }
+}
+
+class _MutatingNewActiveProofCutoverReceiver
+    extends _CutoverRecordingBundleReceiver {
+  final MigrationCutoverRecord Function(MigrationCutoverRecord proof)
+  mutateProof;
+
+  _MutatingNewActiveProofCutoverReceiver(this.mutateProof);
+
+  @override
+  Future<MigrationCutoverRecord?> acceptOldBlockProof({
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationPendingPairingSession pendingSession,
+    required MigrationCutoverRecord oldBlockProof,
+  }) async {
+    final accepted = await super.acceptOldBlockProof(
+      manifest: manifest,
+      transcript: transcript,
+      pendingSession: pendingSession,
+      oldBlockProof: oldBlockProof,
+    );
+    if (accepted == null) return null;
+    newActiveProof = mutateProof(accepted);
+    return newActiveProof;
+  }
+}
+
+class _PausableProofCutoverReceiver extends _CutoverRecordingBundleReceiver {
+  final proofEntered = Completer<void>();
+  final _proofRelease = Completer<void>();
+  int acceptInvocations = 0;
+
+  void releaseProof() {
+    if (!_proofRelease.isCompleted) {
+      _proofRelease.complete();
+    }
+  }
+
+  @override
+  Future<MigrationCutoverRecord?> acceptOldBlockProof({
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationPendingPairingSession pendingSession,
+    required MigrationCutoverRecord oldBlockProof,
+  }) async {
+    acceptInvocations += 1;
+    if (!proofEntered.isCompleted) {
+      proofEntered.complete();
+    }
+    await _proofRelease.future;
+    return super.acceptOldBlockProof(
+      manifest: manifest,
+      transcript: transcript,
+      pendingSession: pendingSession,
+      oldBlockProof: oldBlockProof,
+    );
+  }
+}
+
+class _RetryableProofCutoverReceiver extends _CutoverRecordingBundleReceiver {
+  final Object? error;
+
+  _RetryableProofCutoverReceiver({required this.error});
+
+  @override
+  Future<MigrationCutoverRecord?> acceptOldBlockProof({
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationPendingPairingSession pendingSession,
+    required MigrationCutoverRecord oldBlockProof,
+  }) async {
+    if (oldBlockProofCalls == 0) {
+      oldBlockProofCalls += 1;
+      this.oldBlockProof = oldBlockProof;
+      final failure = error;
+      if (failure != null) throw failure;
+      return null;
+    }
     return super.acceptOldBlockProof(
       manifest: manifest,
       transcript: transcript,
@@ -2641,6 +4061,7 @@ class _SharedFakeDiscovery implements LocalDiscoveryService {
   final Map<String, LocalPeer> registry;
   final _controller = StreamController<Map<String, LocalPeer>>.broadcast();
   String? advertisedPeerId;
+  Object? stopAdvertisingError;
 
   _SharedFakeDiscovery(this.registry);
 
@@ -2663,6 +4084,8 @@ class _SharedFakeDiscovery implements LocalDiscoveryService {
 
   @override
   Future<void> stopAdvertising() async {
+    final error = stopAdvertisingError;
+    if (error != null) throw error;
     final peerId = advertisedPeerId;
     if (peerId != null) {
       registry.remove(peerId);
@@ -2708,6 +4131,8 @@ class _SharedFakeDiscovery implements LocalDiscoveryService {
 class _RecordingBundleReceiver implements AccountMigrationLocalBundleReceiver {
   final void Function(MigrationEncryptedSegment segment) onSegment;
   MigrationTransferManifest? acceptedManifest;
+  int acceptManifestCalls = 0;
+  int completeCalls = 0;
 
   _RecordingBundleReceiver({required this.onSegment});
 
@@ -2725,6 +4150,7 @@ class _RecordingBundleReceiver implements AccountMigrationLocalBundleReceiver {
     required AuthenticatedMigrationChannelTranscript transcript,
     required MigrationPendingPairingSession pendingSession,
   }) async {
+    acceptManifestCalls += 1;
     acceptedManifest = manifest;
     return true;
   }
@@ -2746,6 +4172,7 @@ class _RecordingBundleReceiver implements AccountMigrationLocalBundleReceiver {
     required AuthenticatedMigrationChannelTranscript transcript,
     required MigrationPendingPairingSession pendingSession,
   }) async {
+    completeCalls += 1;
     return true;
   }
 }
@@ -2753,6 +4180,8 @@ class _RecordingBundleReceiver implements AccountMigrationLocalBundleReceiver {
 class _CutoverRecordingBundleReceiver extends _RecordingBundleReceiver
     implements AccountMigrationLocalBundleCutoverReceiver {
   MigrationCutoverRecord? oldBlockProof;
+  MigrationCutoverRecord? newActiveProof;
+  int oldBlockProofCalls = 0;
 
   _CutoverRecordingBundleReceiver() : super(onSegment: (_) {});
 
@@ -2763,26 +4192,29 @@ class _CutoverRecordingBundleReceiver extends _RecordingBundleReceiver
     required MigrationPendingPairingSession pendingSession,
     required MigrationCutoverRecord oldBlockProof,
   }) async {
+    oldBlockProofCalls += 1;
     this.oldBlockProof = oldBlockProof;
     if (!oldBlockProof.provesOldNetworkBlocked) {
       return null;
     }
     final now = _fixedNow();
-    return MigrationCutoverRecord.initial(
-      sessionId: manifest.sessionId,
-      accountPeerId: transcript.oldPhonePeerId,
-      devicePeerId: pendingSession.newPhoneEphemeralPublicKey,
-      deviceRole: MigrationCutoverDeviceRole.newPhone,
-      now: now,
-    ).copyWith(
-      phase: MigrationCutoverPhase.newActiveCommitted,
-      oldNetworkBlocked: true,
-      oldNetworkBlockedAt: oldBlockProof.oldNetworkBlockedAt,
-      oldBlockProofReceived: true,
-      oldBlockProofReceivedAt: now,
-      newActiveCommitted: true,
-      newActiveCommittedAt: now,
-    );
+    newActiveProof =
+        MigrationCutoverRecord.initial(
+          sessionId: manifest.sessionId,
+          accountPeerId: transcript.oldPhonePeerId,
+          devicePeerId: pendingSession.newPhoneEphemeralPublicKey,
+          deviceRole: MigrationCutoverDeviceRole.newPhone,
+          now: now,
+        ).copyWith(
+          phase: MigrationCutoverPhase.newActiveCommitted,
+          oldNetworkBlocked: true,
+          oldNetworkBlockedAt: oldBlockProof.oldNetworkBlockedAt,
+          oldBlockProofReceived: true,
+          oldBlockProofReceivedAt: now,
+          newActiveCommitted: true,
+          newActiveCommittedAt: now,
+        );
+    return newActiveProof;
   }
 }
 

@@ -4,6 +4,14 @@
 - Issue type: `new-feature`
 - Output doc path: `Test-Flight-Improv/Move-Feature/01-move-account-to-new-device-pr.md`
 
+> **Current status addendum — 2026-07-26.** Plan 285 is implemented and
+> host-closed for bounded in-session cutover retry/replay, runtime-service
+> re-arm, retained-route ownership/reset, authority-aware blocked UI, and
+> destination shared-store compatibility. This does not close the overall Move
+> Account program: MIG-006/MIG-012, optional device confidence, durable
+> process-restart recovery, erase-residue cleanup, and final release acceptance
+> remain open.
+
 # 2. Problem Statement
 
 Users who replace their phone need a clear way to move their mknoon account from the old device to the new device without losing their identity, private keys, database, message history, media, group state, or local account data.
@@ -21,7 +29,7 @@ The product expectation for this feature is an account move, not two active prim
 - Product risk if over-scoped: supporting two active primary phones would require true multi-device sync, message fanout, conflict policy, push-token coordination, read-state rules, and group convergence policy. That is a separate feature and should not be part of this migration MVP.
 - Privacy risk: account migration transfers the most sensitive local data in the app, so the transfer must be end-to-end encrypted and must not send the migration bundle through relay or cloud infrastructure.
 
-# 4. Current State
+# 4. Planning Baseline — Historical As Of 2026-06-06
 
 - App startup opens the encrypted SQLCipher database before routing the user into onboarding or the main app. The database key is stored in secure storage under `db_encryption_key`. Evidence: `lib/main.dart`, `lib/core/database/encrypted_db_opener.dart`, `test/core/database/encrypted_db_opener_test.dart`
 - The app has a database `user_version` wired through startup, but it does not yet have a migration-bundle protocol version, source app version, compatibility manifest, or controlled downgrade/import gate. Evidence: `lib/main.dart`, `lib/core/database/encrypted_db_opener.dart`
@@ -394,6 +402,14 @@ Before release, simulator or device-context acceptance must cover these iOS jour
 - Remaining acceptance gap after MIG-010 at the time of that session: the full exporter/importer still had to consume the pending-work manifest and prove actual migration/new-phone resume behavior; pending drafts or composer-local unsent data outside the covered committed row surfaces still needed exact final acceptance evidence; user journey, progress UI, wake lock, and migrated-out UX were assigned to MIG-011; final physical-device/release acceptance remained MIG-012; and MIG-006 remained deliberately deferred-last/evidence-gated for commands 29-123 and final group verification. MIG-010 did not prove full bundle export/import, final migrated database render, physical paired same-WiFi iOS-to-iOS migration, or final end-to-end program acceptance.
 - MIG-011 coverage now proves the host-side migration journey and user-visible copy: first launch exposes `Move from old phone` without starting identity generation or restore, Settings opens the old-phone migration route and says it scans the migration QR shown on the new phone, new-phone QR and old-phone scan/confirmation/progress states render without QR secret/private-material UI, the old-phone route launches `QRScannerScreen` with migration-specific scan/paste copy while normal contact scanner defaults stay intact, contact QR input is rejected without authorization side effects, foreground migration progress holds/releases `UploadWakeLockController`, and migrated-out UX blocks normal account UI behind an explicit erase confirmation. Evidence: `test/features/identity/presentation/screens/identity_choice_screen_test.dart`, `test/features/identity/presentation/screens/identity_choice_wired_test.dart`, `test/features/settings/presentation/screens/settings_screen_test.dart`, `test/features/settings/presentation/screens/settings_wired_test.dart`, `test/features/account_migration/presentation/account_migration_journey_screen_test.dart`, `test/features/account_migration/presentation/account_migration_blocked_screen_test.dart`, `test/core/device/upload_wake_lock_test.dart`, `test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart`, and `test/features/identity/presentation/screens/startup_router_recovery_test.dart`.
 - Remaining acceptance gap after MIG-011: host/widget tests prove presentation and coordinator boundaries only. Full bundle exporter/importer consumption, actual same-WiFi transfer, physical paired iOS-to-iOS success, camera/local-network/storage/version permission and failure proof on device, iOS lock/call/background lifecycle recovery, final migrated database/media/group/post/intro rendering, final cutover success UI backed by real transfer, and deferred-last MIG-006 release evidence remain open before overall Move Account acceptance.
+- Plan 285 host closure now proves replay-safe in-session old-block-proof
+  completion with bounded retry, duplicate-complete single-flight settlement,
+  full proof-identity binding, a retained proof-only grace route, resumable
+  live-service startup, off-screen activation/reset ownership, authority-aware
+  blocked-screen confirmation, and unsupported shared-store filtering. It adds
+  one backward-compatible `old_block_proof_replay_safe` response capability
+  without a protocol-version or persisted-format change. Evidence is recorded
+  in `285-move-account-cutover-window-recovery-tdd-plan.md`.
 - Missing acceptance evidence: no current test proves the old phone pauses sends and inbox consumption during final export so in-flight messages are not lost from the migration snapshot.
 - Remaining acceptance gap after MIG-010: committed pending-work ownership is covered by the manifest/validator, but no current test proves the final importer consumes that manifest to resume work only on the new phone after commit or shows user-facing paused/failed pending-work state.
 - Missing acceptance evidence: no current test proves sensitive migration material is excluded from logs, analytics, crash reports, debug events, and readable temporary artifacts.
@@ -415,7 +431,13 @@ Before release, simulator or device-context acceptance must cover these iOS jour
 - Remaining device acceptance gap after MIG-011: host widget tests prove the migrated-out screen blocks normal account UI and requires explicit erase confirmation, but no physical paired-device acceptance yet proves the old phone reaches that state after a real successful migration without exposing old inbox, conversations, read-only history, or normal account UI.
 - Missing acceptance evidence: no current test proves Android and cross-platform migration remain out of MVP scope.
 - Remaining device acceptance gap after MIG-011: host widget tests prove foreground migration progress acquires/releases the app wake-lock controller, but no simulator/device proof yet validates iOS suspension, manual lock, call interruption, or verified staged-progress resume behavior.
-- Remaining acceptance gap after MIG-010: import preconditions, startup authority gates, durable cutover proof checks, server lease-cleanup primitives, runtime network gates, and pending-work ownership manifesting now cover the focused foundation for avoiding two active phones with the same peer ID. Full exporter/importer pending-work consumption, UI/wake-lock/migrated-out UX, final device acceptance, and deferred-last MIG-006 release evidence remain open before the overall Move Account doc can claim end-to-end prevention.
+- Remaining program gap after Plan 285: import preconditions, startup authority
+  gates, durable cutover proof checks, server lease-cleanup primitives, runtime
+  network gates, pending-work ownership, and host-side UI/wake-lock/migrated-out
+  UX are covered. Full importer consumption, durable process-restart recovery,
+  erase/shared-scope residue cleanup, final device acceptance, and deferred-last
+  MIG-006 release evidence remain open before the overall Move Account doc can
+  claim end-to-end prevention.
 
 ## Acceptance Evidence
 
@@ -427,6 +449,13 @@ Required acceptance evidence layers:
 - MIG-009 landed focused host evidence for migrated-out runtime network gates: direct account-migration/P2P/resume/push/P2P-service bundle passed with `+107`; affected push/background bundle passed with `+46`; delayed key-exchange/post retrier bundle passed with `+20`; app-entry smoke passed with `+7`; post-wrapper baseline passed with host `+105`, loading smoke `+7`, and posts fake `+1`; permitted `1to1`, host-side `groups`, `transport`, and `completeness-check` gates passed; analyzer, `git diff --check`, and `graphify update .` completed after the final code delta. The host-side `groups` gate is not MIG-006 group simulator/release evidence, and MIG-006 remains deferred-last.
 - MIG-010 landed focused host evidence for pending-work ownership and queue-migration manifesting: direct pending-work builder/validator tests passed with `+7`; affected retrier/repository/account-migration direct bundle passed with `+64`; targeted analyzer passed with no issues; required host gates passed for baseline (host `+105`, loading smoke `+7`, posts fake `+1`), `1to1` (`+74`), host-side `groups` (`+324`), `posts` (presence `+3` plus posts fake phases 1/2/4/5 green), `intro` (`+205`), and completeness-check `803/803`; `git diff --check` passed. The host-side `groups` gate is not MIG-006 group simulator/release evidence, MIG-006 remains deferred-last, and the overall Move Account doc remains open.
 - MIG-011 landed focused host evidence for user journey, scanner/settings copy, progress wake-lock, and migrated-out UX: `flutter gen-l10n` passed after ARB copy changes; focused scanner/settings copy tests passed; the direct MIG-011 bundle passed; affected QR/startup regression bundle passed; targeted analyzer passed with no issues; `./scripts/run_test_gates.sh completeness-check` passed; `git diff --check` passed; and `graphify update .` completed. This evidence is host-side only and does not claim full exporter/importer, physical paired iOS-to-iOS success, iOS permission/lifecycle proof, final device acceptance, or MIG-006 group release evidence.
+- Plan 285 landed bounded host-tier cutover recovery evidence: 173/173
+  focused tests, all 50 `move-feature` commands, startup wiring 4/4, l10n 4/4,
+  completeness 1,349/1,349, clean strict analysis and scoped diff, and refreshed
+  Graphify fingerprint `d3c748f7a3cdec3b`. Optional device rows TC-16/16b were
+  N/A for host closure. This evidence does not implement the user-asserted
+  abort, durable process-restart recovery, erase-residue cleanup, MIG-006/MIG-012
+  acceptance, or overall release closure.
 - Integration: full export/import of database, staged primary and shared secure-storage values, committed retained group-key generations, primary-store pending group-key rotation drafts, group member device rosters, sender device/transport metadata, key-package state, chat-media secure keys, post-media DB crypto metadata, and app-owned media into a fresh app state without exposing partial account data, overwriting active keys before commit, mismatching secrets, leaking sensitive migration material, losing messages outside the export snapshot, duplicating pending jobs, breaking notification-preview decryption, creating a second active group device entry for the moved account, leaving server-side old-device rendezvous/push leases active, or leaving two active account holders.
 - Smoke: user-visible new-phone and old-phone journeys remain understandable from QR pairing and confirmation through final success, retryable failure, migrated-out old-phone state, and explicit erase.
 - Simulator: iOS lifecycle, camera permission, local-network permission, clock-skewed pairing, insufficient storage, iOS keychain/restore behavior, foreground wake-lock behavior, manual lock/call/background suspension recovery, runtime old-device shutdown, server-side lease cleanup, and post-migration startup behavior.

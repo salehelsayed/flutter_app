@@ -16,11 +16,10 @@ import 'package:flutter_app/features/groups/application/send_group_reaction_use_
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
-import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
-    as group_leave;
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
@@ -28,22 +27,31 @@ import 'package:flutter_app/features/groups/application/remove_group_member_use_
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 import '../../core/bridge/fake_bridge.dart';
+import '../../features/identity/domain/repositories/fake_identity_repository.dart';
 import 'fake_group_dissolve_preflight.dart';
 import 'fake_group_reaction_replay_outbox_repository.dart';
 import 'fake_group_pubsub_network.dart';
 import 'in_memory_media_attachment_repository.dart';
 import 'in_memory_group_message_repository.dart';
 import 'in_memory_group_repository.dart';
+import '../helpers/durable_group_exit_driver.dart';
+import '../helpers/durable_group_exit_surface_harness.dart';
 
 /// Encapsulates the full per-user group stack for multi-user integration tests.
 class GroupTestUser {
+  static final Expando<Map<String, GroupTestUser>> _usersByNetwork =
+      Expando<Map<String, GroupTestUser>>();
+
   final String peerId;
   final String deviceId;
   final String username;
@@ -65,6 +73,7 @@ class GroupTestUser {
   final StreamController<Map<String, dynamic>> _incomingReactionController;
   final DownloadGroupAvatarFn? _downloadGroupAvatarFn;
   int _messageSequence = 0;
+  DurableGroupExitEvidence? lastDurableGroupExitEvidence;
 
   GroupTestUser._({
     required this.peerId,
@@ -170,7 +179,7 @@ class GroupTestUser {
       recoverFromDispatcherOverflow: recoverFromDispatcherOverflow,
     );
 
-    return GroupTestUser._(
+    final user = GroupTestUser._(
       peerId: peerId,
       deviceId: resolvedDeviceId,
       username: username,
@@ -193,6 +202,9 @@ class GroupTestUser {
       incomingReactionController: reactionController,
       downloadGroupAvatarFn: downloadGroupAvatarFn,
     );
+    (_usersByNetwork[network] ??= <String, GroupTestUser>{})[resolvedDeviceId] =
+        user;
+    return user;
   }
 
   // ---- Actions ----
@@ -502,74 +514,77 @@ class GroupTestUser {
     }, senderDeviceId: deviceId);
   }
 
-  /// Leaves a group locally and, when that leave is allowed, broadcasts the
-  /// same membership update peers rely on for durable membership history.
+  /// Drives the production-shaped durable exit and mirrors its signed notice
+  /// onto the in-memory network used by integration-style host tests.
   Future<void> leaveGroup(String groupId) async {
     final group = await groupRepo.getGroup(groupId);
-    final members = await groupRepo.getMembers(groupId);
-    final adminCount = members
-        .where((member) => member.role == MemberRole.admin)
-        .length;
-
-    final shouldBroadcastSelfRemoval =
-        group != null && !(group.myRole == GroupRole.admin && adminCount <= 1);
-    if (shouldBroadcastSelfRemoval) {
-      final leftAt = DateTime.now().toUtc();
-      final remainingMembers = members
-          .where((member) => member.peerId != peerId)
-          .toList();
-      final groupConfig = {
-        'name': group.name,
-        'groupType': group.type.toValue(),
-        if (group.description != null) 'description': group.description,
-        'members': remainingMembers
-            .map((member) => member.toConfigJson())
-            .toList(),
-        'createdBy': group.createdBy,
-        'createdAt': group.createdAt.toUtc().toIso8601String(),
-      };
-
-      await msgRepo.saveMessage(
-        buildMemberRemovedTimelineMessage(
-          groupId: groupId,
-          removedPeerId: peerId,
-          removedUsername: username,
-          senderId: peerId,
-          senderUsername: username,
-          eventAt: leftAt,
+    if (group == null) {
+      throw StateError('Group exit parent is unavailable.');
+    }
+    final identityAt = group.createdAt.toUtc().toIso8601String();
+    final identityRepository = FakeIdentityRepository()
+      ..seed(
+        IdentityModel(
+          peerId: peerId,
+          publicKey: publicKey,
+          privateKey: privateKey,
+          mnemonic12:
+              'one two three four five six seven eight nine ten eleven twelve',
+          mlKemPublicKey: mlKemPublicKey,
+          username: username,
+          createdAt: identityAt,
+          updatedAt: identityAt,
         ),
       );
-
-      final sysText = jsonEncode({
-        '__sys': 'member_removed',
-        'member': {'peerId': peerId, 'username': username},
-        'removedAt': leftAt.toIso8601String(),
-        'groupConfig': groupConfig,
-      });
-      final removalEventId = canonicalMembershipEventId(
-        transitionType: 'member_removed',
-        groupId: groupId,
-        actorPeerId: peerId,
-        eventAt: leftAt,
-      );
-
-      await _network.publish(groupId, peerId, {
-        'groupId': groupId,
-        'senderId': peerId,
-        'senderUsername': username,
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': leftAt.toIso8601String(),
-        'messageId': removalEventId,
-      }, senderDeviceId: deviceId);
-    }
-
-    await group_leave.leaveGroup(
-      bridge: bridge,
-      groupRepo: groupRepo,
+    final seedRepository = await _durableExitSeedRepository(group);
+    final durableKey =
+        await seedRepository.getLatestKey(groupId) ??
+        await groupRepo.getLatestKey(groupId) ??
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'durable-host-exit-key:$groupId',
+          createdAt: group.createdAt.toUtc(),
+        );
+    final harness = await DurableGroupExitSurfaceHarness.createForSurface(
       groupId: groupId,
+      bridge: bridge,
+      groupRepository: groupRepo,
+      identityRepository: identityRepository,
+      durableSeedGroupRepository: seedRepository,
+      messageRepository: msgRepo,
+      fallbackDurableKey: durableKey,
+      now: () => DateTime.now().toUtc(),
+      afterNoticeAttempt: (pending) =>
+          _deliverDurableExitNotice(pending, durableKey),
     );
-    unsubscribeFromGroup(groupId);
+    try {
+      final result = await harness.requestLeaveForTest();
+      final evidence = await harness.driver!.evidenceFor(groupId);
+      lastDurableGroupExitEvidence = evidence;
+      if (result.status == GroupExitIntentRequestStatus.blockedLastAdmin) {
+        throw StateError(lastAdminLeaveBlockedMessage);
+      }
+      if (result.status != GroupExitIntentRequestStatus.started ||
+          evidence.actionId == null ||
+          evidence.sourceEventId == null ||
+          evidence.pendingBroadcastId == null ||
+          evidence.noticePrepareCount != 1 ||
+          evidence.noticeAttemptCount != 1 ||
+          evidence.rotationAttemptCount != 1 ||
+          evidence.nativeLeaveCount != 1 ||
+          evidence.intentPresentAfter ||
+          evidence.pendingBroadcastPresentAfter) {
+        throw StateError(
+          'Durable group exit did not complete one exact action: '
+          '${evidence.toJson()} status=${result.status.name} '
+          'cause=${result.cause}',
+        );
+      }
+      unsubscribeFromGroup(groupId);
+    } finally {
+      await harness.close();
+    }
   }
 
   /// Sends a message to a group (publishes via network fan-out + saves locally).
@@ -991,7 +1006,99 @@ class GroupTestUser {
 
   void dispose() {
     groupMessageListener.dispose();
+    _usersByNetwork[_network]?.remove(deviceId);
     _network.unregisterPeer(deviceId);
+  }
+
+  Future<InMemoryGroupRepository> _durableExitSeedRepository(
+    GroupModel group,
+  ) async {
+    final users = _usersByNetwork[_network]?.values;
+    if (users == null) return groupRepo;
+    for (final user in users) {
+      if (user.peerId != group.createdBy) continue;
+      final candidate = await user.groupRepo.getGroup(group.id);
+      if (candidate != null) return user.groupRepo;
+    }
+    return groupRepo;
+  }
+
+  Future<void> _deliverDurableExitNotice(
+    GroupPendingBroadcast pending,
+    GroupKeyInfo durableKey,
+  ) async {
+    final envelope = <String, dynamic>{
+      'groupId': pending.groupId,
+      'topicGroupId': pending.groupId,
+      'senderId': peerId,
+      'senderUsername': username,
+      'senderDeviceId': deviceId,
+      'transportPeerId': deviceId,
+      'keyEpoch': durableKey.keyGeneration,
+      'text': pending.sysText,
+      'timestamp': pending.eventAt.toUtc().toIso8601String(),
+      'messageId': pending.sourceMessageId,
+    };
+    final recipients = pending.recipientPeerIds.toSet();
+    final users = _usersByNetwork[_network]?.values ?? const <GroupTestUser>[];
+    for (final user in users) {
+      if (!recipients.contains(user.peerId) || user.deviceId == deviceId) {
+        continue;
+      }
+      if (await user.groupRepo.getLatestKey(pending.groupId) == null) {
+        await user.groupRepo.saveKey(durableKey);
+      }
+    }
+    await _network.publish(
+      pending.groupId,
+      peerId,
+      envelope,
+      senderDeviceId: deviceId,
+    );
+    for (final user in users) {
+      if (!recipients.contains(user.peerId) || user.deviceId == deviceId) {
+        continue;
+      }
+      final timeline = buildMemberRemovedTimelineMessage(
+        groupId: pending.groupId,
+        removedPeerId: peerId,
+        removedUsername: username,
+        senderId: peerId,
+        senderUsername: username,
+        eventAt: pending.eventAt,
+      );
+      var delivered = await user.msgRepo.getMessage(timeline.id) != null;
+      for (var attempt = 0; !delivered && attempt < 100; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+        delivered = await user.msgRepo.getMessage(timeline.id) != null;
+      }
+      if (!delivered) {
+        final receiverGroup = await user.groupRepo.getGroup(pending.groupId);
+        final parsed = jsonDecode(pending.sysText) as Map<String, dynamic>;
+        final audit = await verifyGroupTransitionAudit(
+          bridge: user.bridge,
+          containerPayload: parsed,
+          groupId: pending.groupId,
+          transitionType: 'member_removed',
+          sourceEventId: pending.sourceMessageId!,
+          eventAt: pending.eventAt,
+          actorPeerId: peerId,
+          actorUsername: username,
+          actorSigningPublicKey: publicKey,
+          expectedPreTransitionStateHash: await buildGroupTransitionStateHash(
+            user.groupRepo,
+            pending.groupId,
+          ),
+          expectedTransitionSubject: buildGroupSystemTransitionSubject(parsed),
+        );
+        throw StateError(
+          'Durable exit recipient did not persist the exact timeline: '
+          'receiver=${user.peerId} eventAt=${pending.eventAt.toIso8601String()} '
+          'watermark=${receiverGroup?.lastMembershipEventAt?.toIso8601String()} '
+          'audit=${audit.failure?.reason ?? 'valid'}',
+        );
+      }
+    }
   }
 
   String _nextGroupMessageId(DateTime timestamp) {

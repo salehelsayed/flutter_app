@@ -2508,52 +2508,6 @@ void main() {
     );
 
     test(
-      'fresh direct join holds the per-group coordinator through native and private persistence',
-      () async {
-        await db.close();
-        db = await openDatabase(inMemoryDatabasePath, version: 1);
-        await runProductionOnCreate(db, 102);
-        groupKeyStore = FakeSecureKeyStore();
-        final coordinated = makeRepo(
-          FakeSecureKeyStore(),
-          selfRemovedShellAuthorityEnabled: true,
-        );
-        final group = makeGroup(id: 'fresh-direct');
-        final self = makeMember(groupId: group.id, peerId: 'peer-self');
-        final key = makeKey(groupId: group.id, keyGeneration: 2);
-        final nativeEntered = Completer<void>();
-        final releaseNative = Completer<void>();
-
-        final direct = coordinated.commitFreshDirectJoin(
-          group: group,
-          selfMember: self,
-          key: key,
-          joinNative: () async {
-            nativeEntered.complete();
-            await releaseNative.future;
-          },
-        );
-        await nativeEntered.future;
-        var writerCompleted = false;
-        final writer = coordinated
-            .saveGroup(group.copyWith(name: 'later writer'))
-            .then((_) => writerCompleted = true);
-        await Future<void>.delayed(Duration.zero);
-        expect(writerCompleted, isFalse);
-
-        releaseNative.complete();
-        await direct;
-        await writer;
-        expect(writerCompleted, isTrue);
-        expect(await coordinated.getMember(group.id, 'peer-self'), isNotNull);
-        expect(
-          (await coordinated.getLatestKey(group.id))?.encryptedKey,
-          'base64-key-2',
-        );
-      },
-    );
-
-    test(
       'marked or absent group rejects delayed member committed key and draft writes without secure or projection residue',
       () async {
         final marked = await resetToMarkedV102();

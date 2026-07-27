@@ -225,7 +225,10 @@ Future<void> main(List<String> args) async {
 
     // Wait for Alice to finish building + reach ready state before launching Bob
     _log('ORCH', 'Waiting for Alice to be ready (build + node online)...');
-    await _signals.waitForSignal('alice_ready', timeout: const Duration(minutes: 15));
+    await _signals.waitForSignal(
+      'alice_ready',
+      timeout: const Duration(minutes: 15),
+    );
     _log('ORCH', 'Alice ready — launching Bob');
 
     // Now launch Bob (build won't conflict since Alice's build is done)
@@ -240,14 +243,23 @@ Future<void> main(List<String> args) async {
 
     // Wait for Bob ready
     _log('ORCH', 'Waiting for Bob to be ready...');
-    await _signals.waitForSignal('bob_ready', timeout: const Duration(minutes: 15));
+    await _signals.waitForSignal(
+      'bob_ready',
+      timeout: const Duration(minutes: 15),
+    );
     _log('ORCH', 'Both harnesses ready');
 
     // ══════════ S1: Cold send ══════════
     _log('ORCH', '─── S1: Cold send ───');
     _signals.writeSignal('s1_go');
-    final s1Alice = await _signals.waitForJson('s1_alice_sent', timeout: const Duration(minutes: 3));
-    final s1Bob = await _signals.waitForJson('s1_bob_received', timeout: const Duration(minutes: 3));
+    final s1Alice = await _signals.waitForJson(
+      's1_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s1Bob = await _signals.waitForJson(
+      's1_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s1_verified');
     _check(
       'S1',
@@ -272,8 +284,14 @@ Future<void> main(List<String> args) async {
     // ══════════ S2: Warm send x5 ══════════
     _log('ORCH', '─── S2: Warm send x5 ───');
     _signals.writeSignal('s2_go');
-    await _signals.waitForJson('s2_alice_sent', timeout: const Duration(minutes: 3));
-    final s2Bob = await _signals.waitForJson('s2_bob_received', timeout: const Duration(minutes: 3));
+    await _signals.waitForJson(
+      's2_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s2Bob = await _signals.waitForJson(
+      's2_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s2_verified');
     final s2Count = s2Bob['count'] as int? ?? 0;
     _check('S2', s2Count == 5, 'Bob received $s2Count/5');
@@ -285,10 +303,16 @@ Future<void> main(List<String> args) async {
     await _signals.waitForSignal('s3_bob_stopped');
     _log('ORCH', 'S3: Bob stopped');
     // Alice sends to inbox (she's waiting for s3_bob_stopped already)
-    final s3Alice = await _signals.waitForJson('s3_alice_sent', timeout: const Duration(minutes: 3));
+    final s3Alice = await _signals.waitForJson(
+      's3_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     _log('ORCH', 'S3: Alice sent: ${s3Alice['sendPath']}');
     _signals.writeSignal('s3_bob_restart');
-    final s3Bob = await _signals.waitForJson('s3_bob_received', timeout: const Duration(minutes: 3));
+    final s3Bob = await _signals.waitForJson(
+      's3_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s3_verified');
     // S3 measures the full offline → inbox → restart → drain → delivery pipeline.
     // The inbox store (Alice's side) always succeeds. Bob's inbox drain may not
@@ -309,8 +333,14 @@ Future<void> main(List<String> args) async {
     // Give Bob time to register on rendezvous after S3 restart
     await Future<void>.delayed(const Duration(seconds: 3));
     _signals.writeSignal('s4_go');
-    final s4Alice = await _signals.waitForJson('s4_alice_sent', timeout: const Duration(minutes: 3));
-    final s4Bob = await _signals.waitForJson('s4_bob_received', timeout: const Duration(minutes: 3));
+    final s4Alice = await _signals.waitForJson(
+      's4_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s4Bob = await _signals.waitForJson(
+      's4_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s4_verified');
     _check(
       'S4',
@@ -323,7 +353,10 @@ Future<void> main(List<String> args) async {
     _signals.writeSignal('s5_go');
     await _signals.waitForSignal('s5_alice_complete');
     await _signals.waitForSignal('s5_bob_complete');
-    final s5Bob = await _signals.waitForJson('s5_bob_complete', timeout: const Duration(minutes: 3));
+    final s5Bob = await _signals.waitForJson(
+      's5_bob_complete',
+      timeout: const Duration(minutes: 3),
+    );
     final s5Received = s5Bob['received'] as List<dynamic>? ?? [];
     final s5Sent = s5Bob['sent'] as List<dynamic>? ?? [];
     _check(
@@ -339,8 +372,14 @@ Future<void> main(List<String> args) async {
     await _signals.waitForSignal('s6_bob_killed');
     _signals.writeSignal('s6_bob_restart');
     await _signals.waitForSignal('s6_bob_restarted');
-    final s6Alice = await _signals.waitForJson('s6_alice_sent', timeout: const Duration(minutes: 3));
-    final s6Bob = await _signals.waitForJson('s6_bob_received', timeout: const Duration(minutes: 3));
+    final s6Alice = await _signals.waitForJson(
+      's6_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s6Bob = await _signals.waitForJson(
+      's6_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s6_verified');
     _check(
       'S6',
@@ -351,7 +390,10 @@ Future<void> main(List<String> args) async {
     // ══════════ S7: All-paths-fail ══════════
     _log('ORCH', '─── S7: All-paths-fail ───');
     _signals.writeSignal('s7_go');
-    final s7Alice = await _signals.waitForJson('s7_alice_sent', timeout: const Duration(minutes: 3));
+    final s7Alice = await _signals.waitForJson(
+      's7_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     // Inbox fallback succeeds for any peer when relay is up, so outcome may be
     // 'success' (stored in inbox) or 'failed' (relay also down). Both are valid.
     final s7Outcome = s7Alice['outcome'] as String? ?? '';
@@ -387,8 +429,14 @@ Future<void> main(List<String> args) async {
     await _signals.waitForSignal('s8_alice_complete');
     await _signals.waitForSignal('s8_bob_complete');
 
-    final s8Alice = await _signals.waitForJson('s8_alice_complete', timeout: const Duration(minutes: 3));
-    final s8Bob = await _signals.waitForJson('s8_bob_complete', timeout: const Duration(minutes: 3));
+    final s8Alice = await _signals.waitForJson(
+      's8_alice_complete',
+      timeout: const Duration(minutes: 3),
+    );
+    final s8Bob = await _signals.waitForJson(
+      's8_bob_complete',
+      timeout: const Duration(minutes: 3),
+    );
     final s8AliceTimeline = s8Alice['timeline'] as List<dynamic>? ?? [];
     final s8BobTimeline = s8Bob['timeline'] as List<dynamic>? ?? [];
     _check(
@@ -404,7 +452,10 @@ Future<void> main(List<String> args) async {
     await _signals.waitForSignal('s9_bob_stopped');
     _log('ORCH', 'S9: Bob stopped');
     // Alice sends 5 messages to inbox
-    final s9Alice = await _signals.waitForJson('s9_alice_sent', timeout: const Duration(minutes: 3));
+    final s9Alice = await _signals.waitForJson(
+      's9_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     final s9AliceTimings = s9Alice['timings'] as List<dynamic>? ?? [];
     _log('ORCH', 'S9: Alice sent ${s9AliceTimings.length} msgs to inbox');
     _signals.writeSignal('s9_bob_restart');
@@ -422,7 +473,10 @@ Future<void> main(List<String> args) async {
     _signals.writeSignal('s10_go');
     await _signals.waitForSignal('s10_alice_msg_sent');
     await _signals.waitForSignal('s10_bob_received_msg');
-    final s10Delete = await _signals.waitForJson('s10_alice_delete_sent', timeout: const Duration(minutes: 3));
+    final s10Delete = await _signals.waitForJson(
+      's10_alice_delete_sent',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s10_verified');
     _check(
       'S10',
@@ -433,8 +487,14 @@ Future<void> main(List<String> args) async {
     // ══════════ S13: ACK under load ══════════
     _log('ORCH', '─── S13: ACK under load ───');
     _signals.writeSignal('s13_go');
-    final s13Alice = await _signals.waitForJson('s13_alice_sent', timeout: const Duration(minutes: 3));
-    final s13Bob = await _signals.waitForJson('s13_bob_received', timeout: const Duration(minutes: 3));
+    final s13Alice = await _signals.waitForJson(
+      's13_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s13Bob = await _signals.waitForJson(
+      's13_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s13_verified');
     final s13AliceCount = (s13Alice['timings'] as List<dynamic>?)?.length ?? 0;
     final s13BobCount = s13Bob['count'] as int? ?? 0;
@@ -447,7 +507,10 @@ Future<void> main(List<String> args) async {
     // ══════════ S11: Voice/media upload ══════════
     _log('ORCH', '─── S11: Voice/media upload ───');
     _signals.writeSignal('s11_go');
-    final s11Alice = await _signals.waitForJson('s11_alice_sent', timeout: const Duration(minutes: 3));
+    final s11Alice = await _signals.waitForJson(
+      's11_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s11_verified');
     _check(
       'S11',
@@ -458,7 +521,10 @@ Future<void> main(List<String> args) async {
     // ══════════ S12: Media transfer (1MB + 5MB) ══════════
     _log('ORCH', '─── S12: Media transfer (1MB + 5MB) ───');
     _signals.writeSignal('s12_go');
-    final s12Alice = await _signals.waitForJson('s12_alice_sent', timeout: const Duration(minutes: 3));
+    final s12Alice = await _signals.waitForJson(
+      's12_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s12_verified');
     _check(
       'S12',
@@ -470,8 +536,14 @@ Future<void> main(List<String> args) async {
     // ══════════ S14: Local WiFi ══════════
     _log('ORCH', '─── S14: Local WiFi ───');
     _signals.writeSignal('s14_go');
-    final s14Alice = await _signals.waitForJson('s14_alice_sent', timeout: const Duration(minutes: 3));
-    final s14Bob = await _signals.waitForJson('s14_bob_received', timeout: const Duration(minutes: 3));
+    final s14Alice = await _signals.waitForJson(
+      's14_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s14Bob = await _signals.waitForJson(
+      's14_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s14_verified');
     _check(
       'S14',
@@ -479,19 +551,25 @@ Future<void> main(List<String> args) async {
       'isLocal=${s14Alice['isLocal']} send=${s14Alice['sendMs']}ms path=${s14Alice['sendPath']} e2e=${s14Bob['e2eMs']}ms',
     );
 
-    // ══════════ S15: Relay probe ══════════
-    _log('ORCH', '─── S15: Relay probe ───');
+    // ══════════ S15: Rendezvous-gap relay delivery ══════════
+    _log('ORCH', '─── S15: Rendezvous-gap relay delivery ───');
     _signals.writeSignal('s15_go');
-    // Bob restarts and signals immediately (before rendezvous)
+    // Bob restarts and signals immediately, before rendezvous registration.
     await _signals.waitForSignal('s15_bob_unregistered');
-    // Alice sends — discover may fail → relay probe
-    final s15Alice = await _signals.waitForJson('s15_alice_sent', timeout: const Duration(minutes: 3));
-    final s15Bob = await _signals.waitForJson('s15_bob_received', timeout: const Duration(minutes: 3));
+    // Alice sends while Bob remains reachable through the relay connection.
+    final s15Alice = await _signals.waitForJson(
+      's15_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final s15Bob = await _signals.waitForJson(
+      's15_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('s15_verified');
     _check(
       'S15',
       s15Alice['outcome'] == 'success',
-      'send=${s15Alice['sendMs']}ms path=${s15Alice['sendPath']} probe=${s15Alice['probeAttempted']} e2e=${s15Bob['e2eMs']}ms',
+      'send=${s15Alice['sendMs']}ms path=${s15Alice['sendPath']} e2e=${s15Bob['e2eMs']}ms',
     );
 
     // ══════════ X1: Both-sides restart ══════════
@@ -501,14 +579,26 @@ Future<void> main(List<String> args) async {
     await _signals.waitForSignal('x1_bob_stopped');
     _log('ORCH', 'X1: Both stopped');
     _signals.writeSignal('x1_restart');
-    final x1Alice = await _signals.waitForJson('x1_alice_restarted', timeout: const Duration(minutes: 3));
-    final x1Bob = await _signals.waitForJson('x1_bob_restarted', timeout: const Duration(minutes: 3));
+    final x1Alice = await _signals.waitForJson(
+      'x1_alice_restarted',
+      timeout: const Duration(minutes: 3),
+    );
+    final x1Bob = await _signals.waitForJson(
+      'x1_bob_restarted',
+      timeout: const Duration(minutes: 3),
+    );
     _log(
       'ORCH',
       'X1: Both restarted (Alice=${x1Alice['restartMs']}ms Bob=${x1Bob['restartMs']}ms)',
     );
-    final x1Send = await _signals.waitForJson('x1_alice_sent', timeout: const Duration(minutes: 3));
-    final x1Recv = await _signals.waitForJson('x1_bob_received', timeout: const Duration(minutes: 3));
+    final x1Send = await _signals.waitForJson(
+      'x1_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final x1Recv = await _signals.waitForJson(
+      'x1_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('x1_verified');
     _check(
       'X1',
@@ -524,14 +614,26 @@ Future<void> main(List<String> args) async {
     _log('ORCH', 'X2: Both paused');
     await Future<void>.delayed(const Duration(seconds: 3));
     _signals.writeSignal('x2_resume');
-    final x2Alice = await _signals.waitForJson('x2_alice_resumed', timeout: const Duration(minutes: 3));
-    final x2Bob = await _signals.waitForJson('x2_bob_resumed', timeout: const Duration(minutes: 3));
+    final x2Alice = await _signals.waitForJson(
+      'x2_alice_resumed',
+      timeout: const Duration(minutes: 3),
+    );
+    final x2Bob = await _signals.waitForJson(
+      'x2_bob_resumed',
+      timeout: const Duration(minutes: 3),
+    );
     _log(
       'ORCH',
       'X2: Both resumed (Alice=${x2Alice['resumeMs']}ms Bob=${x2Bob['resumeMs']}ms)',
     );
-    final x2Send = await _signals.waitForJson('x2_alice_sent', timeout: const Duration(minutes: 3));
-    final x2Recv = await _signals.waitForJson('x2_bob_received', timeout: const Duration(minutes: 3));
+    final x2Send = await _signals.waitForJson(
+      'x2_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final x2Recv = await _signals.waitForJson(
+      'x2_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('x2_verified');
     _check(
       'X2',
@@ -542,8 +644,14 @@ Future<void> main(List<String> args) async {
     // ══════════ X3: Relay failover ══════════
     _log('ORCH', '─── X3: Relay failover ───');
     _signals.writeSignal('x3_go');
-    final x3Send = await _signals.waitForJson('x3_alice_sent', timeout: const Duration(minutes: 3));
-    final x3Recv = await _signals.waitForJson('x3_bob_received', timeout: const Duration(minutes: 3));
+    final x3Send = await _signals.waitForJson(
+      'x3_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final x3Recv = await _signals.waitForJson(
+      'x3_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     _signals.writeSignal('x3_verified');
     _check(
       'X3',
@@ -555,8 +663,14 @@ Future<void> main(List<String> args) async {
     _signals.writeSignal('all_done');
 
     // Wait for both to finish cleanup
-    await _signals.waitForSignal('alice_done', timeout: const Duration(seconds: 30));
-    await _signals.waitForSignal('bob_done', timeout: const Duration(seconds: 30));
+    await _signals.waitForSignal(
+      'alice_done',
+      timeout: const Duration(seconds: 30),
+    );
+    await _signals.waitForSignal(
+      'bob_done',
+      timeout: const Duration(seconds: 30),
+    );
 
     // ══════════════════════════════════════════════════════════════
     //  PHASE 2: GROUP SCENARIOS (G1–G5)
@@ -595,7 +709,10 @@ Future<void> main(List<String> args) async {
     _pipeOutput(alice.stderr, 'ALICE-G-ERR', aliceLog);
 
     _log('ORCH', 'Waiting for group Alice ready...');
-    await gsmoke.waitForSignal('alice_ready', timeout: const Duration(minutes: 15));
+    await gsmoke.waitForSignal(
+      'alice_ready',
+      timeout: const Duration(minutes: 15),
+    );
     _log('ORCH', 'Group Alice ready — launching group Bob');
 
     bob = await _launchHarness(
@@ -619,8 +736,14 @@ Future<void> main(List<String> args) async {
     // ══════════ G1: Group publish → receive ══════════
     _log('ORCH', '─── G1: Group publish ───');
     gsmoke.writeSignal('g1_go');
-    final g1Alice = await gsmoke.waitForJson('g1_alice_sent', timeout: const Duration(minutes: 3));
-    final g1Bob = await gsmoke.waitForJson('g1_bob_received', timeout: const Duration(minutes: 3));
+    final g1Alice = await gsmoke.waitForJson(
+      'g1_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final g1Bob = await gsmoke.waitForJson(
+      'g1_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g1_verified');
     _check(
       'G1',
@@ -631,8 +754,14 @@ Future<void> main(List<String> args) async {
     // ══════════ G2: Group warm x5 ══════════
     _log('ORCH', '─── G2: Group warm x5 ───');
     gsmoke.writeSignal('g2_go');
-    await gsmoke.waitForJson('g2_alice_sent', timeout: const Duration(minutes: 3));
-    final g2Bob = await gsmoke.waitForJson('g2_bob_received', timeout: const Duration(minutes: 3));
+    await gsmoke.waitForJson(
+      'g2_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final g2Bob = await gsmoke.waitForJson(
+      'g2_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g2_verified');
     final g2 = evaluateG2(g2Bob);
     _check('G2', g2.ok, g2.detail);
@@ -641,7 +770,10 @@ Future<void> main(List<String> args) async {
     _log('ORCH', '─── G3: Group bidirectional ───');
     gsmoke.writeSignal('g3_go');
     await gsmoke.waitForSignal('g3_alice_complete');
-    final g3Bob = await gsmoke.waitForJson('g3_bob_complete', timeout: const Duration(minutes: 3));
+    final g3Bob = await gsmoke.waitForJson(
+      'g3_bob_complete',
+      timeout: const Duration(minutes: 3),
+    );
     final g3Received = g3Bob['received'] as List<dynamic>? ?? [];
     final g3Sent = g3Bob['sent'] as List<dynamic>? ?? [];
     _check(
@@ -656,9 +788,15 @@ Future<void> main(List<String> args) async {
     gsmoke.writeSignal('g4_bob_stop');
     await gsmoke.waitForSignal('g4_bob_stopped');
     _log('ORCH', 'G4: Bob stopped');
-    await gsmoke.waitForJson('g4_alice_sent', timeout: const Duration(minutes: 3));
+    await gsmoke.waitForJson(
+      'g4_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g4_bob_restart');
-    final g4Bob = await gsmoke.waitForJson('g4_bob_received', timeout: const Duration(minutes: 3));
+    final g4Bob = await gsmoke.waitForJson(
+      'g4_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g4_verified');
     final g4 = evaluateG4(g4Bob);
     _check('G4', g4.ok, g4.detail);
@@ -680,24 +818,42 @@ Future<void> main(List<String> args) async {
 
     await gsmoke.waitForSignal('g5_alice_complete');
     await gsmoke.waitForSignal('g5_bob_complete');
-    final g5Alice = await gsmoke.waitForJson('g5_alice_complete', timeout: const Duration(minutes: 3));
-    final g5Bob = await gsmoke.waitForJson('g5_bob_complete', timeout: const Duration(minutes: 3));
+    final g5Alice = await gsmoke.waitForJson(
+      'g5_alice_complete',
+      timeout: const Duration(minutes: 3),
+    );
+    final g5Bob = await gsmoke.waitForJson(
+      'g5_bob_complete',
+      timeout: const Duration(minutes: 3),
+    );
     final g5 = evaluateG5(g5Alice, g5Bob);
     _check('G5', g5.ok, g5.detail);
 
     // ══════════ G6: Group peer discovery timing ══════════
     _log('ORCH', '─── G6: Peer discovery timing ───');
     gsmoke.writeSignal('g6_go');
-    final g6Alice = await gsmoke.waitForJson('g6_alice_done', timeout: const Duration(minutes: 3));
-    await gsmoke.waitForJson('g6_bob_done', timeout: const Duration(minutes: 3));
+    final g6Alice = await gsmoke.waitForJson(
+      'g6_alice_done',
+      timeout: const Duration(minutes: 3),
+    );
+    await gsmoke.waitForJson(
+      'g6_bob_done',
+      timeout: const Duration(minutes: 3),
+    );
     final g6Ms = g6Alice['peerDiscoveryMs'] as int? ?? -1;
     _check('G6', true, 'peerDiscovery=${g6Ms}ms (includes 5s settle)');
 
     // ══════════ G7: Group key rotation ══════════
     _log('ORCH', '─── G7: Key rotation ───');
     gsmoke.writeSignal('g7_go');
-    final g7Alice = await gsmoke.waitForJson('g7_alice_sent', timeout: const Duration(minutes: 3));
-    final g7Bob = await gsmoke.waitForJson('g7_bob_received', timeout: const Duration(minutes: 3));
+    final g7Alice = await gsmoke.waitForJson(
+      'g7_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final g7Bob = await gsmoke.waitForJson(
+      'g7_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g7_verified');
     final g7 = evaluateG7(g7Alice, g7Bob);
     _check('G7', g7.ok, g7.detail);
@@ -705,15 +861,27 @@ Future<void> main(List<String> args) async {
     // ══════════ G8: Multi-member publish ══════════
     _log('ORCH', '─── G8: Multi-member publish ───');
     gsmoke.writeSignal('g8_go');
-    final g8Alice = await gsmoke.waitForJson('g8_alice_sent', timeout: const Duration(minutes: 3));
-    final g8Bob = await gsmoke.waitForJson('g8_bob_received', timeout: const Duration(minutes: 3));
+    final g8Alice = await gsmoke.waitForJson(
+      'g8_alice_sent',
+      timeout: const Duration(minutes: 3),
+    );
+    final g8Bob = await gsmoke.waitForJson(
+      'g8_bob_received',
+      timeout: const Duration(minutes: 3),
+    );
     gsmoke.writeSignal('g8_verified');
     final g8 = evaluateG8(g8Alice, g8Bob);
     _check('G8', g8.ok, g8.detail);
 
     gsmoke.writeSignal('all_done');
-    await gsmoke.waitForSignal('alice_done', timeout: const Duration(seconds: 30));
-    await gsmoke.waitForSignal('bob_done', timeout: const Duration(seconds: 30));
+    await gsmoke.waitForSignal(
+      'alice_done',
+      timeout: const Duration(seconds: 30),
+    );
+    await gsmoke.waitForSignal(
+      'bob_done',
+      timeout: const Duration(seconds: 30),
+    );
 
     // Print combined report
     print('\n${'═' * 70}');

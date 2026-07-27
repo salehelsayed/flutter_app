@@ -18,6 +18,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
@@ -232,9 +233,9 @@ void main() {
     expect(Theme.of(rootContext).brightness, Brightness.light);
 
     // ...yet the scanner scaffold stays black with the live camera chrome.
-    final blackScaffold = tester.widgetList<Scaffold>(find.byType(Scaffold)).any(
-      (s) => s.backgroundColor == Colors.black,
-    );
+    final blackScaffold = tester
+        .widgetList<Scaffold>(find.byType(Scaffold))
+        .any((s) => s.backgroundColor == Colors.black);
     expect(blackScaffold, isTrue, reason: 'scanner scaffold stays black');
     expect(find.byType(MobileScanner), findsOneWidget);
 
@@ -300,6 +301,70 @@ void main() {
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
       expect(find.text('Added to your circle!'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'contact QR sends an encrypted request and isolates profile download failure',
+    (tester) async {
+      const scannedPeerId = 'encrypted-peer-12345';
+      String? downloadedOwnerPeerId;
+      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+      p2pService.storeInInboxResult = true;
+
+      await tester.pumpWidget(
+        buildScanner(
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadedOwnerPeerId = ownerPeerId;
+                throw StateError('profile download failed');
+              },
+        ),
+      );
+      await pumpFrames(tester);
+
+      final scanner = tester.widget<QRScannerScreen>(
+        find.byType(QRScannerScreen),
+      );
+      scanner.onScanned(
+        _buildValidQrData(
+          peerId: scannedPeerId,
+          publicKey: 'scanned-encryption-public-key',
+          username: 'Bob',
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Added to your circle!'), findsOneWidget);
+      final contact = await contactRepository.getContact(scannedPeerId);
+      expect(contact, isNotNull);
+      expect(contact?.username, 'Bob');
+      expect(downloadedOwnerPeerId, scannedPeerId);
+
+      final signIndex = bridge.commandLog.indexOf('payload.sign');
+      final encryptIndex = bridge.commandLog.indexOf('contactrequest.encrypt');
+      expect(signIndex, greaterThanOrEqualTo(0));
+      expect(encryptIndex, greaterThan(signIndex));
+
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.lastStoreInInboxPeerId, scannedPeerId);
+      final storedMessage = p2pService.lastStoreInInboxMessage;
+      expect(storedMessage, isNotNull);
+      final envelope = jsonDecode(storedMessage!) as Map<String, dynamic>;
+      expect(envelope['type'], 'contact_request');
+      expect(envelope['version'], '2');
+      expect(envelope['encrypted'], {
+        'ephemeralPublicKey': 'ephPubBase64',
+        'ciphertext': 'ctBase64',
+        'nonce': 'nonceBase64',
+      });
+      expect(envelope.containsKey('payload'), isFalse);
+      expect(tester.takeException(), isNull);
     },
   );
 

@@ -729,41 +729,6 @@ Future<Map<String, dynamic>> callGroupGenerateNextKey(
   }
 }
 
-/// Legacy key rotation is unsupported because this helper cannot own durable
-/// key distribution to active group members.
-///
-/// Callers must use `rotateAndDistributeGroupKey`, which coordinates
-/// [callGroupGenerateNextKey], member fanout, and [callGroupUpdateKey].
-///
-/// Returns a map with:
-/// - Always: `{ "ok": false, "errorCode": "LEGACY_ROTATE_KEY_UNSUPPORTED", "errorMessage": "..." }`
-Future<Map<String, dynamic>> callGroupRotateKey(
-  Bridge bridge,
-  String groupId, {
-  Duration timeout = const Duration(seconds: 10),
-}) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_FL_BRIDGE_ROTATE_KEY_REQUEST',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-    },
-  );
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_FL_BRIDGE_ROTATE_KEY_RESPONSE',
-    details: {'ok': false, 'errorCode': 'LEGACY_ROTATE_KEY_UNSUPPORTED'},
-  );
-
-  return {
-    'ok': false,
-    'errorCode': 'LEGACY_ROTATE_KEY_UNSUPPORTED',
-    'errorMessage':
-        'Legacy group key rotation is unsupported; use rotateAndDistributeGroupKey.',
-  };
-}
-
 /// Calls the bridge to update the stored group key without generating a new one.
 ///
 /// Used by non-admin members when receiving a key update via P2P.

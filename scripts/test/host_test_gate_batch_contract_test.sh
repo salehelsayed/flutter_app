@@ -158,6 +158,19 @@ grep -Fq 'Host test planned-item inventory: core-host-all' \
 grep -Fq 'concurrency=2, reporter=compact' <<<"$broad_scope_dry" ||
   fail 'public wrapper changed forwarded broad-scope batch controls'
 
+# DTR-11: core-host-all owns every unit-level tooling/policy suite as an exact
+# sorted family, not only test/core. This assertion is intentionally added
+# before the host planner changes so its first run is the causal registration
+# RED.
+expected_unit_paths="$(rg --files test/unit -g '*_test.dart' | sort)"
+actual_unit_paths="$(
+  printf '%s\n' "$broad_scope_dry" |
+    sed -n "s/^  *[0-9][0-9]*\. Flutter batch path '\(test\/.*_test\.dart\)'$/\1/p" |
+    awk '$0 ~ /^test\/unit\//'
+)"
+[ "$actual_unit_paths" = "$expected_unit_paths" ] ||
+  fail 'core-host-all omitted or duplicated test/unit paths'
+
 # RED/GREEN 2: the full batch is one exact-path Flutter command followed by the
 # eight existing, separately reset Go commands.
 batch_output="$(

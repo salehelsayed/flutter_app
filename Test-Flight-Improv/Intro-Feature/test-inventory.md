@@ -1,6 +1,6 @@
 # Introduction Feature -- Test Inventory
 
-**Date:** 2026-04-13
+**Date:** 2026-04-13 (DTR-11 current-owner reconciliation: 2026-07-27)
 **Scope:** All automated tests covering the Introduction feature across unit, widget, integration, and regression categories.
 
 ---
@@ -55,11 +55,11 @@ Screenshots from device runs are saved under `build/intro_e2e/`.
 | Domain (models, repo impl) | 2 | 13 |
 | Data (DB migrations/helpers) | 3 | 12 |
 | Application (use cases, listener, delivery) | 18 | 182 |
-| Presentation (widgets, screens) | 10 | 72 |
+| Presentation (widgets, screens) | 8 | 55 |
 | Integration (smoke, wiring, multi-node) | 4 | 63 |
 | Regression | 1 | 22 |
-| Cross-feature (feed, push, conversation, orbit) | 8 | 44 |
-| **Total** | **46** | **408** |
+| Cross-feature (feed, push, conversation, orbit) | 8 | 45 |
+| **Total** | **44** | **392** |
 
 QA checklist from the `c4-code.md` source-of-truth review:
 
@@ -67,7 +67,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 - [ ] Section 2 still overstates "Every File in the Feature"; intro-related contact metadata, settings debug wiring, and share/startup routing seams exist outside that file map. Some of those seams are exercised in broader tests, but they are not enumerated in this inventory.
 - [ ] Section 12 still omits intro-adjacent flow-event families for contact intro metadata persistence and intro retry orchestration; no dedicated test currently pins that event inventory.
 - [ ] Section 13 still says `chatMessageStream` routes `type == 'chat'`; the live router uses `chat_message`, and no intro-scoped regression currently locks that contract.
-- [x] Section 10.3 still says the mutual-accept CTA is `Send Message`; the live `IntroRow` label is `Message`, and `intro_row_test.dart` now asserts that exact copy.
+- [x] Section 10.3 now names the live `OrbitScreen` intro sliver and `IntroRow` owners; the retired standalone tab is no longer presented as current production or test inventory.
 - [x] `acceptIntroduction` / `passIntroduction` now reject non-party callers, and direct accept/pass regressions pin the no-mutation contract.
 
 ---
@@ -496,33 +496,21 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | introducer attribution keeps Arabic-first username explicit | RTL attribution |
 | introducer attribution keeps English-first username explicit | LTR attribution |
 
-### 4.3 IntrosTab
-**File:** `test/features/introduction/presentation/widgets/intros_tab_test.dart`
+### 4.3 OrbitScreen intro review sliver
+**File:** `test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart`
 
 | Test | What it covers |
 |------|----------------|
-| shows empty state when no introductions | Empty state |
-| shows pending introductions grouped by sender | Grouping rendering |
-| group header shows "From [username]" | Header text |
-| each intro row shows introduced username | Row content |
-| each intro row shows introducer attribution | Attribution in row |
-| accept button visible for pending intros | Accept CTA visibility |
-| pass button visible for pending intros | Pass CTA visibility |
-| accept callback triggered on tap | Accept wiring |
-| pass callback triggered on tap | Pass wiring |
-| status label shown for responded intros | Post-response UI |
-| renders duplicate aboza introductions as one folded review row | Folded duplicate row rendering |
+| renders intros in the sliver list without nested ListView | Active `CustomScrollView`/`SliverList` owner, group header, attribution, and target row |
+| renders duplicate aboza introductions as one folded row in the active intros sliver | One live row per folded target with both introducer attributions and Accept/Pass |
+| folded live intro preserves peer-id attribution fallback and long names stay actionable | Blank introducer-name fallback, long attribution rendering, and intact Accept/Pass actions |
+| intros tab renders grouped intros and carries the correct pending count | Multiple introducer groups and review-count projection |
+| live intro row reveals delete on swipe | Active Orbit row deletion affordance |
 
-**File:** `test/features/introduction/presentation/widgets/intros_tab_extended_test.dart`
-
-| Test | What it covers |
-|------|----------------|
-| multiple introducers render multiple group headers | Multi-group |
-| expired status shows non-pending UI | Expired state |
-| empty state shows placeholder text | Placeholder copy |
-| blank or null usernames fall back to peer ids | Fallback display name |
-| very long usernames still render with actions intact | Overflow handling |
-| folded attribution falls back for blank introducer names and keeps long names actionable | Folded attribution fallback and action preservation |
+Historical note: DTR-11 retired the standalone test-only tab widget and its two
+dedicated test files. The shared `IntroRow` suite retains row-state/callback
+coverage, `OrbitWired` tests retain action wiring, and the unique folded
+fallback/long-name case above now executes against the live Orbit sliver.
 
 ### 4.4 IntroGroupHeader
 **File:** `test/features/introduction/presentation/widgets/intro_group_header_test.dart`
@@ -692,7 +680,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | intro count and grouped data refresh after delete action | Reactive update |
 | introReceivedStream triggers data availability | Stream wiring |
 | introStatusChangedStream triggers on accept notification | Stream wiring |
-| IntrosTab built with correct grouped data | Widget data binding |
+| `IntrosTab built with correct grouped data` (historical test name) | Data-only grouped projection check; it does not instantiate the retired widget |
 
 ---
 
@@ -873,7 +861,7 @@ that used to lack direct coverage:
 - **Concurrent intro-chain isolation**: Covered on 2026-04-09 by the concurrent-chain isolation regression in `test/features/introduction/integration/introduction_multi_node_test.dart` and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Offline relay intro to first chat**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=offline-chat ./smoke_test_friends.sh`, the offline-relay-to-first-chat regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Pass fallback after unreachable peers**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=pass-fallback ./smoke_test_friends.sh`, the pass-fallback inbox regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
-- **Folded duplicate intro review and acceptance**: Covered on 2026-05-07 by the folded projection/count tests in `load_introductions_test.dart`, folded Accept/Pass wrapper tests in `folded_introduction_response_use_case_test.dart`, folded `IntroRow`/`IntrosTab`/`OrbitScreen` widget tests, folded `OrbitWired` action and badge tests, the Feed folded badge companion, `./scripts/run_test_gates.sh intro`, and a green uninterrupted retry of `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh`. The first `all` attempt timed out in scenario 3 `pass-handshake` before intro send/pass/folded behavior, with A/C complete and B still `running`; the exact retry passed scenarios 1-11 and ended with `=== Intro E2E harness passed ===`.
+- **Folded duplicate intro review and acceptance**: Covered on 2026-05-07 by the folded projection/count tests in `load_introductions_test.dart`, folded Accept/Pass wrapper tests in `folded_introduction_response_use_case_test.dart`, folded `IntroRow` and live `OrbitScreen` widget tests, folded `OrbitWired` action and badge tests, the Feed folded badge companion, `./scripts/run_test_gates.sh intro`, and a green uninterrupted retry of `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh`. DTR-11 later retired the former standalone tab proofs after moving their unique blank-name/long-name assertion to the live Orbit sliver. The first `all` attempt timed out in scenario 3 `pass-handshake` before intro send/pass/folded behavior, with A/C complete and B still `running`; the exact retry passed scenarios 1-11 and ended with `=== Intro E2E harness passed ===`.
 - **Four-identity folded duplicate simulator fixture**: `INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh` and scenario 11 of `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` require introducer A, current viewer B, introduced target C, and second introducer D. Current 2026-05-07 fixture intake passed with `flutter devices --machine` and `xcrun simctl list devices available`; the final `all` retry proved the four-identity folded duplicate acceptance path.
 - **Push notification trigger path**: Exact intro title/body content is now covered on 2026-04-13 across the introducer- and participant-role listener regressions in `introduction_listener_test.dart`, the introducer copy helpers in `introduction_copy_test.dart`, the role-correct intro fallback copy regression in `background_push_notification_fallback_test.dart`, and green reruns of `./scripts/run_test_gates.sh intro` plus `./scripts/run_test_gates.sh baseline`; end-to-end FCM/APNs trigger delivery still is not exercised beyond routing.
 - **Post-expiry re-introduction**: Covered on 2026-04-09 by the expired-refresh regressions in `test/features/introduction/application/send_introduction_test.dart` and `test/features/introduction/integration/introduction_smoke_test.dart`, plus a green rerun of `./scripts/run_test_gates.sh intro`.

@@ -1705,9 +1705,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get group_saved_safety => 'Saved safety';
 
   @override
-  String get group_card_no_messages => 'No messages yet';
-
-  @override
   String get group_security_encrypted => 'End-to-end encrypted';
 
   @override
@@ -1832,11 +1829,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Cannot send: we could not prepare a secure invite for this friend.';
 
   @override
-  String group_backlog_mixed_list_summary(int days) {
-    return 'Older backlog expired after $days days';
-  }
-
-  @override
   String group_backlog_mixed_banner(int days) {
     return 'Older missed messages expired after $days days. Recent messages were recovered.';
   }
@@ -1847,11 +1839,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String group_backlog_mixed_empty_subtitle(int days) {
     return 'Older missed messages expired after $days days while you were away.';
-  }
-
-  @override
-  String group_backlog_expired_list_summary(int days) {
-    return 'Missed backlog expired after $days days';
   }
 
   @override
@@ -1950,28 +1937,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get group_info_sign_metadata_failed =>
       'Failed to sign group metadata update';
-
-  @override
-  String get groups_title => 'Groups';
-
-  @override
-  String get groups_empty_title => 'No groups yet';
-
-  @override
-  String get groups_empty_desc => 'Create a group to get started';
-
-  @override
-  String get groups_pending_invites => 'Pending Invites';
-
-  @override
-  String get groups_joined => 'Joined Groups';
-
-  @override
-  String get groups_unknown_sender => 'Unknown';
-
-  @override
-  String get groups_no_joined =>
-      'No joined groups yet. Accept an invite to add it here.';
 
   @override
   String get group_type_discussion => 'Discussion';
@@ -3213,6 +3178,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get account_migration_blocked_message =>
       'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.';
+
+  @override
+  String get account_migration_unfinished_move_title =>
+      'Account move not finished';
+
+  @override
+  String get account_migration_unfinished_move_message =>
+      'This phone imported your account, but the final handoff with the old phone did not finish. Keep both phones and do not erase either copy.';
 
   @override
   String get contact_profile_verified_peer => 'Verified peer';

@@ -202,7 +202,6 @@ lib/
 │   │       │   ├── recording_overlay.dart      # Overlay shown during active recording
 │   │       │   ├── amplitude_bars.dart         # Row of vertical bars for audio amplitude
 │   │       │   ├── reaction_bar.dart           # Quick-reaction emoji bar (6 preset emojis)
-│   │       │   ├── reaction_display.dart       # Emoji reaction chips below a message
 │   │       │   └── full_emoji_picker.dart      # Full emoji picker with categories
 │   │       └── navigation/
 │   │           └── conversation_route_transition.dart
@@ -213,7 +212,6 @@ lib/
 │   │   │   │   ├── group_model.dart            # GroupModel + GroupType enum (chat, announcement, qa)
 │   │   │   │   ├── group_member.dart           # GroupMember + MemberRole enum (admin, writer, reader)
 │   │   │   │   ├── group_message.dart          # GroupMessage model (maps to group_messages table)
-│   │   │   │   ├── group_message_payload.dart  # Wire format for group messages (v3 envelope)
 │   │   │   │   ├── group_invite_payload.dart   # Wire format for group invite messages over P2P
 │   │   │   │   └── group_key_info.dart         # GroupKeyInfo model (maps to group_keys table)
 │   │   │   └── repositories/
@@ -224,7 +222,6 @@ lib/
 │   │   ├── application/
 │   │   │   ├── create_group_use_case.dart              # Create group locally + join GossipSub topic
 │   │   │   ├── create_group_with_members_use_case.dart # Create group + invite initial members
-│   │   │   ├── join_group_use_case.dart                # Join group from invite (save + subscribe topic)
 │   │   │   ├── leave_group_use_case.dart               # Leave group (unsubscribe topic)
 │   │   │   ├── add_group_member_use_case.dart          # Add member to existing group
 │   │   │   ├── remove_group_member_use_case.dart       # Remove member from group + rotate key
@@ -235,7 +232,6 @@ lib/
 │   │   │   ├── group_message_listener.dart             # Background GossipSub listener for group messages
 │   │   │   ├── group_invite_listener.dart              # Background P2P listener for group invites
 │   │   │   ├── group_key_update_listener.dart          # Background listener for group key updates
-│   │   │   ├── rotate_group_key_use_case.dart          # Generate + store new group key
 │   │   │   ├── rotate_and_distribute_group_key_use_case.dart # Rotate key + distribute to all members
 │   │   │   ├── rejoin_group_topics_use_case.dart       # Re-subscribe active groups on app restart
 │   │   │   ├── drain_group_offline_inbox_use_case.dart # Drain offline inbox for group messages
@@ -244,8 +240,6 @@ lib/
 │   │   │   └── delete_group_and_messages_use_case.dart # Delete group, messages, and leave
 │   │   └── presentation/
 │   │       ├── screens/
-│   │       │   ├── group_list_screen.dart              # Pure UI: list of groups
-│   │       │   ├── group_list_wired.dart               # Group list business logic
 │   │       │   ├── group_conversation_screen.dart      # Pure UI: group chat with letter cards
 │   │       │   ├── group_conversation_wired.dart       # Group conversation business logic
 │   │       │   ├── group_info_screen.dart              # Pure UI: group details + member list
@@ -257,7 +251,6 @@ lib/
 │   │       │   ├── contact_picker_screen.dart          # Pure UI: contact picker for adding members
 │   │       │   └── contact_picker_wired.dart           # Contact picker business logic (add member flow)
 │   │       └── widgets/
-│   │           ├── group_card.dart                     # Group card in group list
 │   │           ├── group_compose_area.dart             # Compose area for group conversations
 │   │           ├── group_member_row.dart               # Member row with role badge + actions
 │   │           ├── group_name_panel.dart               # Group name input panel
@@ -352,13 +345,9 @@ lib/
 │   │           └── identity_loading_card.dart  # Loading card during identity generation/restore
 │   │
 │   ├── qr_code/
-│   │   ├── domain/
-│   │   │   └── models/
-│   │   │       └── qr_payload_model.dart
 │   │   ├── application/
 │   │   │   ├── build_qr_payload_use_case.dart  # Sign and build QR
-│   │   │   ├── parse_qr_payload_use_case.dart  # Validate scanned QR
-│   │   │   └── handle_scanned_qr_use_case.dart # End-to-end scan → add contact + send CR
+│   │   │   └── parse_qr_payload_use_case.dart  # Validate scanned QR
 │   │   └── presentation/
 │   │       ├── screens/
 │   │       │   ├── qr_display_screen.dart
@@ -401,8 +390,7 @@ lib/
 │   │   │   └── key_exchange_retrier.dart                # Periodic key exchange retry service
 │   │   └── presentation/
 │   │       └── widgets/
-│   │           ├── contact_request_dialog.dart           # Accept/Decline modal
-│   │           └── pending_requests_badge.dart           # Count badge
+│   │           └── contact_request_dialog.dart           # Accept/Decline modal
 │   │
 │   └── p2p/
 │       ├── domain/
@@ -413,10 +401,7 @@ lib/
 │       │       ├── chat_message.dart             # ChatMessage (from, to, content)
 │       │       └── send_message_result.dart      # SendMessageResult class (sent, reply, acknowledged)
 │       ├── application/
-│       │   ├── start_node_use_case.dart          # Start node with identity
-│       │   ├── stop_node_use_case.dart           # Stop running node
-│       │   ├── send_message_use_case.dart        # Send P2P message
-│       │   └── discover_peer_use_case.dart       # Discover + dial peer
+│       │   └── start_node_use_case.dart          # Start node with identity
 │       └── presentation/
 │           └── widgets/
 │               └── connection_status_indicator.dart  # Online/Offline badge

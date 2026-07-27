@@ -2,7 +2,12 @@
 
 ## Summary
 
-The project is clean, but the earlier pass overstated removable code. Only a **small set of files** currently looks low-risk to remove immediately. Several earlier candidates are still referenced by tests or smoke flows, so they are **not** “safe to remove” as a quick cleanup batch. The old standalone create-group screen path has already been removed from `lib/`.
+This file is an early triage aid, not the current deletion authority. The
+decision-controlled status lives in
+`dead-code-and-technical-debt-removal-roadmap.md`. In particular, DTR-11
+resolved the final 11 test/integration-only app leaves: ten were retired and
+the push-preview release calculator was moved unchanged out of `lib/` to
+`tool/telemetry/`.
 
 ---
 
@@ -29,15 +34,20 @@ These are the best current cleanup candidates.
 
 ---
 
-## Category 3: Production-Unused But Test-Backed (examples — not quick-pass safe)
+## Category 3: Production-Unused But Test-Backed (historical examples)
 
-| File | Why It Is Not Safe To Remove Quickly |
-|------|--------------------------------------|
+| File | Current disposition |
+|------|---------------------|
 | `lib/features/feed/presentation/widgets/expanded_compose_input.dart` | Exercised by `integration_test/bidi_text_smoke_test.dart` |
-| `lib/features/groups/presentation/screens/group_list_wired.dart` | Used by `integration_test/loading_states_smoke_test.dart` |
 | `lib/features/posts/presentation/screens/posts_wired.dart` | Used by `test/features/posts/phase1/posts_wired_test.dart` |
-| `lib/features/conversation/presentation/widgets/reaction_display.dart` | Used by `test/features/conversation/presentation/widgets/reaction_display_test.dart` |
-| `lib/features/qr_code/application/handle_scanned_qr_use_case.dart` | Unit-tested and still part of the QR test surface even if current live flow centers on `qr_scanner_wired.dart` |
+| `lib/features/conversation/presentation/widgets/reaction_display.dart` | Retired by DTR-11; live reaction behavior and proof belong to `LetterCard` |
+| `lib/features/qr_code/application/handle_scanned_qr_use_case.dart` | Retired by DTR-11 after encrypted-request/profile-failure proof moved to `qr_scanner_wired_test.dart` |
+
+The remaining DTR-11 leaves were also dispositioned atomically under
+`DTR11-AUTH-01`: the pending-request badge, duplicate Feed projection,
+automatic secure-store recovery wrapper, duplicate Intros tab, three thin P2P
+wrappers, and stale QR payload model were retired; the telemetry calculator
+was relocated to tooling. None remains an unexplained runtime root.
 
 ---
 
@@ -53,8 +63,11 @@ These are the best current cleanup candidates.
 
 ## Verified NOT Dead
 
-- `posts_wired.dart`, `group_list_wired.dart`, `reaction_display.dart`, and `expanded_compose_input.dart` are still used by tests/smokes
-- Current QR behavior flows through `qr_scanner_wired.dart`; do not remove QR-related code casually without product intent review
+- `posts_wired.dart` and `expanded_compose_input.dart` are still used by
+  tests/smokes.
+- Current QR behavior flows through `qr_scanner_wired.dart`, canonical
+  `buildQRPayload`, and canonical `parseQRPayload`; those live paths are not
+  dead-code candidates.
 - Bridge code, l10n output, and generated files are still active
 
 ---
@@ -67,4 +80,5 @@ These are the best current cleanup candidates.
 | **2** | Manual smoke entry points | 3 | Workflow-dependent |
 | **3** | Test-backed candidates from earlier report | Many | Medium/High |
 
-**Total removable now:** ~2 files with good confidence, plus 3 manual entry points only after workflow confirmation.
+These figures are historical triage estimates. Use the current DTR roadmap and
+an owner-approved plan for any further removal.

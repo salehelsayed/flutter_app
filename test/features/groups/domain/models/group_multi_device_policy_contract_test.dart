@@ -113,17 +113,22 @@ void main() {
         // The explicit safety net the proposal asks for: messageHistory (and its
         // siblings) must never be marked implemented without the hydration
         // entry point shipping, which is gated behind the flag.
-        if (!kMultiDeviceSyncEnabled) {
-          for (final facet in convergenceFacets) {
-            expect(
-              isGroupMultiDeviceImplemented(facet),
-              isFalse,
-              reason:
-                  'A freshly restored device hydrates no group $facet today. '
-                  'Do not flip this without the Part-B hydration path + '
-                  'on-device verification.',
-            );
-          }
+        expect(
+          kMultiDeviceSyncEnabled,
+          isFalse,
+          reason:
+              'The default build must remain honest until fresh-device group '
+              'state convergence ships with on-device verification.',
+        );
+        for (final facet in convergenceFacets) {
+          expect(
+            isGroupMultiDeviceImplemented(facet),
+            isFalse,
+            reason:
+                'A freshly restored device hydrates no group $facet today. '
+                'Do not flip this without the Part-B hydration path + '
+                'on-device verification.',
+          );
         }
       },
     );

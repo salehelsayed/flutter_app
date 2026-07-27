@@ -790,7 +790,6 @@
   "group_identity_changed": "Identität geändert",
   "group_current_safety": "Aktuelle Sicherheit",
   "group_saved_safety": "Gespeicherte Sicherheit",
-  "group_card_no_messages": "Noch keine Nachrichten",
   "group_security_encrypted": "Ende-zu-Ende verschlüsselt",
   "group_security_pending": "Verschlüsselung ausstehend",
   "group_security_no_key": "Kein Gruppenschlüssel auf diesem Gerät",
@@ -871,14 +870,6 @@
   "invite_cannot_send_group_key_missing_snackbar": "Senden nicht möglich: Dieser Gruppe fehlt der sichere Einladungsschlüssel.",
   "invite_cannot_send_invalid_payload_snackbar": "Senden nicht möglich: Diese Einladung konnte nicht vorbereitet werden.",
   "invite_cannot_send_generic_snackbar": "Senden nicht möglich: Wir konnten keine sichere Einladung für diesen Freund vorbereiten.",
-  "group_backlog_mixed_list_summary": "Älterer Rückstand nach {days} Tagen abgelaufen",
-  "@group_backlog_mixed_list_summary": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
   "group_backlog_mixed_banner": "Ältere verpasste Nachrichten sind nach {days} Tagen abgelaufen. Aktuelle Nachrichten wurden wiederhergestellt.",
   "@group_backlog_mixed_banner": {
     "placeholders": {
@@ -890,14 +881,6 @@
   "group_backlog_mixed_empty_title": "Aktuelle Nachrichten wiederhergestellt",
   "group_backlog_mixed_empty_subtitle": "Ältere verpasste Nachrichten sind nach {days} Tagen während deiner Abwesenheit abgelaufen.",
   "@group_backlog_mixed_empty_subtitle": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
-  "group_backlog_expired_list_summary": "Verpasster Rückstand nach {days} Tagen abgelaufen",
-  "@group_backlog_expired_list_summary": {
     "placeholders": {
       "days": {
         "type": "int"
@@ -944,13 +927,6 @@
   "group_info_member_not_found": "Mitglied nicht gefunden",
   "group_info_upload_photo_failed": "Gruppenfoto konnte nicht hochgeladen werden",
   "group_info_sign_metadata_failed": "Aktualisierung der Gruppendaten konnte nicht signiert werden",
-  "groups_title": "Gruppen",
-  "groups_empty_title": "Noch keine Gruppen",
-  "groups_empty_desc": "Erstelle eine Gruppe, um loszulegen",
-  "groups_pending_invites": "Ausstehende Einladungen",
-  "groups_joined": "Beigetretene Gruppen",
-  "groups_unknown_sender": "Unbekannt",
-  "groups_no_joined": "Noch keine beigetretenen Gruppen. Nimm eine Einladung an, um sie hier hinzuzufügen.",
   "group_type_discussion": "Diskussion",
   "group_type_announce": "Ankündigung",
   "group_type_qa": "Fragen",
@@ -1620,6 +1596,8 @@
   "account_migration_erase_failed": "Lokale Kontodaten konnten nicht gelöscht werden: {error}",
   "account_migration_blocked_title": "Konto auf ein anderes Telefon umgezogen",
   "account_migration_blocked_message": "Dieses Telefon ist nach der Migration für das Öffnen des Kontos gesperrt. Lösche die lokale Kopie erst, wenn du sicher bist, dass das neue Telefon funktioniert.",
+  "account_migration_unfinished_move_title": "Kontoumzug nicht abgeschlossen",
+  "account_migration_unfinished_move_message": "Dieses Telefon hat dein Konto importiert, aber die endgültige Übergabe mit dem alten Telefon wurde nicht abgeschlossen. Behalte beide Telefone und lösche keine der beiden Kopien.",
   "contact_profile_verified_peer": "Verifizierter Kontakt",
   "contact_profile_blocked": "Blockiert",
   "contact_profile_archived": "Archiviert",

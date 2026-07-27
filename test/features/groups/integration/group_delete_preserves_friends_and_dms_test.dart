@@ -207,11 +207,9 @@ void main() {
           ),
         );
         await deleteGroupAndMessages(
-          bridge: bob.bridge,
           groupRepo: bob.groupRepo,
           groupMessageRepo: bob.msgRepo,
           groupId: groupId,
-          deleteLocallyIfDissolved: true,
         );
 
         // -- assert: Bob's group state is fully purged.
@@ -358,11 +356,9 @@ void main() {
           ),
         );
         await deleteGroupAndMessages(
-          bridge: bob.bridge,
           groupRepo: bob.groupRepo,
           groupMessageRepo: bob.msgRepo,
           groupId: 'group-delete',
-          deleteLocallyIfDissolved: true,
         );
 
         // -- assert: only the targeted group is gone.

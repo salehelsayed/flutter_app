@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_local_transfer_runtime.dart';
@@ -191,55 +192,52 @@ void main() {
       },
     );
 
-    test(
-      'emits ASSEMBLY_FAIL with the failing phase + reason when a critical '
-      'secure value is missing',
-      () async {
-        final lines = <String>[];
-        debugSetMigrationBreadcrumbSink(lines.add);
-        addTearDown(() => debugSetMigrationBreadcrumbSink(null));
+    test('emits ASSEMBLY_FAIL with the failing phase + reason when a critical '
+        'secure value is missing', () async {
+      final lines = <String>[];
+      debugSetMigrationBreadcrumbSink(lines.add);
+      addTearDown(() => debugSetMigrationBreadcrumbSink(null));
 
-        final source = AccountMigrationProductionBundleSource(
-          sourceDb: sourceDb,
-          // Empty store -> db_encryption_key missing -> throws at readDatabaseKey.
-          primaryStore: FakeSecureKeyStore(),
-          documentsRootPath: tempDir.path,
-          exportDirectoryPath: p.join(tempDir.path, 'exports'),
-          snapshotExporter: MigrationDatabaseSnapshotExporter(
-            closeExportedDatabaseAfterValidation: false,
-            adapter: _RecordingSnapshotExportAdapter(
-              verificationDb: verificationDb,
-              snapshotBytes: utf8.encode('snapshot-db-bytes'),
-            ),
+      final source = AccountMigrationProductionBundleSource(
+        sourceDb: sourceDb,
+        // Empty store -> db_encryption_key missing -> throws at readDatabaseKey.
+        primaryStore: FakeSecureKeyStore(),
+        documentsRootPath: tempDir.path,
+        exportDirectoryPath: p.join(tempDir.path, 'exports'),
+        snapshotExporter: MigrationDatabaseSnapshotExporter(
+          closeExportedDatabaseAfterValidation: false,
+          adapter: _RecordingSnapshotExportAdapter(
+            verificationDb: verificationDb,
+            snapshotBytes: utf8.encode('snapshot-db-bytes'),
           ),
-          segmentSize: 32,
-        );
+        ),
+        segmentSize: 32,
+      );
 
-        await expectLater(
-          source(_request()),
-          throwsA(isA<AccountMigrationBundleAssemblyException>()),
-        );
+      await expectLater(
+        source(_request()),
+        throwsA(isA<AccountMigrationBundleAssemblyException>()),
+      );
 
-        expect(
-          lines,
-          contains(
-            predicate<String>(
-              (line) =>
-                  line.contains('ASSEMBLY_FAIL') &&
-                  line.contains('phase=readDatabaseKey') &&
-                  line.contains('reason=missingCriticalSecureValue'),
-              'ASSEMBLY_FAIL naming phase=readDatabaseKey '
-                  'reason=missingCriticalSecureValue',
-            ),
+      expect(
+        lines,
+        contains(
+          predicate<String>(
+            (line) =>
+                line.contains('ASSEMBLY_FAIL') &&
+                line.contains('phase=readDatabaseKey') &&
+                line.contains('reason=missingCriticalSecureValue'),
+            'ASSEMBLY_FAIL naming phase=readDatabaseKey '
+            'reason=missingCriticalSecureValue',
           ),
-        );
-        // Never advanced past the failing phase.
-        expect(
-          lines.any((line) => line.contains('phase=loadDatabaseRows')),
-          isFalse,
-        );
-      },
-    );
+        ),
+      );
+      // Never advanced past the failing phase.
+      expect(
+        lines.any((line) => line.contains('phase=loadDatabaseRows')),
+        isFalse,
+      );
+    });
 
     test('fails before transfer when a critical secure value is missing', () {
       final source = AccountMigrationProductionBundleSource(
@@ -669,10 +667,7 @@ void main() {
           ).readAsStringSync(),
           'image',
         );
-        expect(
-          relativePaths,
-          contains('media/peer-bob/blob-local-media.jpg'),
-        );
+        expect(relativePaths, contains('media/peer-bob/blob-local-media.jpg'));
         expect(
           relativePaths,
           isNot(contains('local_media/peer-bob/blob-local-media.jpg')),
@@ -1300,24 +1295,449 @@ void main() {
       expect(proof?.provesNewActiveCommitted, isTrue);
     }
 
-    test('198 TC-198-37: a sculpted geometry key promotes to the destination',
-        () async {
-      await sourceStore.write(OrbitGeometryPrefs.storageKey, '0.8|1.2|1.3|5|1.5');
-      await runCutoverToProof();
-      expect(
-        await destinationStore.read(OrbitGeometryPrefs.storageKey),
-        '0.8|1.2|1.3|5|1.5',
-        reason: 'the migrate/optional key is promoted onto the active key',
-      );
-    });
+    test(
+      '198 TC-198-37: a sculpted geometry key promotes to the destination',
+      () async {
+        await sourceStore.write(
+          OrbitGeometryPrefs.storageKey,
+          '0.8|1.2|1.3|5|1.5',
+        );
+        await runCutoverToProof();
+        expect(
+          await destinationStore.read(OrbitGeometryPrefs.storageKey),
+          '0.8|1.2|1.3|5|1.5',
+          reason: 'the migrate/optional key is promoted onto the active key',
+        );
+      },
+    );
 
     test(
-        '198 TC-198-37: a never-sculpted source carries no orbit key, import ok',
+      '198 TC-198-37: a never-sculpted source carries no orbit key, import ok',
+      () async {
+        // No sculpt key on sourceStore → optional-missing is skipped in the
+        // bundle; the transfer still completes and destination has no key.
+        await runCutoverToProof();
+        expect(
+          await destinationStore.read(OrbitGeometryPrefs.storageKey),
+          isNull,
+        );
+      },
+    );
+
+    group('shared-scope receiver compatibility', () {
+      test(
+        'complete accepts an iOS-sourced bundle on a destination without a shared access-group store',
         () async {
-      // No sculpt key on sourceStore → optional-missing is skipped in the
-      // bundle; the transfer still completes and destination has no key.
-      await runCutoverToProof();
-      expect(await destinationStore.read(OrbitGeometryPrefs.storageKey), isNull);
+          final events = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(events.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          final sourceSharedStore = FakeSecureKeyStore();
+          await sourceSharedStore.write(
+            MigrationSecureStorageRegistry.identityMlKemSecretKey,
+            'shared-source-ml-kem',
+          );
+          final source = AccountMigrationProductionBundleSource(
+            sourceDb: sourceDb,
+            primaryStore: sourceStore,
+            sharedStore: sourceSharedStore,
+            documentsRootPath: tempDir.path,
+            exportDirectoryPath: p.join(tempDir.path, 'exports'),
+            snapshotExporter: MigrationDatabaseSnapshotExporter(
+              closeExportedDatabaseAfterValidation: false,
+              adapter: _RecordingSnapshotExportAdapter(
+                verificationDb: verificationDb,
+                snapshotBytes: utf8.encode('snapshot-db-bytes'),
+              ),
+            ),
+            segmentSize: 24,
+          );
+          final bundle = await source(_request());
+          final staging = MigrationSecureStorageStaging(
+            primaryStore: destinationStore,
+          );
+          final receiver = AccountMigrationProductionBundleReceiver(
+            streamCrypto: _testStreamCrypto(),
+            secureStorageStaging: staging,
+            databaseImportStaging: MigrationDatabaseImportStaging(
+              secureStorageStaging: staging,
+              opener: _RecordingStagedDatabaseOpener(database: verificationDb),
+            ),
+            authorityRepository: _MemoryAuthorityRepository(),
+            stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
+            documentsRootPath: p.join(tempDir.path, 'destination-documents'),
+          );
+          final pending = _pendingSession();
+          final transcript = _request().transcript;
+
+          expect(
+            await receiver.acceptManifest(
+              manifest: bundle.manifest,
+              transcript: transcript,
+              pendingSession: pending,
+            ),
+            isTrue,
+          );
+          await _sendAllChunks(
+            receiver,
+            bundle,
+            transcript: transcript,
+            pendingSession: pending,
+          );
+
+          final completed = await receiver.complete(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+          );
+          final droppedEvents = events
+              .where(
+                (event) =>
+                    event['event'] ==
+                    'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_SHARED_SCOPE_ENTRIES_DROPPED',
+              )
+              .toList(growable: false);
+          final failureEvents = events
+              .where(
+                (event) =>
+                    event['event'] ==
+                    'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_COMPLETE_FAILED',
+              )
+              .toList(growable: false);
+
+          expect(
+            completed,
+            isTrue,
+            reason:
+                'unsupported shared-scope entries must not reject the bundle',
+          );
+          expect(droppedEvents, hasLength(1));
+          expect(
+            droppedEvents.single['details'],
+            allOf(
+              isA<Map<String, dynamic>>(),
+              containsPair('sessionId', 'session-1'),
+              containsPair('scope', 'iosSharedAccessGroup'),
+              containsPair('droppedCount', 1),
+            ),
+          );
+          expect(failureEvents, isEmpty);
+        },
+      );
+
+      test(
+        'complete and cutover preserve shared mirrors when the destination supports shared scope',
+        () async {
+          final events = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(events.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          const groupId = 'shared-preservation-group';
+          const generation = 7;
+          final sourceSharedStore = FakeSecureKeyStore();
+          await sourceSharedStore.write(
+            MigrationSecureStorageRegistry.identityMlKemSecretKey,
+            'shared-source-ml-kem',
+          );
+          final groupKeys = await _seedCommittedGroupKeyBundleFixture(
+            db: sourceDb,
+            primaryStore: sourceStore,
+            sharedStore: sourceSharedStore,
+            groupId: groupId,
+            generation: generation,
+          );
+          final source = AccountMigrationProductionBundleSource(
+            sourceDb: sourceDb,
+            primaryStore: sourceStore,
+            sharedStore: sourceSharedStore,
+            documentsRootPath: tempDir.path,
+            exportDirectoryPath: p.join(tempDir.path, 'exports'),
+            snapshotExporter: MigrationDatabaseSnapshotExporter(
+              closeExportedDatabaseAfterValidation: false,
+              adapter: _RecordingSnapshotExportAdapter(
+                verificationDb: verificationDb,
+                snapshotBytes: utf8.encode('snapshot-db-bytes'),
+              ),
+            ),
+            segmentSize: 24,
+          );
+          final bundle = await source(_request());
+
+          await activeDb.delete('identity');
+          await activeDb.insert('identity', {
+            'id': 1,
+            'peer_id': 'new-temp-peer',
+            'public_key': 'new-public',
+            'username': 'new-temp',
+          });
+          await destinationStore.write(
+            MigrationSecureStorageRegistry.dbEncryptionKey,
+            'new-active-db-key',
+          );
+          final destinationSharedStore = FakeSecureKeyStore();
+          final staging = MigrationSecureStorageStaging(
+            primaryStore: destinationStore,
+            sharedStore: destinationSharedStore,
+          );
+          final authorityRepository = _MemoryAuthorityRepository();
+          final receiver = AccountMigrationProductionBundleReceiver(
+            streamCrypto: _testStreamCrypto(),
+            secureStorageStaging: staging,
+            databaseImportStaging: MigrationDatabaseImportStaging(
+              secureStorageStaging: staging,
+              opener: _RecordingStagedDatabaseOpener(database: verificationDb),
+            ),
+            activeDatabaseImporter: MigrationDatabaseActiveImporter(
+              activeDatabase: activeDb,
+            ),
+            cutoverCoordinator: MigrationCutoverCoordinator(
+              authorityRepository: authorityRepository,
+              cutoverRepository: _MemoryCutoverRepository(),
+              now: () => DateTime.utc(2026, 6, 8, 12),
+            ),
+            authorityRepository: authorityRepository,
+            stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
+            documentsRootPath: p.join(tempDir.path, 'destination-documents'),
+          );
+          final pending = _pendingSession();
+          final transcript = _request().transcript;
+
+          expect(
+            await receiver.acceptManifest(
+              manifest: bundle.manifest,
+              transcript: transcript,
+              pendingSession: pending,
+            ),
+            isTrue,
+          );
+          await _sendAllChunks(
+            receiver,
+            bundle,
+            transcript: transcript,
+            pendingSession: pending,
+          );
+          expect(
+            await receiver.complete(
+              manifest: bundle.manifest,
+              transcript: transcript,
+              pendingSession: pending,
+            ),
+            isTrue,
+          );
+          final proof = await receiver.acceptOldBlockProof(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+            oldBlockProof: _oldBlockProof(),
+          );
+
+          expect(proof?.provesNewActiveCommitted, isTrue);
+          expect(
+            await destinationSharedStore.read(
+              MigrationSecureStorageRegistry.identityMlKemSecretKey,
+            ),
+            'shared-source-ml-kem',
+          );
+          expect(
+            await destinationSharedStore.read(groupKeys.shared.activeKey),
+            'shared-group-key-material',
+          );
+          expect(
+            events.where(
+              (event) =>
+                  event['event'] ==
+                  'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_SHARED_SCOPE_ENTRIES_DROPPED',
+            ),
+            isEmpty,
+          );
+        },
+      );
+
+      test(
+        'cutover promotes and cleans exactly the primary projection without shared-scope residue',
+        () async {
+          final sourceSharedStore = FakeSecureKeyStore();
+          await sourceSharedStore.write(
+            MigrationSecureStorageRegistry.identityMlKemSecretKey,
+            'shared-source-ml-kem',
+          );
+          await sourceStore.write(
+            OrbitGeometryPrefs.storageKey,
+            '0.8|1.2|1.3|5|1.5',
+          );
+          final groupKeys = await _seedCommittedGroupKeyBundleFixture(
+            db: sourceDb,
+            primaryStore: sourceStore,
+            sharedStore: sourceSharedStore,
+            groupId: 'primary-projection-group',
+            generation: 11,
+          );
+          final source = AccountMigrationProductionBundleSource(
+            sourceDb: sourceDb,
+            primaryStore: sourceStore,
+            sharedStore: sourceSharedStore,
+            documentsRootPath: tempDir.path,
+            exportDirectoryPath: p.join(tempDir.path, 'exports'),
+            snapshotExporter: MigrationDatabaseSnapshotExporter(
+              closeExportedDatabaseAfterValidation: false,
+              adapter: _RecordingSnapshotExportAdapter(
+                verificationDb: verificationDb,
+                snapshotBytes: utf8.encode('snapshot-db-bytes'),
+              ),
+            ),
+            segmentSize: 24,
+          );
+          final bundle = await source(_request());
+
+          await activeDb.delete('identity');
+          await activeDb.insert('identity', {
+            'id': 1,
+            'peer_id': 'new-temp-peer',
+            'public_key': 'new-public',
+            'username': 'new-temp',
+          });
+          await destinationStore.write(
+            MigrationSecureStorageRegistry.dbEncryptionKey,
+            'new-active-db-key',
+          );
+          final staging = _RecordingMigrationSecureStorageStaging(
+            primaryStore: destinationStore,
+          );
+          final authorityRepository = _MemoryAuthorityRepository();
+          final receiver = AccountMigrationProductionBundleReceiver(
+            streamCrypto: _testStreamCrypto(),
+            secureStorageStaging: staging,
+            databaseImportStaging: MigrationDatabaseImportStaging(
+              secureStorageStaging: staging,
+              opener: _RecordingStagedDatabaseOpener(database: verificationDb),
+            ),
+            activeDatabaseImporter: MigrationDatabaseActiveImporter(
+              activeDatabase: activeDb,
+            ),
+            cutoverCoordinator: MigrationCutoverCoordinator(
+              authorityRepository: authorityRepository,
+              cutoverRepository: _MemoryCutoverRepository(),
+              now: () => DateTime.utc(2026, 6, 8, 12),
+            ),
+            authorityRepository: authorityRepository,
+            stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
+            documentsRootPath: p.join(tempDir.path, 'destination-documents'),
+          );
+          final pending = _pendingSession();
+          final transcript = _request().transcript;
+
+          expect(
+            await receiver.acceptManifest(
+              manifest: bundle.manifest,
+              transcript: transcript,
+              pendingSession: pending,
+            ),
+            isTrue,
+          );
+          await _sendAllChunks(
+            receiver,
+            bundle,
+            transcript: transcript,
+            pendingSession: pending,
+          );
+          expect(
+            await receiver.complete(
+              manifest: bundle.manifest,
+              transcript: transcript,
+              pendingSession: pending,
+            ),
+            isTrue,
+          );
+          final proof = await receiver.acceptOldBlockProof(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+            oldBlockProof: _oldBlockProof(),
+          );
+
+          final expectedStagedKeys =
+              MigrationSecureStorageRegistry.deduplicateAndSort([
+                _fixedMigrationKey(
+                  MigrationSecureStorageRegistry.dbEncryptionKey,
+                ),
+                _fixedMigrationKey(
+                  MigrationSecureStorageRegistry.identityPrivateKey,
+                ),
+                _fixedMigrationKey(
+                  MigrationSecureStorageRegistry.identityMnemonic12,
+                ),
+                _fixedMigrationKey(
+                  MigrationSecureStorageRegistry.identityMlKemSecretKey,
+                ),
+                _fixedMigrationKey(OrbitGeometryPrefs.storageKey),
+                groupKeys.primary,
+              ]);
+          final expectedPromotionInput =
+              MigrationSecureStorageRegistry.deduplicateAndSort([
+                ...expectedStagedKeys.where(
+                  (key) =>
+                      key.category !=
+                      MigrationSecureStorageKeyCategory.dbEncryptionKey,
+                ),
+                _fixedMigrationKey(
+                  MigrationSecureStorageRegistry.secretsMigrated,
+                ),
+                ...MigrationSecureStorageRegistry.fixedKeys.where(
+                  (key) =>
+                      key.policy ==
+                      MigrationSecureStorageKeyPolicy.clearRegenerate,
+                ),
+              ]);
+          final expectedPromotedKeys = expectedPromotionInput
+              .where(
+                (key) =>
+                    key.policy !=
+                    MigrationSecureStorageKeyPolicy.clearRegenerate,
+              )
+              .toList(growable: false);
+
+          expect(proof?.provesNewActiveCommitted, isTrue);
+          expect(
+            _migrationKeyIds(staging.stagedKeys),
+            _migrationKeyIds(expectedStagedKeys),
+          );
+          expect(staging.promotionInputs, hasLength(1));
+          expect(
+            _migrationKeyIds(staging.promotionInputs.single),
+            _migrationKeyIds(expectedPromotionInput),
+          );
+          expect(staging.promotionResults, hasLength(1));
+          expect(
+            _migrationKeyIds(staging.promotionResults.single.promotedKeys),
+            _migrationKeyIds(expectedPromotedKeys),
+          );
+          expect(staging.deleteInputs, hasLength(1));
+          expect(
+            _migrationKeyIds(staging.deleteInputs.single),
+            _migrationKeyIds(expectedStagedKeys),
+          );
+          for (final key in expectedStagedKeys) {
+            expect(
+              await destinationStore.read(
+                MigrationSecureStorageStaging.stagingKeyFor(
+                  sessionId: 'session-1',
+                  key: key,
+                ),
+              ),
+              isNull,
+              reason: '${key.sortKey} staging residue survived cutover',
+            );
+          }
+          expect(
+            await destinationStore.read(groupKeys.primary.activeKey),
+            'primary-group-key-material',
+          );
+          expect(
+            await destinationStore.read(OrbitGeometryPrefs.storageKey),
+            '0.8|1.2|1.3|5|1.5',
+          );
+        },
+      );
     });
 
     group('receiver completion and proof stage telemetry', () {
@@ -1353,18 +1773,19 @@ void main() {
         MigrationDatabaseActiveImporter? activeImporter,
         MigrationCutoverCoordinator? coordinator,
         AccountMigrationAuthorityRepository? authorityRepository,
+        MigrationSecureStorageStaging? secureStorageStaging,
       }) {
+        final staging =
+            secureStorageStaging ??
+            MigrationSecureStorageStaging(primaryStore: destinationStore);
         return AccountMigrationProductionBundleReceiver(
           streamCrypto: _testStreamCrypto(),
-          secureStorageStaging: MigrationSecureStorageStaging(
-            primaryStore: destinationStore,
-          ),
+          secureStorageStaging: staging,
           databaseImportStaging: MigrationDatabaseImportStaging(
-            secureStorageStaging: MigrationSecureStorageStaging(
-              primaryStore: destinationStore,
-            ),
+            secureStorageStaging: staging,
             opener:
-                opener ?? _RecordingStagedDatabaseOpener(database: verificationDb),
+                opener ??
+                _RecordingStagedDatabaseOpener(database: verificationDb),
           ),
           activeDatabaseImporter: activeImporter,
           cutoverCoordinator: coordinator,
@@ -1399,9 +1820,7 @@ void main() {
 
       List<Map<String, dynamic>> detailsNamed(String name) => events
           .where((event) => event['event'] == name)
-          .map(
-            (event) => Map<String, dynamic>.from(event['details'] as Map),
-          )
+          .map((event) => Map<String, dynamic>.from(event['details'] as Map))
           .toList(growable: false);
 
       test('complete emits stage telemetry on successful import', () async {
@@ -1480,10 +1899,7 @@ void main() {
                 .length,
           );
           // The failure carries the COUNT of missing entries, never contents.
-          expect(
-            jsonEncode(missing),
-            isNot(contains('snapshot-db-bytes')),
-          );
+          expect(jsonEncode(missing), isNot(contains('snapshot-db-bytes')));
         },
       );
 
@@ -1573,6 +1989,76 @@ void main() {
           isEmpty,
         );
       });
+
+      test(
+        'post-commit secure-staging cleanup failure preserves the committed proof',
+        () async {
+          await activeDb.delete('identity');
+          await activeDb.insert('identity', {
+            'id': 1,
+            'peer_id': 'new-temp-peer',
+            'public_key': 'new-public',
+            'username': 'new-temp',
+          });
+          await destinationStore.write(
+            MigrationSecureStorageRegistry.dbEncryptionKey,
+            'new-active-db-key',
+          );
+          final bundle = await buildBundle();
+          final authorityRepository = _MemoryAuthorityRepository();
+          final receiver = buildReceiver(
+            activeImporter: MigrationDatabaseActiveImporter(
+              activeDatabase: activeDb,
+            ),
+            coordinator: MigrationCutoverCoordinator(
+              authorityRepository: authorityRepository,
+              cutoverRepository: _MemoryCutoverRepository(),
+              now: () => DateTime.utc(2026, 6, 8, 12),
+            ),
+            authorityRepository: authorityRepository,
+            secureStorageStaging: _ThrowingCleanupMigrationSecureStorageStaging(
+              primaryStore: destinationStore,
+            ),
+          );
+          await acceptAll(receiver, bundle);
+          expect(
+            await receiver.complete(
+              manifest: bundle.manifest,
+              transcript: _request().transcript,
+              pendingSession: _pendingSession(),
+            ),
+            isTrue,
+          );
+
+          final newActiveProof = await receiver.acceptOldBlockProof(
+            manifest: bundle.manifest,
+            transcript: _request().transcript,
+            pendingSession: _pendingSession(),
+            oldBlockProof: _oldBlockProof(),
+          );
+
+          expect(newActiveProof?.provesNewActiveCommitted, isTrue);
+          final failed = detailsNamed(
+            'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_OLD_BLOCK_PROOF_FAILED',
+          ).single;
+          expect(failed['sessionId'], 'session-1');
+          expect(failed['stage'], 'cleanup');
+          expect(failed['errorType'], 'StateError');
+          expect(
+            detailsNamed(
+              'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_SECURE_STAGING_CLEANUP_FAILED',
+            ).single['sessionId'],
+            'session-1',
+          );
+          expect(
+            detailsNamed(
+              'ACCOUNT_MIGRATION_BUNDLE_RECEIVER_STAGING_CLEANED',
+            ).single['sessionId'],
+            'session-1',
+            reason: 'session cleanup must still run after secure cleanup fails',
+          );
+        },
+      );
 
       test(
         'old block proof failure during active import is diagnosable',
@@ -1747,9 +2233,7 @@ void main() {
           (entry) => entry.entryId == entryId,
         );
         final chunkOffset = offset ?? chunkIndex * descriptor.chunkSize;
-        final plaintext = await entry
-            .openChunks(offset: chunkOffset)
-            .first;
+        final plaintext = await entry.openChunks(offset: chunkOffset).first;
         final session = await crypto.encapsulateSession(
           recipientMlKemPublicKey: 'new-public-key',
           sessionId: manifest.sessionId,
@@ -1796,11 +2280,7 @@ void main() {
           // Chunk 1 before chunk 0 → typed out-of-order reject.
           final outOfOrder = await receiver.acceptChunk(
             manifest: bundle.manifest,
-            chunk: await encryptFirstChunk(
-              bundle,
-              'file-0',
-              chunkIndex: 1,
-            ),
+            chunk: await encryptFirstChunk(bundle, 'file-0', chunkIndex: 1),
             transcript: transcript,
             pendingSession: pending,
           );
@@ -1824,10 +2304,7 @@ void main() {
             pendingSession: pending,
           );
           expect(duplicate.code, AccountMigrationChunkAcceptCode.duplicate);
-          expect(
-            duplicate.verifiedChunkCount,
-            accepted.verifiedChunkCount,
-          );
+          expect(duplicate.verifiedChunkCount, accepted.verifiedChunkCount);
 
           final status = await receiver.transferStatus(
             manifest: bundle.manifest,
@@ -1912,168 +2389,161 @@ void main() {
               .listSync()
               .map((child) => p.basename(child.path))
               .where(
-                (name) =>
-                    name.startsWith('file-') || name.endsWith('.partial'),
+                (name) => name.startsWith('file-') || name.endsWith('.partial'),
               );
           expect(residue, isEmpty);
         },
       );
 
-      test(
-        'receiver restart resumes from the file-backed ledger without '
-        'resending verified entries',
-        () async {
-          final bundle = await buildBundle();
-          final pending = _pendingSession();
-          final transcript = _request().transcript;
+      test('receiver restart resumes from the file-backed ledger without '
+          'resending verified entries', () async {
+        final bundle = await buildBundle();
+        final pending = _pendingSession();
+        final transcript = _request().transcript;
 
-          final firstReceiver = buildReceiver();
-          expect(
-            await firstReceiver.acceptManifest(
-              manifest: bundle.manifest,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-          // Verify only the first chunk of file-0, then "restart" the phone.
-          final partial = await firstReceiver.acceptChunk(
+        final firstReceiver = buildReceiver();
+        expect(
+          await firstReceiver.acceptManifest(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+          ),
+          isTrue,
+        );
+        // Verify only the first chunk of file-0, then "restart" the phone.
+        final partial = await firstReceiver.acceptChunk(
+          manifest: bundle.manifest,
+          chunk: await encryptFirstChunk(bundle, 'file-0'),
+          transcript: transcript,
+          pendingSession: pending,
+        );
+        expect(partial.code, AccountMigrationChunkAcceptCode.accepted);
+
+        final restarted = buildReceiver();
+        expect(
+          await restarted.acceptManifest(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+          ),
+          isTrue,
+        );
+        final status = await restarted.transferStatus(
+          manifest: bundle.manifest,
+          transcript: transcript,
+          pendingSession: pending,
+        );
+        expect(status!.entryOffsets['file-0'], 24);
+
+        // The remaining bytes resume from the persisted offset, the entry
+        // hash still verifies, and the whole import completes.
+        await _sendAllChunksFrom(
+          restarted,
+          bundle,
+          status,
+          transcript: transcript,
+          pendingSession: pending,
+        );
+        expect(
+          await restarted.complete(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+          ),
+          isTrue,
+        );
+      });
+
+      test('a changed manifest carries identical entries over and wipes '
+          'changed ones', () async {
+        final bundle = await buildBundle();
+        final receiver = buildReceiver();
+        final pending = _pendingSession();
+        final transcript = _request().transcript;
+        expect(
+          await receiver.acceptManifest(
+            manifest: bundle.manifest,
+            transcript: transcript,
+            pendingSession: pending,
+          ),
+          isTrue,
+        );
+        expect(
+          (await receiver.acceptChunk(
             manifest: bundle.manifest,
             chunk: await encryptFirstChunk(bundle, 'file-0'),
             transcript: transcript,
             pendingSession: pending,
-          );
-          expect(partial.code, AccountMigrationChunkAcceptCode.accepted);
+          )).isAccepted,
+          isTrue,
+        );
 
-          final restarted = buildReceiver();
-          expect(
-            await restarted.acceptManifest(
-              manifest: bundle.manifest,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-          final status = await restarted.transferStatus(
-            manifest: bundle.manifest,
-            transcript: transcript,
-            pendingSession: pending,
-          );
-          expect(status!.entryOffsets['file-0'], 24);
-
-          // The remaining bytes resume from the persisted offset, the entry
-          // hash still verifies, and the whole import completes.
-          await _sendAllChunksFrom(
-            restarted,
-            bundle,
-            status,
-            transcript: transcript,
-            pendingSession: pending,
-          );
-          expect(
-            await restarted.complete(
-              manifest: bundle.manifest,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-        },
-      );
-
-      test(
-        'a changed manifest carries identical entries over and wipes '
-        'changed ones',
-        () async {
-          final bundle = await buildBundle();
-          final receiver = buildReceiver();
-          final pending = _pendingSession();
-          final transcript = _request().transcript;
-          expect(
-            await receiver.acceptManifest(
-              manifest: bundle.manifest,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-          expect(
-            (await receiver.acceptChunk(
-              manifest: bundle.manifest,
-              chunk: await encryptFirstChunk(bundle, 'file-0'),
-              transcript: transcript,
-              pendingSession: pending,
-            )).isAccepted,
-            isTrue,
-          );
-
-          // Identical entries under a rebuilt bundle id (e.g. only the DB
-          // snapshot changed) keep their verified offsets.
-          final rebundled = bundle.manifest.copyWith(
-            bundleId: 'bundle-different',
-          );
-          expect(
-            await receiver.acceptManifest(
-              manifest: rebundled,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-          final carried = await receiver.transferStatus(
+        // Identical entries under a rebuilt bundle id (e.g. only the DB
+        // snapshot changed) keep their verified offsets.
+        final rebundled = bundle.manifest.copyWith(
+          bundleId: 'bundle-different',
+        );
+        expect(
+          await receiver.acceptManifest(
             manifest: rebundled,
             transcript: transcript,
             pendingSession: pending,
-          );
-          expect(carried!.entryOffsets['file-0'], 24);
+          ),
+          isTrue,
+        );
+        final carried = await receiver.transferStatus(
+          manifest: rebundled,
+          transcript: transcript,
+          pendingSession: pending,
+        );
+        expect(carried!.entryOffsets['file-0'], 24);
 
-          // A content-changed entry is wiped: its partial can never verify.
-          final changed = rebundled.copyWith(
-            bundleId: 'bundle-changed',
-            entries: rebundled.entries
-                .map(
-                  (entry) => entry.entryId == 'file-0'
-                      ? MigrationTransferEntryDescriptor(
-                          entryId: entry.entryId,
-                          kind: entry.kind,
-                          relativePath: entry.relativePath,
-                          sizeBytes: entry.sizeBytes,
-                          sha256: 'f' * 64,
-                          chunkSize: entry.chunkSize,
-                          chunkCount: entry.chunkCount,
-                        )
-                      : entry,
-                )
-                .toList(growable: false),
-          );
-          expect(
-            await receiver.acceptManifest(
-              manifest: changed,
-              transcript: transcript,
-              pendingSession: pending,
-            ),
-            isTrue,
-          );
-          final wiped = await receiver.transferStatus(
+        // A content-changed entry is wiped: its partial can never verify.
+        final changed = rebundled.copyWith(
+          bundleId: 'bundle-changed',
+          entries: rebundled.entries
+              .map(
+                (entry) => entry.entryId == 'file-0'
+                    ? MigrationTransferEntryDescriptor(
+                        entryId: entry.entryId,
+                        kind: entry.kind,
+                        relativePath: entry.relativePath,
+                        sizeBytes: entry.sizeBytes,
+                        sha256: 'f' * 64,
+                        chunkSize: entry.chunkSize,
+                        chunkCount: entry.chunkCount,
+                      )
+                    : entry,
+              )
+              .toList(growable: false),
+        );
+        expect(
+          await receiver.acceptManifest(
             manifest: changed,
             transcript: transcript,
             pendingSession: pending,
-          );
-          expect(wiped!.entryOffsets['file-0'], anyOf(isNull, 0));
-          expect(
-            File(
-              p.join(
-                tempDir.path,
-                'incoming',
-                'session-1',
-                'entries',
-                'file-0.partial',
-              ),
-            ).existsSync(),
-            isFalse,
-          );
-        },
-      );
+          ),
+          isTrue,
+        );
+        final wiped = await receiver.transferStatus(
+          manifest: changed,
+          transcript: transcript,
+          pendingSession: pending,
+        );
+        expect(wiped!.entryOffsets['file-0'], anyOf(isNull, 0));
+        expect(
+          File(
+            p.join(
+              tempDir.path,
+              'incoming',
+              'session-1',
+              'entries',
+              'file-0.partial',
+            ),
+          ).existsSync(),
+          isFalse,
+        );
+      });
 
       test(
         'P2-3: production source builds and streams without whole-file reads',
@@ -2176,6 +2646,110 @@ void main() {
       });
     });
   });
+}
+
+MigrationSecureStorageKey _fixedMigrationKey(String activeKey) {
+  return MigrationSecureStorageRegistry.fixedKey(
+    scope: MigrationSecureStoreScope.primary,
+    activeKey: activeKey,
+  )!;
+}
+
+List<String> _migrationKeyIds(Iterable<MigrationSecureStorageKey> keys) {
+  return keys.map((key) => key.sortKey).toList(growable: false);
+}
+
+Future<({MigrationSecureStorageKey primary, MigrationSecureStorageKey shared})>
+_seedCommittedGroupKeyBundleFixture({
+  required Database db,
+  required FakeSecureKeyStore primaryStore,
+  required FakeSecureKeyStore sharedStore,
+  required String groupId,
+  required int generation,
+}) async {
+  await db.execute('''
+CREATE TABLE group_keys (
+  group_id TEXT NOT NULL,
+  key_generation INTEGER NOT NULL,
+  encrypted_key TEXT NOT NULL,
+  PRIMARY KEY (group_id, key_generation)
+)
+''');
+  final primary = MigrationSecureStorageRegistry.primaryGroupKeyMaterial(
+    groupId: groupId,
+    generation: generation,
+  );
+  final shared = MigrationSecureStorageRegistry.sharedGroupMirror(
+    groupId: groupId,
+    generation: generation,
+  );
+  await db.insert('group_keys', {
+    'group_id': groupId,
+    'key_generation': generation,
+    'encrypted_key': secureStoreReferenceForKey(primary.activeKey),
+  });
+  await primaryStore.write(primary.activeKey, 'primary-group-key-material');
+  await sharedStore.write(shared.activeKey, 'shared-group-key-material');
+  return (primary: primary, shared: shared);
+}
+
+class _RecordingMigrationSecureStorageStaging
+    extends MigrationSecureStorageStaging {
+  final stagedKeys = <MigrationSecureStorageKey>[];
+  final promotionInputs = <List<MigrationSecureStorageKey>>[];
+  final promotionResults = <MigrationSecureStoragePromotionResult>[];
+  final deleteInputs = <List<MigrationSecureStorageKey>>[];
+
+  _RecordingMigrationSecureStorageStaging({required super.primaryStore})
+    : super(sharedStore: null);
+
+  @override
+  Future<void> stageValue({
+    required String sessionId,
+    required MigrationSecureStorageKey key,
+    required String value,
+  }) {
+    stagedKeys.add(key);
+    return super.stageValue(sessionId: sessionId, key: key, value: value);
+  }
+
+  @override
+  Future<MigrationSecureStoragePromotionResult> promote({
+    required String sessionId,
+    required Iterable<MigrationSecureStorageKey> registryKeys,
+  }) async {
+    final keys = List<MigrationSecureStorageKey>.unmodifiable(registryKeys);
+    promotionInputs.add(keys);
+    final result = await super.promote(
+      sessionId: sessionId,
+      registryKeys: keys,
+    );
+    promotionResults.add(result);
+    return result;
+  }
+
+  @override
+  Future<void> deleteStagingValues({
+    required String sessionId,
+    required Iterable<MigrationSecureStorageKey> registryKeys,
+  }) {
+    final keys = List<MigrationSecureStorageKey>.unmodifiable(registryKeys);
+    deleteInputs.add(keys);
+    return super.deleteStagingValues(sessionId: sessionId, registryKeys: keys);
+  }
+}
+
+class _ThrowingCleanupMigrationSecureStorageStaging
+    extends MigrationSecureStorageStaging {
+  _ThrowingCleanupMigrationSecureStorageStaging({required super.primaryStore});
+
+  @override
+  Future<void> deleteStagingValues({
+    required String sessionId,
+    required Iterable<MigrationSecureStorageKey> registryKeys,
+  }) {
+    throw StateError('forced secure-staging cleanup failure');
+  }
 }
 
 class _ThrowingStagedDatabaseOpener implements MigrationStagedDatabaseOpener {

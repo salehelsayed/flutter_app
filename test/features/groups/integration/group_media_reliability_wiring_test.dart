@@ -279,8 +279,6 @@ void main() {
           'groupMediaDownloadCoordinator',
           'widget.groupMediaDownloadCoordinator',
         ],
-        'lib/features/groups/presentation/screens/group_list_wired.dart':
-            <String>['widget.groupMediaDownloadCoordinator'],
         'lib/features/groups/presentation/screens/create_group_picker_wired.dart':
             <String>['widget.groupMediaDownloadCoordinator'],
         'lib/features/orbit/presentation/screens/orbit_wired.dart': <String>[
@@ -294,7 +292,7 @@ void main() {
         discovered.keys.toSet(),
         expectedCoordinatorExpressionsByPath.keys.toSet(),
         reason:
-            'The production baseline has exactly five direct group-conversation '
+            'The production baseline has exactly four direct group-conversation '
             'paths. A new path must be enumerated and wired explicitly.',
       );
 

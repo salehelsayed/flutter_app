@@ -318,6 +318,85 @@ void main() {
     );
 
     testWidgets(
+      'folded live intro preserves peer-id attribution fallback and long names stay actionable',
+      (tester) async {
+        suppressOverflowErrors();
+        tester.view.physicalSize = testViewSize;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        const longIntroducer =
+            'A remarkably long introducer display name that should still render';
+        final now = DateTime.now().toUtc();
+        final blankIntro = IntroductionModel(
+          id: 'intro-blank',
+          introducerId: 'peer-blank',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: '   ',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.subtract(const Duration(minutes: 1)).toIso8601String(),
+        );
+        final longIntro = IntroductionModel(
+          id: 'intro-long-name',
+          introducerId: 'peer-long',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: longIntroducer,
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.toIso8601String(),
+        );
+        final folded = foldIntroductionsForReview(
+          introductions: [blankIntro, longIntro],
+          ownPeerId: 'peer-me',
+        );
+        final introsData = OrbitIntrosViewData(
+          groupedIntros: {
+            'peer-blank': [blankIntro],
+            'peer-long': [longIntro],
+          },
+          foldedReviewItems: folded,
+          introducerUsernames: const {
+            'peer-blank': '   ',
+            'peer-long': longIntroducer,
+          },
+          ownPeerId: 'peer-me',
+          onAccept: (_) {},
+          onPass: (_) {},
+        );
+
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            filterTab: 'intros',
+            introsData: introsData,
+            introCount: folded.length,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final row = find.byType(IntroRow);
+        expect(row, findsOneWidget);
+        expect(find.text('aboza'), findsOneWidget);
+        expect(
+          find.descendant(of: row, matching: find.textContaining('peer-blank')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: row,
+            matching: find.textContaining(longIntroducer),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Accept'), findsOneWidget);
+        expect(find.text('Pass'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'intros tab renders grouped intros and carries the correct pending count',
       (tester) async {
         suppressOverflowErrors();

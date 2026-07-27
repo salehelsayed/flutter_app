@@ -179,7 +179,6 @@ class GoBridgeClient extends Bridge {
     'group:publishReaction': _CmdSpec('groupPublishReaction', true),
     'group:updateConfig': _CmdSpec('groupUpdateConfig', true),
     'group:generateNextKey': _CmdSpec('groupGenerateNextKey', true),
-    'group:rotateKey': _CmdSpec('groupRotateKey', true),
     'group:updateKey': _CmdSpec('groupUpdateKey', true),
     'group:inboxStore': _CmdSpec('groupInboxStore', true),
     'group:inboxRetrieve': _CmdSpec('groupInboxRetrieve', true),

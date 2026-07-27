@@ -34,6 +34,8 @@ const accountMigrationLocalTransferCommandComplete = 'complete';
 const accountMigrationLocalTransferCommandOldBlockProof = 'old-block-proof';
 const accountMigrationLocalTransferFieldBundleId = 'bundle_id';
 const accountMigrationLocalTransferFieldCutoverReady = 'cutover_ready';
+const accountMigrationLocalTransferFieldOldBlockProofReplaySafe =
+    'old_block_proof_replay_safe';
 const accountMigrationLocalTransferFieldOldBlockProof = 'old_block_proof';
 const accountMigrationLocalTransferFieldNewActiveProof = 'new_active_proof';
 const accountMigrationLocalTransferFieldLedger = 'ledger';
@@ -195,6 +197,8 @@ class AccountMigrationLocalTransferRuntime {
   /// Hard upper bound for any single migration command budget, scaled or not.
   final Duration maxCommandTimeout;
 
+  final Duration committedProofReplayGrace;
+  final Future<void> Function(Duration) oldBlockProofRetryDelay;
   final DateTime Function() now;
 
   final _receiverSessions = <String, _ReceiverSession>{};
@@ -243,8 +247,13 @@ class AccountMigrationLocalTransferRuntime {
     this.httpTimeout = const Duration(seconds: 10),
     this.transferBytesPerSecondFloor = 64 * 1024,
     this.maxCommandTimeout = const Duration(seconds: 120),
+    this.committedProofReplayGrace = const Duration(minutes: 5),
+    Future<void> Function(Duration)? oldBlockProofRetryDelay,
     DateTime Function()? now,
   }) : httpClientFactory = httpClientFactory ?? HttpClient.new,
+       oldBlockProofRetryDelay =
+           oldBlockProofRetryDelay ??
+           ((duration) => Future<void>.delayed(duration)),
        now = now ?? DateTime.now;
 
   Future<AccountMigrationReceiverStartResult> startNewPhoneReceiver(
@@ -257,6 +266,25 @@ class AccountMigrationLocalTransferRuntime {
         code: AccountMigrationReceiverStartFailureCode.sessionExpired,
         safeMessage:
             'This Move Account QR expired. Create a new code on this phone.',
+      );
+    }
+
+    final retainedSession = _receiverSessions[payload.sessionId];
+    if (retainedSession != null &&
+        retainedSession.phase != _ReceiverSessionPhase.receiving) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_LOCAL_RECEIVER_START_REJECTED',
+        details: {
+          'sessionId': payload.sessionId,
+          'reason': 'session_finalizing',
+          'phase': retainedSession.phase.name,
+        },
+      );
+      return const AccountMigrationReceiverStartResult.failure(
+        code: AccountMigrationReceiverStartFailureCode.sessionUnavailable,
+        safeMessage:
+            'This Move Account session is already finishing. Keep both phones open until it completes.',
       );
     }
 
@@ -277,6 +305,10 @@ class AccountMigrationLocalTransferRuntime {
       final port = await wsServer.start();
       final migrationPeerId = accountMigrationLocalPeerIdForSession(
         payload.sessionId,
+      );
+      _removeReceiverSession(
+        payload.sessionId,
+        _receiverSessions[payload.sessionId],
       );
       _receiverSessions[payload.sessionId] = _ReceiverSession(
         pendingSession: pending,
@@ -307,14 +339,43 @@ class AccountMigrationLocalTransferRuntime {
   }
 
   Future<void> stopNewPhoneReceiver(String sessionId) async {
-    final removed = _receiverSessions.remove(sessionId);
-    if (removed == null) return;
-    await discovery.stopAdvertising();
+    final session = _receiverSessions[sessionId];
+    if (session == null) return;
+    session.stopRequested = true;
+    try {
+      await _stopReceiverAdvertising(sessionId, session);
+    } finally {
+      if (session.phase == _ReceiverSessionPhase.receiving) {
+        _removeReceiverSession(sessionId, session);
+      }
+    }
+  }
+
+  Future<void> _stopReceiverAdvertising(
+    String sessionId,
+    _ReceiverSession session,
+  ) async {
+    if (session.stopRecorded) return;
+    session.stopRecorded = true;
+    try {
+      await discovery.stopAdvertising();
+    } catch (_) {
+      session.stopRecorded = false;
+      rethrow;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'ACCOUNT_MIGRATION_LOCAL_RECEIVER_STOPPED',
       details: {'sessionId': sessionId},
     );
+  }
+
+  void _removeReceiverSession(String sessionId, _ReceiverSession? session) {
+    if (session == null || !identical(_receiverSessions[sessionId], session)) {
+      return;
+    }
+    session.replayExpiryTimer?.cancel();
+    _receiverSessions.remove(sessionId);
   }
 
   Future<void> handleMigrationTransferRequest(
@@ -371,6 +432,16 @@ class AccountMigrationLocalTransferRuntime {
           context,
           HttpStatus.notFound,
           'unknown_session',
+        );
+        return;
+      }
+
+      if (!_receiverPhaseAllowsCommand(session.phase, parsedPath.command)) {
+        await _rejectRequest(
+          request,
+          context,
+          HttpStatus.conflict,
+          'session_finalizing',
         );
         return;
       }
@@ -439,6 +510,23 @@ class AccountMigrationLocalTransferRuntime {
         // The sender may already have timed out and closed the connection;
         // the failure event above is the diagnostic record.
       }
+    }
+  }
+
+  bool _receiverPhaseAllowsCommand(
+    _ReceiverSessionPhase phase,
+    String command,
+  ) {
+    switch (phase) {
+      case _ReceiverSessionPhase.receiving:
+        return true;
+      case _ReceiverSessionPhase.completeInFlight:
+      case _ReceiverSessionPhase.verifiedWaiting:
+        return command == accountMigrationLocalTransferCommandComplete ||
+            command == accountMigrationLocalTransferCommandOldBlockProof;
+      case _ReceiverSessionPhase.proofInFlight:
+      case _ReceiverSessionPhase.committedReplayable:
+        return command == accountMigrationLocalTransferCommandOldBlockProof;
     }
   }
 
@@ -545,6 +633,10 @@ class AccountMigrationLocalTransferRuntime {
           request: request,
           peer: peer,
           source: source,
+          receiverReplaySafe:
+              transcriptResponse
+                  .body?[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] ==
+              true,
           onProgress: onProgress,
           isCancelled: isCancelled,
           onSegmentProgress: onSegmentProgress,
@@ -610,6 +702,7 @@ class AccountMigrationLocalTransferRuntime {
     required AccountMigrationTransferRequest request,
     required LocalPeer peer,
     required AccountMigrationLocalTransferBundleSource source,
+    required bool receiverReplaySafe,
     required AccountMigrationTransferProgressCallback onProgress,
     required bool Function() isCancelled,
     AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
@@ -741,29 +834,37 @@ class AccountMigrationLocalTransferRuntime {
     }
 
     onProgress(AccountMigrationTransferStep.checking);
-    final _MigrationJsonResponse completeResponse;
-    try {
-      completeResponse = await _postJson(
-        httpClient: httpClient,
-        peer: peer,
-        sessionId: request.sessionId,
-        command: accountMigrationLocalTransferCommandComplete,
-        body: {
-          accountMigrationLocalTransferFieldBundleId: bundle.manifest.bundleId,
-        },
-        // v2 entries are hash-verified per chunk on arrival, so complete()
-        // only re-validates the staged DB + metadata — not the whole account.
-        budgetScaleBytes: bundle.manifest.isEntryStreamed
-            ? bundle.manifest.importValidationBytes
-            : bundle.manifest.totalBytes,
-      );
-    } on _MigrationPostException {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.localTransferTimedOut,
-        safeMessage: accountMigrationLocalTransferStalledSafeMessage,
-      );
+    _MigrationJsonResponse? completeResponse;
+    final completeAttemptCount = receiverReplaySafe ? 2 : 1;
+    for (var attempt = 0; attempt < completeAttemptCount; attempt++) {
+      try {
+        completeResponse = await _postJson(
+          httpClient: httpClient,
+          peer: peer,
+          sessionId: request.sessionId,
+          command: accountMigrationLocalTransferCommandComplete,
+          body: {
+            accountMigrationLocalTransferFieldBundleId:
+                bundle.manifest.bundleId,
+          },
+          // v2 entries are hash-verified per chunk on arrival, so complete()
+          // only re-validates the staged DB + metadata — not the whole account.
+          budgetScaleBytes: bundle.manifest.isEntryStreamed
+              ? bundle.manifest.importValidationBytes
+              : bundle.manifest.totalBytes,
+        );
+        break;
+      } on _MigrationPostException {
+        if (attempt + 1 >= completeAttemptCount) {
+          return const AccountMigrationTransferResult.failure(
+            code: AccountMigrationTransferFailureCode.localTransferTimedOut,
+            safeMessage: accountMigrationLocalTransferStalledSafeMessage,
+          );
+        }
+      }
     }
-    if (!_isOk(completeResponse)) {
+    final settledCompleteResponse = completeResponse!;
+    if (!_isOk(settledCompleteResponse)) {
       return const AccountMigrationTransferResult.failure(
         code: AccountMigrationTransferFailureCode.verificationFailed,
         safeMessage:
@@ -772,7 +873,7 @@ class AccountMigrationLocalTransferRuntime {
     }
 
     if (oldPhoneCutoverCoordinator != null &&
-        completeResponse
+        settledCompleteResponse
                 .body?[accountMigrationLocalTransferFieldCutoverReady] !=
             true) {
       return const AccountMigrationTransferResult.failure(
@@ -781,6 +882,10 @@ class AccountMigrationLocalTransferRuntime {
             'The new phone verified the bundle but cannot complete final account handoff. Update both phones and try again.',
       );
     }
+    final oldBlockProofReplaySafe =
+        settledCompleteResponse
+            .body?[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] ==
+        true;
 
     onProgress(AccountMigrationTransferStep.finishing);
     final cutoverFailure = await _runOldPhoneCutoverIfConfigured(
@@ -788,6 +893,7 @@ class AccountMigrationLocalTransferRuntime {
       request: request,
       peer: peer,
       manifest: bundle.manifest,
+      oldBlockProofReplaySafe: oldBlockProofReplaySafe,
     );
     if (cutoverFailure != null) {
       return cutoverFailure;
@@ -924,6 +1030,7 @@ class AccountMigrationLocalTransferRuntime {
     required AccountMigrationTransferRequest request,
     required LocalPeer peer,
     required MigrationTransferManifest manifest,
+    required bool oldBlockProofReplaySafe,
   }) async {
     final cutoverCoordinator = oldPhoneCutoverCoordinator;
     if (cutoverCoordinator == null) {
@@ -961,31 +1068,50 @@ class AccountMigrationLocalTransferRuntime {
             'The old phone could not prepare the final account handoff. Keep both phones open and try again.',
       );
     }
-    final _MigrationJsonResponse response;
-    try {
-      response = await _postJson(
-        httpClient: httpClient,
-        peer: peer,
-        sessionId: request.sessionId,
-        command: accountMigrationLocalTransferCommandOldBlockProof,
-        body: {
-          accountMigrationLocalTransferFieldOldBlockProof: oldBlockProof
-              .toJson(),
-        },
-        // Active DB import still runs behind old-block-proof, so its budget
-        // stays scaled by the database (not the whole account) under v2.
-        budgetScaleBytes: manifest.isEntryStreamed
-            ? manifest.importValidationBytes
-            : manifest.totalBytes,
-        oldNetworkBlocked: true,
-      );
-    } on _MigrationPostException {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.localTransferTimedOut,
-        safeMessage: accountMigrationFinalHandoffStalledSafeMessage,
-      );
+    _MigrationJsonResponse? response;
+    final proofAttemptCount = oldBlockProofReplaySafe ? 2 : 1;
+    for (var attempt = 0; attempt < proofAttemptCount; attempt++) {
+      try {
+        response = await _postJson(
+          httpClient: httpClient,
+          peer: peer,
+          sessionId: request.sessionId,
+          command: accountMigrationLocalTransferCommandOldBlockProof,
+          body: {
+            accountMigrationLocalTransferFieldOldBlockProof: oldBlockProof
+                .toJson(),
+          },
+          // Active DB import still runs behind old-block-proof, so its budget
+          // stays scaled by the database (not the whole account) under v2.
+          budgetScaleBytes: manifest.isEntryStreamed
+              ? manifest.importValidationBytes
+              : manifest.totalBytes,
+          oldNetworkBlocked: true,
+        );
+        if (_isOk(response)) {
+          break;
+        }
+        final hasRetry = attempt + 1 < proofAttemptCount;
+        final retryableReceiverRejection =
+            response.statusCode == HttpStatus.badRequest &&
+            response.body?['reason'] == 'cutover_rejected';
+        if (!hasRetry || !retryableReceiverRejection) {
+          break;
+        }
+        await oldBlockProofRetryDelay(const Duration(milliseconds: 250));
+      } on _MigrationPostException {
+        final hasRetry = attempt + 1 < proofAttemptCount;
+        if (!hasRetry) {
+          return const AccountMigrationTransferResult.failure(
+            code: AccountMigrationTransferFailureCode.localTransferTimedOut,
+            safeMessage: accountMigrationFinalHandoffStalledSafeMessage,
+          );
+        }
+        await oldBlockProofRetryDelay(const Duration(milliseconds: 250));
+      }
     }
-    if (!_isOk(response)) {
+    final settledResponse = response!;
+    if (!_isOk(settledResponse)) {
       return const AccountMigrationTransferResult.failure(
         code: AccountMigrationTransferFailureCode.cutoverRejected,
         safeMessage:
@@ -993,7 +1119,7 @@ class AccountMigrationLocalTransferRuntime {
       );
     }
     final proofJson =
-        response.body?[accountMigrationLocalTransferFieldNewActiveProof];
+        settledResponse.body?[accountMigrationLocalTransferFieldNewActiveProof];
     if (proofJson is! Map) {
       return const AccountMigrationTransferResult.failure(
         code: AccountMigrationTransferFailureCode.cutoverRejected,
@@ -1004,8 +1130,12 @@ class AccountMigrationLocalTransferRuntime {
     final newActiveProof = MigrationCutoverRecord.fromJson(
       Map<String, dynamic>.from(proofJson),
     );
-    if (newActiveProof.isFailClosed ||
-        !newActiveProof.provesNewActiveCommitted) {
+    if (!_isValidNewActiveProof(
+      newActiveProof,
+      sessionId: request.sessionId,
+      accountPeerId: request.oldPhonePeerId,
+      devicePeerId: request.transcript.newPhoneEphemeralPublicKey,
+    )) {
       return const AccountMigrationTransferResult.failure(
         code: AccountMigrationTransferFailureCode.cutoverRejected,
         safeMessage:
@@ -1467,7 +1597,11 @@ class AccountMigrationLocalTransferRuntime {
     }
 
     session.transcript = transcript;
-    await _writeTracked(request, HttpStatus.ok, {'ok': true}, context);
+    await _writeTracked(request, HttpStatus.ok, {
+      'ok': true,
+      accountMigrationLocalTransferFieldOldBlockProofReplaySafe:
+          receiver is AccountMigrationLocalBundleCutoverReceiver,
+    }, context);
   }
 
   Future<void> _handleManifest(
@@ -1882,7 +2016,47 @@ class AccountMigrationLocalTransferRuntime {
       return;
     }
 
-    final (_, _, bodyReadMs, decodeMs) = await _readJsonTimed(request, context);
+    final Completer<bool>? ownedCompletion;
+    final Future<bool>? joinedCompletion;
+    final bool alreadyVerified;
+    if (session.phase == _ReceiverSessionPhase.receiving) {
+      final latch = Completer<bool>();
+      session.phase = _ReceiverSessionPhase.completeInFlight;
+      session.completeFuture = latch.future;
+      ownedCompletion = latch;
+      joinedCompletion = null;
+      alreadyVerified = false;
+    } else if (session.phase == _ReceiverSessionPhase.completeInFlight) {
+      ownedCompletion = null;
+      joinedCompletion = session.completeFuture;
+      alreadyVerified = false;
+    } else {
+      ownedCompletion = null;
+      joinedCompletion = null;
+      alreadyVerified = true;
+    }
+
+    late final int bodyReadMs;
+    late final int decodeMs;
+    try {
+      final (_, _, measuredBodyReadMs, measuredDecodeMs) = await _readJsonTimed(
+        request,
+        context,
+      );
+      bodyReadMs = measuredBodyReadMs;
+      decodeMs = measuredDecodeMs;
+    } catch (_) {
+      final latch = ownedCompletion;
+      if (latch != null) {
+        session.phase = _ReceiverSessionPhase.receiving;
+        session.completeFuture = null;
+        if (!latch.isCompleted) latch.complete(false);
+        if (session.stopRequested) {
+          _removeReceiverSession(manifest.sessionId, session);
+        }
+      }
+      rethrow;
+    }
     _receiverEventsController.add(
       AccountMigrationReceiverEvent.importingBundle(
         sessionId: manifest.sessionId,
@@ -1895,11 +2069,46 @@ class AccountMigrationLocalTransferRuntime {
       ),
     );
     final acceptStart = context.stopwatch.elapsedMilliseconds;
-    final accepted = await receiver.complete(
-      manifest: manifest,
-      transcript: transcript,
-      pendingSession: session.pendingSession,
-    );
+    final Future<bool> completion;
+    final latch = ownedCompletion;
+    if (latch != null) {
+      final settlement = _settleReceiverComplete(
+        sessionId: manifest.sessionId,
+        session: session,
+        receiver: receiver,
+        manifest: manifest,
+        transcript: transcript,
+      );
+      unawaited(
+        settlement.then<void>(
+          (accepted) {
+            if (!latch.isCompleted) latch.complete(accepted);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!latch.isCompleted) {
+              latch.completeError(error, stackTrace);
+            }
+          },
+        ),
+      );
+      completion = latch.future;
+    } else if (!alreadyVerified) {
+      final inFlight = joinedCompletion;
+      if (inFlight == null) {
+        await _rejectCommand(
+          request,
+          context,
+          event: 'ACCOUNT_MIGRATION_RECEIVER_COMPLETE_REJECTED',
+          statusCode: HttpStatus.conflict,
+          reason: 'complete_state_unavailable',
+        );
+        return;
+      }
+      completion = inFlight;
+    } else {
+      completion = Future<bool>.value(true);
+    }
+    final accepted = await completion;
     final acceptMs = context.stopwatch.elapsedMilliseconds - acceptStart;
     if (!accepted) {
       await _rejectCommand(
@@ -1929,11 +2138,42 @@ class AccountMigrationLocalTransferRuntime {
         sessionId: manifest.sessionId,
       ),
     );
+    final cutoverReady = receiver is AccountMigrationLocalBundleCutoverReceiver;
     await _writeTracked(request, HttpStatus.ok, {
       'ok': true,
-      accountMigrationLocalTransferFieldCutoverReady:
-          receiver is AccountMigrationLocalBundleCutoverReceiver,
+      accountMigrationLocalTransferFieldCutoverReady: cutoverReady,
+      accountMigrationLocalTransferFieldOldBlockProofReplaySafe: cutoverReady,
     }, context);
+  }
+
+  Future<bool> _settleReceiverComplete({
+    required String sessionId,
+    required _ReceiverSession session,
+    required AccountMigrationLocalBundleReceiver receiver,
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+  }) async {
+    try {
+      final accepted = await receiver.complete(
+        manifest: manifest,
+        transcript: transcript,
+        pendingSession: session.pendingSession,
+      );
+      session.phase =
+          accepted && receiver is AccountMigrationLocalBundleCutoverReceiver
+          ? _ReceiverSessionPhase.verifiedWaiting
+          : _ReceiverSessionPhase.receiving;
+      return accepted;
+    } catch (_) {
+      session.phase = _ReceiverSessionPhase.receiving;
+      rethrow;
+    } finally {
+      session.completeFuture = null;
+      if (session.stopRequested &&
+          session.phase == _ReceiverSessionPhase.receiving) {
+        _removeReceiverSession(sessionId, session);
+      }
+    }
   }
 
   Future<void> _handleOldBlockProof(
@@ -1981,7 +2221,14 @@ class AccountMigrationLocalTransferRuntime {
     final oldBlockProof = MigrationCutoverRecord.fromJson(
       Map<String, dynamic>.from(rawProof),
     );
-    if (oldBlockProof.isFailClosed) {
+    if (!_isValidOldBlockProof(
+          oldBlockProof,
+          manifest: manifest,
+          transcript: transcript,
+        ) ||
+        (session.acceptedOldBlockProofFingerprint != null &&
+            session.acceptedOldBlockProofFingerprint !=
+                _oldBlockProofFingerprint(oldBlockProof))) {
       await _rejectCommand(
         request,
         context,
@@ -1992,13 +2239,54 @@ class AccountMigrationLocalTransferRuntime {
       return;
     }
 
+    if (session.phase == _ReceiverSessionPhase.receiving ||
+        session.phase == _ReceiverSessionPhase.completeInFlight) {
+      await _rejectCommand(
+        request,
+        context,
+        event: 'ACCOUNT_MIGRATION_RECEIVER_OLD_BLOCK_PROOF_REJECTED',
+        statusCode: HttpStatus.conflict,
+        reason: 'cutover_not_ready',
+      );
+      return;
+    }
+
     final acceptStart = context.stopwatch.elapsedMilliseconds;
-    final newActiveProof = await receiver.acceptOldBlockProof(
-      manifest: manifest,
-      transcript: transcript,
-      pendingSession: session.pendingSession,
-      oldBlockProof: oldBlockProof,
-    );
+    final Future<MigrationCutoverRecord?> proofResult;
+    if (session.phase == _ReceiverSessionPhase.committedReplayable) {
+      proofResult = Future<MigrationCutoverRecord?>.value(
+        session.committedProof,
+      );
+    } else if (session.phase == _ReceiverSessionPhase.proofInFlight) {
+      final inFlight = session.proofFuture;
+      if (inFlight == null) {
+        await _rejectCommand(
+          request,
+          context,
+          event: 'ACCOUNT_MIGRATION_RECEIVER_OLD_BLOCK_PROOF_REJECTED',
+          statusCode: HttpStatus.conflict,
+          reason: 'proof_state_unavailable',
+        );
+        return;
+      }
+      proofResult = inFlight;
+    } else {
+      session.acceptedOldBlockProof = oldBlockProof;
+      session.acceptedOldBlockProofFingerprint = _oldBlockProofFingerprint(
+        oldBlockProof,
+      );
+      session.phase = _ReceiverSessionPhase.proofInFlight;
+      proofResult = _settleOldBlockProof(
+        sessionId: manifest.sessionId,
+        session: session,
+        receiver: receiver,
+        manifest: manifest,
+        transcript: transcript,
+        oldBlockProof: oldBlockProof,
+      );
+      session.proofFuture = proofResult;
+    }
+    final newActiveProof = await proofResult;
     final acceptMs = context.stopwatch.elapsedMilliseconds - acceptStart;
     if (newActiveProof == null || !newActiveProof.provesNewActiveCommitted) {
       _receiverEventsController.add(
@@ -2022,13 +2310,127 @@ class AccountMigrationLocalTransferRuntime {
       event: 'ACCOUNT_MIGRATION_RECEIVER_OLD_BLOCK_PROOF_ACCEPTED',
       details: {'sessionId': manifest.sessionId, 'acceptMs': acceptMs},
     );
-    _receiverEventsController.add(
-      AccountMigrationReceiverEvent.activated(sessionId: manifest.sessionId),
-    );
     await _writeTracked(request, HttpStatus.ok, {
       'ok': true,
       accountMigrationLocalTransferFieldNewActiveProof: newActiveProof.toJson(),
     }, context);
+  }
+
+  bool _isValidOldBlockProof(
+    MigrationCutoverRecord proof, {
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+  }) {
+    return !proof.isFailClosed &&
+        proof.provesOldNetworkBlocked &&
+        proof.sessionId == manifest.sessionId &&
+        proof.accountPeerId == transcript.oldPhonePeerId &&
+        proof.deviceRole == MigrationCutoverDeviceRole.oldPhone;
+  }
+
+  String _oldBlockProofFingerprint(MigrationCutoverRecord proof) {
+    return jsonEncode(proof.toJson());
+  }
+
+  Future<MigrationCutoverRecord?> _settleOldBlockProof({
+    required String sessionId,
+    required _ReceiverSession session,
+    required AccountMigrationLocalBundleCutoverReceiver receiver,
+    required MigrationTransferManifest manifest,
+    required AuthenticatedMigrationChannelTranscript transcript,
+    required MigrationCutoverRecord oldBlockProof,
+  }) async {
+    try {
+      final MigrationCutoverRecord? newActiveProof;
+      try {
+        newActiveProof = await receiver.acceptOldBlockProof(
+          manifest: manifest,
+          transcript: transcript,
+          pendingSession: session.pendingSession,
+          oldBlockProof: oldBlockProof,
+        );
+      } catch (error) {
+        session.phase = _ReceiverSessionPhase.verifiedWaiting;
+        session.acceptedOldBlockProof = null;
+        session.acceptedOldBlockProofFingerprint = null;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ACCOUNT_MIGRATION_RECEIVER_OLD_BLOCK_PROOF_SETTLE_FAILED',
+          details: {
+            'sessionId': sessionId,
+            'errorType': accountMigrationTransferErrorType(error),
+          },
+        );
+        return null;
+      }
+      if (newActiveProof == null ||
+          !_isValidNewActiveProof(
+            newActiveProof,
+            sessionId: manifest.sessionId,
+            accountPeerId: transcript.oldPhonePeerId,
+            devicePeerId: session.pendingSession.newPhoneEphemeralPublicKey,
+          )) {
+        session.phase = _ReceiverSessionPhase.verifiedWaiting;
+        session.acceptedOldBlockProof = null;
+        session.acceptedOldBlockProofFingerprint = null;
+        return null;
+      }
+
+      session.committedProof = newActiveProof;
+      session.phase = _ReceiverSessionPhase.committedReplayable;
+      _scheduleCommittedProofExpiry(sessionId, session);
+      if (!session.activationEmitted) {
+        session.activationEmitted = true;
+        session.stopRequested = true;
+        try {
+          await _stopReceiverAdvertising(sessionId, session);
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'ACCOUNT_MIGRATION_LOCAL_RECEIVER_STOP_FAILED',
+            details: {
+              'sessionId': sessionId,
+              'errorType': accountMigrationTransferErrorType(error),
+            },
+          );
+        }
+        _receiverEventsController.add(
+          AccountMigrationReceiverEvent.activated(sessionId: sessionId),
+        );
+      }
+      return newActiveProof;
+    } finally {
+      session.proofFuture = null;
+    }
+  }
+
+  void _scheduleCommittedProofExpiry(
+    String sessionId,
+    _ReceiverSession session,
+  ) {
+    session.replayExpiryTimer?.cancel();
+    session.replayExpiryTimer = Timer(committedProofReplayGrace, () {
+      _removeReceiverSession(sessionId, session);
+    });
+  }
+
+  bool _isValidNewActiveProof(
+    MigrationCutoverRecord proof, {
+    required String sessionId,
+    required String accountPeerId,
+    required String devicePeerId,
+  }) {
+    return !proof.isFailClosed &&
+        proof.sessionId == sessionId &&
+        proof.accountPeerId == accountPeerId &&
+        proof.devicePeerId == devicePeerId &&
+        proof.deviceRole == MigrationCutoverDeviceRole.newPhone &&
+        proof.phase == MigrationCutoverPhase.newActiveCommitted &&
+        proof.oldNetworkBlocked &&
+        proof.oldNetworkBlockedAt != null &&
+        proof.oldBlockProofReceived &&
+        proof.oldBlockProofReceivedAt != null &&
+        proof.provesNewActiveCommitted;
   }
 
   Future<void> _rejectCommand(
@@ -2245,11 +2647,29 @@ class AccountMigrationLocalTransferRuntime {
   }
 }
 
+enum _ReceiverSessionPhase {
+  receiving,
+  completeInFlight,
+  verifiedWaiting,
+  proofInFlight,
+  committedReplayable,
+}
+
 class _ReceiverSession {
   final MigrationPendingPairingSession pendingSession;
   AuthenticatedMigrationChannelTranscript? transcript;
   MigrationTransferManifest? manifest;
   final acceptedSegmentIndexes = <int>{};
+  _ReceiverSessionPhase phase = _ReceiverSessionPhase.receiving;
+  bool stopRequested = false;
+  bool stopRecorded = false;
+  bool activationEmitted = false;
+  Future<bool>? completeFuture;
+  Future<MigrationCutoverRecord?>? proofFuture;
+  MigrationCutoverRecord? acceptedOldBlockProof;
+  String? acceptedOldBlockProofFingerprint;
+  MigrationCutoverRecord? committedProof;
+  Timer? replayExpiryTimer;
 
   /// Protocol v2 progress mirror (authoritative state lives in the
   /// receiver's file-backed ledger).

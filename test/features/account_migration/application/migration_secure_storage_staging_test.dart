@@ -139,6 +139,73 @@ void main() {
         }
       },
     );
+
+    test(
+      'supportsScope is false only for iosSharedAccessGroup when sharedStore is null',
+      () {
+        final unavailableSharedStaging = MigrationSecureStorageStaging(
+          primaryStore: primaryStore,
+        );
+
+        expect(
+          staging.supportsScope(MigrationSecureStoreScope.primary),
+          isTrue,
+        );
+        expect(
+          staging.supportsScope(MigrationSecureStoreScope.iosSharedAccessGroup),
+          isTrue,
+        );
+        expect(
+          unavailableSharedStaging.supportsScope(
+            MigrationSecureStoreScope.primary,
+          ),
+          isTrue,
+        );
+        expect(
+          unavailableSharedStaging.supportsScope(
+            MigrationSecureStoreScope.iosSharedAccessGroup,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'stageValue still throws when a shared-scope key reaches an unavailable store directly',
+      () async {
+        final unavailableSharedStaging = MigrationSecureStorageStaging(
+          primaryStore: primaryStore,
+        );
+        final sharedMlKem = MigrationSecureStorageRegistry.fixedKey(
+          scope: MigrationSecureStoreScope.iosSharedAccessGroup,
+          activeKey: MigrationSecureStorageRegistry.identityMlKemSecretKey,
+        )!;
+
+        expect(
+          () => unavailableSharedStaging.stageValue(
+            sessionId: 'session-unavailable-shared',
+            key: sharedMlKem,
+            value: 'must-not-fall-back-to-primary',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'iOS shared access-group secure store is required',
+            ),
+          ),
+        );
+        expect(
+          await primaryStore.read(
+            MigrationSecureStorageStaging.stagingKeyFor(
+              sessionId: 'session-unavailable-shared',
+              key: sharedMlKem,
+            ),
+          ),
+          isNull,
+        );
+      },
+    );
   });
 }
 

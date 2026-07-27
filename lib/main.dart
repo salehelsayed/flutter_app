@@ -2853,11 +2853,9 @@ void main() async {
   final diagnosingDeleteDissolvedGroupShellAction =
       DiagnosingDeleteDissolvedGroupShellAction(
         inner: (groupId) => deleteGroupAndMessages(
-          bridge: bridge,
           groupRepo: groupRepository,
           groupMessageRepo: groupMessageRepository,
           groupId: groupId,
-          deleteLocallyIfDissolved: true,
         ),
         submit: groupExitDiagnosticRepository.appendOutcome,
       );
@@ -4787,6 +4785,8 @@ void main() async {
     resolveWakeToken: wakeTokenResolver,
   );
 
+  final liveServiceStartupSteps = AccountMigrationRuntimeStartupSteps();
+  final liveServiceForwardingSubscriptions = <StreamSubscription<dynamic>>[];
   var liveServicesStarted = false;
   Future<void> startLiveServices() async {
     if (liveServicesStarted) {
@@ -4796,84 +4796,196 @@ void main() async {
     // kicked after runApp. Await it before even consulting the network gate so
     // bridge/listener/P2P startup can never overtake local terminalization and
     // cleanup. A concurrent caller reuses the same future.
-    await ensurePrivateMediaColdRecovery();
+    await liveServiceStartupSteps.runAsync(
+      'private_media_cold_recovery',
+      () async {
+        await ensurePrivateMediaColdRecovery();
+      },
+    );
     final groupContextBackfill = keychainMirrorBackfill;
     if (groupContextBackfill != null) {
-      await groupContextBackfill;
+      await liveServiceStartupSteps.runAsync(
+        'group_context_backfill',
+        () async {
+          await groupContextBackfill;
+        },
+      );
     }
-    await groupReactionComparandBackfill;
+    await liveServiceStartupSteps.runAsync(
+      'group_reaction_comparand_backfill',
+      () async {
+        await groupReactionComparandBackfill;
+      },
+    );
     if (liveServicesStarted) {
       return;
     }
     if (!await allowsAccountRuntimeNetworkSideEffects('live_services_start')) {
       return;
     }
-    liveServicesStarted = true;
-
-    await ensureFirebaseReady();
-    await bridge.initialize();
-    StartupTiming.instance.mark('bridge_initialized');
-    await notificationService.initialize();
-    StartupTiming.instance.mark('notification_service_ready');
+    await liveServiceStartupSteps.runAsync('firebase_ready', () async {
+      await ensureFirebaseReady();
+    });
+    await liveServiceStartupSteps.runAsync('bridge_initialize', () async {
+      await bridge.initialize();
+      StartupTiming.instance.mark('bridge_initialized');
+    });
+    await liveServiceStartupSteps.runAsync(
+      'notification_service_initialize',
+      () async {
+        await notificationService.initialize();
+        StartupTiming.instance.mark('notification_service_ready');
+      },
+    );
 
     // Start router first, then listeners, then retriers.
-    messageRouter.start();
-    contactRequestListener.start();
-    chatMessageListener.start();
-    postListener.start();
-    postCommentListener.start();
-    postReactionListener.start();
-    postPresenceListener.start();
-    postPassListener.start();
-    postPinListener.start();
-    reactionListener.start();
-    messageDeletionListener.start();
-    deliveryReceiptListener.start();
-    profileUpdateListener.start();
-    groupMessageListener.start(
-      groupMessageStreamController.stream,
-      incomingGroupReactions: groupReactionStreamController.stream,
+    liveServiceStartupSteps.runSync(
+      'message_router_start',
+      messageRouter.start,
     );
-    groupInviteListener.start();
-    groupKeyUpdateListener.start();
-    groupKeyRepairResponderListener.start();
-    groupMembershipUpdateListener.start();
-    introductionListener.start();
+    liveServiceStartupSteps.runSync(
+      'contact_request_listener_start',
+      contactRequestListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'chat_message_listener_start',
+      chatMessageListener.start,
+    );
+    liveServiceStartupSteps.runSync('post_listener_start', postListener.start);
+    liveServiceStartupSteps.runSync(
+      'post_comment_listener_start',
+      postCommentListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'post_reaction_listener_start',
+      postReactionListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'post_presence_listener_start',
+      postPresenceListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'post_pass_listener_start',
+      postPassListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'post_pin_listener_start',
+      postPinListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'reaction_listener_start',
+      reactionListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'message_deletion_listener_start',
+      messageDeletionListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'delivery_receipt_listener_start',
+      deliveryReceiptListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'profile_update_listener_start',
+      profileUpdateListener.start,
+    );
+    liveServiceStartupSteps.runSync('group_message_listener_start', () {
+      groupMessageListener.start(
+        groupMessageStreamController.stream,
+        incomingGroupReactions: groupReactionStreamController.stream,
+      );
+    });
+    liveServiceStartupSteps.runSync(
+      'group_invite_listener_start',
+      groupInviteListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'group_key_update_listener_start',
+      groupKeyUpdateListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'group_key_repair_responder_listener_start',
+      groupKeyRepairResponderListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'group_membership_update_listener_start',
+      groupMembershipUpdateListener.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'introduction_listener_start',
+      introductionListener.start,
+    );
 
     // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
     // StartupRouter._doStartP2P() AFTER node:start completes. They require
     // the Go node to be running (pubsub must be initialized).
-    pendingMessageRetrier.start();
-    groupPendingKeyRepairBackoffTimer.start();
-    pendingPostMediaUploadRetrier.start();
-    pendingPostDeliveryRetrier.start();
-    pendingPostFollowOnRetrier.start();
-    keyExchangeRetrier.start();
+    liveServiceStartupSteps.runSync(
+      'pending_message_retrier_start',
+      pendingMessageRetrier.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'group_pending_key_repair_backoff_timer_start',
+      groupPendingKeyRepairBackoffTimer.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'pending_post_media_upload_retrier_start',
+      pendingPostMediaUploadRetrier.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'pending_post_delivery_retrier_start',
+      pendingPostDeliveryRetrier.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'pending_post_follow_on_retrier_start',
+      pendingPostFollowOnRetrier.start,
+    );
+    liveServiceStartupSteps.runSync(
+      'key_exchange_retrier_start',
+      keyExchangeRetrier.start,
+    );
 
     // Forward profile avatar updates through chatMessageListener so
     // FeedWired/OrbitWired (which subscribe to contactUpdatedStream) refresh.
-    profileUpdateListener.contactUpdatedStream.listen((contact) {
-      chatMessageListener.emitContactUpdate(contact);
+    liveServiceStartupSteps.runSync('profile_update_forwarder_install', () {
+      liveServiceForwardingSubscriptions.add(
+        profileUpdateListener.contactUpdatedStream.listen((contact) {
+          chatMessageListener.emitContactUpdate(contact);
+        }),
+      );
     });
 
     // Forward ML-KEM key updates from reciprocal contact requests so
     // ConversationWired/FeedWired pick up the new encryption key.
-    contactRequestListener.contactKeyUpdatedStream.listen((contact) {
-      chatMessageListener.emitContactUpdate(contact);
-      // FDC-09 §12 / CV-14: a key rotation changed the recipient set — coalesce
-      // a single re-mint+register (INV-5).
-      wakeTokenReissueCoalescer.trigger();
+    liveServiceStartupSteps.runSync('contact_key_update_forwarder_install', () {
+      liveServiceForwardingSubscriptions.add(
+        contactRequestListener.contactKeyUpdatedStream.listen((contact) {
+          chatMessageListener.emitContactUpdate(contact);
+          // FDC-09 §12 / CV-14: a key rotation changed the recipient set —
+          // coalesce a single re-mint+register (INV-5).
+          wakeTokenReissueCoalescer.trigger();
+        }),
+      );
     });
 
     // 171: a one-scan tap-free auto-add — refresh the UI so the new mutual
     // contact appears immediately (same path as a key update; feed/orbit
     // surfaces listening to contact changes render the non-modal update).
-    contactRequestListener.autoAddedStream.listen((contact) {
-      chatMessageListener.emitContactUpdate(contact);
-      // FDC-09 §12 / CV-14: a new mutual contact — coalesce a single re-issue.
-      wakeTokenReissueCoalescer.trigger();
+    liveServiceStartupSteps.runSync('auto_added_forwarder_install', () {
+      liveServiceForwardingSubscriptions.add(
+        contactRequestListener.autoAddedStream.listen((contact) {
+          chatMessageListener.emitContactUpdate(contact);
+          // FDC-09 §12 / CV-14: a new mutual contact — coalesce a single
+          // re-issue.
+          wakeTokenReissueCoalescer.trigger();
+        }),
+      );
     });
     StartupTiming.instance.mark('runtime_services_ready');
+    liveServicesStarted = true;
+  }
+
+  Future<bool> startLiveServicesIfAllowed() async {
+    await startLiveServices();
+    return liveServicesStarted;
   }
 
   // 164 (cold-start-1): startLiveServices (Firebase init + bridge + ~25 listener
@@ -4995,7 +5107,7 @@ void main() async {
         return accountMigrationCutoverCoordinator
             .restoreActiveAfterExportInterrupted();
       },
-      deferredRuntimeStartup: startLiveServices,
+      deferredRuntimeStartup: startLiveServicesIfAllowed,
       ingestStagedPushEnvelopes: ({required String source}) async {
         await ingestStagedPushEnvelopesUseCase(source: source);
       },
@@ -5720,7 +5832,7 @@ class MyApp extends StatefulWidget {
   /// Restores active authority on app resume when a Move Account export
   /// pause is stale (no export run in flight). See handleAppResumed.
   final Future<bool> Function()? accountMigrationRecoverExportPause;
-  final Future<void> Function()? deferredRuntimeStartup;
+  final Future<bool> Function()? deferredRuntimeStartup;
   final Future<void> Function({required String source})?
   ingestStagedPushEnvelopes;
 
@@ -5869,7 +5981,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final NotificationOpenDedupeGate _remoteNotificationOpenDedupeGate =
       NotificationOpenDedupeGate();
   late final Future<void> _initialShareIntentCapture;
-  Future<void>? _runtimeServicesReady;
+  late final AccountMigrationRuntimeStartupLatch runtimeStartupLatch;
   // 181: FDC-09 §6.3 presence self-publish lifecycle driver. Announces
   // `foreground` on resume (+ arms a 60s heartbeat) and `background` on pause so
   // the relay can report this peer reachable/unreachable to senders — activating
@@ -5898,6 +6010,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    runtimeStartupLatch = AccountMigrationRuntimeStartupLatch(
+      startRuntime: widget.deferredRuntimeStartup,
+      onAttemptStarted: () {
+        StartupTiming.instance.mark('deferred_runtime_start_begin');
+      },
+      onStarted: () {
+        StartupTiming.instance.mark('deferred_runtime_start_complete');
+        unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
+      },
+    );
     _setPresenceUseCase = SetPresenceUseCase(presenceSetter: widget.p2pService);
     _keepAliveUseCase = ActivePeerKeepAliveUseCase(
       probe: widget.p2pService,
@@ -6048,24 +6170,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _ensureRuntimeServicesReady() {
-    final existingFuture = _runtimeServicesReady;
-    if (existingFuture != null) {
-      return existingFuture;
-    }
-
-    final deferredRuntimeStartup = widget.deferredRuntimeStartup;
-    if (deferredRuntimeStartup == null) {
-      return _runtimeServicesReady = Future.value();
-    }
-
-    final startup = () async {
-      StartupTiming.instance.mark('deferred_runtime_start_begin');
-      await deferredRuntimeStartup();
-      StartupTiming.instance.mark('deferred_runtime_start_complete');
-      unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
-    }();
-    _runtimeServicesReady = startup;
-    return startup;
+    return runtimeStartupLatch.ensureStarted();
   }
 
   Future<void> _ingestStagedPushEnvelopes({required String source}) async {

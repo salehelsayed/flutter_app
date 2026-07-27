@@ -8270,7 +8270,6 @@ void _validateVoluntaryLeaveConvergenceProof({
     }
     for (final field in const <String>[
       'charlieExcludedFromRoster',
-      'leaveTimelineRendered',
       'leaveWasSilent',
     ]) {
       _requireTrueProof(
@@ -8290,6 +8289,21 @@ void _validateVoluntaryLeaveConvergenceProof({
   for (final role in const <String>['alice', 'bob']) {
     final proof = _mapValue(byRole[role]?[proofName]);
     if (proof == null) continue;
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'leaveTimelineRendered',
+      failures: failures,
+    );
+    _requireIntProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'leaveTimelineRowCount',
+      expected: 1,
+      failures: failures,
+    );
     _requireTrueProof(
       role: role,
       proofName: proofName,
@@ -8317,24 +8331,222 @@ void _validateVoluntaryLeaveConvergenceProof({
     }
   }
 
-  // charlie (the leaver): the locally-rendered timeline is source-verified to
-  // read 'X left the group' (actor == subject), and charlie hard-deletes the
-  // group locally. The receiver render path (alice/bob) is validated only for
-  // roster exclusion + a leave-timeline row, not the exact text.
+  // Charlie's production cleanup removes the target group and its local
+  // history. Only the two receivers retain exactly one leave timeline row.
   final charlieProof = _mapValue(byRole['charlie']?[proofName]);
   if (charlieProof != null) {
-    final leaveText = _stringValue(charlieProof['leaveTimelineText']);
-    if (leaveText != null && !leaveText.contains('left the group')) {
-      failures.add(
-        'charlie: $proofName.leaveTimelineText must contain "left the group"',
-      );
-    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'leaveTimelineRendered',
+      failures: failures,
+    );
+    _requireIntProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'leaveTimelineRowCount',
+      expected: 0,
+      failures: failures,
+    );
     _requireTrueProof(
       role: 'charlie',
       proofName: proofName,
       proof: charlieProof,
       field: 'groupHardDeletedLocally',
       failures: failures,
+    );
+    final evidence = _validateDtr10DurableExitEvidence(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      expectedCoordinatorStatus: 'started',
+      requireActionIdentity: true,
+      expectedNoticePrepareCount: 1,
+      expectedNoticeAttemptCount: 1,
+      expectedRotationAttemptCount: 1,
+      expectedRotationOutcome: 'deferred',
+      expectedNativeLeaveCount: 1,
+      failures: failures,
+    );
+    if (evidence != null) {
+      _validateDtr10BridgeBaseline(
+        role: 'charlie',
+        proofName: proofName,
+        evidence: evidence,
+        expectedDelta: 1,
+        failures: failures,
+      );
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'targetGroupPresentBefore',
+        failures: failures,
+      );
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'targetGroupPresentAfter',
+        failures: failures,
+      );
+      _requireIntProof(
+        role: 'charlie',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'targetMessageCountAfter',
+        expected: 0,
+        failures: failures,
+      );
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'unrelatedMarkerPresentBefore',
+        failures: failures,
+      );
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'unrelatedMarkerPresentAfter',
+        failures: failures,
+      );
+      final markerId = _stringValue(evidence['unrelatedMarkerId']);
+      if (markerId == null || markerId.isEmpty) {
+        failures.add(
+          'charlie: $proofName.durableExitEvidence.unrelatedMarkerId '
+          'must be non-empty',
+        );
+      }
+    }
+  }
+}
+
+Map<String, dynamic>? _validateDtr10DurableExitEvidence({
+  required String role,
+  required String proofName,
+  required Map<String, dynamic> proof,
+  required String expectedCoordinatorStatus,
+  required bool requireActionIdentity,
+  required int expectedNoticePrepareCount,
+  required int expectedNoticeAttemptCount,
+  required int expectedRotationAttemptCount,
+  required String? expectedRotationOutcome,
+  required int expectedNativeLeaveCount,
+  required List<String> failures,
+}) {
+  final evidence = _mapValue(proof['durableExitEvidence']);
+  if (evidence == null) {
+    failures.add('$role: missing $proofName.durableExitEvidence');
+    return null;
+  }
+
+  if (_stringValue(evidence['coordinatorStatus']) !=
+      expectedCoordinatorStatus) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence.coordinatorStatus must be '
+      '$expectedCoordinatorStatus',
+    );
+  }
+
+  for (final field in const <String>[
+    'actionId',
+    'sourceEventId',
+    'pendingBroadcastId',
+  ]) {
+    final value = _stringValue(evidence[field]);
+    if (requireActionIdentity) {
+      if (value == null || value.isEmpty) {
+        failures.add(
+          '$role: $proofName.durableExitEvidence.$field must be non-empty',
+        );
+      }
+    } else if (value != null && value.isNotEmpty) {
+      failures.add(
+        '$role: $proofName.durableExitEvidence.$field must be absent',
+      );
+    }
+  }
+
+  for (final entry in <String, int>{
+    'requestCount': 1,
+    'retryCount': 0,
+    'noticePrepareCount': expectedNoticePrepareCount,
+    'noticeAttemptCount': expectedNoticeAttemptCount,
+    'rotationAttemptCount': expectedRotationAttemptCount,
+    'nativeLeaveCount': expectedNativeLeaveCount,
+  }.entries) {
+    _requireIntProof(
+      role: role,
+      proofName: '$proofName.durableExitEvidence',
+      proof: evidence,
+      field: entry.key,
+      expected: entry.value,
+      failures: failures,
+    );
+  }
+
+  final rotationOutcome = _stringValue(evidence['rotationOutcome']);
+  if (rotationOutcome != expectedRotationOutcome) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence.rotationOutcome must be '
+      '${expectedRotationOutcome ?? 'absent'}',
+    );
+  }
+  _requireFalseProof(
+    role: role,
+    proofName: '$proofName.durableExitEvidence',
+    proof: evidence,
+    field: 'intentPresentAfter',
+    failures: failures,
+  );
+  _requireFalseProof(
+    role: role,
+    proofName: '$proofName.durableExitEvidence',
+    proof: evidence,
+    field: 'pendingBroadcastPresentAfter',
+    failures: failures,
+  );
+  final terminalIntentState = _stringValue(evidence['terminalIntentState']);
+  if (terminalIntentState != null && terminalIntentState.isNotEmpty) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence.terminalIntentState must be '
+      'absent after terminal cleanup',
+    );
+  }
+  return evidence;
+}
+
+void _validateDtr10BridgeBaseline({
+  required String role,
+  required String proofName,
+  required Map<String, dynamic> evidence,
+  required int expectedDelta,
+  required List<String> failures,
+}) {
+  final before = _intValue(evidence['bridgeGroupLeaveCountBefore']);
+  final after = _intValue(evidence['bridgeGroupLeaveCountAfter']);
+  final delta = _intValue(evidence['bridgeGroupLeaveCountDelta']);
+  if (before == null || after == null || delta == null) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence bridge group:leave baselines '
+      'must be numeric',
+    );
+    return;
+  }
+  if (after - before != delta) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence.bridgeGroupLeaveCountDelta '
+      'must match before/after counts',
+    );
+  }
+  if (delta != expectedDelta) {
+    failures.add(
+      '$role: $proofName.durableExitEvidence.bridgeGroupLeaveCountDelta '
+      'must be $expectedDelta',
     );
   }
 }
@@ -23532,37 +23744,54 @@ void _validateGm015AdminSelfRemovalPolicyProof({
   validateSharedProof('charlie', charlieProof);
 
   if (aliceProof != null) {
-    if (_stringValue(aliceProof['selfRemovalOutcome']) != 'blocked') {
-      failures.add('alice: $proofName.selfRemovalOutcome must be blocked');
-    }
-    final selfRemovalReason = _stringValue(aliceProof['selfRemovalReason']);
-    if (selfRemovalReason == null ||
-        !selfRemovalReason.contains(
-          "You can't remove the last admin from this group.",
-        )) {
-      failures.add('alice: missing GM-015 clear self-removal block reason');
-    }
-    if (_stringValue(aliceProof['voluntaryLeaveBroadcastOutcome']) !=
-        'skipped') {
-      failures.add(
-        'alice: $proofName.voluntaryLeaveBroadcastOutcome must be skipped',
+    final evidence = _validateDtr10DurableExitEvidence(
+      role: 'alice',
+      proofName: proofName,
+      proof: aliceProof,
+      expectedCoordinatorStatus: 'blockedLastAdmin',
+      requireActionIdentity: false,
+      expectedNoticePrepareCount: 0,
+      expectedNoticeAttemptCount: 0,
+      expectedRotationAttemptCount: 0,
+      expectedRotationOutcome: null,
+      expectedNativeLeaveCount: 0,
+      failures: failures,
+    );
+    if (evidence != null) {
+      _validateDtr10BridgeBaseline(
+        role: 'alice',
+        proofName: proofName,
+        evidence: evidence,
+        expectedDelta: 0,
+        failures: failures,
       );
-    }
-    if (_stringValue(aliceProof['voluntaryLeaveBroadcastSkipReason']) !=
-        'lastAdmin') {
-      failures.add(
-        'alice: $proofName.voluntaryLeaveBroadcastSkipReason must be lastAdmin',
+      _requireTrueProof(
+        role: 'alice',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'targetGroupPresentBefore',
+        failures: failures,
       );
-    }
-    if (_stringValue(aliceProof['leaveOutcome']) != 'blocked') {
-      failures.add('alice: $proofName.leaveOutcome must be blocked');
-    }
-    final leaveReason = _stringValue(aliceProof['leaveReason']);
-    if (leaveReason == null ||
-        !leaveReason.contains(
-          "You can't leave this group because you're the only admin.",
-        )) {
-      failures.add('alice: missing GM-015 clear leave block reason');
+      _requireTrueProof(
+        role: 'alice',
+        proofName: '$proofName.durableExitEvidence',
+        proof: evidence,
+        field: 'targetGroupPresentAfter',
+        failures: failures,
+      );
+      for (final field in const <String>[
+        'leaveTimelineRowCountBefore',
+        'leaveTimelineRowCountAfter',
+      ]) {
+        _requireIntProof(
+          role: 'alice',
+          proofName: '$proofName.durableExitEvidence',
+          proof: evidence,
+          field: field,
+          expected: 0,
+          failures: failures,
+        );
+      }
     }
     _requireTrueProof(
       role: 'alice',

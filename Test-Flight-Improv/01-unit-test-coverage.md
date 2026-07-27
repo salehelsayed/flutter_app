@@ -112,5 +112,7 @@ Good overall test density. The earlier pass overstated several “critical gaps,
 - Posts core use cases already have direct tests such as `send_post_use_case_test.dart`, `send_post_comment_use_case_test.dart`, `send_post_reaction_use_case_test.dart`, `pass_post_along_use_case_test.dart`, and `pin_post_use_case_test.dart`.
 - Introduction core use cases already have direct tests such as `send_introduction_test.dart`, `accept_introduction_test.dart`, `mutual_acceptance_test.dart`, and `create_connection_on_mutual_acceptance_test.dart`.
 - Startup routing already has meaningful coverage via `startup_router_test.dart` and `startup_router_recovery_test.dart`.
-- Feed projection/store behavior already has direct coverage via `feed_projection_test.dart` and `feed_store_test.dart`.
+- Feed snapshot projection behavior has direct coverage through
+  `feed_projection_test.dart` and `feed_store_test.dart`; both now exercise the
+  live `FeedStore` owner rather than a duplicate projection helper.
 - Migration confidence is stronger than raw file counts suggest because the repo already includes full-chain migration coverage.

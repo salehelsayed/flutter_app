@@ -1,8 +1,92 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 
 typedef AccountMigrationNetworkGate =
     Future<bool> Function({String? peerId, required String operation});
+
+class AccountMigrationRuntimeStartupSteps {
+  final Set<String> _completedSteps = <String>{};
+
+  Future<void> runAsync(String step, Future<void> Function() action) async {
+    if (_completedSteps.contains(step)) {
+      return;
+    }
+    await action();
+    _completedSteps.add(step);
+  }
+
+  void runSync(String step, void Function() action) {
+    if (_completedSteps.contains(step)) {
+      return;
+    }
+    action();
+    _completedSteps.add(step);
+  }
+}
+
+class AccountMigrationRuntimeStartupLatch {
+  final Future<bool> Function()? startRuntime;
+  final void Function()? onAttemptStarted;
+  final void Function()? onStarted;
+
+  Future<void>? _startedOrInFlight;
+
+  AccountMigrationRuntimeStartupLatch({
+    required this.startRuntime,
+    this.onAttemptStarted,
+    this.onStarted,
+  });
+
+  Future<void> ensureStarted() {
+    final existing = _startedOrInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final completer = Completer<void>();
+    final published = completer.future;
+    _startedOrInFlight = published;
+
+    final start = startRuntime;
+    if (start == null) {
+      completer.complete();
+      return published;
+    }
+
+    onAttemptStarted?.call();
+    Future<bool> outcome;
+    try {
+      outcome = start();
+    } catch (error, stackTrace) {
+      if (identical(_startedOrInFlight, published)) {
+        _startedOrInFlight = null;
+      }
+      completer.completeError(error, stackTrace);
+      return published;
+    }
+
+    outcome.then(
+      (started) {
+        if (!started && identical(_startedOrInFlight, published)) {
+          _startedOrInFlight = null;
+        }
+        if (started) {
+          onStarted?.call();
+        }
+        completer.complete();
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_startedOrInFlight, published)) {
+          _startedOrInFlight = null;
+        }
+        completer.completeError(error, stackTrace);
+      },
+    );
+    return published;
+  }
+}
 
 class AccountMigrationRuntimeNetworkGate {
   final AccountMigrationAuthorityRepository _authorityRepository;

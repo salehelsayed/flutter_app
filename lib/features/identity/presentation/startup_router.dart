@@ -36,6 +36,8 @@ import 'package:flutter_app/features/account_migration/application/migration_sec
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/application/migration_qr_payload_use_case.dart';
+import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_blocked_screen.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -82,6 +84,132 @@ import 'package:flutter_app/features/posts/domain/repositories/contact_presence_
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
+
+typedef _AccountMigrationOnboardingBuilder =
+    Widget Function(
+      BuildContext context,
+      AccountMigrationReceiverStartFn? startReceiver,
+      AccountMigrationReceiverStopFn? stopReceiver,
+    );
+
+class _AccountMigrationOnboardingActivationOwner extends StatefulWidget {
+  final AccountMigrationReceiverStartFn? startReceiver;
+  final AccountMigrationReceiverStopFn? stopReceiver;
+  final AccountMigrationReceiverEvents? receiverEvents;
+  final Future<void> Function()? refreshAfterActivation;
+  final StartupRouter restartedStartupRouter;
+  final _AccountMigrationOnboardingBuilder builder;
+
+  const _AccountMigrationOnboardingActivationOwner({
+    required this.startReceiver,
+    required this.stopReceiver,
+    required this.receiverEvents,
+    required this.refreshAfterActivation,
+    required this.restartedStartupRouter,
+    required this.builder,
+  });
+
+  @override
+  State<_AccountMigrationOnboardingActivationOwner> createState() =>
+      _AccountMigrationOnboardingActivationOwnerState();
+}
+
+class _AccountMigrationOnboardingActivationOwnerState
+    extends State<_AccountMigrationOnboardingActivationOwner> {
+  StreamSubscription<AccountMigrationReceiverEvent>? _receiverEventsSub;
+  String? _activeSessionId;
+  bool _activationStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _receiverEventsSub = widget.receiverEvents?.listen(_handleReceiverEvent);
+  }
+
+  Future<AccountMigrationReceiverStartResult> _startReceiver(
+    MigrationQrBuildOutput output,
+  ) async {
+    final result = await widget.startReceiver!(output);
+    if (result.isStarted) {
+      _activeSessionId = output.payload.sessionId;
+      _activationStarted = false;
+    }
+    return result;
+  }
+
+  Future<void> _stopReceiver(String sessionId) async {
+    await widget.stopReceiver?.call(sessionId);
+    if (_activeSessionId == sessionId) {
+      _activeSessionId = null;
+    }
+  }
+
+  void _handleReceiverEvent(AccountMigrationReceiverEvent event) {
+    if (event.type != AccountMigrationReceiverEventType.activated ||
+        event.sessionId != _activeSessionId ||
+        _activationStarted) {
+      return;
+    }
+    _activationStarted = true;
+    unawaited(_finishActivation(event.sessionId));
+  }
+
+  Future<void> _finishActivation(String sessionId) async {
+    final refreshAfterActivation = widget.refreshAfterActivation;
+    final restartedStartupRouter = widget.restartedStartupRouter;
+    try {
+      await _stopReceiver(sessionId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_RECEIVER_STOP_AFTER_ACTIVATION_FAILED',
+        details: {'sessionId': sessionId, 'error': error.toString()},
+      );
+    }
+    if (!mounted) return;
+
+    try {
+      await refreshAfterActivation?.call();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_RECEIVER_ACTIVATION_REFRESH_FAILED',
+        details: {'errorType': accountMigrationTransferErrorType(error)},
+      );
+    }
+    if (!mounted) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ACCOUNT_MIGRATION_RECEIVER_ROUTE_RESET',
+      details: {},
+    );
+    Navigator.of(context).pushAndRemoveUntil(
+      buildStartupReplacementRoute<void>(
+        settings: const RouteSettings(
+          name: 'startup-router-after-account-migration',
+        ),
+        builder: (_) => restartedStartupRouter,
+      ),
+      (_) => false,
+    );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_receiverEventsSub?.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.builder(
+      context,
+      widget.startReceiver == null ? null : _startReceiver,
+      widget.startReceiver == null ? null : _stopReceiver,
+    );
+  }
+}
 
 /// Router widget that handles app startup navigation.
 ///
@@ -331,7 +459,6 @@ class _StartupRouterState extends State<StartupRouter> {
   bool _hasError = false;
   String _errorMessage = '';
   String _startupStage = startupStageCheckingIdentity;
-  bool _accountMigrationActivationRerouteStarted = false;
 
   @override
   void initState() {
@@ -352,16 +479,47 @@ class _StartupRouterState extends State<StartupRouter> {
       if (!mounted) return;
       widget.appShellController.setBackgroundPreference(backgroundPreference);
 
-      final decision = await decideStartupRoute(
+      final migrationAuthorityRepository =
+          SecureKeyStoreAccountMigrationAuthorityRepository(
+            secureKeyStore: widget.secureKeyStore,
+          );
+      var decision = await decideStartupRoute(
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
-        migrationAuthorityRepository:
-            SecureKeyStoreAccountMigrationAuthorityRepository(
-              secureKeyStore: widget.secureKeyStore,
-            ),
+        migrationAuthorityRepository: migrationAuthorityRepository,
       );
 
       if (!mounted) return;
+
+      AccountMigrationAuthorityRecord? confirmedBlockedRecord;
+      if (decision == StartupDecision.accountMigrationBlocked) {
+        try {
+          confirmedBlockedRecord = await migrationAuthorityRepository
+              .loadAuthority();
+        } catch (_) {
+          confirmedBlockedRecord = null;
+        }
+        if (!mounted) return;
+
+        if (confirmedBlockedRecord?.allowsNormalStartup == true) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'ID_STARTUP_MIGRATION_AUTHORITY_REDECIDE',
+            details: {'state': confirmedBlockedRecord!.state.wireName},
+          );
+          decision = await decideStartupRoute(
+            identityRepo: widget.repository,
+            contactRepo: widget.contactRepository,
+            migrationAuthorityRepository: migrationAuthorityRepository,
+          );
+          if (!mounted) return;
+          if (decision == StartupDecision.accountMigrationBlocked) {
+            // Authority changed again while re-deciding. Stay fail-safe and
+            // never hand an earlier normal-start record to the erase surface.
+            confirmedBlockedRecord = null;
+          }
+        }
+      }
 
       // Capture locally to avoid widget reference issues after async gap
       final bridge = widget.bridge;
@@ -385,6 +543,7 @@ class _StartupRouterState extends State<StartupRouter> {
           );
           await _pushStartupReplacement(
             builder: (_) => AccountMigrationBlockedScreen(
+              record: confirmedBlockedRecord,
               onEraseAccount: _eraseMigratedOutAccount,
             ),
           );
@@ -564,93 +723,107 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_ONBOARDING',
             details: {},
           );
+          final migrationActivationRefresh =
+              widget.onAccountMigrationReceiverActivated;
+          final restartedStartupRouter = _buildRestartedStartupRouter();
           await _pushStartupReplacement(
-            builder: (routeContext) => IdentityChoiceWired(
-              repository: repository,
-              callIdentityGenerate: () => callIdentityGenerate(bridge),
-              callIdentityRestore: (mnemonic) =>
-                  callIdentityRestore(bridge, mnemonic),
-              callMlKemKeygen: () => callMlKemKeygen(bridge),
-              secureKeyStore: widget.secureKeyStore,
-              contactRepo: contactRepository,
-              groupRepo: widget.groupRepository,
-              backgroundPreference:
-                  widget.appShellController.backgroundPreference,
-              moveFromOldPhoneBuilder: (migrationContext) =>
-                  AccountMigrationJourneyWired.newPhone(
-                    bridge: bridge,
+            builder: (_) => _AccountMigrationOnboardingActivationOwner(
+              startReceiver: widget.accountMigrationStartReceiver,
+              stopReceiver: widget.accountMigrationStopReceiver,
+              receiverEvents: widget.accountMigrationReceiverEvents,
+              refreshAfterActivation: migrationActivationRefresh,
+              restartedStartupRouter: restartedStartupRouter,
+              builder: (_, retainedStartReceiver, retainedStopReceiver) =>
+                  IdentityChoiceWired(
+                    repository: repository,
+                    callIdentityGenerate: () => callIdentityGenerate(bridge),
+                    callIdentityRestore: (mnemonic) =>
+                        callIdentityRestore(bridge, mnemonic),
+                    callMlKemKeygen: () => callMlKemKeygen(bridge),
                     secureKeyStore: widget.secureKeyStore,
-                    startReceiver: widget.accountMigrationStartReceiver,
-                    stopReceiver: widget.accountMigrationStopReceiver,
-                    receiverEvents: widget.accountMigrationReceiverEvents,
-                    onReceiverActivated: () =>
-                        _handleAccountMigrationReceiverActivated(
-                          migrationContext,
-                        ),
+                    contactRepo: contactRepository,
+                    groupRepo: widget.groupRepository,
                     backgroundPreference:
                         widget.appShellController.backgroundPreference,
-                  ),
-              onNavigateToMain: (progressContext) async {
-                Navigator.of(progressContext).pushAndRemoveUntil(
-                  buildStartupReplacementRoute<void>(
-                    builder: (_) => FirstTimeExperienceWired(
-                      repository: repository,
-                      contactRepository: contactRepository,
-                      contactRequestRepository: contactRequestRepository,
-                      contactRequestListener: contactRequestListener,
-                      messageRepository: messageRepository,
-                      postRepository: postRepository,
-                      mediaAttachmentRepository: mediaAttachmentRepository,
-                      chatMessageListener: chatMessageListener,
-                      bridge: bridge,
-                      p2pService: p2pService,
-                      mediaFileManager: widget.mediaFileManager,
-                      secureKeyStore: widget.secureKeyStore,
-                      imageProcessor: widget.imageProcessor,
-                      conversationTracker: widget.conversationTracker,
-                      audioRecorderService: widget.audioRecorderService,
-                      reactionRepository: widget.reactionRepository,
-                      reactionListener: widget.reactionListener,
-                      groupRepository: widget.groupRepository,
-                      groupMessageRepository: widget.groupMessageRepository,
-                      groupExitDiagnosticRepository:
-                          widget.groupExitDiagnosticRepository,
-                      groupInviteDeliveryAttemptRepository:
-                          widget.groupInviteDeliveryAttemptRepository,
-                      groupReactionReplayOutboxRepository:
-                          widget.groupReactionReplayOutboxRepository,
-                      groupMessageListener: widget.groupMessageListener,
-                      groupMediaDownloadCoordinator:
-                          widget.groupMediaDownloadCoordinator,
-                      groupInviteListener: widget.groupInviteListener,
-                      groupConversationTracker: widget.groupConversationTracker,
-                      introductionRepository: widget.introductionRepository,
-                      introReviewSeenRepository:
-                          widget.introReviewSeenRepository,
-                      introductionListener: widget.introductionListener,
-                      shareIntentService: widget.shareIntentService,
-                      appShellController: widget.appShellController,
-                      pendingPostTargetStore: widget.pendingPostTargetStore,
-                      postsPrivacySettingsRepository:
-                          widget.postsPrivacySettingsRepository,
-                      feedClearedRepository: widget.feedClearedRepository,
-                      contactPresenceSnapshotRepository:
-                          widget.contactPresenceSnapshotRepository,
-                      nearbyLocationService: widget.nearbyLocationService,
-                      transportMetrics: widget.transportMetrics,
-                      accountMigrationRunTransfer:
-                          widget.accountMigrationRunTransfer,
-                      accountMigrationSizeGate: widget.accountMigrationSizeGate,
-                    ),
-                  ),
-                  (_) => false,
-                );
+                    moveFromOldPhoneBuilder: (_) =>
+                        AccountMigrationJourneyWired.newPhone(
+                          bridge: bridge,
+                          secureKeyStore: widget.secureKeyStore,
+                          startReceiver: retainedStartReceiver,
+                          stopReceiver: retainedStopReceiver,
+                          receiverEvents: widget.accountMigrationReceiverEvents,
+                          receiverActivationOwnedByParent: true,
+                          backgroundPreference:
+                              widget.appShellController.backgroundPreference,
+                        ),
+                    onNavigateToMain: (progressContext) async {
+                      Navigator.of(progressContext).pushAndRemoveUntil(
+                        buildStartupReplacementRoute<void>(
+                          builder: (_) => FirstTimeExperienceWired(
+                            repository: repository,
+                            contactRepository: contactRepository,
+                            contactRequestRepository: contactRequestRepository,
+                            contactRequestListener: contactRequestListener,
+                            messageRepository: messageRepository,
+                            postRepository: postRepository,
+                            mediaAttachmentRepository:
+                                mediaAttachmentRepository,
+                            chatMessageListener: chatMessageListener,
+                            bridge: bridge,
+                            p2pService: p2pService,
+                            mediaFileManager: widget.mediaFileManager,
+                            secureKeyStore: widget.secureKeyStore,
+                            imageProcessor: widget.imageProcessor,
+                            conversationTracker: widget.conversationTracker,
+                            audioRecorderService: widget.audioRecorderService,
+                            reactionRepository: widget.reactionRepository,
+                            reactionListener: widget.reactionListener,
+                            groupRepository: widget.groupRepository,
+                            groupMessageRepository:
+                                widget.groupMessageRepository,
+                            groupExitDiagnosticRepository:
+                                widget.groupExitDiagnosticRepository,
+                            groupInviteDeliveryAttemptRepository:
+                                widget.groupInviteDeliveryAttemptRepository,
+                            groupReactionReplayOutboxRepository:
+                                widget.groupReactionReplayOutboxRepository,
+                            groupMessageListener: widget.groupMessageListener,
+                            groupMediaDownloadCoordinator:
+                                widget.groupMediaDownloadCoordinator,
+                            groupInviteListener: widget.groupInviteListener,
+                            groupConversationTracker:
+                                widget.groupConversationTracker,
+                            introductionRepository:
+                                widget.introductionRepository,
+                            introReviewSeenRepository:
+                                widget.introReviewSeenRepository,
+                            introductionListener: widget.introductionListener,
+                            shareIntentService: widget.shareIntentService,
+                            appShellController: widget.appShellController,
+                            pendingPostTargetStore:
+                                widget.pendingPostTargetStore,
+                            postsPrivacySettingsRepository:
+                                widget.postsPrivacySettingsRepository,
+                            feedClearedRepository: widget.feedClearedRepository,
+                            contactPresenceSnapshotRepository:
+                                widget.contactPresenceSnapshotRepository,
+                            nearbyLocationService: widget.nearbyLocationService,
+                            transportMetrics: widget.transportMetrics,
+                            accountMigrationRunTransfer:
+                                widget.accountMigrationRunTransfer,
+                            accountMigrationSizeGate:
+                                widget.accountMigrationSizeGate,
+                          ),
+                        ),
+                        (_) => false,
+                      );
 
-                StartupTiming.instance.mark('route_pushed');
+                      StartupTiming.instance.mark('route_pushed');
 
-                // Start P2P node in background after identity creation
-                _startP2PInBackground();
-              },
+                      // Start P2P node in background after identity creation
+                      _startP2PInBackground();
+                    },
+                  ),
             ),
           );
           break;
@@ -1187,33 +1360,6 @@ class _StartupRouterState extends State<StartupRouter> {
     // 133: the home surface now owns the top of the stack — let the app shell
     // release any deferred notification route on top of it.
     widget.onStartupHomeReady?.call();
-  }
-
-  Future<void> _handleAccountMigrationReceiverActivated(
-    BuildContext navigationContext,
-  ) async {
-    if (_accountMigrationActivationRerouteStarted) {
-      return;
-    }
-    _accountMigrationActivationRerouteStarted = true;
-
-    await widget.onAccountMigrationReceiverActivated?.call();
-    if (!navigationContext.mounted) return;
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'ACCOUNT_MIGRATION_RECEIVER_ROUTE_RESET',
-      details: {},
-    );
-    Navigator.of(navigationContext).pushAndRemoveUntil(
-      buildStartupReplacementRoute<void>(
-        settings: const RouteSettings(
-          name: 'startup-router-after-account-migration',
-        ),
-        builder: (_) => _buildRestartedStartupRouter(),
-      ),
-      (_) => false,
-    );
   }
 
   StartupRouter _buildRestartedStartupRouter() {

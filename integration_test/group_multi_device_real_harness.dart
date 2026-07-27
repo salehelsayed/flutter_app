@@ -14,12 +14,13 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
-import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -44,6 +46,7 @@ import 'package:flutter_app/features/groups/application/group_invite_send_latenc
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -65,7 +68,11 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
@@ -81,6 +88,7 @@ import '_support/invite_reliability_runner_contract.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '../test/shared/helpers/durable_group_exit_driver.dart';
 
 const configuredSharedDir = String.fromEnvironment(
   'E2E_SHARED_DIR',
@@ -336,6 +344,7 @@ Future<sqlcipher.Database> _openTestDatabase({
 class GroupMultiDeviceTestStack {
   final sqlcipher.Database db;
   final String dbName;
+  final SecureKeyStore secureKeyStore;
   final GoBridgeClient bridge;
   final P2PServiceImpl p2pService;
   final IdentityRepositoryImpl identityRepo;
@@ -346,6 +355,9 @@ class GroupMultiDeviceTestStack {
   final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
   final ReactionRepositoryImpl reactionRepo;
   final GroupReactionReplayOutboxRepositoryImpl reactionReplayOutboxRepo;
+  final GroupExitIntentRepository groupExitIntentRepo;
+  final GroupPendingBroadcastRepository groupPendingBroadcastRepo;
+  final DurableGroupExitDriver durableGroupExitDriver;
   final IncomingMessageRouter messageRouter;
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
@@ -361,6 +373,7 @@ class GroupMultiDeviceTestStack {
   const GroupMultiDeviceTestStack({
     required this.db,
     required this.dbName,
+    required this.secureKeyStore,
     required this.bridge,
     required this.p2pService,
     required this.identityRepo,
@@ -371,6 +384,9 @@ class GroupMultiDeviceTestStack {
     required this.mediaAttachmentRepo,
     required this.reactionRepo,
     required this.reactionReplayOutboxRepo,
+    required this.groupExitIntentRepo,
+    required this.groupPendingBroadcastRepo,
+    required this.durableGroupExitDriver,
     required this.messageRouter,
     required this.groupKeyUpdateListener,
     required this.groupMembershipUpdateListener,
@@ -383,6 +399,14 @@ class GroupMultiDeviceTestStack {
     required this.identity,
     required this.cliContact,
   });
+
+  int get groupLeaveCommandCount {
+    final currentBridge = bridge;
+    if (currentBridge is! RecordingGoBridgeClient) {
+      throw StateError('Exact group:leave command recording is unavailable.');
+    }
+    return currentBridge.groupLeaveCommandCount;
+  }
 
   Future<void> teardown() async {
     groupKeyUpdateListener.dispose();
@@ -414,6 +438,21 @@ class RecordingGoBridgeClient extends GoBridgeClient {
     });
     return response;
   }
+
+  int commandCount(String command) {
+    var count = 0;
+    for (final message in sentMessages) {
+      try {
+        final decoded = jsonDecode(message);
+        if (decoded is Map && decoded['cmd'] == command) count++;
+      } catch (_) {
+        // Non-command bridge payloads are irrelevant to this exact count.
+      }
+    }
+    return count;
+  }
+
+  int get groupLeaveCommandCount => commandCount('group:leave');
 }
 
 Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
@@ -482,6 +521,22 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
         dbLoadGroupKeyByGeneration(db, groupId, generation),
     dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
+    dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
+    dbDeleteGroupKeysBeforeGeneration: (groupId, minKeyGenerationToKeep) =>
+        dbDeleteGroupKeysBeforeGeneration(db, groupId, minKeyGenerationToKeep),
+    dbUpsertPendingGroupKeyRotation: (row) =>
+        dbUpsertPendingGroupKeyRotation(db, row),
+    dbLoadPendingGroupKeyRotation: (groupId) =>
+        dbLoadPendingGroupKeyRotation(db, groupId),
+    dbDeletePendingGroupKeyRotation: (groupId, keyGeneration) =>
+        dbDeletePendingGroupKeyRotation(db, groupId, keyGeneration),
+    dbDeletePendingGroupKeyRotations: (groupId) =>
+        dbDeletePendingGroupKeyRotations(db, groupId),
+    groupKeyStore: secureKeyStore,
+    dbHasGroupExitCleanupPending: (groupId) async {
+      final row = await dbLoadGroupExitIntentForGroup(db, groupId);
+      return row?['state'] == 'cleanup_pending';
+    },
   );
   GroupMessageRepositoryImpl createGroupMessageRepository(
     dynamic executor, {
@@ -582,6 +637,78 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final groupMsgRepo = createGroupMessageRepository(
     db,
     enableInboxPageTransactions: true,
+  );
+  final groupExitIntentRepo = GroupExitIntentRepositoryImpl(
+    dbLoadForGroup: (groupId) => dbLoadGroupExitIntentForGroup(db, groupId),
+    dbLoadAll: () => dbLoadAllGroupExitIntents(db),
+    dbEnqueue: (row) => dbEnqueueGroupExitIntent(db, row),
+    dbCancelQueued: ({required expected, required updatedAt}) =>
+        dbCancelQueuedGroupExitIntent(
+          db,
+          expected: expected,
+          updatedAt: updatedAt,
+        ),
+    dbPrepareLeaveNotice:
+        ({
+          required expected,
+          required timelineRow,
+          required pendingBroadcastRow,
+          required updatedAt,
+        }) => dbPrepareGroupExitLeaveNotice(
+          db,
+          expected: expected,
+          timelineRow: timelineRow,
+          pendingBroadcastRow: pendingBroadcastRow,
+          updatedAt: updatedAt,
+        ),
+    dbCompleteLeaveNoticeAttempt:
+        ({
+          required expected,
+          required pendingBroadcastRow,
+          required completionCode,
+          required updatedAt,
+        }) => dbCompleteGroupExitLeaveNotice(
+          db,
+          expected: expected,
+          pendingBroadcastRow: pendingBroadcastRow,
+          completionCode: completionCode,
+          updatedAt: updatedAt,
+        ),
+    dbAdvance:
+        ({
+          required expected,
+          required nextState,
+          required updatedAt,
+          lastErrorCode,
+        }) => dbAdvanceGroupExitIntent(
+          db,
+          expected: expected,
+          nextState: nextState,
+          updatedAt: updatedAt,
+          lastErrorCode: lastErrorCode,
+        ),
+    dbCleanupOrRetire: ({required expected, required updatedAt}) =>
+        dbCleanupOrRetireGroupExitIntent(
+          db,
+          expected: expected,
+          updatedAt: updatedAt,
+        ),
+    dbRetireExact: (expected) => dbRetireExactGroupExitIntent(db, expected),
+    dbTerminalizeForGroup: (groupId) =>
+        dbTerminalizeGroupExitIntentForGroup(db, groupId),
+  );
+  final groupPendingBroadcastRepo = GroupPendingBroadcastRepositoryImpl(
+    dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
+    dbLoadForGroup: (groupId) =>
+        dbLoadPendingGroupBroadcastsForGroup(db, groupId),
+    dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
+    dbCountForGroup: (groupId) =>
+        dbCountPendingGroupBroadcastsForGroup(db, groupId),
+    dbDelete: (id) => dbDeletePendingGroupBroadcast(db, id),
+    dbDeleteIfExact: (expected) =>
+        dbDeletePendingGroupBroadcastIfExact(db, expected),
+    dbDeleteForGroup: (groupId) =>
+        dbDeletePendingGroupBroadcastsForGroup(db, groupId),
   );
   final groupInviteDeliveryAttemptRepo =
       GroupInviteDeliveryAttemptRepositoryImpl(
@@ -976,6 +1103,28 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     getOwnPeerId: () async => updatedIdentity.peerId,
     getOwnMlKemPublicKey: () async => updatedIdentity.mlKemPublicKey,
   );
+  var durableExitId = 0;
+  final durableGroupExitDriver = DurableGroupExitDriver.compose(
+    bridge: bridge,
+    intentRepository: groupExitIntentRepo,
+    pendingRepository: groupPendingBroadcastRepo,
+    groupRepository: groupRepo,
+    identityRepository: identityRepo,
+    loadMessage: groupMsgRepo.getMessage,
+    rePushPendingBroadcast: buildGroupPendingBroadcastRePush(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      loadIdentity: identityRepo.loadIdentity,
+      pendingRepository: groupPendingBroadcastRepo,
+    ),
+    newId: () =>
+        'device-group-exit-${updatedIdentity.peerId}-${++durableExitId}',
+    now: () => DateTime.now().toUtc(),
+    sendP2PMessage: (peerId, message) async =>
+        p2pService.sendMessage(peerId, message),
+    storeP2PMessageInInbox: (peerId, message) async =>
+        p2pService.storeInInbox(peerId, message),
+  );
 
   messageRouter.start();
   groupKeyUpdateListener.start();
@@ -992,6 +1141,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   return GroupMultiDeviceTestStack(
     db: db,
     dbName: dbName,
+    secureKeyStore: secureKeyStore,
     bridge: bridge,
     p2pService: p2pService,
     identityRepo: identityRepo,
@@ -1002,6 +1152,9 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     mediaAttachmentRepo: mediaAttachmentRepo,
     reactionRepo: reactionRepo,
     reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+    groupExitIntentRepo: groupExitIntentRepo,
+    groupPendingBroadcastRepo: groupPendingBroadcastRepo,
+    durableGroupExitDriver: durableGroupExitDriver,
     messageRouter: messageRouter,
     groupKeyUpdateListener: groupKeyUpdateListener,
     groupMembershipUpdateListener: groupMembershipUpdateListener,

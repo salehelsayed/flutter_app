@@ -532,24 +532,6 @@ class InMemoryGroupRepository
   }
 
   @override
-  Future<void> commitFreshDirectJoin({
-    required GroupModel group,
-    required GroupMember selfMember,
-    required GroupKeyInfo key,
-    required Future<void> Function() joinNative,
-  }) async {
-    final authority = _shellAuthority(group.id, selfMember.peerId);
-    if (authority.shape != SelfRemovedShellAuthorityShape.absent ||
-        _removalFloors[group.id] != null) {
-      throw StateError('fresh direct join refused');
-    }
-    await joinNative();
-    await saveGroup(group);
-    await saveMember(selfMember);
-    await saveKey(key);
-  }
-
-  @override
   Future<SelfRemovedAcceptedRollbackOutcome>
   rollbackFreshAcceptedMaterialization({
     required String groupId,
@@ -754,6 +736,38 @@ class InMemoryGroupRepository
   Future<void> removeAllKeys(String groupId) async {
     _keys.remove(groupId);
     _pendingKeyRotations.remove(groupId);
+  }
+
+  /// Atomically projects a completed durable exit onto detached test fakes.
+  ///
+  /// There are deliberately no awaits in this test-only compare-and-delete:
+  /// the exact membership generation is checked, then the paired message and
+  /// group surfaces are removed in the same single-isolate turn. A same-peer
+  /// rejoin with a different [selfJoinedAt] refuses the whole projection.
+  bool deleteExactMembershipSurfaceForTest({
+    required String groupId,
+    required String selfPeerId,
+    required DateTime selfJoinedAt,
+    void Function(String groupId)? deleteMessagesForGroup,
+  }) {
+    final group = _groups[groupId];
+    final self = _members[groupId]?[selfPeerId];
+    if (group == null ||
+        group.selfRemovedAt != null ||
+        group.isDissolved ||
+        group.dissolvedAt != null ||
+        self == null ||
+        !_sameTestInstant(self.joinedAt, selfJoinedAt)) {
+      return false;
+    }
+
+    deleteMessagesForGroup?.call(groupId);
+    _members.remove(groupId);
+    _keys.remove(groupId);
+    _pendingKeyRotations.remove(groupId);
+    _rejoinStates.remove(groupId);
+    _groups.remove(groupId);
+    return true;
   }
 
   @override

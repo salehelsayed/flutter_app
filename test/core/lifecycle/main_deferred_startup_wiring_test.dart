@@ -3,6 +3,36 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/main.dart' as app;
 
+String _startupStepInvocation(
+  String source, {
+  required String wrapper,
+  required String stepId,
+}) {
+  final stepToken = "'$stepId'";
+  final stepIndex = source.indexOf(stepToken);
+  if (stepIndex < 0) {
+    throw StateError('Missing startup step $stepId');
+  }
+  final invocationStart = source.lastIndexOf(wrapper, stepIndex);
+  if (invocationStart < 0) {
+    throw StateError('$stepId is not owned by $wrapper');
+  }
+  final openingParenthesis = source.indexOf('(', invocationStart);
+  var depth = 0;
+  for (var index = openingParenthesis; index < source.length; index++) {
+    switch (source[index]) {
+      case '(':
+        depth += 1;
+      case ')':
+        depth -= 1;
+        if (depth == 0) {
+          return source.substring(invocationStart, index + 1);
+        }
+    }
+  }
+  throw StateError('Unterminated startup step $stepId');
+}
+
 // 164 (cold-start-1 / cold-start-3): source-substring wiring locks over
 // lib/main.dart. These assert the pre-runApp deferral structure (no eager
 // startLiveServices / ensureFirebaseReady awaits, unconditional
@@ -13,8 +43,190 @@ import 'package:flutter_app/main.dart' as app;
 // app.MyApp.navigatorKey first to force the import, then read lib/main.dart as a
 // string and assert index-delimited substrings.
 void main() {
-  test('TC-164-01 main wires startLiveServices as unconditional '
-      'deferredRuntimeStartup and drops both eager pre-runApp awaits', () async {
+  test(
+    'migration-gated deferred startup uses retryable outcome latch',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+
+      expect(
+        mainSource,
+        contains('AccountMigrationRuntimeStartupLatch('),
+        reason: 'MyApp must use the shared retryable runtime-startup latch',
+      );
+      expect(
+        mainSource,
+        contains('startRuntime: widget.deferredRuntimeStartup'),
+        reason: 'the latch must own the injected boolean startup outcome',
+      );
+      expect(
+        mainSource,
+        contains('Future<bool> startLiveServicesIfAllowed() async'),
+        reason:
+            'the existing void starter needs an outcome wrapper so a gated '
+            'no-start can be retried',
+      );
+      expect(
+        mainSource,
+        contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
+        reason: 'MyApp must receive the outcome-returning startup wrapper',
+      );
+      expect(
+        mainSource,
+        contains('return runtimeStartupLatch.ensureStarted();'),
+        reason:
+            '_ensureRuntimeServicesReady must delegate to the retryable latch',
+      );
+    },
+  );
+
+  test(
+    'TC-16a every fallible live-service startup step is resumable and run once',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+      final start = mainSource.indexOf(
+        'Future<void> startLiveServices() async {',
+      );
+      final end = mainSource.indexOf(
+        'Future<bool> startLiveServicesIfAllowed() async',
+        start,
+      );
+      expect(start, isNonNegative);
+      expect(end, greaterThan(start));
+      final startupBody = mainSource.substring(start, end);
+
+      const asyncSteps = <String, String>{
+        'private_media_cold_recovery':
+            'await ensurePrivateMediaColdRecovery();',
+        'group_context_backfill': 'await groupContextBackfill;',
+        'group_reaction_comparand_backfill':
+            'await groupReactionComparandBackfill;',
+        'firebase_ready': 'await ensureFirebaseReady();',
+        'bridge_initialize': 'await bridge.initialize();',
+        'notification_service_initialize':
+            'await notificationService.initialize();',
+      };
+      const syncSteps = <String, String>{
+        'message_router_start': 'messageRouter.start',
+        'contact_request_listener_start': 'contactRequestListener.start',
+        'chat_message_listener_start': 'chatMessageListener.start',
+        'post_listener_start': 'postListener.start',
+        'post_comment_listener_start': 'postCommentListener.start',
+        'post_reaction_listener_start': 'postReactionListener.start',
+        'post_presence_listener_start': 'postPresenceListener.start',
+        'post_pass_listener_start': 'postPassListener.start',
+        'post_pin_listener_start': 'postPinListener.start',
+        'reaction_listener_start': 'reactionListener.start',
+        'message_deletion_listener_start': 'messageDeletionListener.start',
+        'delivery_receipt_listener_start': 'deliveryReceiptListener.start',
+        'profile_update_listener_start': 'profileUpdateListener.start',
+        'group_message_listener_start': 'groupMessageListener.start',
+        'group_invite_listener_start': 'groupInviteListener.start',
+        'group_key_update_listener_start': 'groupKeyUpdateListener.start',
+        'group_key_repair_responder_listener_start':
+            'groupKeyRepairResponderListener.start',
+        'group_membership_update_listener_start':
+            'groupMembershipUpdateListener.start',
+        'introduction_listener_start': 'introductionListener.start',
+        'pending_message_retrier_start': 'pendingMessageRetrier.start',
+        'group_pending_key_repair_backoff_timer_start':
+            'groupPendingKeyRepairBackoffTimer.start',
+        'pending_post_media_upload_retrier_start':
+            'pendingPostMediaUploadRetrier.start',
+        'pending_post_delivery_retrier_start':
+            'pendingPostDeliveryRetrier.start',
+        'pending_post_follow_on_retrier_start':
+            'pendingPostFollowOnRetrier.start',
+        'key_exchange_retrier_start': 'keyExchangeRetrier.start',
+        'profile_update_forwarder_install':
+            'profileUpdateListener.contactUpdatedStream.listen',
+        'contact_key_update_forwarder_install':
+            'contactRequestListener.contactKeyUpdatedStream.listen',
+        'auto_added_forwarder_install':
+            'contactRequestListener.autoAddedStream.listen',
+      };
+
+      expect(
+        'liveServiceStartupSteps.runAsync('.allMatches(startupBody),
+        hasLength(asyncSteps.length),
+      );
+      expect(
+        'liveServiceStartupSteps.runSync('.allMatches(startupBody),
+        hasLength(syncSteps.length),
+      );
+
+      for (final entry in asyncSteps.entries) {
+        expect(
+          "'${entry.key}'".allMatches(startupBody),
+          hasLength(1),
+          reason: '${entry.key} must have one stable checkpoint ID',
+        );
+        expect(
+          entry.value.allMatches(startupBody),
+          hasLength(1),
+          reason: '${entry.key} must have one production call site',
+        );
+        final invocation = _startupStepInvocation(
+          startupBody,
+          wrapper: 'liveServiceStartupSteps.runAsync',
+          stepId: entry.key,
+        );
+        expect(
+          invocation,
+          contains(entry.value),
+          reason: '${entry.key} must execute inside runAsync',
+        );
+      }
+
+      for (final entry in syncSteps.entries) {
+        expect(
+          "'${entry.key}'".allMatches(startupBody),
+          hasLength(1),
+          reason: '${entry.key} must have one stable checkpoint ID',
+        );
+        expect(
+          entry.value.allMatches(startupBody),
+          hasLength(1),
+          reason: '${entry.key} must have one production call site',
+        );
+        final invocation = _startupStepInvocation(
+          startupBody,
+          wrapper: 'liveServiceStartupSteps.runSync',
+          stepId: entry.key,
+        );
+        expect(
+          invocation,
+          contains(entry.value),
+          reason: '${entry.key} must execute inside runSync',
+        );
+        if (entry.key.endsWith('_forwarder_install')) {
+          expect(
+            invocation,
+            contains('liveServiceForwardingSubscriptions.add('),
+            reason: '${entry.key} must retain its subscription',
+          );
+        }
+      }
+
+      expect(
+        'liveServiceForwardingSubscriptions.add('.allMatches(startupBody),
+        hasLength(3),
+      );
+      expect(RegExp(r'\.listen\(').allMatches(startupBody), hasLength(3));
+      expect(
+        startupBody.indexOf('liveServicesStarted = true;'),
+        greaterThan(startupBody.lastIndexOf('liveServiceStartupSteps.runSync')),
+        reason: 'the runtime may be marked started only after every checkpoint',
+      );
+    },
+  );
+
+  test('TC-164-01 main wires the live-services outcome wrapper as '
+      'unconditional deferredRuntimeStartup and drops both eager pre-runApp '
+      'awaits', () async {
     expect(app.MyApp.navigatorKey, isNotNull);
 
     final mainSource = await File('lib/main.dart').readAsString();
@@ -22,7 +234,7 @@ void main() {
     // (i) deferredRuntimeStartup is unconditional, not isShareLaunch-gated.
     expect(
       mainSource,
-      contains('deferredRuntimeStartup: startLiveServices,'),
+      contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
       reason:
           'normal launch must take the same deferred startup path share '
           'launch already used',
@@ -30,7 +242,10 @@ void main() {
     expect(
       mainSource,
       isNot(
-        contains('deferredRuntimeStartup: isShareLaunch ? startLiveServices'),
+        contains(
+          'deferredRuntimeStartup: isShareLaunch '
+          '? startLiveServicesIfAllowed',
+        ),
       ),
       reason: 'the isShareLaunch ternary on deferredRuntimeStartup is removed',
     );

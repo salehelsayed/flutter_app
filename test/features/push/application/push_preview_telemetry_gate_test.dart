@@ -1,5 +1,6 @@
-import 'package:flutter_app/features/push/application/push_preview_telemetry_gate.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../tool/telemetry/push_preview_telemetry_gate.dart';
 
 void main() {
   group('calculatePushPreviewDegradeRate', () {

@@ -37,7 +37,6 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
@@ -1087,11 +1086,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         legacyTestCallback: widget.msgRepo == null
             ? null
             : (groupId) => deleteGroupAndMessages(
-                bridge: widget.bridge,
                 groupRepo: widget.groupRepo,
                 groupMessageRepo: widget.msgRepo!,
                 groupId: groupId,
-                deleteLocallyIfDissolved: true,
               ),
       );
 

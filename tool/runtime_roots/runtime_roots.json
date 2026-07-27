@@ -139,6 +139,19 @@
       ]
     },
     {
+      "path": "integration_test/group_multi_party_device_real_android_harness.dart",
+      "owner": "DTR-10 / QA",
+      "reason": "The group multi-party real-device runner selects this non-convention main only for strict Android launches.",
+      "condition": "Remove only with the owning strict-Android runner path and equivalent runtime-config handshake proof.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/group_multi_party_device_real_android_harness.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/group_multi_party_device_real_harness.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
@@ -568,240 +581,7 @@
       ]
     },
     {
-      "path": "lib/features/contact_request/presentation/widgets/pending_requests_badge.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/conversation/presentation/widgets/reaction_display.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/feed/application/feed_projection.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
       "path": "lib/features/groups/application/group_missed_message_telemetry.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/application/hydrate_groups_from_peers_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/application/join_group_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/application/leave_group_and_delete_local_history_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/application/rotate_group_key_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/domain/models/group_inbox_cursor.dart",
-      "rootKinds": [],
-      "disposition": "candidate",
-      "owner": "DTR-10 / groups",
-      "reason": "No current computed root reaches this exact source.",
-      "condition": "DTR-10 must resolve group compatibility ownership before removal.",
-      "evidence": []
-    },
-    {
-      "path": "lib/features/groups/domain/models/group_message_payload.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/presentation/screens/group_list_screen.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/presentation/screens/group_list_wired.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/groups/presentation/widgets/group_card.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/identity/application/recover_identity_from_secure_store_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/introduction/presentation/widgets/intros_tab.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/p2p/application/discover_peer_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/p2p/application/send_message_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/p2p/application/stop_node_use_case.dart",
       "rootKinds": [],
       "disposition": "explained-root",
       "owner": "DTR program / owning feature",
@@ -1181,48 +961,6 @@
           "source": "lib/main.dart",
           "callee": "FirebaseMessaging.onBackgroundMessage",
           "argument": "firebaseMessagingBackgroundHandler"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/push/application/push_preview_telemetry_gate.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/qr_code/application/handle_scanned_qr_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
-      "path": "lib/features/qr_code/domain/models/qr_payload_model.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "DTR program / owning feature",
-      "reason": "Current source is reachable only from a computed convention test/integration origin.",
-      "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
         }
       ]
     },

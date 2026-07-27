@@ -273,7 +273,6 @@ void main() {
 
       for (final path in const <String>[
         'lib/features/groups/presentation/screens/group_info_wired.dart',
-        'lib/features/groups/presentation/screens/group_list_wired.dart',
         'lib/features/orbit/presentation/screens/orbit_wired.dart',
       ]) {
         final source = File(path).readAsStringSync();

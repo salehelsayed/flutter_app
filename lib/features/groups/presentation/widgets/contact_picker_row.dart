@@ -34,7 +34,7 @@ class ContactPickerRow extends StatelessWidget {
       // Make the entire row rectangle one tap target (not just painted
       // children), so taps in the padding band / blank space to the right of a
       // short name still select the contact. Mirrors friend_picker_screen.dart
-      // and group_card.dart.
+      // behavior.
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

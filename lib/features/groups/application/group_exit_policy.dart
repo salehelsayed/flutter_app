@@ -8,6 +8,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
+const lastAdminLeaveBlockedMessage =
+    "You can't leave this group because you're the only admin.";
+
 enum GroupDissolvePreflightDisposition {
   allowed,
   blockedByExitIntent,

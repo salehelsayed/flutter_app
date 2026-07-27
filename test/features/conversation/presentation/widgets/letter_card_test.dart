@@ -4,7 +4,6 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -497,9 +496,7 @@ void main() {
             await tester.pumpWidget(
               buildTestWidget(isIncoming: false, status: status),
             );
-            final icon = tester.widget<Icon>(
-              find.byIcon(Icons.inbox_rounded),
-            );
+            final icon = tester.widget<Icon>(find.byIcon(Icons.inbox_rounded));
             expect(
               icon.color,
               neutral,
@@ -839,9 +836,7 @@ void main() {
         expect(timeRow, isNotNull, reason: 'Timestamp should be inside a Row');
       });
 
-      testWidgets('no standalone ReactionDisplay when reactions provided', (
-        tester,
-      ) async {
+      testWidgets('reactions render inline in the footer', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(
             text: 'Hello',
@@ -850,7 +845,6 @@ void main() {
           ),
         );
         expect(find.text('👍'), findsOneWidget);
-        expect(find.byType(ReactionDisplay), findsNothing);
       });
 
       testWidgets('multiple reaction emojis render inline with counts', (
@@ -894,7 +888,6 @@ void main() {
         expect(find.text('👍 2'), findsOneWidget);
         expect(find.text('❤️'), findsOneWidget);
         expect(find.text('3:30 PM'), findsOneWidget);
-        expect(find.byType(ReactionDisplay), findsNothing);
       });
 
       testWidgets('own reaction chip has teal border inline', (tester) async {
@@ -931,7 +924,6 @@ void main() {
           isTrue,
           reason: 'Own reaction chip should have teal border',
         );
-        expect(find.byType(ReactionDisplay), findsNothing);
       });
 
       testWidgets(
@@ -1270,9 +1262,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: ThemeData(
-          extensions: <ThemeExtension<dynamic>>[
-            BackgroundReadableColors.dark,
-          ],
+          extensions: <ThemeExtension<dynamic>>[BackgroundReadableColors.dark],
         ),
         home: Scaffold(
           body: Center(
@@ -1309,10 +1299,9 @@ void main() {
     // Returns the Align that directly wraps the card chrome in bubble mode.
     Align bubbleAlign(WidgetTester tester) {
       return tester.widget<Align>(
-        find.ancestor(
-          of: find.byType(ClipRRect),
-          matching: find.byType(Align),
-        ).first,
+        find
+            .ancestor(of: find.byType(ClipRRect), matching: find.byType(Align))
+            .first,
       );
     }
 
@@ -1327,9 +1316,9 @@ void main() {
             ),
           )
           .firstWhere((c) {
-        final d = c.decoration;
-        return d is BoxDecoration && d.borderRadius != null;
-      });
+            final d = c.decoration;
+            return d is BoxDecoration && d.borderRadius != null;
+          });
       return (container.decoration as BoxDecoration).borderRadius!
           as BorderRadius;
     }
@@ -1372,9 +1361,9 @@ void main() {
             ),
           )
           .firstWhere((c) {
-        final d = c.decoration;
-        return d is BoxDecoration && d.color == colors.surfaceRaised;
-      });
+            final d = c.decoration;
+            return d is BoxDecoration && d.color == colors.surfaceRaised;
+          });
       expect((fill.decoration as BoxDecoration).color, colors.surfaceRaised);
     });
 
@@ -1409,7 +1398,8 @@ void main() {
       expect(
         hasCap,
         isTrue,
-        reason: 'Bubble should be wrapped in a ConstrainedBox capping maxWidth '
+        reason:
+            'Bubble should be wrapped in a ConstrainedBox capping maxWidth '
             'around 78% of the available width.',
       );
     });
@@ -1437,7 +1427,11 @@ void main() {
         ),
       );
       var radius = bubbleRadius(tester);
-      expect(radius.bottomLeft, sq, reason: 'incoming first squares bottom-left');
+      expect(
+        radius.bottomLeft,
+        sq,
+        reason: 'incoming first squares bottom-left',
+      );
       expect(radius.topLeft, r);
       expect(radius.topRight, r);
       expect(radius.bottomRight, r);
@@ -1501,7 +1495,11 @@ void main() {
         ),
       );
       radius = bubbleRadius(tester);
-      expect(radius.bottomRight, sq, reason: 'outgoing first squares bottom-right');
+      expect(
+        radius.bottomRight,
+        sq,
+        reason: 'outgoing first squares bottom-right',
+      );
       expect(radius.topRight, r);
       expect(radius.topLeft, r);
       expect(radius.bottomLeft, r);
@@ -1577,7 +1575,8 @@ void main() {
         expect(
           hasGutter,
           isFalse,
-          reason: 'Continuation incoming bubble must NOT keep a ~42px leading '
+          reason:
+              'Continuation incoming bubble must NOT keep a ~42px leading '
               'gutter — it should be flush-left like the first balloon.',
         );
       },
@@ -1682,7 +1681,8 @@ void main() {
         expect(
           continuationLeft,
           closeTo(firstLeft, 1.0),
-          reason: 'Continuation incoming balloon must be flush-left with the '
+          reason:
+              'Continuation incoming balloon must be flush-left with the '
               'first balloon (no avatar gutter drift).',
         );
       },
@@ -1706,7 +1706,8 @@ void main() {
       expect(
         bubbleWidth(tester),
         lessThan(200),
-        reason: 'A headered bubble with short text must hug name+text, not '
+        reason:
+            'A headered bubble with short text must hug name+text, not '
             'stretch to the 0.78 cap (~312 at a 400px slot).',
       );
     });
@@ -1855,7 +1856,8 @@ void main() {
       expect(
         bubbleWidth(tester),
         lessThan(200),
-        reason: 'A short bubble that also shows reactions must hug its content, '
+        reason:
+            'A short bubble that also shows reactions must hug its content, '
             'not stretch to the 0.78 cap.',
       );
     });
@@ -1994,7 +1996,10 @@ void main() {
           ),
         );
         final continuationLeft = bubbleLeft(tester);
-        final continuationAvatarCount = find.byType(UserAvatar).evaluate().length;
+        final continuationAvatarCount = find
+            .byType(UserAvatar)
+            .evaluate()
+            .length;
 
         // First balloon paints the avatar; continuation reserves an empty gutter.
         expect(firstAvatarCount, 1);
@@ -2079,7 +2084,8 @@ void main() {
         expect(
           avatarRight,
           lessThanOrEqualTo(bubbleLeftEdge + 1.0),
-          reason: 'Under RTL the avatar must remain on the leading (physical-'
+          reason:
+              'Under RTL the avatar must remain on the leading (physical-'
               'left) side of the incoming bubble, matching the physical-left '
               'Align — not flip to the inner side.',
         );
@@ -2120,35 +2126,36 @@ void main() {
     // TC-H1 — the group avatar-outside bubble body is vertically compact:
     // smaller body padding and a tighter line height than the 1:1/legacy card
     // (which keep 1.65, so their find.text long-press target stays stable).
-    testWidgets('TC-H1 group avatar-outside bubble body is vertically compact', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        buildBubble(
-          isIncoming: true,
-          showAvatar: false,
-          showSenderName: false,
-          avatarOutsideBubble: true,
-          text: 'hi',
-        ),
-      );
+    testWidgets(
+      'TC-H1 group avatar-outside bubble body is vertically compact',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: false,
+            showSenderName: false,
+            avatarOutsideBubble: true,
+            text: 'hi',
+          ),
+        );
 
-      final bodyPad = tester
-          .widgetList<Padding>(
-            find.ancestor(
-              of: find.byType(LinkableText),
-              matching: find.byType(Padding),
-            ),
-          )
-          .first
-          .padding
-          .resolve(TextDirection.ltr);
-      // Compact: top 8 + bottom 6 = 14 (vs the looser 12 + 8 = 20).
-      expect(bodyPad.top + bodyPad.bottom, lessThanOrEqualTo(14));
+        final bodyPad = tester
+            .widgetList<Padding>(
+              find.ancestor(
+                of: find.byType(LinkableText),
+                matching: find.byType(Padding),
+              ),
+            )
+            .first
+            .padding
+            .resolve(TextDirection.ltr);
+        // Compact: top 8 + bottom 6 = 14 (vs the looser 12 + 8 = 20).
+        expect(bodyPad.top + bodyPad.bottom, lessThanOrEqualTo(14));
 
-      final body = tester.widget<LinkableText>(find.byType(LinkableText));
-      expect(body.style!.height, lessThan(1.65));
-    });
+        final body = tester.widget<LinkableText>(find.byType(LinkableText));
+        expect(body.style!.height, lessThan(1.65));
+      },
+    );
 
     // TC-AV6 (RTL) — a WIDE sender name must not push the bubble off the gutter
     // under RTL: the name-above Column is pinned LTR like the gutter, so the
@@ -2203,29 +2210,25 @@ void main() {
 
   // TC-13 preservation sentinel: the flag-less default render is unchanged.
   group('bubble layout preservation (TC-13)', () {
-    testWidgets(
-      'default (no new flags) renders unchanged full-width card',
-      (tester) async {
-        await tester.pumpWidget(buildTestWidget(isIncoming: true));
+    testWidgets('default (no new flags) renders unchanged full-width card', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildTestWidget(isIncoming: true));
 
-        // Header avatar + sender name present (legacy full-width card).
-        expect(find.byType(UserAvatar), findsOneWidget);
-        expect(find.text('Alice'), findsOneWidget);
+      // Header avatar + sender name present (legacy full-width card).
+      expect(find.byType(UserAvatar), findsOneWidget);
+      expect(find.text('Alice'), findsOneWidget);
 
-        // No bubble Align wraps the card in default mode.
-        expect(
-          find.ancestor(
-            of: find.byType(ClipRRect),
-            matching: find.byType(Align),
-          ),
-          findsNothing,
-        );
+      // No bubble Align wraps the card in default mode.
+      expect(
+        find.ancestor(of: find.byType(ClipRRect), matching: find.byType(Align)),
+        findsNothing,
+      );
 
-        // BorderRadius.circular(24) intact on the ClipRRect.
-        final clip = tester.widget<ClipRRect>(find.byType(ClipRRect).first);
-        expect(clip.borderRadius, BorderRadius.circular(24));
-      },
-    );
+      // BorderRadius.circular(24) intact on the ClipRRect.
+      final clip = tester.widget<ClipRRect>(find.byType(ClipRRect).first);
+      expect(clip.borderRadius, BorderRadius.circular(24));
+    });
 
     // TC-P1 (137 NEW preservation) — the legacy full-width card must NOT pick
     // up the bubble-mode hug / inline-timestamp scoping (INV-5). Guards against
@@ -2237,12 +2240,12 @@ void main() {
         await tester.pumpWidget(buildTestWidget(isIncoming: true, text: 'bbb'));
 
         // Fills the available width (legacy full-width card), not hugging 'bbb'.
-        final cardWidth =
-            tester.getSize(find.byType(ClipRRect).first).width;
+        final cardWidth = tester.getSize(find.byType(ClipRRect).first).width;
         expect(
           cardWidth,
           greaterThan(600),
-          reason: 'Legacy card must keep filling width; if bubble hug leaked it '
+          reason:
+              'Legacy card must keep filling width; if bubble hug leaked it '
               'would shrink to hug the short text.',
         );
 
@@ -2373,9 +2376,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: ThemeData(
-          extensions: <ThemeExtension<dynamic>>[
-            BackgroundReadableColors.dark,
-          ],
+          extensions: <ThemeExtension<dynamic>>[BackgroundReadableColors.dark],
         ),
         home: Scaffold(
           body: Center(
@@ -2561,15 +2562,14 @@ void main() {
     // ---- INCOMING (transportStatusGlyph: true, status null) ---------------
 
     // TC-08
-    testWidgets(
-      'TC-08 incoming via inbox → inbox glyph (arrived-while-away)',
-      (tester) async {
-        await tester.pumpWidget(
-          buildTransportGlyph(isIncoming: true, transport: 'inbox'),
-        );
-        expect(find.byIcon(Icons.inbox), findsOneWidget);
-      },
-    );
+    testWidgets('TC-08 incoming via inbox → inbox glyph (arrived-while-away)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: 'inbox'),
+      );
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+    });
 
     // TC-09
     testWidgets('TC-09 incoming direct → device_hub', (tester) async {
@@ -2665,11 +2665,7 @@ void main() {
         // Footer variant: empty text → the standalone footer meta Row renders
         // (gate 1).
         await tester.pumpWidget(
-          buildTransportGlyph(
-            isIncoming: true,
-            transport: 'relay',
-            text: '',
-          ),
+          buildTransportGlyph(isIncoming: true, transport: 'relay', text: ''),
         );
         expect(
           find.byIcon(Icons.cell_tower),
@@ -2780,23 +2776,20 @@ void main() {
     // the generic label, failing the positive find); the negative "Sent via
     // direct connection" assert is a copy-paste-mislabel guard, not the RED
     // lock (the upgraded sent string is "Upgraded to …", not "Sent via …").
-    testWidgets(
-      'TC-20 outgoing upgraded a11y → message_sent_via_upgraded (not '
-      'via_direct)',
-      (tester) async {
-        await tester.pumpWidget(
-          buildTransportGlyph(status: 'delivered', transport: 'upgraded'),
-        );
-        expect(
-          find.bySemanticsLabel(RegExp('Upgraded to direct connection')),
-          findsWidgets,
-        );
-        expect(
-          find.bySemanticsLabel(RegExp('Sent via direct connection')),
-          findsNothing,
-        );
-      },
-    );
+    testWidgets('TC-20 outgoing upgraded a11y → message_sent_via_upgraded (not '
+        'via_direct)', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(status: 'delivered', transport: 'upgraded'),
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Upgraded to direct connection')),
+        findsWidgets,
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Sent via direct connection')),
+        findsNothing,
+      );
+    });
 
     // TC-21 (RT-W4) — INCOMING via 'upgraded' shows the incoming upgrade
     // glyph (the incoming glyph fires for any non-system/non-unknown

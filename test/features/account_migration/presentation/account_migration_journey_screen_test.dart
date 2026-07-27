@@ -319,6 +319,99 @@ void main() {
     expect(activatedCallbackCalled, isTrue);
   });
 
+  testWidgets(
+    'verified new-phone finalization disables close and system back',
+    (tester) async {
+      final qrPayload = payload(sessionId: 'session-finalizing');
+      final events =
+          StreamController<AccountMigrationReceiverEvent>.broadcast();
+      addTearDown(events.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => FilledButton(
+              key: const ValueKey('identity-choice-action'),
+              onPressed: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => AccountMigrationJourneyWired.newPhone(
+                      bridge: _FakeBridge(),
+                      secureKeyStore: FakeSecureKeyStore(),
+                      buildQrPayload: () async => (
+                        BuildMigrationQrPayloadResult.success,
+                        MigrationQrBuildOutput(
+                          payload: qrPayload,
+                          qrJson: qrPayload.toJsonString(),
+                        ),
+                      ),
+                      startReceiver: (_) async =>
+                          const AccountMigrationReceiverStartResult.started(),
+                      receiverEvents: events.stream,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('Generate or restore identity'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('identity-choice-action')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      events.add(
+        const AccountMigrationReceiverEvent.importingBundle(
+          sessionId: 'session-finalizing',
+        ),
+      );
+      await tester.pump();
+
+      var closeButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('account-migration-close')),
+      );
+      expect(
+        closeButton.onPressed,
+        isNull,
+        reason: 'importingBundle begins the non-poppable finalization window',
+      );
+
+      events.add(
+        const AccountMigrationReceiverEvent.importVerified(
+          sessionId: 'session-finalizing',
+        ),
+      );
+      await tester.pump();
+
+      closeButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('account-migration-close')),
+      );
+      expect(
+        closeButton.onPressed,
+        isNull,
+        reason: 'the route stays locked while the old-block proof is pending',
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('identity-choice-action')),
+        findsNothing,
+        reason:
+            'system back must not expose identity generation or restoration '
+            'while a late proof can still activate the imported account',
+      );
+    },
+  );
+
   testWidgets('new-phone QR renders keygen and persistence failures', (
     tester,
   ) async {
@@ -1034,10 +1127,10 @@ void main() {
                 }) async {
                   onProgress(AccountMigrationTransferStep.transferringDatabase);
                   return const AccountMigrationTransferResult.failure(
-                    code:
-                        AccountMigrationTransferFailureCode
-                            .localTransferTimedOut,
-                    safeMessage: accountMigrationLocalTransferStalledSafeMessage,
+                    code: AccountMigrationTransferFailureCode
+                        .localTransferTimedOut,
+                    safeMessage:
+                        accountMigrationLocalTransferStalledSafeMessage,
                   );
                 },
           ),
@@ -1059,7 +1152,9 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('The account move stopped unexpectedly before final handoff.'),
+        find.text(
+          'The account move stopped unexpectedly before final handoff.',
+        ),
         findsNothing,
       );
 
@@ -1131,7 +1226,9 @@ void main() {
 
       expect(find.text('Move failed'), findsOneWidget);
       expect(
-        find.text('The account move stopped unexpectedly before final handoff.'),
+        find.text(
+          'The account move stopped unexpectedly before final handoff.',
+        ),
         findsOneWidget,
       );
 
@@ -1576,9 +1673,7 @@ void main() {
                   onProgress(AccountMigrationTransferStep.preparing);
                   onProgress(AccountMigrationTransferStep.connecting);
                   onProgress(AccountMigrationTransferStep.encrypting);
-                  onProgress(
-                    AccountMigrationTransferStep.transferringDatabase,
-                  );
+                  onProgress(AccountMigrationTransferStep.transferringDatabase);
                   onSegmentProgress?.call(
                     const AccountMigrationTransferSegmentProgress(
                       sentSegments: 2,
@@ -1634,91 +1729,89 @@ void main() {
     },
   );
 
-  testWidgets(
-    'stitched new-phone journey: QR → receive → import → activated',
-    (tester) async {
-      final qrPayload = payload(sessionId: 'stitched-new-session');
-      final events =
-          StreamController<AccountMigrationReceiverEvent>.broadcast();
-      addTearDown(events.close);
-      var activated = false;
+  testWidgets('stitched new-phone journey: QR → receive → import → activated', (
+    tester,
+  ) async {
+    final qrPayload = payload(sessionId: 'stitched-new-session');
+    final events = StreamController<AccountMigrationReceiverEvent>.broadcast();
+    addTearDown(events.close);
+    var activated = false;
 
-      await tester.pumpWidget(
-        wrap(
-          AccountMigrationJourneyWired.newPhone(
-            bridge: _FakeBridge(),
-            secureKeyStore: FakeSecureKeyStore(),
-            buildQrPayload: () async => (
-              BuildMigrationQrPayloadResult.success,
-              MigrationQrBuildOutput(
-                payload: qrPayload,
-                qrJson: qrPayload.toJsonString(),
-              ),
-            ),
-            startReceiver: (_) async =>
-                const AccountMigrationReceiverStartResult.started(),
-            stopReceiver: (_) async {},
-            receiverEvents: events.stream,
-            onReceiverActivated: () async => activated = true,
-            transferKeepAlive: MigrationTransferKeepAlive(
-              invoker: (method, args) async {},
+    await tester.pumpWidget(
+      wrap(
+        AccountMigrationJourneyWired.newPhone(
+          bridge: _FakeBridge(),
+          secureKeyStore: FakeSecureKeyStore(),
+          buildQrPayload: () async => (
+            BuildMigrationQrPayloadResult.success,
+            MigrationQrBuildOutput(
+              payload: qrPayload,
+              qrJson: qrPayload.toJsonString(),
             ),
           ),
+          startReceiver: (_) async =>
+              const AccountMigrationReceiverStartResult.started(),
+          stopReceiver: (_) async {},
+          receiverEvents: events.stream,
+          onReceiverActivated: () async => activated = true,
+          transferKeepAlive: MigrationTransferKeepAlive(
+            invoker: (method, args) async {},
+          ),
         ),
-      );
-      await tester.pump();
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
 
-      // 1. QR ready and shown.
-      expect(find.text('Move Account QR'), findsOneWidget);
+    // 1. QR ready and shown.
+    expect(find.text('Move Account QR'), findsOneWidget);
 
-      // 2. Segments stream in: receiving stage with a determinate bar.
-      events.add(
-        const AccountMigrationReceiverEvent.receivingSegment(
-          sessionId: 'stitched-new-session',
-          segmentIndex: 0,
-          segmentCount: 3,
-          verifiedCount: 1,
-        ),
-      );
-      await tester.pump();
-      expect(find.text('Transferring database'), findsOneWidget);
-      final bar = tester.widget<LinearProgressIndicator>(
-        find.byKey(const ValueKey('account-migration-progress-bar')),
-      );
-      expect(bar.value, closeTo(1 / 3, 0.001));
+    // 2. Segments stream in: receiving stage with a determinate bar.
+    events.add(
+      const AccountMigrationReceiverEvent.receivingSegment(
+        sessionId: 'stitched-new-session',
+        segmentIndex: 0,
+        segmentCount: 3,
+        verifiedCount: 1,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Transferring database'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const ValueKey('account-migration-progress-bar')),
+    );
+    expect(bar.value, closeTo(1 / 3, 0.001));
 
-      // 3. Import begins, then verifies.
-      events.add(
-        const AccountMigrationReceiverEvent.importingBundle(
-          sessionId: 'stitched-new-session',
-          segmentCount: 3,
-          verifiedCount: 3,
-        ),
-      );
-      await tester.pump();
-      expect(find.text('Checking transferred data'), findsOneWidget);
+    // 3. Import begins, then verifies.
+    events.add(
+      const AccountMigrationReceiverEvent.importingBundle(
+        sessionId: 'stitched-new-session',
+        segmentCount: 3,
+        verifiedCount: 3,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Checking transferred data'), findsOneWidget);
 
-      events.add(
-        const AccountMigrationReceiverEvent.importVerified(
-          sessionId: 'stitched-new-session',
-        ),
-      );
-      await tester.pump();
-      expect(find.text('Checking transferred data'), findsOneWidget);
+    events.add(
+      const AccountMigrationReceiverEvent.importVerified(
+        sessionId: 'stitched-new-session',
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Checking transferred data'), findsOneWidget);
 
-      // 4. Activation completes the journey and fires the reroute hook.
-      events.add(
-        const AccountMigrationReceiverEvent.activated(
-          sessionId: 'stitched-new-session',
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-      expect(find.text('Transfer complete'), findsOneWidget);
-      expect(activated, isTrue);
-    },
-  );
+    // 4. Activation completes the journey and fires the reroute hook.
+    events.add(
+      const AccountMigrationReceiverEvent.activated(
+        sessionId: 'stitched-new-session',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Transfer complete'), findsOneWidget);
+    expect(activated, isTrue);
+  });
 
   testWidgets('leaving the journey cancels an in-flight transfer run', (
     tester,

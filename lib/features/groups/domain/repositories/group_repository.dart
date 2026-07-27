@@ -435,15 +435,6 @@ abstract class SelfRemovedGroupShellRepository {
     required Future<void> Function() joinNative,
   });
 
-  /// Fresh-only direct join. Production holds its coordinator across the
-  /// absent/no-floor proof, native action, and private assumes-held writes.
-  Future<void> commitFreshDirectJoin({
-    required GroupModel group,
-    required GroupMember selfMember,
-    required GroupKeyInfo key,
-    required Future<void> Function() joinNative,
-  });
-
   /// Exact no-floor fresh rollback. Newer group/member/key state refuses and
   /// no sequence of public destructive repository calls is used.
   Future<SelfRemovedAcceptedRollbackOutcome>

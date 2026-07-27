@@ -2968,12 +2968,6 @@ abstract class AppLocalizations {
   /// **'Saved safety'**
   String get group_saved_safety;
 
-  /// No description provided for @group_card_no_messages.
-  ///
-  /// In en, this message translates to:
-  /// **'No messages yet'**
-  String get group_card_no_messages;
-
   /// No description provided for @group_security_encrypted.
   ///
   /// In en, this message translates to:
@@ -3142,12 +3136,6 @@ abstract class AppLocalizations {
   /// **'Cannot send: we could not prepare a secure invite for this friend.'**
   String get invite_cannot_send_generic_snackbar;
 
-  /// No description provided for @group_backlog_mixed_list_summary.
-  ///
-  /// In en, this message translates to:
-  /// **'Older backlog expired after {days} days'**
-  String group_backlog_mixed_list_summary(int days);
-
   /// No description provided for @group_backlog_mixed_banner.
   ///
   /// In en, this message translates to:
@@ -3165,12 +3153,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Older missed messages expired after {days} days while you were away.'**
   String group_backlog_mixed_empty_subtitle(int days);
-
-  /// No description provided for @group_backlog_expired_list_summary.
-  ///
-  /// In en, this message translates to:
-  /// **'Missed backlog expired after {days} days'**
-  String group_backlog_expired_list_summary(int days);
 
   /// No description provided for @group_backlog_expired_banner.
   ///
@@ -3327,48 +3309,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to sign group metadata update'**
   String get group_info_sign_metadata_failed;
-
-  /// No description provided for @groups_title.
-  ///
-  /// In en, this message translates to:
-  /// **'Groups'**
-  String get groups_title;
-
-  /// No description provided for @groups_empty_title.
-  ///
-  /// In en, this message translates to:
-  /// **'No groups yet'**
-  String get groups_empty_title;
-
-  /// No description provided for @groups_empty_desc.
-  ///
-  /// In en, this message translates to:
-  /// **'Create a group to get started'**
-  String get groups_empty_desc;
-
-  /// No description provided for @groups_pending_invites.
-  ///
-  /// In en, this message translates to:
-  /// **'Pending Invites'**
-  String get groups_pending_invites;
-
-  /// No description provided for @groups_joined.
-  ///
-  /// In en, this message translates to:
-  /// **'Joined Groups'**
-  String get groups_joined;
-
-  /// No description provided for @groups_unknown_sender.
-  ///
-  /// In en, this message translates to:
-  /// **'Unknown'**
-  String get groups_unknown_sender;
-
-  /// No description provided for @groups_no_joined.
-  ///
-  /// In en, this message translates to:
-  /// **'No joined groups yet. Accept an invite to add it here.'**
-  String get groups_no_joined;
 
   /// No description provided for @group_type_discussion.
   ///
@@ -5371,6 +5311,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.'**
   String get account_migration_blocked_message;
+
+  /// No description provided for @account_migration_unfinished_move_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Account move not finished'**
+  String get account_migration_unfinished_move_title;
+
+  /// No description provided for @account_migration_unfinished_move_message.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone imported your account, but the final handoff with the old phone did not finish. Keep both phones and do not erase either copy.'**
+  String get account_migration_unfinished_move_message;
 
   /// No description provided for @contact_profile_verified_peer.
   ///

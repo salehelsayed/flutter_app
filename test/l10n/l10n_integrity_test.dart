@@ -90,6 +90,132 @@ void main() {
       },
     );
 
+    test(
+      'DTR-07 retired group-list keys are absent from every locale and generated API',
+      () {
+        const retiredKeys = <String>{
+          'group_card_no_messages',
+          'groups_title',
+          'groups_joined',
+          'groups_no_joined',
+          'groups_empty_title',
+          'groups_empty_desc',
+          'groups_pending_invites',
+          'groups_unknown_sender',
+        };
+        const retainedKeys = <String>{
+          'orbit_view_toggle_to_list',
+          'orbit_view_toggle_to_circle',
+        };
+        final violations = <String>[];
+
+        for (final locale in locales) {
+          final keys = _messageKeys(_loadArb(locale));
+          violations.addAll(
+            retiredKeys.intersection(keys).map((key) => 'app_$locale.arb:$key'),
+          );
+          violations.addAll(
+            retainedKeys
+                .difference(keys)
+                .map((key) => 'app_$locale.arb:missing:$key'),
+          );
+        }
+
+        final generatedFiles = <File>[
+          File('lib/l10n/app_localizations.dart'),
+          ...locales.map(
+            (locale) => File('lib/l10n/app_localizations_$locale.dart'),
+          ),
+        ];
+        for (final file in generatedFiles) {
+          final source = file.readAsStringSync();
+          violations.addAll(
+            retiredKeys
+                .where((key) => RegExp('\\b$key\\b').hasMatch(source))
+                .map((key) => '${file.path}:$key'),
+          );
+          violations.addAll(
+            retainedKeys
+                .where((key) => !RegExp('\\b$key\\b').hasMatch(source))
+                .map((key) => '${file.path}:missing:$key'),
+          );
+        }
+
+        expect(
+          violations,
+          isEmpty,
+          reason:
+              'DTR07-L10N-RED: retired group-list keys remain or Orbit '
+              'replacement keys are missing',
+        );
+      },
+    );
+
+    test(
+      'DTR-11 retired backlog list-summary keys are absent while live notice copy remains',
+      () {
+        const retiredKeys = <String>{
+          'group_backlog_mixed_list_summary',
+          'group_backlog_expired_list_summary',
+        };
+        const retainedKeys = <String>{
+          'group_backlog_mixed_banner',
+          'group_backlog_mixed_empty_title',
+          'group_backlog_mixed_empty_subtitle',
+          'group_backlog_expired_banner',
+          'group_backlog_expired_empty_title',
+          'group_backlog_expired_empty_subtitle',
+        };
+        final violations = <String>[];
+
+        for (final locale in locales) {
+          final bundle = _loadArb(locale);
+          final keys = _messageKeys(bundle);
+          violations.addAll(
+            retiredKeys.intersection(keys).map((key) => 'app_$locale.arb:$key'),
+          );
+          violations.addAll(
+            retiredKeys
+                .where((key) => bundle.containsKey('@$key'))
+                .map((key) => 'app_$locale.arb:@$key'),
+          );
+          violations.addAll(
+            retainedKeys
+                .difference(keys)
+                .map((key) => 'app_$locale.arb:missing:$key'),
+          );
+        }
+
+        final generatedFiles = <File>[
+          File('lib/l10n/app_localizations.dart'),
+          ...locales.map(
+            (locale) => File('lib/l10n/app_localizations_$locale.dart'),
+          ),
+        ];
+        for (final file in generatedFiles) {
+          final source = file.readAsStringSync();
+          violations.addAll(
+            retiredKeys
+                .where((key) => RegExp('\\b$key\\b').hasMatch(source))
+                .map((key) => '${file.path}:$key'),
+          );
+          violations.addAll(
+            retainedKeys
+                .where((key) => !RegExp('\\b$key\\b').hasMatch(source))
+                .map((key) => '${file.path}:missing:$key'),
+          );
+        }
+
+        expect(
+          violations,
+          isEmpty,
+          reason:
+              'DTR11-L10N-RED: retired list-summary keys remain or live '
+              'backlog notice copy is missing',
+        );
+      },
+    );
+
     test('simple hardcoded UI literals stay out of feature/shared widgets', () {
       final roots = <Directory>[
         Directory('lib/features'),

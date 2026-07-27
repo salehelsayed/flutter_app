@@ -6,31 +6,40 @@ Updated 2026-06-10 for the Move Account local segmented transfer timeout slice: 
 Updated 2026-06-10 for Move Account broad-gate capture: `$run-flutter-host-gates move-feature` covers all 40 dedicated account-migration host files plus shared lifecycle, push, local-discovery, startup, and P2P move guards; `$run-flutter-reliability-sims move-feature/all` covers the two Move Account simulator regressions plus the SQLCipher concrete-target integration companion.
 Updated 2026-06-11 for Move Account protocol v2 (entry-streamed bundle, scale plan Phase 2): session chunked-AEAD stream crypto + ledger store + entry stream source tests, v2 chunk/status/resume/cleanup receiver coverage in the bundle transfer suite, v2-ported chained E2E with resume and 100 MB bounded-memory variants, v2 storage-preflight amplification, the v2-rewritten P0-7 scale benchmark harness, and Go `migration.session/chunk` bridge crypto tests with interop vectors.
 Updated 2026-06-12 for 111 P0 silent 1:1 message-loss gate capture: `$run-flutter-host-gates 1to1` covers the Dart host inventory files alongside the historical 1:1 smoke files; `$run-flutter-reliability-sims 1to1/all` remains the simulator/E2E 1:1 surface because the 111 inventory did not add a new `integration_test` simulator file.
+Updated 2026-07-26 for Plan 285 host closure and the canonical `move-feature`
+gate: 44 dedicated account-migration files / 310 declared tests plus six
+explicitly registered shared paths.
+Updated 2026-07-27 for DTR-11 from the live filesystem census: the ten
+SUT-only suites were retired, `feed_projection_test.dart` and the push-preview
+release calculator were migrated to live/tooling owners, and all four
+`test/unit/**/*_test.dart` files are now registered in both `core-host-all` and
+`host-all`. Feature-count corrections below are limited to DTR-11-touched
+features.
 
 ## Summary
-- Dart unit/widget tests (`test/**`): **708**
-- Flutter integration tests/harnesses (`integration_test/**`): **79**
-- Go (`go-mknoon/**`) tests: **80** (includes 27 vendored `third_party/go-libp2p-pubsub/*_test.go`)
-- Go (`go-relay-server/**`) tests: **13**
-- **Total**: **880**
+- Dart unit/widget tests (`test/**/*_test.dart`): **1,270**
+- Flutter integration tests/harnesses/support (`integration_test/**/*.dart`): **205**
+- Go (`go-mknoon/**/*_test.go`) tests: **120** (includes 41 vendored `third_party/**/*_test.go`)
+- Go (`go-relay-server/**/*_test.go`) tests: **22**
+- **Total**: **1,617**
 
 ## Feature index
 
 App features (`test/features/<feature>/`):
-- [account_migration](#account_migration) — 40 tests
+- [account_migration](#account_migration) — 44 test files
 - [contact_request](#contact_request) — 19 tests
 - [contacts](#contacts) — 9 tests
-- [conversation](#conversation) — 78 tests
-- [feed](#feed) — 37 tests
+- [conversation](#conversation) — 155 tests
+- [feed](#feed) — 38 tests
 - [groups](#groups) — 88 tests
 - [home](#home) — 9 tests
-- [identity](#identity) — 19 tests
-- [introduction](#introduction) — 34 tests
-- [orbit](#orbit) — 22 tests
-- [p2p](#p2p) — 10 tests
+- [identity](#identity) — 24 tests
+- [introduction](#introduction) — 37 tests
+- [orbit](#orbit) — 48 tests
+- [p2p](#p2p) — 9 tests
 - [posts](#posts) — 92 tests (multi-phase: improvement, phase1–phase5)
-- [push](#push) — 17 tests
-- [qr_code](#qr_code) — 7 tests
+- [push](#push) — 34 tests
+- [qr_code](#qr_code) — 5 tests
 - [settings](#settings) — 17 tests
 - [share](#share) — 6 tests
 - [features-loose](#features-loose) — 1 test (top-level under `test/features/`)
@@ -41,17 +50,17 @@ Cross-cutting:
 - [Shared widgets / fixtures](#shared) — 9 tests (`test/shared/**`)
 - [Performance & benchmarks](#performance) — 23 tests (`test/performance/**`)
 - [Security](#security) — 1 test (`test/security/**`)
-- [Unit (analyzer / path utils)](#unit-bucket) — 2 tests (`test/unit/**`)
-- [Flutter on-device integration & harnesses](#flutter-integration) — 79 files (`integration_test/**`)
-- [Go P2P node (`go-mknoon`)](#go-mknoon) — 80 tests
-- [Go relay server (`go-relay-server`)](#go-relay-server) — 13 tests
+- [Unit tooling / inventory contracts](#unit-bucket) — 4 tests (`test/unit/**`; `core-host-all` + `host-all`)
+- [Flutter on-device integration & harnesses](#flutter-integration) — 205 Dart files (`integration_test/**`)
+- [Go P2P node (`go-mknoon`)](#go-mknoon) — 120 tests
+- [Go relay server (`go-relay-server`)](#go-relay-server) — 22 tests
 
 ---
 
 <a id="account_migration"></a>
 ## account_migration
 **Where it lives in the app**: `lib/features/account_migration/` (device-local migration authority, QR pairing/session boundary, secure-storage migration helpers, SQLCipher DB migration primitives, app-owned file manifest/preflight helpers, and host-side migration presentation).
-**Test count**: Dart unit/widget 40 files / 226 declared tests | Integration 3 files | Go 0
+**Test count**: Dart unit/widget 44 files / 310 declared tests | Integration 3 files | Go 0
 
 ### Application
 - `account_migration_authority_repository_test.dart` — Device-local authority persistence outside the migrated DB.
@@ -73,6 +82,11 @@ Cross-cutting:
 - `migration_database_import_staging_test.dart` — Staged DB open with staged DB key, checksum/schema/integrity verification, and active-key preservation.
 - `migration_database_import_validator_test.dart` — Imported identity null-secret columns plus required staged DB/identity/ML-KEM secret readiness.
 - `migration_database_import_cleanup_test.dart` — Staged DB artifact and SQLite sidecar cleanup with MIG-003 failed-import cleanup integration.
+- `migration_database_active_importer_test.dart` — Verified staged rows replace
+  the active DB atomically, schema mismatch fails without deleting active rows,
+  and v103/v104 diagnostic compatibility is preserved.
+- `migration_account_size_estimator_test.dart` — Account-size estimation used
+  for migration planning and transfer-budget decisions.
 - `migration_file_manifest_builder_test.dart` — App-owned file manifest generation across chat media, post media, avatars, group avatars, pending uploads, thumbnails, path healing, checksums, and transient-file classification.
 - `migration_file_manifest_validator_test.dart` — Required-file validation, encrypted chat-media secure-key metadata checks, post-media DB crypto checks, and non-critical thumbnail handling.
 - `migration_storage_preflight_test.dart` — Required/optional/staging byte accounting and fail-closed storage-capacity preflight results.
@@ -91,6 +105,8 @@ Cross-cutting:
 - `account_migration_runtime_network_gate_test.dart` — Migrated-out runtime network gate semantics for active, missing legacy, failed, mismatched, and non-active authority states.
 - `migration_pending_work_manifest_builder_test.dart` — Row-driven pending-work ownership manifest across 1:1, media, posts, introductions, and group pending work with new-phone-only resume policy.
 - `migration_pending_work_manifest_validator_test.dart` — Blocking unsafe pending work, missing payload/file context, unsupported pending paths, terminal retry contradictions, and sensitive-material leakage.
+- `migration_breadcrumb_test.dart` — Sanitized Move Account diagnostic
+  breadcrumbs and privacy-safe phase/failure context.
 
 ### Integration
 - `integration_test/migration_database_sqlcipher_capability_test.dart` — Plugin-registered macOS SQLCipher `sqlcipher_export` capability probe.
@@ -98,7 +114,7 @@ Cross-cutting:
 - `integration_test/account_migration_local_transfer_timeout_simulator_test.dart` — Local segmented transfer timeout simulator: 34-segment near-budget success with monotonic segment progress telemetry and over-budget typed `localTransferTimedOut` failure with full `POST_FAILED` phase diagnostics (no `bundleSourceFailed` mislabel).
 
 ### Broad Gate Capture
-- `$run-flutter-host-gates move-feature` captures all 40 dedicated account-migration host files plus shared move guards in `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`, `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`, `test/core/services/p2p_service_impl_test.dart`, `test/features/identity/application/startup_decision_test.dart`, and `test/features/push/application/push_registration_post_cutover_test.dart`.
+- `$run-flutter-host-gates move-feature` captures all 44 dedicated account-migration host files plus six shared move guards: `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`, `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`, `test/core/services/p2p_service_impl_test.dart`, `test/features/identity/application/startup_decision_test.dart`, `test/features/identity/presentation/screens/startup_router_recovery_test.dart`, and `test/features/push/application/push_registration_post_cutover_test.dart`.
 - `$run-flutter-host-gates feature-host-all`, `core-host-all`, and `host-all` also capture those files through their broad directory scopes.
 - `$run-flutter-reliability-sims move-feature/all` captures `account_migration_group_media_durability_simulator_test.dart`, `account_migration_local_transfer_timeout_simulator_test.dart`, and the SQLCipher capability test as a Move Account concrete-target integration companion. The SQLCipher row is not a group-messaging proof, and Android-to-iOS SQLCipher migration remains a known gap outside the same-device probe.
 
@@ -153,8 +169,10 @@ Cross-cutting:
 - `key_exchange_retry_flow_test.dart` — Multi-step ML-KEM retry/recovery flow.
 
 ### Presentation widgets
-- `contact_request_dialog_test.dart` — Accept/decline dialog widget.
-- `pending_requests_badge_test.dart` — Badge count widget.
+- `contact_request_dialog_test.dart` — Live accept/decline request surface;
+  pending-request visibility is owned by
+  `contact_request_notification_materializer_test.dart` and the Feed-wired
+  dialog flow after retirement of the badge-only suite.
 
 ### Notes
 - Solid coverage for both happy paths and key-exchange edge cases.
@@ -185,7 +203,7 @@ Cross-cutting:
 <a id="conversation"></a>
 ## conversation
 **Where it lives in the app**: `lib/features/conversation/` (1:1 letter-card chat, media, voice, reactions).
-**Test count**: Dart unit/widget 78 | Integration 11 | Go 0 (handled by go-mknoon node tests)
+**Test count**: Dart unit/widget 155 | Integration 24 | Go 0 (handled by go-mknoon node tests)
 
 ### Application — send/receive pipeline (`test/features/conversation/application/`)
 - `send_chat_message_use_case_test.dart` / `send_chat_message_no_bg_task_test.dart` — Outbound encryption, persistence, ack handling; no-background-task variant.
@@ -269,7 +287,9 @@ Cross-cutting:
 - `letter_card_test.dart` — Core message bubble.
 - `compose_area_test.dart` / `attachment_preview_strip_test.dart` — Composer.
 - `voice_record_button_test.dart` / `recording_overlay_test.dart` — Voice recording UI.
-- `reaction_bar_test.dart` / `reaction_display_test.dart` / `full_emoji_picker_test.dart` — Reactions UI.
+- `reaction_bar_test.dart` / `full_emoji_picker_test.dart` /
+  `letter_card_test.dart` — Reaction controls/picker plus the live LetterCard
+  reaction chips, counts, current-user highlighting, and tap behavior.
 - `message_context_overlay_test.dart` — Long-press context.
 - `compact_origin_marker_test.dart` / `empty_conversation_state_test.dart` / `date_separator_test.dart` / `conversation_header_test.dart` / `blocked_banner_test.dart` — Misc states/widgets.
 
@@ -281,10 +301,12 @@ Cross-cutting:
 <a id="feed"></a>
 ## feed
 **Where it lives in the app**: `lib/features/feed/` (incoming-only feed; cards split into connection vs message).
-**Test count**: Dart unit/widget 37 | Integration 3 | Go 0
+**Test count**: Dart unit/widget 38 | Integration 0 | Go 0
 
 ### Application
-- `feed_projection_test.dart` — Pure projection of repo data into FeedItems.
+- `feed_projection_test.dart` — `FeedStore` contact/group snapshot replacement
+  parity against cold `projectPendingFeed` projection, including archive,
+  mark-read, ordering, and media preservation.
 - `feed_store_test.dart` / `feed_reaction_store_test.dart` — In-memory store + reaction join.
 - `load_feed_use_case_test.dart` — Load feed from repos.
 
@@ -353,7 +375,8 @@ Cross-cutting:
 - `group_offline_replay_envelope_test.dart` — Offline-replay envelope semantics.
 
 ### Application — keys
-- `rotate_group_key_use_case_test.dart` / `rotate_and_distribute_group_key_use_case_test.dart` — Key rotation paths.
+- `rotate_and_distribute_group_key_use_case_test.dart` — Live generate/distribute/promote/persist key-rotation flow.
+- `legacy_group_key_rotation_removal_contract_test.dart` — Retired Dart rotation leaf and raw-dispatch absence contract.
 - `group_key_update_listener_test.dart` — Key-update listener.
 
 ### Application — recovery / retries
@@ -390,14 +413,12 @@ Cross-cutting:
 - `announcement_happy_path_test.dart` / `announcement_new_reader_onboarding_test.dart` — Announcement-group variant flows.
 
 ### Presentation — screens
-- `group_list_screen_test.dart` / `group_list_wired_test.dart` / `group_list_screen_bidi_test.dart` — Group list (RTL/LTR).
 - `group_conversation_screen_test.dart` / `group_conversation_wired_test.dart` / `screens/group_conversation_wired_bg_task_test.dart` — Group chat screen.
 - `group_info_screen_test.dart` / `group_info_wired_test.dart` — Group info/details.
 - `contact_picker_screen_test.dart` / `contact_picker_wired_test.dart` / `contact_picker_multi_select_integration_test.dart` — Picker for adding members.
 - `create_group_picker_screen_test.dart` / `create_group_picker_wired_test.dart` — Create-group picker.
 
 ### Presentation — widgets
-- `group_card_test.dart` / `group_card_bidi_test.dart` — Group list card.
 - `group_type_badge_test.dart` — Type badge.
 - `widgets/contact_picker_row_test.dart` — Picker row.
 - `widgets/expandable_fab_test.dart` / `widgets/glow_fab_test.dart` — Compose FABs.
@@ -435,13 +456,14 @@ Cross-cutting:
 <a id="identity"></a>
 ## identity
 **Where it lives in the app**: `lib/features/identity/` (generate, restore, secrets storage, startup routing).
-**Test count**: Dart unit/widget 19 | Integration 0 | Go (`go-mknoon/identity`) 1
+**Test count**: Dart unit/widget 24 | Integration 0 | Go (`go-mknoon/identity`) 1
 
 ### Application
 - `generate_identity_use_case_test.dart` — Generates Ed25519 + ML-KEM + mnemonic, persists.
 - `restore_identity_use_case_test.dart` — Restore from mnemonic.
-- `recover_identity_from_secure_store_use_case_test.dart` — Recovery path from secure storage.
-- `startup_decision_test.dart` — Decides FTE vs Home vs Recovery.
+- `startup_decision_test.dart` — Decides FTE vs Home vs Recovery while keeping
+  identity restoration an explicit action rather than automatically restoring
+  from surviving secure-store material.
 
 ### Domain
 - `domain/models/identity_model_test.dart` — Model.
@@ -454,7 +476,11 @@ Cross-cutting:
 - `identity_choice_screen_test.dart` / `identity_choice_wired_test.dart` — Choice screen.
 - `identity_progress_screen_test.dart` — Progress UI during identity generation.
 - `mnemonic_input_screen_test.dart` — Restore mnemonic input.
-- `startup_router_test.dart` / `startup_router_recovery_test.dart` / `startup_router_notification_open_test.dart` — Top-level startup router flows.
+- `startup_router_test.dart` / `startup_router_recovery_test.dart` /
+  `startup_router_notification_open_test.dart` — Top-level startup router
+  flows, including the no-auto-restore lock (`needsIdentity` ignores a
+  surviving mnemonic and does not call `identity.restore`) while explicit
+  recovery remains separately exercised.
 
 ### Presentation — widgets
 - `ambient_background_test.dart` / `brand_header_test.dart` / `choice_card_test.dart` / `startup_loading_gate_test.dart` — UI bits.
@@ -470,7 +496,7 @@ Cross-cutting:
 <a id="introduction"></a>
 ## introduction
 **Where it lives in the app**: `lib/features/introduction/` (intro/friends flow — introduce two contacts).
-**Test count**: Dart unit/widget 34 | Integration 3 | Regression 1 | Go 0
+**Test count**: Dart unit/widget 37 | Integration 4 | Regression 1 | Go 0
 
 ### Application
 - `send_introduction_test.dart` / `pass_introduction_test.dart` — Outbound send / forwarding.
@@ -504,7 +530,10 @@ Cross-cutting:
 - `intro_banner_test.dart` — Top banner.
 - `intro_group_header_test.dart` / `intro_row_test.dart` — List items.
 - `intro_system_message_test.dart` — System message bubble.
-- `intros_tab_test.dart` / `intros_tab_extended_test.dart` — Tab containers.
+- Live intro-list composition is owned by
+  `test/features/orbit/presentation/screens/orbit_screen_archived_groups_test.dart`;
+  it proves folded attribution peer-id fallback and long-name actionability on
+  the shipped Orbit sliver.
 
 ### Regression
 - `regression/introduction_regression_test.dart` — Regression-bucket guards.
@@ -517,7 +546,7 @@ Cross-cutting:
 <a id="orbit"></a>
 ## orbit
 **Where it lives in the app**: `lib/features/orbit/` (friends/groups orbital visualization).
-**Test count**: Dart unit/widget 22 | Integration 0 | Go 0
+**Test count**: Dart unit/widget 48 | Integration 0 | Go 0
 
 ### Application
 - `load_orbit_data_use_case_test.dart` — Loads friends + intros + active threads.
@@ -528,7 +557,9 @@ Cross-cutting:
 
 ### Presentation — screens
 - `orbit_screen_loading_test.dart` / `orbit_wired_test.dart` — Loading / wired states.
-- `orbit_screen_archived_groups_test.dart` — Archived-groups screen branch.
+- `orbit_screen_archived_groups_test.dart` — Archived-groups branch and the
+  live intros sliver, including folded blank-introducer peer-id fallback, long
+  names, and intact Accept/Pass actions.
 - `orbit_intros_wiring_test.dart` — Intros card wiring on orbit.
 
 ### Presentation — widgets
@@ -548,12 +579,16 @@ Cross-cutting:
 <a id="p2p"></a>
 ## p2p
 **Where it lives in the app**: `lib/features/p2p/` (Dart-side wrappers; transport lives in Go).
-**Test count**: Dart unit/widget 10 | Integration 0 | Go = entire `go-mknoon/`
+**Test count**: Dart unit/widget 9 | Integration 0 | Go = entire `go-mknoon/`
 
 ### Application
-- `start_node_use_case_test.dart` / `stop_node_use_case_test.dart` — Bridge `node:start` / `node:stop` lifecycle.
-- `discover_peer_use_case_test.dart` — Peer discovery wrapper.
-- `send_message_use_case_test.dart` — Send wrapper.
+- `start_node_use_case_test.dart` — Live `node:start` composition, identity
+  inputs, bridge failure, and migrated-account runtime gate.
+
+### Live service / lifecycle owners (`test/core/services/`)
+- `p2p_service_impl_test.dart` / `p2p_service_stop_race_test.dart` — Direct
+  discover/send/stop behavior and lifecycle recovery, including stop/dispose
+  race safety and no post-stop node resurrection.
 
 ### Domain models
 - `chat_message_test.dart` — Inbound/outbound model.
@@ -638,7 +673,7 @@ Cross-cutting:
 <a id="push"></a>
 ## push
 **Where it lives in the app**: `lib/features/push/` (FCM/APNs integration + local notifications).
-**Test count**: Dart unit/widget 17 | Integration 0 | Go 0
+**Test count**: Dart unit/widget 34 | Integration 1 | Go 0
 
 ### Application
 - `register_push_token_use_case_test.dart` / `request_push_permission_use_case_test.dart` — Permission + token.
@@ -646,7 +681,10 @@ Cross-cutting:
 - `handle_foreground_remote_message_use_case_test.dart` / `handle_initial_remote_message_use_case_test.dart` / `background_message_handler_test.dart` — Foreground / cold / background handlers.
 - `prepare_notification_open_use_case_test.dart` — Pre-open hooks.
 - `show_notification_use_case_test.dart` / `notification_body_for_message_test.dart` — Notification body composition.
-- `push_decrypt_preview_test.dart` / `push_preview_telemetry_gate_test.dart` — Decrypted preview + telemetry gate.
+- `push_decrypt_preview_test.dart` — Runtime decrypted-preview behavior.
+- `push_preview_telemetry_gate_test.dart` — Tooling-owned release calculator
+  imported from `tool/telemetry/`: cross-platform numerator/denominator,
+  expected-fallback exclusions, and the 3% release-block threshold.
 - `infrastructure/push_token_store_impl_test.dart` — Device-bound push token/platform secure-store keys, clear/regenerate behavior, invalid partial-token cleanup.
 - `chat_and_group_push_open_flow_test.dart` — Open flow for chat + group pushes.
 - `intro_notification_orbit_route_test.dart` — Intro push routes to orbit.
@@ -662,22 +700,23 @@ Cross-cutting:
 <a id="qr_code"></a>
 ## qr_code
 **Where it lives in the app**: `lib/features/qr_code/` (display + scan).
-**Test count**: Dart unit/widget 7 | Integration 0 | Go 0
+**Test count**: Dart unit/widget 5 | Integration 0 | Go 0
 
 ### Application
 - `build_qr_payload_use_case_test.dart` — Build payload for display.
 - `parse_qr_payload_use_case_test.dart` — Parse scanned payload.
-- `handle_scanned_qr_use_case_test.dart` — Dispatches scanned payload (CR vs intro vs unknown).
-
-### Domain
-- `qr_payload_model_test.dart` — Payload model.
 
 ### Presentation
-- `qr_display_wired_test.dart` / `qr_scanner_wired_test.dart` — Wired screens.
+- `qr_display_wired_test.dart` — Wired display screen.
+- `qr_scanner_wired_test.dart` — Live scan owner: MIG-002 migration dispatch
+  remains contact-side-effect-free, while contact scans prove sign-before-
+  encrypt ordering, a v2 encrypted `contact_request` inbox envelope, and
+  profile-download failure isolation.
 - `widgets/scan_overlay_test.dart` — Scan overlay UI.
 
 ### Notes
-- `handle_scanned_qr_use_case_test.dart` and `qr_scanner_wired_test.dart` now include MIG-002 regressions proving migration QR payloads are classified before contact parsing/contact-add/contact-request/profile-picture side effects.
+- `qr_scanner_wired_test.dart` owns the migrated MIG-002 and encrypted-request
+  proof on the shipped scanner path.
 
 ---
 
@@ -887,14 +926,25 @@ Benchmark harnesses (Dart-side, run as unit tests):
 ---
 
 <a id="unit-bucket"></a>
-## Unit bucket (`test/unit/**`) — 2
-- `analyzer_baseline_parser_test.dart` — Parses Flutter analyzer baseline file.
-- `path_exists_test.dart` — File-existence helper used by tooling.
+## Unit tooling / inventory contracts (`test/unit/**`) — 4
+- `analyzer_suppression_ratchet_test.dart` — Production analyzer-suppression
+  discovery and baseline-ratchet contract. **Gates:** `core-host-all`,
+  `host-all`.
+- `dtr11_remaining_test_only_leaves_disposition_test.dart` — Exact DTR-11
+  retirement, live-owner, carry-in, and curated-family registration contract.
+  **Gates:** `core-host-all`, `host-all`.
+- `path_exists_test.dart` — CI unit-path existence sentinel. **Gates:**
+  `core-host-all`, `host-all`.
+- `runtime_root_inventory_test.dart` — Runtime-root classifier, manifest, and
+  generated-root ownership contract. **Gates:** `core-host-all`, `host-all`.
+
+`test/unit/**` is no longer host-all-only: `core-host-all` discovers the same
+four `*_test.dart` paths exactly.
 
 ---
 
 <a id="flutter-integration"></a>
-## Flutter on-device integration & harnesses (`integration_test/**`) — 78
+## Flutter on-device integration & harnesses (`integration_test/**`) — 205 Dart files
 **Where they run**: real device or simulator via `flutter test integration_test/...` or `flutter drive`.
 
 ### Top-level smoke / e2e
@@ -959,7 +1009,7 @@ Benchmark harnesses (Dart-side, run as unit tests):
 ---
 
 <a id="go-mknoon"></a>
-## Go P2P node — `go-mknoon/**` — 80 tests
+## Go P2P node — `go-mknoon/**` — 120 tests
 
 ### `bridge/` (gomobile-exposed surface) — 2
 - `bridge_test.go` — End-to-end bridge tests for command dispatch.
@@ -1019,7 +1069,7 @@ Benchmark harnesses (Dart-side, run as unit tests):
 ---
 
 <a id="go-relay-server"></a>
-## Go relay server — `go-relay-server/**` — 13
+## Go relay server — `go-relay-server/**` — 22 tests
 
 - `server_bootstrap_test.go` — Server boot sequence.
 - `inbox_test.go` / `inbox_dedup_test.go` — 1:1 inbox + dedupe.

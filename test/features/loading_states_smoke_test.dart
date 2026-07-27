@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/qr_code_section.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -47,21 +46,6 @@ void main() {
 
       expect(find.byKey(const ValueKey('feed-loading-card-0')), findsOneWidget);
       expect(find.byKey(const ValueKey('feed-loading-status')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('Group list loading renders without overflow', (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(
-          GroupListScreen(
-            groups: [],
-            isLoading: true,
-            onGroupTap: (_) {},
-            onBack: () {},
-          ),
-        ),
-      );
-      await tester.pump();
       expect(tester.takeException(), isNull);
     });
 

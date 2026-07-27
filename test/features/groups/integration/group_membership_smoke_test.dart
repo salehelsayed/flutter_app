@@ -15,7 +15,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
@@ -47,6 +47,36 @@ import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+
+void expectCompletedDurableExit(GroupTestUser user) {
+  final evidence = user.lastDurableGroupExitEvidence;
+  expect(evidence, isNotNull);
+  expect(evidence!.coordinatorStatus?.name, 'started');
+  expect(evidence.actionId, isNotEmpty);
+  expect(evidence.sourceEventId, isNotEmpty);
+  expect(evidence.pendingBroadcastId, isNotEmpty);
+  expect(evidence.noticePrepareCount, 1);
+  expect(evidence.noticeAttemptCount, 1);
+  expect(evidence.rotationAttemptCount, 1);
+  expect(evidence.nativeLeaveCount, 1);
+  expect(evidence.intentPresentAfter, isFalse);
+  expect(evidence.pendingBroadcastPresentAfter, isFalse);
+}
+
+void expectBlockedDurableExit(GroupTestUser user) {
+  final evidence = user.lastDurableGroupExitEvidence;
+  expect(evidence, isNotNull);
+  expect(evidence!.coordinatorStatus?.name, 'blockedLastAdmin');
+  expect(evidence.actionId, isNull);
+  expect(evidence.sourceEventId, isNull);
+  expect(evidence.pendingBroadcastId, isNull);
+  expect(evidence.noticePrepareCount, 0);
+  expect(evidence.noticeAttemptCount, 0);
+  expect(evidence.rotationAttemptCount, 0);
+  expect(evidence.nativeLeaveCount, 0);
+  expect(evidence.intentPresentAfter, isFalse);
+  expect(evidence.pendingBroadcastPresentAfter, isFalse);
+}
 
 void main() {
   late FakeGroupPubSubNetwork network;
@@ -2666,11 +2696,7 @@ void main() {
       bob.start();
 
       await expectLater(
-        leaveGroup(
-          bridge: admin.bridge,
-          groupRepo: admin.groupRepo,
-          groupId: groupId,
-        ),
+        admin.leaveGroup(groupId),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -2679,6 +2705,7 @@ void main() {
           ),
         ),
       );
+      expectBlockedDurableExit(admin);
 
       expect(admin.bridge.commandLog, isNot(contains('group:leave')));
       expect(await admin.groupRepo.getGroup(groupId), isNotNull);
@@ -2811,6 +2838,7 @@ void main() {
             ),
           ),
         );
+        expectBlockedDurableExit(alice);
         expect(alice.bridge.commandLog, isNot(contains('group:leave')));
         await pump();
         expect(removedGroupIds, isEmpty);
@@ -3004,6 +3032,7 @@ void main() {
         await pump();
 
         await admin.leaveGroup(groupId);
+        expectCompletedDurableExit(admin);
         await pump();
 
         expect(await admin.groupRepo.getGroup(groupId), isNull);
@@ -14611,6 +14640,7 @@ void main() {
         charlie.start();
 
         await bob.leaveGroup(groupId);
+        expectCompletedDurableExit(bob);
         await pump();
 
         expect(await bob.groupRepo.getGroup(groupId), isNull);
@@ -16836,11 +16866,9 @@ void main() {
         bob.bridge.commandLog.clear();
 
         await deleteGroupAndMessages(
-          bridge: bob.bridge,
           groupRepo: bob.groupRepo,
           groupMessageRepo: bob.msgRepo,
           groupId: groupId,
-          deleteLocallyIfDissolved: true,
         );
         await pump();
 

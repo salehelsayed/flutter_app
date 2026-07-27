@@ -16,8 +16,9 @@ RED/GREEN and mutation re-reds, TC-02 through TC-08, `1to1`, strict analysis,
 discovery, the physical Pixel 6 transport preservation gate, the 821-path
 `feature-host-all` sweep, and Graphify closure are green. The live shared relay
 protocol is retained; protected protocol files and executable
-`relayProbeEligible` plumbing are unchanged. Wave 1 aggregate `host-all`
-remains the wave-level next gate, not a per-plan claim.
+`relayProbeEligible` plumbing are unchanged. The later Wave 1 aggregate
+`host-all` passed and is recorded separately in the master roadmap; it is not a
+per-plan claim.
 
 ## Planning Progress
 | Time | Role | Files inspected | Decision/blocker | Next action |
@@ -334,8 +335,9 @@ a registration break would surface.
 ### Dependencies
 
 - DTR-02's ratchet loses its only handwritten entry.
-- Wave 1 aggregate `host-all` remains owned by the DTR-03/DTR-04/DTR-05 wave
-  closure; final rollout/release owns the second aggregate `host-all`.
+- Wave 1 aggregate `host-all` was owned by the DTR-03/DTR-04/DTR-05 wave
+  closure and is now accepted in the roadmap; final rollout/release owns the
+  second aggregate `host-all`.
 - FDC-03 supplies the discharged retention condition; no FDC production change
   is part of this plan.
 - `DTR05-AUTH-01` owns the disposition and two-peer-waiver decision.
@@ -1236,8 +1238,19 @@ mutation re-reds, exact preservation tests, `1to1`, strict analysis, four Go
 selectors, discovery, physical Pixel 6 transport preservation, the 821-path
 `feature-host-all` sweep, Graphify, protected-scope, and diff gates. No DTR-05
 blocker remains. The live protocol-retirement floor remains UNKNOWN and
-retirement is not authorized. Wave 1 aggregate acceptance is not claimed until
-its separate full `host-all`.
+retirement is not authorized. This per-plan verdict did not itself claim Wave 1
+acceptance; the later full `host-all` acceptance is recorded below.
+
+## Wave 1 Acceptance Addendum
+
+Plan 276 remains `Plan-green`; its DTR-05 registry row was promoted separately
+to `Wave-accepted` on 2026-07-26. The complete Wave 1 `host-all` retry passed at
+concurrency 1: 1,265 exact Dart paths, 12,863 tests passed and 1 skipped, and
+all eight Go tails passed. The non-green first attempt, test-only assertion
+correction, accepted retry, original-log hashes, and stable archives are
+recorded in the
+[master roadmap](dead-code-and-technical-debt-removal-roadmap.md#wave-gate-ledger).
+No production source changed between the two Wave 1 attempts.
 
 ## Handoff
 
@@ -1254,9 +1267,9 @@ its separate full `host-all`.
   test registration is added.
 - Boundary closure: host-causal closure plus the conditional single-target
   Android preservation gate under the recorded helper-only waiver.
-- Remaining work: one Wave 1 aggregate full `host-all` after constituent
-  landing, then final-rollout `host-all` at release closure. Neither is a
-  per-plan DTR-05 gate.
+- Remaining work: Wave 1 aggregate `host-all` is complete and accepted.
+  Final-rollout `host-all` remains required at release closure; neither gate is
+  a per-plan DTR-05 gate.
 
 ## Execution Progress
 
@@ -1264,4 +1277,5 @@ its separate full `host-all`.
 |---|---|---|---|---|---|---|
 | 2026-07-26 | prerequisite landing | Roadmap registry/proof floors/decision ledger/compatibility row; index; Plan 276; completed DTR-01 through DTR-04 tree | Commit `ec86247eb`; clean Gate 0 exited 0 | `DTR05-AUTH-01` recorded; exact census was 3 tokens = 1 declaration + 2 comments, with no part/VM entrypoint; four-occurrence ratchet baseline green | No decision blocker | Add E4/E5 tests and establish the causal RED |
 | 2026-07-26 | causal implementation and mutation verification | Chat send source; suppression inventory; ratchet, chat-send, and P2P fault-injection tests | TC-01 emitted `DTR05-RED inventory-count-3` then GREEN; M-1 through M-4 re-red; TC-03 observed one probe; TC-04 observed two stores | Helper/suppression/handwritten identity removed atomically; all six mutation recipes discriminated the intended fault and were immediately reversed | No causal-evidence blocker | Run preservation, family, device, and graph closure |
-| 2026-07-26 | preservation and closure | Eight Test Contract rows; `1to1`; analyzer; Go; discovery; Pixel transport; feature family; Graphify; protected scope | TC-02 through TC-08 GREEN; `1to1` 2,441; strict 3/0; Go 4/4; Pixel `21071FDF600CSC` transport exit 0; `feature-host-all` `+8550 ~1` across 821 paths; Graph fingerprint `a79b2f04386f2be9` | Exact chat node absent, introduction node present once; live shared protocol and protected files unchanged; final ten-path allowlist clean | `Plan-green`; no DTR-05 blocker | Wave 1 aggregate `host-all`, then final-rollout `host-all` |
+| 2026-07-26 | preservation and closure | Eight Test Contract rows; `1to1`; analyzer; Go; discovery; Pixel transport; feature family; Graphify; protected scope | TC-02 through TC-08 GREEN; `1to1` 2,441; strict 3/0; Go 4/4; Pixel `21071FDF600CSC` transport exit 0; `feature-host-all` `+8550 ~1` across 821 paths; Graph fingerprint `a79b2f04386f2be9` | Exact chat node absent, introduction node present once; live shared protocol and protected files unchanged; final ten-path allowlist clean | `Plan-green`; no DTR-05 blocker | await the cadence-owned Wave 1 aggregate gate |
+| 2026-07-26 | Wave 1 acceptance | DTR-03, DTR-04, DTR-05 integrated tree | accepted full `host-all`: Flutter `+12863 ~1`; Go 8/8 PASS; exit 0 | complete attempt history and stable log archives recorded in the master roadmap | DTR-05 promoted to `Wave-accepted`; no remaining wave blocker | final-rollout `host-all` remains a separate later gate |

@@ -33,7 +33,6 @@ import 'package:flutter_app/features/groups/application/retry_incomplete_group_d
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/application/trusted_private_group_system_event.dart';
@@ -169,9 +168,10 @@ String _membershipFlowId(String value) =>
 /// when members are added or removed. These update the local DB and Go topic
 /// validator so that messages are accepted/rejected accordingly.
 ///
-/// When the local user is removed from a group, the listener calls
-/// [leaveGroup] to unsubscribe from the Go pubsub topic and clean up
-/// local data, then emits the groupId on [groupRemovedStream].
+/// When the local user is removed from a group, the listener retains the
+/// read-only local history shell through [_retainSelfRemovedLocalHistory] and
+/// emits the groupId on [groupRemovedStream]. Voluntary exit cleanup remains
+/// owned by the durable group-exit coordinator and runner.
 class GroupMessageListener {
   final GroupRepository _groupRepo;
   final GroupMessageRepository _msgRepo;
@@ -4011,9 +4011,9 @@ class GroupMessageListener {
 
   /// Handles a member_removed system message.
   ///
-  /// If the removed member is the local user, calls [leaveGroup] to
-  /// unsubscribe from the Go pubsub topic and clean up local data,
-  /// then emits on [groupRemovedStream].
+  /// If the removed member is the local user, retains the read-only local
+  /// history shell through [_retainSelfRemovedLocalHistory], then emits on
+  /// [groupRemovedStream]. Durable voluntary exit cleanup is a separate path.
   ///
   /// Otherwise, removes the member from the local DB and updates the Go
   /// topic validator config.

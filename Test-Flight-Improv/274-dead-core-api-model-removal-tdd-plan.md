@@ -928,8 +928,8 @@ Semantic outcomes:
 - Boundary closure: host-only source deletion plus read-only generated-binding
   verification; no simulator/device/relay/SQLCipher/native build is warranted
   because every native/Go mapping source is protected from change.
-- Full-gate owner: Wave 1 runs one full `host-all` after DTR-03/DTR-04/DTR-05
-  are complete or terminal; final rollout/release runs it again.
+- Full-gate owner: Wave 1 ran one full accepted `host-all` after
+  DTR-03/DTR-04/DTR-05 became Plan-green; final rollout/release runs it again.
 - Confirmed: all three surfaces are isolated exactly as described; the old
   helper has zero supported/runtime repository caller and four SUT-only calls;
   active replacements, live invite/rejoin roots, native/generated mappings,
@@ -939,7 +939,7 @@ Semantic outcomes:
 - Authorization evidence: both named-role records are approved, including
   explicit acceptance of the recorded supported external/path/git/raw caller
   floor. The bounded implementation and all per-plan causal/closure evidence
-  are complete; Wave 1 still owns its later aggregate `host-all`.
+  are complete; Wave 1 aggregate acceptance is recorded in the master roadmap.
 
 ## Reviewer Findings
 
@@ -958,8 +958,8 @@ gate; the final execution result is recorded below.
 
 Closure addendum: **Plan-green / implementation-complete** on 2026-07-25.
 The bounded deletion, causal proof, preservation proof, per-plan gates, graph
-refresh, and hygiene checks all passed. This does not close Wave 1 or replace
-its later aggregate `host-all`.
+refresh, and hygiene checks all passed. This per-plan result did not itself
+close Wave 1; the later aggregate acceptance is recorded separately below.
 
 Authorization resolution and applied fixes:
 
@@ -1009,10 +1009,22 @@ Blind-spot sweep:
 - B-5 is bounded by exact deletions and Git rollback. B-1/B-6/B-7 are N/A
   because no schema/data/marker/fallback transition is introduced.
 
+## Wave 1 Acceptance Addendum
+
+Plan 274 remains `Plan-green`; its DTR-03 registry row was promoted separately
+to `Wave-accepted` on 2026-07-26. The complete Wave 1 `host-all` retry passed at
+concurrency 1: 1,265 exact Dart paths, 12,863 tests passed and 1 skipped, and
+all eight Go tails passed. The non-green first attempt, test-only assertion
+correction, accepted retry, original-log hashes, and stable archives are
+recorded in the
+[master roadmap](dead-code-and-technical-debt-removal-roadmap.md#wave-gate-ledger).
+No production source changed between the two Wave 1 attempts.
+
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-25 | pre-authorization preflight complete; implementation stopped | Plan 274 only; all production/test/runtime-root/current-architecture paths read-only | fail-closed `DTR03-CALLER-01` passed; protected-path diff passed; `BB-006 rejects topic-name-only helper before bridge send` passed `+1` | caller floor is durable against HEAD `a68aacee7482f910f966d33d16d3c7598489f059`; cached diff empty; scoped implementation delta independently audited | At this historical checkpoint, `DTR03-AUTH-01` and `DTR03-AUTH-02` had not yet been supplied. | obtain both named approvals before causal RED |
 | 2026-07-25 | authorization complete; execution-ready | Plan 274 plus DTR roadmap/index decision records | current authenticated project owner approved both DTR-03 removals while acting as Core Services and Groups owner and confirmed no supported external user of the old group-join function | `DTR03-AUTH-01/02` now record exact scope, retention, rollback, and acceptance of `DTR03-CALLER-01`; `DTR08-COMP-004` is resolved only for the DTR-03 wrapper | No authorization blocker; implementation and all causal/closure gates remain pending. | begin the three causal RED selectors, then exact scoped deletion and verification |
-| 2026-07-25 | Plan-green; implementation and per-plan closure complete | three retired source/test files; deprecated wrapper and legacy test fragments; DTR-01 manifest/test; causal contract; five current architecture docs; Plan/roadmap/index | all three causal selectors failed before deletion for their exact artifact, then passed `3/3`; restoring a declaration and adding a tear-off each re-red TC-DTR03-03; 42 focused Dart preservation tests and eight exact Go tests passed; bindings verified with matching Android/iOS input digests | exact removal is 339 dead code/test lines across three deleted files plus wrapper/test fragments; helper diff is exactly `0/31`; 28 protected paths remain clean; isolated `runtime-roots` passed `13/13`, trustworthy/no-drift, 1,054 files; `1to1` passed 2,440; `groups` passed 3,305; `core-host-all` passed 2,765 across 350 paths plus Android renderer contract; strict analysis found no issues; completeness is 1,358/1,358; Graphify refresh is current at `06cfd529b61c6e10`; negative census and diff hygiene pass | No per-plan blocker. Live feature P2P/contact behavior, full-config Dart/native/Go join behavior, and both DTR-10 islands are retained. | await DTR-04/DTR-05 terminal states, then run the single Wave 1 aggregate `host-all` |
+| 2026-07-25 | Plan-green; implementation and per-plan closure complete | three retired source/test files; deprecated wrapper and legacy test fragments; DTR-01 manifest/test; causal contract; five current architecture docs; Plan/roadmap/index | all three causal selectors failed before deletion for their exact artifact, then passed `3/3`; restoring a declaration and adding a tear-off each re-red TC-DTR03-03; 42 focused Dart preservation tests and eight exact Go tests passed; bindings verified with matching Android/iOS input digests | exact removal is 339 dead code/test lines across three deleted files plus wrapper/test fragments; helper diff is exactly `0/31`; 28 protected paths remain clean; isolated `runtime-roots` passed `13/13`, trustworthy/no-drift, 1,054 files; `1to1` passed 2,440; `groups` passed 3,305; `core-host-all` passed 2,765 across 350 paths plus Android renderer contract; strict analysis found no issues; completeness is 1,358/1,358; Graphify refresh is current at `06cfd529b61c6e10`; negative census and diff hygiene pass | No per-plan blocker. Live feature P2P/contact behavior, full-config Dart/native/Go join behavior, and both DTR-10 islands are retained. | await DTR-04/DTR-05 terminal states and the cadence-owned Wave 1 aggregate gate |
+| 2026-07-26 | Wave 1 acceptance | DTR-03, DTR-04, DTR-05 integrated tree | accepted full `host-all`: Flutter `+12863 ~1`; Go 8/8 PASS; exit 0 | complete attempt history and stable log archives recorded in the master roadmap | DTR-03 promoted to `Wave-accepted`; no remaining wave blocker | final-rollout `host-all` remains a separate later gate |

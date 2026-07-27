@@ -1,5 +1,13 @@
 # Relay-Free Move Account — Feature Gap & Bug Audit
 
+> **Historical static-audit snapshot from 2026-06-10.** Plan 285 later closed
+> bounded in-session cutover retry/replay, runtime re-arm, retained-route
+> ownership/reset, authority-aware blocked UI, and destination shared-store
+> compatibility at host tier. It did not implement user abort/`recover()`,
+> durable process-restart recovery, erase-residue cleanup, device acceptance,
+> or release acceptance. Supersession notes below update only those findings;
+> the original audit remains the historical baseline.
+
 **Date:** 2026-06-10
 **Scope:** Everything in the move pipeline that can prevent a relay-free account move (old phone → new phone), EXCLUDING the two already-triaged bugs: the MIG-012 group-media relay leak (`MIG-012-group-media-relay-leak-triage.md`) and the segment-transfer timeout (`move-transfer-timeout-before-handoff-triage.md`) — those appear only where they interact or have new manifestations.
 **Method:** 74-agent workflow — 8 domain finders + 3 critic-spawned extra finders over the working tree (`lib/features/account_migration/` is untracked/new), every finding adversarially verified against source, refuted claims retained for the record. Static analysis only; no code changed, no device runs.
@@ -55,8 +63,13 @@ The DB snapshot is frozen once at assembly start (`account_migration_bundle_tran
 Scenario: mid-transfer a contact sends a message; the old phone drains+ACKs it; after cutover the new phone never has it and it is gone from relay — silent permanent loss under a SUCCESS result.
 Fix: set `migrationExportingNetworkPaused` before reading the snapshot so the (already-wired) gate blocks drain/ACK/pubsub, and/or do a final incremental drain into the bundle immediately before cutover; suppress ACK once export begins.
 
-**Interrupted/failed cutover bricks both phones into an erase-only screen; recovery machinery is dead code**
+**Interrupted/failed cutover bricks both phones into an erase-only screen; recovery machinery is dead code — PARTIALLY SUPERSEDED BY PLAN 285**
 Type: move-failure · Severity: critical · Confidence: high
+(Plan-285 update: bounded in-session proof loss now retries against a
+replay-safe retained receiver route, duplicate completes share one settled
+result, and blocked-authority confirmation is state-aware. Durable
+process-restart recovery, user abort/`recover()`, and erase-residue cleanup
+remain open.)
 (Consolidated: independently confirmed by the pending-work-resume, import-pipeline-integrity, and retry-after-failed-attempt lanes.) The old phone persists `migrationCutoverPendingBlocked` *before* the old-block-proof POST (`migration_cutover_coordinator.dart:62-67` ← `account_migration_local_transfer_runtime.dart:438`→`:443`); the new phone persists `migrationVerifiedWaitingForCutover` at verify (`account_migration_bundle_transfer.dart:1058-1064`). Both states `blocksNormalStartup` (`account_migration_authority_state.dart:28-37`) and route to `AccountMigrationBlockedScreen` whose only action is `_eraseMigratedOutAccount` (`startup_router.dart:315-318`, `:672-684`), wiping `db_encryption_key`/`identity_private_key`/`mnemonic12`/ML-KEM. `MigrationCutoverCoordinator.recover()` (`:381-411`) and `migrationFailedActiveRestored` have **zero production callers/writers** (grep-verified). No crash is even required — any proof-POST timeout/WiFi-drop reaches this state. The receiver's verified import lives only in `_sessions` (in-memory), so a restarted new phone can never replay the handoff.
 Scenario: handoff hits a WiFi blip; both phones relaunch to "Account moved to another phone — Erase"; tapping erase on the old phone (the only complete copy) loses the account.
 Fix: wire `recover()` at startup; write `migrationFailedActiveRestored` (or `active`) on every cutover-failure path before commit; make the blocked screen state-aware with a "resume handoff" action instead of erase-only; persist/rehydrate the receiver's verified import.
@@ -67,8 +80,11 @@ Voice notes sent over LAN persist `localPath: recording.filePath, downloadStatus
 Scenario: user once sent a voice note to a contact on the same WiFi; months later every Move attempt aborts at `buildFilePayload`, with no way to identify the offending row.
 Fix: durable-copy on local-send success (mirror `_buildLocalSuccessAttachmentFromPlan`); add a manifest salvage candidate that materializes an existing absolute path into the canonical relative path instead of emitting a blocking issue.
 
-**iPhone→Android move fails deterministically: iOS shared-access-group secure entries cannot be staged on Android (failure swallowed)**
+**iPhone→Android move fails deterministically: iOS shared-access-group secure entries cannot be staged on Android (failure swallowed) — SUPERSEDED AT HOST TIER BY PLAN 285**
 Type: move-failure · Severity: critical · Confidence: high
+(Plan-285 update: receiver staging/promotion/cleanup now filters to scopes
+supported by the destination, with host proof for the primary projection.
+Physical cross-platform device acceptance remains open.)
 (Reverse direction — does NOT block the tested Pixel→iPhone, but blocks every iOS→Android move.) An iOS source exports `iosSharedAccessGroup`-scoped entries (fixed `identity_ml_kem_secret_key` + one `group_key:<id>:<gen>` mirror per generation). The Android receiver's `sharedStore` is null (`main.dart:336-338`), so the first shared-scope entry throws `StateError('iOS shared access-group secure store is required')` (`migration_secure_storage_staging.dart:189-193`); `complete()`'s `on Object { return false; }` (`account_migration_bundle_transfer.dart:1066-1068`) swallows it with zero telemetry. No platform gate exists, so all segments stream and then the move deterministically dies at completion with "could not verify the transferred account bundle." Any established identity triggers it (the fixed ML-KEM mirror alone suffices).
 Scenario: user moves iPhone→Pixel; transfer completes, "checking" always fails; retry never works.
 Fix: at receive time, drop/redirect `iosSharedAccessGroup` entries when `sharedStore` is null (they are derivable mirrors); add telemetry to the `complete()` catch.
@@ -304,7 +320,7 @@ The audit confirmed several findings classified `known-bug-interaction` and expl
 
 - **Android→iOS never populates the iOS shared ML-KEM mirror (push broken):** refuted — `_mirrorMlKemSecretForPush` runs on *every* `loadIdentity()` (`identity_repository_impl.dart:111`), and the migration receiver-activation explicitly invalidates the cache, so the shared mirror is written immediately after cutover.
 - **Files for `pending`/`downloading`/`failed` rows relay-refetched where the old phone could heal offline:** refuted — the cited crash windows leave `localPath` NULL (atomic `updateLocalPath` writes path+`done` together), so the old phone is equally relay-dependent; no old-vs-new asymmetry exists, and the exclusion is explicit audited design.
-- **`startLiveServices` one-shot strands migrated pending work after an in-process gated boot:** refuted — a gated boot always routes to the erase-only blocked screen and the receive flow is unreachable from there, so the scenario cannot occur; the one-shot early-return is latent fragility only.
+- **`startLiveServices` one-shot strands migrated pending work after an in-process gated boot:** historical audit verdict was refuted; Plan 285 later proved the latent one-shot cache could strand post-cutover startup and replaced it with a coalesced, retryable, per-side-effect checkpoint ledger. This item is superseded at host tier.
 - **Source-side missing-media downgrade bakes integrity-failed rows into the snapshot → relay refetch:** refuted — re-report of KNOWN-1/MIG-012 Root Cause 4; the downgrade is now `nonCriticalCache`-gated (video thumbnails only, never real chat media), and `integrity_failed` is excluded from auto-recovery.
 - **Each export attempt permanently mutates the source DB and ratchets media loss across retries:** refuted — the downgrade is critical-gated (thumbnails), KNOWN-1's deletion is fixed, and path-repair writes are benign relative-path normalization; no media-loss ratchet.
 - **New-phone retry races attempt-1 receiver teardown against attempt-2 advertising (dead QR):** refuted — `stop()`'s dispatch is synchronous-until-first-await and always targets attempt-1's broadcast; worst case is a *visible* failure or a benign broadcast leak (phone stays resolvable), never a silently dead fresh QR.
@@ -358,7 +374,9 @@ Retry / import integrity
 **Top residual risks:**
 1. Media-heavy real accounts — memory ceiling + 10s timeout + no-resume + disk amplification *compound*; a multi-GB account almost certainly cannot complete today, and a small test account may mask all four.
 2. The MIG-012 cohort (test Pixel) — legacy KNOWN-1-damaged `done` rows hard-block the move with a retry-forever message.
-3. Cutover interruption — any handoff hiccup can brick both phones; an old-phone erase = total account loss.
+3. Cutover interruption — Plan 285 host-hardens in-session proof loss and
+   blocked-route recovery, but durable process-restart recovery, user abort,
+   and erase-residue safety remain open.
 4. Live-window data loss — inbox drain during transfer silently destroys messages while reporting success, undermining trust in a "successful" test.
 5. Plaintext secret residue on the new phone (iOS backup vector) and old-phone key residue (G1).
 
@@ -372,7 +390,13 @@ Context: KNOWN-1's deletion is already fixed in the working tree (good — but t
 
 2. **Make the move *startable* — fix the export hard-blockers (one manifest-builder workstream):** durable-copy LAN-sent media and post-media drafts at send time (C6, H1); add a pre-export reconciliation pass that heals `done`+missing rows to `pending`/`failed` and emits non-blocking degraded-to-relay accounting (H2, including the legacy KNOWN-1 cohort); downgrade avatar issues and add a post-media sanitize analog (L1, M2); include `upload_failed` files in packaging (M-`#3/#15`). These all touch `migration_file_manifest_builder.dart` + the downgrade policy and share a fix shape; do them together. Without them the bundle never assembles for realistic devices.
 
-3. **Stop the bleeding at handoff (one cutover workstream):** wire `recover()` at startup, write `migrationFailedActiveRestored` on every cutover-failure path, make the blocked screen state-aware with a resume action, and persist/rehydrate the receiver's verified import (C5, plus its facets `#35`/`#57`/`#10`). This prevents a failed test from bricking devices or losing the account, so it must precede repeated real-account testing.
+3. **Finish the remaining handoff recovery work (partially superseded by Plan
+   285):** Plan 285 closed bounded in-session proof retry/replay,
+   authority-aware blocked UI, and retained-route reset ownership. Remaining
+   work must make commit state durably observable across process restart,
+   implement an owner-approved safe abort/recovery path, and close erase
+   residue. Do not describe `recover()` as currently wired or rehydrate the
+   receiver session without a separate authorized design.
 
 4. **Quiesce the old phone — single root fix, high leverage:** set `migrationExportingNetworkPaused` before `_loadBundleRows` and gate drain/ACK/pubsub/retriers on it. This resolves the critical silent message loss (C4 #25) *and* the TOCTOU/double-send/pending-delete cluster (M4 = #16/#29/#30) in one change.
 

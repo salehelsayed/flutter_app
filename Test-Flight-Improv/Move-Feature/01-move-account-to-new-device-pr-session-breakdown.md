@@ -46,7 +46,7 @@ Status: reusable-breakdown
 - Downstream workflow rule: detailed planning happens one session at a time. Later sessions must be refreshed against landed code before execution.
 - Intended plan path rule: every session uses `Test-Flight-Improv/Move-Feature/01-move-account-to-new-device-pr-session-<session-id>-plan.md`. Shared generic plan paths are not allowed.
 
-## Run Mode Snapshot
+## Historical Run Mode Snapshot
 
 - Last refreshed: `2026-06-07T18:07:49Z`
 - Active mode: `standard`
@@ -56,6 +56,22 @@ Status: reusable-breakdown
 - Overall closure bar: all sessions must collectively satisfy the iOS-to-iOS account move MVP below, with per-session closure evidence recorded in the source proposal or test/gate inventory docs when new tests or classifications land.
 - Final verdict policy: persist exactly one of `closed`, `accepted_with_explicit_follow_up`, `residual_only`, or `still_open`; use `still_open` while any required session remains blocked, any required closure result is missing, or the overall closure bar is not met.
 - Current sequencing override: MIG-006 is deliberately deferred-last with commands 29-123 and final group verification still required. This is not a failure and not a closure; do not run MIG-006 group simulator/release evidence while closing the remaining implementation sessions, select dependency-satisfied MIG-007 through MIG-011 first, and do not close the overall Move Account doc while MIG-006 remains deferred. MIG-012 is acceptance-only and cannot be closed or used to claim final acceptance until MIG-006 deferred evidence and final device acceptance are complete.
+
+### Post-Ledger Plan-285 Host-Hardening Addendum — 2026-07-26
+
+- Plan 285 is implemented and host-closed for bounded in-session cutover
+  retry/replay, resumable runtime startup, retained-route activation/reset
+  ownership, authority-aware blocked UI, and destination shared-store
+  compatibility.
+- It is a post-ledger hardening plan, not a new MIG session, and does not change
+  the historical session verdicts or close the overall Move Account program.
+- `DEFER-285-01/02/03`, MIG-006, MIG-012, optional device confidence, and final
+  release acceptance remain open. Final cross-session closure remains owned by
+  MIG-012.
+- Recorded Plan-285 host evidence is 173/173 focused tests, all 50
+  `move-feature` commands, startup wiring 4/4, l10n 4/4, completeness
+  1,349/1,349, clean strict analysis/diff hygiene, and refreshed Graphify
+  fingerprint `d3c748f7a3cdec3b`.
 
 ## Controller Progress
 

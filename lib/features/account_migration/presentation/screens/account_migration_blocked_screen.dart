@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 class AccountMigrationBlockedScreen extends StatefulWidget {
+  final AccountMigrationAuthorityRecord? record;
   final Future<void> Function()? onEraseAccount;
 
-  const AccountMigrationBlockedScreen({super.key, this.onEraseAccount});
+  const AccountMigrationBlockedScreen({
+    super.key,
+    this.record,
+    this.onEraseAccount,
+  });
 
   @override
   State<AccountMigrationBlockedScreen> createState() =>
@@ -58,9 +64,7 @@ class _AccountMigrationBlockedScreenState
       await erase();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.account_migration_erased_snackbar),
-        ),
+        SnackBar(content: Text(l10n.account_migration_erased_snackbar)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -79,6 +83,32 @@ class _AccountMigrationBlockedScreenState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final record = widget.record;
+    final (title, message) = switch (record) {
+      final authority when authority?.isFailClosed == true => (
+        l10n.account_migration_blocked_title,
+        l10n.account_migration_blocked_message,
+      ),
+      final authority
+          when authority?.state ==
+              AccountMigrationAuthorityState
+                  .migrationVerifiedWaitingForCutover =>
+        (
+          l10n.account_migration_unfinished_move_title,
+          l10n.account_migration_unfinished_move_message,
+        ),
+      _ => (
+        l10n.account_migration_blocked_title,
+        l10n.account_migration_blocked_message,
+      ),
+    };
+    final showEraseAction =
+        record != null &&
+        !record.isFailClosed &&
+        !record.allowsNormalStartup &&
+        record.state !=
+            AccountMigrationAuthorityState.migrationVerifiedWaitingForCutover;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -95,7 +125,7 @@ class _AccountMigrationBlockedScreenState
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  l10n.account_migration_blocked_title,
+                  title,
                   key: const ValueKey('account-migration-blocked-title'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
@@ -106,7 +136,7 @@ class _AccountMigrationBlockedScreenState
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  l10n.account_migration_blocked_message,
+                  message,
                   key: const ValueKey('account-migration-blocked-message'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
@@ -115,26 +145,28 @@ class _AccountMigrationBlockedScreenState
                     height: 1.35,
                   ),
                 ),
-                const SizedBox(height: 24),
-                FilledButton.icon(
-                  key: const ValueKey('account-migration-erase-action'),
-                  onPressed: widget.onEraseAccount == null || _isErasing
-                      ? null
-                      : _confirmErase,
-                  icon: _isErasing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline, size: 18),
-                  label: Text(_isErasing ? 'Erasing...' : 'Erase local data'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primaryAccent,
-                    foregroundColor: Colors.black,
-                    minimumSize: const Size.fromHeight(46),
+                if (showEraseAction) ...[
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    key: const ValueKey('account-migration-erase-action'),
+                    onPressed: widget.onEraseAccount == null || _isErasing
+                        ? null
+                        : _confirmErase,
+                    icon: _isErasing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_outline, size: 18),
+                    label: Text(l10n.account_migration_erase_local_data),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primaryAccent,
+                      foregroundColor: Colors.black,
+                      minimumSize: const Size.fromHeight(46),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

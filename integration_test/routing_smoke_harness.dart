@@ -425,7 +425,8 @@ void _runAlice() {
       final msgs = await messageRepo.getMessagesForContact(bobPeerId);
       final outgoing = msgs
           .where(
-            (m) => !m.isIncoming && m.text.contains('S1: cold hello from Alice'),
+            (m) =>
+                !m.isIncoming && m.text.contains('S1: cold hello from Alice'),
           )
           .toList();
       s1Status = outgoing.isNotEmpty ? outgoing.last.status : '';
@@ -822,19 +823,19 @@ void _runAlice() {
     await _signals.waitForSignal('s14_verified');
 
     // ════════════════════════════════════════════════════════════════
-    //  S15: Relay probe path (Bob unregistered from rendezvous)
+    //  S15: Rendezvous-gap relay delivery (Bob not yet re-registered)
     // ════════════════════════════════════════════════════════════════
     await _signals.waitForSignal('s15_go');
-    print('\n--- S15: Relay probe ---');
+    print('\n--- S15: Rendezvous-gap relay delivery ---');
     // Bob has unregistered from rendezvous but is still connected to relay.
-    // Alice's discover will fail → relayProbeEligible → probe → relay send.
+    // The send must still complete while rendezvous registration catches up.
     await _signals.waitForSignal('s15_bob_unregistered');
     final s15Events = await _captureFlowEvents(() async {
       await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
         targetPeerId: bobPeerId,
-        text: 'S15: relay probe msg',
+        text: 'S15: rendezvous-gap relay msg',
         senderPeerId: ownPeerId,
         senderUsername: 'Alice',
         bridge: bridge,
@@ -842,10 +843,6 @@ void _runAlice() {
       );
     });
     final s15Timings = _filter(s15Events, 'CHAT_MSG_SEND_TIMING');
-    final s15ProbeEvents = _filter(
-      s15Events,
-      'CHAT_MSG_SEND_RELAY_PROBE_BEGIN',
-    );
     final s15Details = s15Timings.isNotEmpty
         ? s15Timings.first['details'] as Map<String, dynamic>
         : <String, dynamic>{};
@@ -853,7 +850,6 @@ void _runAlice() {
       'sendMs': s15Details['elapsedMs'],
       'sendPath': s15Details['sendPath'],
       'outcome': s15Details['outcome'],
-      'probeAttempted': s15ProbeEvents.isNotEmpty,
     });
     await _signals.waitForSignal('s15_verified');
 
@@ -1513,9 +1509,9 @@ void _runBob() {
     _signals.writeJson('s14_bob_received', s14Msg ?? {'e2eMs': -1});
 
     // ════════════════════════════════════════════════════════════════
-    //  S15: Relay probe — Bob restarts without rendezvous (brief window)
+    //  S15: Rendezvous-gap relay delivery — Bob restarts before registration
     // ════════════════════════════════════════════════════════════════
-    print('\n--- S15: Relay probe ---');
+    print('\n--- S15: Rendezvous-gap relay delivery ---');
     await _signals.waitForSignal('s15_go');
     // Stop and restart to create a window where Bob is on relay but
     // not yet registered on rendezvous
@@ -1535,7 +1531,7 @@ void _runBob() {
       getOwnMlKemSecretKey: () async => ownMlKemSk,
     );
     chatListener.start();
-    // Receive the relay probe message
+    // Receive the message delivered during the rendezvous-registration gap.
     final s15Msg = await waitForMessage(
       'S15:',
       timeout: const Duration(seconds: 30),

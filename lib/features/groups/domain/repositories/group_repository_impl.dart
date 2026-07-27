@@ -990,49 +990,6 @@ class GroupRepositoryImpl
   }
 
   @override
-  Future<void> commitFreshDirectJoin({
-    required GroupModel group,
-    required GroupMember selfMember,
-    required GroupKeyInfo key,
-    required Future<void> Function() joinNative,
-  }) async {
-    final loadAuthority = dbLoadSelfRemovedGroupShellAuthority;
-    final loadFloor = dbLoadSelfRemovedGroupFreshnessFloorFn;
-    if (loadAuthority == null || loadFloor == null) {
-      throw StateError('Fresh direct-join authority is unavailable.');
-    }
-    if (selfMember.groupId != group.id || key.groupId != group.id) {
-      throw ArgumentError('Fresh direct-join material has mixed group ids.');
-    }
-    await _runGroupMutation(group.id, () async {
-      final authority = await loadAuthority(
-        groupId: group.id,
-        selfPeerId: selfMember.peerId,
-      );
-      final floor = await loadFloor(group.id);
-      if (authority.shape !=
-              shell_db.SelfRemovedGroupShellAuthorityShape.absent ||
-          floor != null) {
-        throw StateError(
-          'Direct join is fresh-only for an absent group without a floor.',
-        );
-      }
-      await joinNative();
-
-      // Private assumes-coordinated persistence: no public repository method
-      // may reacquire this non-reentrant coordinator between native and writes.
-      await dbInsertGroup(group.toMap());
-      await dbInsertGroupMember(selfMember.toMap());
-      final storageRow = await _toStorageRow(key);
-      await dbInsertGroupKey(storageRow);
-      await _projectAcceptedReentry(
-        groupId: group.id,
-        keyGeneration: key.keyGeneration,
-      );
-    });
-  }
-
-  @override
   Future<SelfRemovedAcceptedRollbackOutcome>
   rollbackFreshAcceptedMaterialization({
     required String groupId,

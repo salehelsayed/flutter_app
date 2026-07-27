@@ -431,7 +431,15 @@ class InMemoryGroupMessageRepository
   }
 
   @override
-  Future<int> deleteMessagesForGroup(String groupId) async {
+  Future<int> deleteMessagesForGroup(String groupId) async =>
+      deleteMessagesForGroupSynchronouslyForTest(groupId);
+
+  /// Synchronous half of the detached presentation-surface cleanup CAS.
+  ///
+  /// The in-memory group repository invokes this only after checking the exact
+  /// membership generation, without yielding back to the event loop between
+  /// that check and deleting both fake surfaces.
+  int deleteMessagesForGroupSynchronouslyForTest(String groupId) {
     final toRemove = _messages.entries
         .where((e) => e.value.groupId == groupId)
         .toList();

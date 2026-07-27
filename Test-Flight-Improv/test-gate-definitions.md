@@ -4,6 +4,10 @@ Session 1 source of truth for named regression gates.
 
 If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 
+Updated 2026-07-26 for Plan 285: canonical `move-feature` currently contains
+44 dedicated account-migration files / 310 declared tests plus six explicitly
+registered shared paths.
+
 ## Mobile Target Availability Policy
 
 - Device-bound Flutter tests run only on targets discovered as available at execution time: USB-connected Android devices, USB-connected iPhones, available iOS simulators, and available Android emulators.
@@ -322,6 +326,13 @@ Read-only diagnostic commands:
   silently dropping their full file/relay semantics. Run
   `bash scripts/test/host_test_gate_batch_contract_test.sh` after changing this
   orchestration contract.
+- `core-host-all` is the exact union of every
+  `test/core/**/*_test.dart` path, every `test/unit/**/*_test.dart` path, and
+  the Android renderer manifest contract when the run is not Dart-only.
+  `host-all` includes that same unit inventory through its broader host
+  expansion. The batch-contract test compares the sorted live `test/unit`
+  census with the `core-host-all --dry-run` plan so omissions and duplicates
+  fail causally.
 - Durable concurrency guidance: `./scripts/run_test_gates.sh 1to1` with no
   extra arguments already sends all of its host paths to one `flutter test`
   invocation, so Flutter schedules file workers concurrently; its integration
@@ -351,20 +362,23 @@ Host command plan source:
 
 Host capture:
 
-- `move-feature` captures all 40 dedicated `test/features/account_migration/**/*_test.dart` files, currently 226 declared `test` / `testWidgets` cases, plus the shared lifecycle, push, local-discovery, startup, and P2P move guards listed below.
-- `feature-host-all` and `host-all` capture all 40 dedicated account-migration files plus the shared feature suites under identity, push, QR code, settings, and home.
+- `move-feature` captures all 44 dedicated `test/features/account_migration/**/*_test.dart` files, currently 310 declared `test` / `testWidgets` cases, plus the six registered shared lifecycle, push, local-discovery, startup, and P2P move guards listed below.
+- `feature-host-all` and `host-all` capture all 44 dedicated account-migration files plus the shared feature suites under identity, push, QR code, settings, and home.
 - `core-host-all` and `host-all` capture the shared core-side move gates under lifecycle, local-discovery, and P2P services.
 
-Shared host suites that should stay visible in Move Account reviews:
+Shared host suites registered in canonical `move-feature`:
 
 - `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`
 - `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`
 - `test/core/services/p2p_service_impl_test.dart`
 - `test/features/identity/application/startup_decision_test.dart`
 - `test/features/identity/presentation/screens/startup_router_recovery_test.dart`
-- `test/features/push/application/background_message_handler_test.dart`
 - `test/features/push/application/push_registration_post_cutover_test.dart`
-- `test/features/qr_code/application/handle_scanned_qr_use_case_test.dart`
+
+Related Move Account suites visible through broader/direct coverage but not
+registered in canonical `move-feature`:
+
+- `test/features/push/application/background_message_handler_test.dart`
 - `test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart`
 - `test/features/settings/presentation/screens/settings_wired_test.dart`
 - `test/features/home/presentation/screens/first_time_experience_wired_test.dart`
@@ -1000,6 +1014,10 @@ Files:
 
 - `test/features/push/application/push_preview_telemetry_gate_test.dart`
 
+The release-only calculator imported by that suite lives under
+`tool/telemetry/push_preview_telemetry_gate.dart`; it is deliberately not a
+runtime app leaf.
+
 ### Move Account Gate (`move-feature`)
 
 Run whenever anything under `lib/features/account_migration/`, the migration
@@ -1019,8 +1037,8 @@ Equivalent skill-backed form:
 "${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" move-feature
 ```
 
-Files: all 40 dedicated `test/features/account_migration/**/*_test.dart`
-files, currently 226 declared tests, including
+Files: all 44 dedicated `test/features/account_migration/**/*_test.dart`
+files, currently 310 declared tests, including
 `account_migration_end_to_end_test.dart` — the chained host E2E of the shipped
 composition (production bundle source → real in-process `LocalWsServer` HTTP
 wire → production receiver → cutover), with a realistic-scale ~12 MB / 50+
@@ -1032,6 +1050,7 @@ Shared host files included by the `move-feature` host plan:
 - `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`
 - `test/core/services/p2p_service_impl_test.dart`
 - `test/features/identity/application/startup_decision_test.dart`
+- `test/features/identity/presentation/screens/startup_router_recovery_test.dart`
 - `test/features/push/application/push_registration_post_cutover_test.dart`
 
 Device/simulator companion (required pre-step for physical move tests, runs
@@ -1252,7 +1271,7 @@ These directories are intentionally outside the named gates, but they are not ac
 | Scope | Classification | Reason |
 |------|----------------|--------|
 | `test/core/services/*.dart` | Direct suite | Service, router, retrier, and orchestration coverage for the exact module being edited |
-| `test/features/account_migration/**/*.dart` | Direct suite; `$run-flutter-host-gates move-feature/feature-host-all/host-all` | All 40 dedicated Move Account host files, currently 226 declared test cases, covering transfer, bundle content, secure storage, database import, cutover/authority/gating, QR/pairing, presentation, chained host E2E, post-import behavior, and keep-alive |
+| `test/features/account_migration/**/*.dart` | Direct suite; `$run-flutter-host-gates move-feature/feature-host-all/host-all` | All 44 dedicated Move Account host files, currently 310 declared test cases, covering transfer, bundle content, secure storage, database import, cutover/authority/gating, QR/pairing, presentation, chained host E2E, post-import behavior, and keep-alive |
 | `test/features/account_migration/presentation/*.dart` | Direct suite | Move Account MIG-011 host-side presentation, scanner-copy, wake-lock, and migrated-out UX tests without widening frozen named gates |
 | `test/core/lifecycle/*.dart` | Direct suite | Pause/resume ordering and lifecycle hardening; kept separate so the transport gate stays bounded |
 | `test/core/resilience/*.dart` | Direct suite | Deterministic chaos/failover coverage; broader than the frozen transport gate |
@@ -1270,7 +1289,7 @@ These directories are intentionally outside the named gates, but they are not ac
 | `test/shared/fakes/*.dart` | Direct suite | Test harness fakes and seeded reproduction fixtures |
 | `test/security/*.dart` | Direct suite | Security invariant and forbidden-field classifier coverage without widening frozen named gates |
 | `test/shared/widgets/*.dart` | Direct suite | Shared widget behavior |
-| `test/unit/*.dart` | Direct suite | Unit-level leaf coverage |
+| `test/unit/**/*_test.dart` | `$run-flutter-host-gates core-host-all/host-all` | Tooling and structural unit contracts; the core family validates the exact recursive inventory with no omissions or duplicates |
 
 ## Completeness Check
 

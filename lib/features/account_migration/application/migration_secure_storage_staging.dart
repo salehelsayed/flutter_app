@@ -22,6 +22,11 @@ class MigrationSecureStorageStaging {
     this.sharedStore,
   });
 
+  bool supportsScope(MigrationSecureStoreScope scope) {
+    return scope != MigrationSecureStoreScope.iosSharedAccessGroup ||
+        sharedStore != null;
+  }
+
   static String stagingKeyFor({
     required String sessionId,
     required MigrationSecureStorageKey key,

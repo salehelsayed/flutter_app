@@ -8,7 +8,6 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
-import 'package:flutter_app/features/groups/application/hydrate_groups_from_peers_use_case.dart';
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
@@ -154,7 +153,7 @@ void main() {
   );
 
   test(
-    'marked shells and loaded membership work perform zero join inbox hydrate announce dissolve or pending sends',
+    'marked shells and loaded membership work perform zero join inbox announce dissolve or pending sends',
     () async {
       const orderingGroupId = 'group-ordering';
       final orderingRepo = InMemoryGroupRepository();
@@ -269,17 +268,6 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         groupId: groupId,
-      );
-      expect(
-        await hydrateGroupsFromPeers(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          canRejoinForExitIntent: (_) async => true,
-          processExitIntent: (_) async {},
-          multiDeviceSyncEnabled: true,
-        ),
-        0,
       );
       expect(
         await announceRestoredDeviceToGroups(

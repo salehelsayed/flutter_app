@@ -14,23 +14,15 @@ void main() {
   tearDown(setGroupExitIntentAccessSinks);
 
   test(
-    'five group entry sites wire one complete or explicit null opener contract',
+    'four group entry sites wire one complete or explicit null opener contract',
     () {
       const mainPath = 'lib/main.dart';
       const feedPath = 'lib/features/feed/presentation/screens/feed_wired.dart';
       const orbitPath =
           'lib/features/orbit/presentation/screens/orbit_wired.dart';
-      const listPath =
-          'lib/features/groups/presentation/screens/group_list_wired.dart';
       const pickerPath =
           'lib/features/groups/presentation/screens/create_group_picker_wired.dart';
-      const sites = <String>[
-        mainPath,
-        feedPath,
-        orbitPath,
-        listPath,
-        pickerPath,
-      ];
+      const sites = <String>[mainPath, feedPath, orbitPath, pickerPath];
       final sources = <String, String>{
         for (final path in sites) path: File(path).readAsStringSync(),
       };
@@ -75,7 +67,7 @@ void main() {
         }
         constructors[path] = entryBlocks.single;
       }
-      expect(constructors, hasLength(5));
+      expect(constructors, hasLength(4));
 
       expect(
         constructors[mainPath],
@@ -97,10 +89,6 @@ void main() {
         contains(
           'openAnnouncementSenderConversation: _openConversationForContact',
         ),
-      );
-      expect(
-        constructors[listPath],
-        contains('openAnnouncementSenderConversation: null'),
       );
       expect(
         constructors[pickerPath],

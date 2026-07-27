@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
@@ -48,6 +49,54 @@ class _ThrowingStartupRejoinRepository extends InMemoryGroupRepository {
   @override
   Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async {
     throw StateError('rejoin discovery unavailable');
+  }
+}
+
+class _SecondAuthorityReadThrowingSecureKeyStore extends FakeSecureKeyStore {
+  int authorityReadCount = 0;
+  int injectedThrowCount = 0;
+
+  @override
+  Future<String?> read(String key) {
+    if (key == SecureKeyStoreAccountMigrationAuthorityRepository.storageKey) {
+      authorityReadCount += 1;
+      if (authorityReadCount == 2) {
+        injectedThrowCount += 1;
+        throw StateError('authority re-read unavailable');
+      }
+    }
+    return super.read(key);
+  }
+}
+
+class _AuthorityBecomesActiveOnSecondReadSecureKeyStore
+    extends FakeSecureKeyStore {
+  _AuthorityBecomesActiveOnSecondReadSecureKeyStore({
+    required this.activeRecord,
+  });
+
+  final AccountMigrationAuthorityRecord activeRecord;
+  int authorityReadCount = 0;
+
+  @override
+  Future<String?> read(String key) {
+    if (key == SecureKeyStoreAccountMigrationAuthorityRepository.storageKey) {
+      authorityReadCount += 1;
+      if (authorityReadCount >= 2) {
+        return Future<String?>.value(activeRecord.toPersistedJson());
+      }
+    }
+    return super.read(key);
+  }
+}
+
+class _RecordingNavigatorObserver extends NavigatorObserver {
+  final List<String?> pushedRouteNames = <String?>[];
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pushedRouteNames.add(route.settings.name);
+    super.didPush(route, previousRoute);
   }
 }
 
@@ -150,8 +199,10 @@ void main() {
 
   Widget buildRouterApp({
     AccountMigrationReceiverStartFn? accountMigrationStartReceiver,
+    AccountMigrationReceiverStopFn? accountMigrationStopReceiver,
     AccountMigrationReceiverEvents? accountMigrationReceiverEvents,
     Future<void> Function()? onAccountMigrationReceiverActivated,
+    List<NavigatorObserver> navigatorObservers = const <NavigatorObserver>[],
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
     Future<bool> Function(String groupId)? canRejoinForExitIntent,
@@ -162,6 +213,7 @@ void main() {
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      navigatorObservers: navigatorObservers,
       home: StartupRouter(
         repository: identityRepository,
         feedClearedRepository: InMemoryFeedClearedRepository(),
@@ -186,6 +238,7 @@ void main() {
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
         accountMigrationStartReceiver: accountMigrationStartReceiver,
+        accountMigrationStopReceiver: accountMigrationStopReceiver,
         accountMigrationReceiverEvents: accountMigrationReceiverEvents,
         onAccountMigrationReceiverActivated:
             onAccountMigrationReceiverActivated,
@@ -254,6 +307,93 @@ void main() {
       expect(identityRepository.saveIdentityCallCount, 0);
       expect(bridge.commandLog, isNot(contains('mlkem.keygen')));
       expect(p2pService.startNodeCallCount, 0);
+    },
+  );
+
+  testWidgets(
+    'blocked route passes the loaded authority record to the blocked screen',
+    (tester) async {
+      await saveAuthority(
+        AccountMigrationAuthorityState.migrationVerifiedWaitingForCutover,
+      );
+
+      await tester.pumpWidget(buildRouterApp());
+      await pumpFrames(tester);
+
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      expect(find.text('Account move not finished'), findsOneWidget);
+      expect(find.text('Account moved to another phone'), findsNothing);
+    },
+  );
+
+  testWidgets('authority re-read failure still renders the blocked screen', (
+    tester,
+  ) async {
+    final throwingStore = _SecondAuthorityReadThrowingSecureKeyStore();
+    secureKeyStore = throwingStore;
+    await saveAuthority(
+      AccountMigrationAuthorityState.migrationVerifiedWaitingForCutover,
+    );
+
+    await tester.pumpWidget(buildRouterApp());
+    await pumpFrames(tester);
+
+    expect(throwingStore.authorityReadCount, 2);
+    expect(throwingStore.injectedThrowCount, 1);
+    expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+    expect(find.text('Account moved to another phone'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('account-migration-erase-action')),
+      findsNothing,
+    );
+    expect(find.text('Failed to initialize'), findsNothing);
+  });
+
+  testWidgets(
+    'authority becoming active during blocked confirmation reroutes safely',
+    (tester) async {
+      const peerId = '12D3KooWAuthorityBecameActive';
+      final transitioningStore =
+          _AuthorityBecomesActiveOnSecondReadSecureKeyStore(
+            activeRecord: const AccountMigrationAuthorityRecord(
+              state: AccountMigrationAuthorityState.active,
+              accountPeerId: peerId,
+            ),
+          );
+      secureKeyStore = transitioningStore;
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      contactRepository.seed([
+        ContactModel(
+          peerId: 'peer-existing',
+          publicKey: 'pk-existing',
+          rendezvous: '/dns4/rendezvous.example.com/tcp/4001/p2p/peer-existing',
+          username: 'Existing',
+          signature: 'sig-existing',
+          scannedAt: '2026-07-26T14:00:00.000Z',
+        ),
+      ]);
+      await saveAuthority(
+        AccountMigrationAuthorityState.migrationVerifiedWaitingForCutover,
+        accountPeerId: peerId,
+      );
+
+      await tester.pumpWidget(buildRouterApp());
+      await pumpFrames(tester, count: 40);
+
+      expect(transitioningStore.authorityReadCount, greaterThanOrEqualTo(3));
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.byType(AccountMigrationBlockedScreen), findsNothing);
+      expect(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+        findsNothing,
+      );
+      expect(p2pService.startNodeCallCount, 1);
     },
   );
 
@@ -558,6 +698,7 @@ void main() {
     (tester) async {
       final receiverEvents =
           StreamController<AccountMigrationReceiverEvent>.broadcast();
+      final stoppedSessions = <String>[];
       String? receiverSessionId;
       var activationCallbackCalled = false;
       addTearDown(receiverEvents.close);
@@ -567,6 +708,9 @@ void main() {
           accountMigrationStartReceiver: (output) async {
             receiverSessionId = output.payload.sessionId;
             return const AccountMigrationReceiverStartResult.started();
+          },
+          accountMigrationStopReceiver: (sessionId) async {
+            stoppedSessions.add(sessionId);
           },
           accountMigrationReceiverEvents: receiverEvents.stream,
           onAccountMigrationReceiverActivated: () async {
@@ -614,6 +758,298 @@ void main() {
       expect(find.byType(AccountMigrationJourneyWired), findsNothing);
       expect(find.byType(IdentityChoiceWired), findsNothing);
       expect(p2pService.startNodeCallCount, 1);
+      expect(stoppedSessions, <String>[receiverSessionId!]);
+    },
+  );
+
+  testWidgets(
+    'off-screen receiver activation stops the retained session and resets the route once',
+    (tester) async {
+      final receiverEvents =
+          StreamController<AccountMigrationReceiverEvent>.broadcast();
+      final navigatorObserver = _RecordingNavigatorObserver();
+      final stoppedSessions = <String>[];
+      String? receiverSessionId;
+      var activationCallbackCalls = 0;
+      addTearDown(receiverEvents.close);
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          navigatorObservers: <NavigatorObserver>[navigatorObserver],
+          accountMigrationStartReceiver: (output) async {
+            receiverSessionId = output.payload.sessionId;
+            return const AccountMigrationReceiverStartResult.started();
+          },
+          accountMigrationStopReceiver: (sessionId) async {
+            stoppedSessions.add(sessionId);
+          },
+          accountMigrationReceiverEvents: receiverEvents.stream,
+          onAccountMigrationReceiverActivated: () async {
+            activationCallbackCalls += 1;
+            identityRepository.seed(
+              FakeIdentityRepository.makeIdentity(
+                peerId: '12D3KooWImportedOffscreen',
+                mlKemPublicKey: 'imported-offscreen-mlkem-public',
+                mlKemSecretKey: 'imported-offscreen-mlkem-secret',
+              ),
+            );
+            contactRepository.seed([
+              ContactModel(
+                peerId: 'peer-imported-offscreen',
+                publicKey: 'pk-imported-offscreen',
+                rendezvous:
+                    '/dns4/rendezvous.example.com/tcp/4001/p2p/'
+                    'peer-imported-offscreen',
+                username: 'Imported offscreen',
+                signature: 'sig-imported-offscreen',
+                scannedAt: '2026-07-26T12:00:00.000Z',
+              ),
+            ]);
+            await saveAuthority(
+              AccountMigrationAuthorityState.active,
+              accountPeerId: '12D3KooWImportedOffscreen',
+            );
+          },
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.text('Move from old phone'));
+      await pumpFrames(tester);
+
+      expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+      expect(receiverSessionId, isNotNull);
+
+      receiverEvents.add(
+        AccountMigrationReceiverEvent.importVerified(
+          sessionId: receiverSessionId!,
+        ),
+      );
+      await tester.pump();
+
+      final journeyContext = tester.element(
+        find.byType(AccountMigrationJourneyWired),
+      );
+      final journeyRoute = ModalRoute.of(journeyContext);
+      expect(journeyRoute, isNotNull);
+      Navigator.of(journeyContext).removeRoute(journeyRoute!);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(IdentityChoiceWired), findsOneWidget);
+      expect(
+        stoppedSessions,
+        isEmpty,
+        reason:
+            'verified receiver ownership must survive programmatic journey '
+            'removal until activation',
+      );
+
+      final activated = AccountMigrationReceiverEvent.activated(
+        sessionId: receiverSessionId!,
+      );
+      receiverEvents
+        ..add(activated)
+        ..add(activated);
+      await pumpFrames(tester, count: 40);
+
+      expect(stoppedSessions, <String>[receiverSessionId!]);
+      expect(activationCallbackCalls, 1);
+      expect(
+        navigatorObserver.pushedRouteNames.where(
+          (name) => name == 'startup-router-after-account-migration',
+        ),
+        hasLength(1),
+      );
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(IdentityChoiceWired), findsNothing);
+      expect(p2pService.startNodeCallCount, 1);
+    },
+  );
+
+  testWidgets(
+    'committed activation stays locked until the startup route reset finishes',
+    (tester) async {
+      final receiverEvents =
+          StreamController<AccountMigrationReceiverEvent>.broadcast();
+      final refreshStarted = Completer<void>();
+      final releaseRefresh = Completer<void>();
+      String? receiverSessionId;
+      addTearDown(receiverEvents.close);
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          accountMigrationStartReceiver: (output) async {
+            receiverSessionId = output.payload.sessionId;
+            return const AccountMigrationReceiverStartResult.started();
+          },
+          accountMigrationStopReceiver: (_) async {},
+          accountMigrationReceiverEvents: receiverEvents.stream,
+          onAccountMigrationReceiverActivated: () async {
+            refreshStarted.complete();
+            await releaseRefresh.future;
+            identityRepository.seed(
+              FakeIdentityRepository.makeIdentity(
+                peerId: '12D3KooWImportedSlowRefresh',
+                mlKemPublicKey: 'imported-slow-refresh-mlkem-public',
+                mlKemSecretKey: 'imported-slow-refresh-mlkem-secret',
+              ),
+            );
+            contactRepository.seed([
+              ContactModel(
+                peerId: 'peer-imported-slow-refresh',
+                publicKey: 'pk-imported-slow-refresh',
+                rendezvous:
+                    '/dns4/rendezvous.example.com/tcp/4001/p2p/'
+                    'peer-imported-slow-refresh',
+                username: 'Imported slow refresh',
+                signature: 'sig-imported-slow-refresh',
+                scannedAt: '2026-07-26T13:00:00.000Z',
+              ),
+            ]);
+            await saveAuthority(
+              AccountMigrationAuthorityState.active,
+              accountPeerId: '12D3KooWImportedSlowRefresh',
+            );
+          },
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.text('Move from old phone'));
+      await pumpFrames(tester);
+      expect(receiverSessionId, isNotNull);
+
+      receiverEvents.add(
+        AccountMigrationReceiverEvent.activated(sessionId: receiverSessionId!),
+      );
+      await refreshStarted.future;
+      await tester.pump();
+
+      expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('account-migration-close')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(find.byType(IdentityChoiceWired), findsNothing);
+      expect(find.text("I'm new here"), findsNothing);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+
+      expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+      expect(find.byType(IdentityChoiceWired), findsNothing);
+      expect(find.text("I'm new here"), findsNothing);
+
+      releaseRefresh.complete();
+      await pumpFrames(tester, count: 40);
+
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(IdentityChoiceWired), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'receiver activation reset survives projection refresh failure exactly once',
+    (tester) async {
+      final receiverEvents =
+          StreamController<AccountMigrationReceiverEvent>.broadcast();
+      final navigatorObserver = _RecordingNavigatorObserver();
+      final stoppedSessions = <String>[];
+      final flowEvents = <Map<String, dynamic>>[];
+      String? receiverSessionId;
+      var activationCallbackCalls = 0;
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() {
+        debugSetFlowEventSink(null);
+        return receiverEvents.close();
+      });
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          navigatorObservers: <NavigatorObserver>[navigatorObserver],
+          accountMigrationStartReceiver: (output) async {
+            receiverSessionId = output.payload.sessionId;
+            return const AccountMigrationReceiverStartResult.started();
+          },
+          accountMigrationStopReceiver: (sessionId) async {
+            stoppedSessions.add(sessionId);
+          },
+          accountMigrationReceiverEvents: receiverEvents.stream,
+          onAccountMigrationReceiverActivated: () async {
+            activationCallbackCalls += 1;
+            const peerId = '12D3KooWImportedRefreshFailure';
+            identityRepository.seed(
+              FakeIdentityRepository.makeIdentity(
+                peerId: peerId,
+                mlKemPublicKey: 'imported-refresh-failure-mlkem-public',
+                mlKemSecretKey: 'imported-refresh-failure-mlkem-secret',
+              ),
+            );
+            contactRepository.seed([
+              ContactModel(
+                peerId: 'peer-imported-refresh-failure',
+                publicKey: 'pk-imported-refresh-failure',
+                rendezvous:
+                    '/dns4/rendezvous.example.com/tcp/4001/p2p/'
+                    'peer-imported-refresh-failure',
+                username: 'Imported refresh failure',
+                signature: 'sig-imported-refresh-failure',
+                scannedAt: '2026-07-26T13:30:00.000Z',
+              ),
+            ]);
+            await saveAuthority(
+              AccountMigrationAuthorityState.active,
+              accountPeerId: peerId,
+            );
+            throw StateError('projection refresh failed');
+          },
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.text('Move from old phone'));
+      await pumpFrames(tester);
+      expect(receiverSessionId, isNotNull);
+
+      final activated = AccountMigrationReceiverEvent.activated(
+        sessionId: receiverSessionId!,
+      );
+      receiverEvents
+        ..add(activated)
+        ..add(activated);
+      await pumpFrames(tester, count: 40);
+
+      expect(activationCallbackCalls, 1);
+      expect(stoppedSessions, <String>[receiverSessionId!]);
+      expect(
+        navigatorObserver.pushedRouteNames.where(
+          (name) => name == 'startup-router-after-account-migration',
+        ),
+        hasLength(1),
+      );
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(IdentityChoiceWired), findsNothing);
+
+      final refreshFailureEvents = flowEvents.where(
+        (event) =>
+            event['event'] ==
+            'ACCOUNT_MIGRATION_RECEIVER_ACTIVATION_REFRESH_FAILED',
+      );
+      expect(refreshFailureEvents, hasLength(1));
+      expect(
+        (refreshFailureEvents.single['details']
+            as Map<String, dynamic>)['errorType'],
+        'StateError',
+      );
     },
   );
 }

@@ -229,7 +229,8 @@ Scopes:
   host-all                   All test/**/*_test.dart except test/performance/**,
                              plus host-side Go bridge reliability contracts.
   feature-host-all           All test/features/**/*_test.dart.
-  core-host-all              All test/core/**/*_test.dart plus the Android
+  core-host-all              All test/core/**/*_test.dart and
+                             test/unit/**/*_test.dart, plus the Android
                              renderer merged-manifest contract.
   performance-host           All test/performance/**/*_test.dart.
   move-feature               Move Account dedicated host tests plus shared
@@ -400,6 +401,7 @@ case "$scope" in
   core-host-all)
     {
       rg --files test/core -g '*_test.dart'
+      rg --files test/unit -g '*_test.dart'
       if [ "$dart_only" -ne 1 ]; then
         printf '%s\n' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
       fi
@@ -416,6 +418,7 @@ case "$scope" in
         test/features/push/application/push_registration_post_cutover_test.dart \
         test/core/local_discovery/bonsoir_discovery_service_contract_test.dart \
         test/features/identity/application/startup_decision_test.dart \
+        test/features/identity/presentation/screens/startup_router_recovery_test.dart \
         test/core/services/p2p_service_impl_test.dart
     } | sort -u >"$plan_file"
     ;;

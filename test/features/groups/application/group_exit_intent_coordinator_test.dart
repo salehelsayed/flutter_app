@@ -8,14 +8,20 @@ import 'package:flutter_app/features/groups/application/group_exit_intent_runner
 import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/helpers/durable_group_exit_surface_harness.dart';
 
 class _IntentRepo implements GroupExitIntentRepository {
   final Map<String, GroupExitIntent> rows = <String, GroupExitIntent>{};
@@ -134,6 +140,105 @@ class _IntentRepo implements GroupExitIntentRepository {
 
   @override
   Future<int> terminalizeForGroup(String groupId) => throw UnimplementedError();
+}
+
+class _FreshRequestBarrierIntentRepository
+    implements GroupExitIntentRepository {
+  _FreshRequestBarrierIntentRepository(this.delegate);
+
+  final GroupExitIntentRepository delegate;
+  final Completer<void> _bothInitialLoadsArrived = Completer<void>();
+  final Completer<void> _bothEnqueuesConverged = Completer<void>();
+  final List<GroupExitIntent> enqueueAttempts = <GroupExitIntent>[];
+  final List<GroupExitIntentMutationResult> enqueueResults =
+      <GroupExitIntentMutationResult>[];
+  int initialLoadCalls = 0;
+
+  Future<void> get bothEnqueuesConverged => _bothEnqueuesConverged.future;
+
+  @override
+  Future<GroupExitIntent?> forGroup(String groupId) async {
+    if (initialLoadCalls < 2) {
+      initialLoadCalls++;
+      if (initialLoadCalls == 2) _bothInitialLoadsArrived.complete();
+      await _bothInitialLoadsArrived.future;
+      return null;
+    }
+    return delegate.forGroup(groupId);
+  }
+
+  @override
+  Future<List<GroupExitIntent>> all() => delegate.all();
+
+  @override
+  Future<GroupExitIntentMutationResult> enqueue(GroupExitIntent intent) async {
+    enqueueAttempts.add(intent);
+    final result = await delegate.enqueue(intent);
+    enqueueResults.add(result);
+    if (enqueueResults.length == 2 && !_bothEnqueuesConverged.isCompleted) {
+      _bothEnqueuesConverged.complete();
+    }
+    return result;
+  }
+
+  @override
+  Future<GroupExitIntentMutationResult> cancelQueued(
+    GroupExitIntent expected, {
+    required DateTime updatedAt,
+  }) => delegate.cancelQueued(expected, updatedAt: updatedAt);
+
+  @override
+  Future<GroupExitIntentMutationResult> prepareLeaveNotice({
+    required GroupExitIntent expected,
+    required GroupMessage timelineMessage,
+    required GroupPendingBroadcast pendingBroadcast,
+    required DateTime updatedAt,
+  }) => delegate.prepareLeaveNotice(
+    expected: expected,
+    timelineMessage: timelineMessage,
+    pendingBroadcast: pendingBroadcast,
+    updatedAt: updatedAt,
+  );
+
+  @override
+  Future<GroupExitIntentMutationResult> completeLeaveNoticeAttempt({
+    required GroupExitIntent expected,
+    required GroupPendingBroadcast pendingBroadcast,
+    required String completionCode,
+    required DateTime updatedAt,
+  }) => delegate.completeLeaveNoticeAttempt(
+    expected: expected,
+    pendingBroadcast: pendingBroadcast,
+    completionCode: completionCode,
+    updatedAt: updatedAt,
+  );
+
+  @override
+  Future<GroupExitIntentMutationResult> advance({
+    required GroupExitIntent expected,
+    required GroupExitIntentState nextState,
+    required DateTime updatedAt,
+    String? lastErrorCode,
+  }) => delegate.advance(
+    expected: expected,
+    nextState: nextState,
+    updatedAt: updatedAt,
+    lastErrorCode: lastErrorCode,
+  );
+
+  @override
+  Future<GroupExitIntentMutationResult> cleanupOrRetire(
+    GroupExitIntent expected, {
+    required DateTime updatedAt,
+  }) => delegate.cleanupOrRetire(expected, updatedAt: updatedAt);
+
+  @override
+  Future<GroupExitIntentMutationResult> retireExact(GroupExitIntent expected) =>
+      delegate.retireExact(expected);
+
+  @override
+  Future<int> terminalizeForGroup(String groupId) =>
+      delegate.terminalizeForGroup(groupId);
 }
 
 class _PendingRepo implements GroupPendingBroadcastRepository {
@@ -310,6 +415,327 @@ GroupExitIntent _intent({
 }
 
 void main() {
+  test(
+    'DTR-10 rapid fresh leave requests converge on one durable action and side-effect sequence',
+    () async {
+      final joinedAt = DateTime.utc(2026, 7, 20);
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Rapid Exit',
+          type: GroupType.chat,
+          topicName: 'topic-group-1',
+          createdAt: joinedAt,
+          createdBy: 'peer-other',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(rotateKeys: true),
+          publicKey: 'pk-self',
+          mlKemPublicKey: 'mlkem-self',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-other',
+          username: 'Other',
+          role: MemberRole.admin,
+          publicKey: 'pk-other',
+          mlKemPublicKey: 'mlkem-other',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'group-key-1',
+          createdAt: joinedAt,
+        ),
+      );
+      final identityRepo = _identityRepo();
+      final messageRepo = InMemoryGroupMessageRepository();
+      final p2pService = FakeP2PService();
+      final bridge = PassthroughCryptoBridge();
+      bridge.responses.addAll(<String, Map<String, dynamic>>{
+        'group:publish': <String, dynamic>{
+          'ok': true,
+          'messageId': 'rapid-exit-notice',
+        },
+        'group:inboxStore': <String, dynamic>{'ok': true},
+        'group:generateNextKey': <String, dynamic>{
+          'ok': true,
+          'groupKey': 'group-key-2',
+          'keyEpoch': 2,
+        },
+        'group:leave': <String, dynamic>{'ok': true},
+      });
+      late _FreshRequestBarrierIntentRepository barrierRepository;
+      GroupExitIntent? heldNativeIntent;
+      GroupMessage? heldNativeTimeline;
+      late final DurableGroupExitSurfaceHarness harness;
+      harness = await DurableGroupExitSurfaceHarness.createForSurface(
+        groupId: 'group-1',
+        bridge: bridge,
+        groupRepository: groupRepo,
+        messageRepository: messageRepo,
+        identityRepository: identityRepo,
+        sendP2PMessage: p2pService.sendMessage,
+        storeP2PMessageInInbox: p2pService.storeInInbox,
+        now: () => DateTime.utc(2026, 7, 26, 12),
+        coordinatorIntentRepositoryDecorator: (repository) {
+          barrierRepository = _FreshRequestBarrierIntentRepository(repository);
+          return barrierRepository;
+        },
+        beforeNativeLeave: (intent) async {
+          await barrierRepository.bothEnqueuesConverged;
+          heldNativeIntent = intent;
+          heldNativeTimeline = await harness.loadDurableTimelineMessage();
+        },
+      );
+      addTearDown(harness.close);
+
+      final results = await Future.wait(<Future<GroupExitIntentRequestResult>>[
+        harness.coordinator.requestLeave('group-1'),
+        harness.coordinator.requestLeave('group-1'),
+      ]);
+
+      expect(
+        results.map((result) => result.status).toList(growable: false),
+        everyElement(GroupExitIntentRequestStatus.started),
+      );
+      final observedIntents = results
+          .map((result) => result.intent)
+          .whereType<GroupExitIntent>()
+          .toList(growable: false);
+      expect(observedIntents, hasLength(2));
+      final observedIdentities = observedIntents
+          .map(
+            (intent) => (
+              intentId: intent.intentId,
+              pendingBroadcastId: intent.pendingBroadcastId,
+              selfPeerId: intent.selfPeerId,
+              selfJoinedAt: intent.selfJoinedAt,
+            ),
+          )
+          .toList(growable: false);
+      expect(
+        observedIdentities,
+        everyElement((
+          intentId: 'durable-exit-surface-1',
+          pendingBroadcastId: 'group-exit-notice:durable-exit-surface-2',
+          selfPeerId: 'peer-self',
+          selfJoinedAt: joinedAt,
+        )),
+      );
+      final exactEventAt = DateTime.utc(2026, 7, 26, 12);
+      final nativeIntent = heldNativeIntent;
+      expect(nativeIntent, isNotNull);
+      expect(nativeIntent!.intentId, 'durable-exit-surface-1');
+      expect(
+        nativeIntent.pendingBroadcastId,
+        'group-exit-notice:durable-exit-surface-2',
+      );
+      expect(
+        nativeIntent.sourceEventId,
+        'member_removed:group-1:peer-self:durable-exit-surface-1',
+      );
+      expect(nativeIntent.eventAt, exactEventAt);
+      final nativeTimeline = heldNativeTimeline;
+      expect(nativeTimeline, isNotNull);
+      expect(
+        nativeTimeline!.id,
+        'sys-member_removed:group-1:peer-self:peer-self:'
+        '${exactEventAt.microsecondsSinceEpoch}',
+      );
+      expect(nativeTimeline.id, harness.lastPreparedTimelineMessageId);
+      expect(nativeTimeline.timestamp, exactEventAt);
+      expect(barrierRepository.initialLoadCalls, 2);
+      expect(barrierRepository.enqueueAttempts, hasLength(2));
+      expect(
+        barrierRepository.enqueueAttempts
+            .map((intent) => intent.intentId)
+            .toList(growable: false),
+        <String>['durable-exit-surface-1', 'durable-exit-surface-3'],
+      );
+      expect(
+        barrierRepository.enqueueAttempts
+            .map((intent) => intent.pendingBroadcastId)
+            .toList(growable: false),
+        <String>[
+          'group-exit-notice:durable-exit-surface-2',
+          'group-exit-notice:durable-exit-surface-4',
+        ],
+      );
+      expect(
+        barrierRepository.enqueueResults
+            .map((result) => result.disposition)
+            .toList(growable: false),
+        <GroupExitIntentMutationDisposition>[
+          GroupExitIntentMutationDisposition.committed,
+          GroupExitIntentMutationDisposition.refusedConflict,
+        ],
+      );
+      expect(
+        barrierRepository.enqueueResults
+            .map((result) => result.current?.intentId)
+            .toList(growable: false),
+        everyElement('durable-exit-surface-1'),
+      );
+      expect(harness.lastPreparedTimelineMessageId, isNotNull);
+      expect(harness.noticePrepareAttempts, 1);
+      expect(harness.noticeAttemptAttempts, 1);
+      expect(harness.rotationAttempts, 1);
+      expect(harness.nativeLeaveAttempts, 1);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
+      expect(await harness.loadIntent(), isNull);
+    },
+  );
+
+  test(
+    'DTR-10 newer same-peer membership survives detached projection after durable completion',
+    () async {
+      final joinedAt = DateTime.utc(2026, 7, 20);
+      final rejoinedAt = DateTime.utc(2026, 7, 27);
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Projection CAS',
+          type: GroupType.chat,
+          topicName: 'topic-group-1',
+          createdAt: joinedAt,
+          createdBy: 'peer-other',
+          myRole: GroupRole.member,
+        ),
+      );
+      final originalSelf = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-self',
+        username: 'Self',
+        role: MemberRole.writer,
+        permissions: const GroupMemberPermissions(rotateKeys: true),
+        publicKey: 'pk-self',
+        mlKemPublicKey: 'mlkem-self',
+        joinedAt: joinedAt,
+      );
+      await groupRepo.saveMember(originalSelf);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-other',
+          username: 'Other',
+          role: MemberRole.admin,
+          publicKey: 'pk-other',
+          mlKemPublicKey: 'mlkem-other',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'group-key-1',
+          createdAt: joinedAt,
+        ),
+      );
+      final messageRepo = InMemoryGroupMessageRepository();
+      final historyAt = joinedAt.add(const Duration(hours: 1));
+      await messageRepo.saveMessage(
+        GroupMessage(
+          id: 'dtr10-preserved-history',
+          groupId: 'group-1',
+          senderPeerId: 'peer-other',
+          senderUsername: 'Other',
+          text: 'preserve across newer membership',
+          timestamp: historyAt,
+          createdAt: historyAt,
+        ),
+      );
+      final p2pService = FakeP2PService();
+      final bridge = PassthroughCryptoBridge();
+      bridge.responses.addAll(<String, Map<String, dynamic>>{
+        'group:publish': <String, dynamic>{
+          'ok': true,
+          'messageId': 'projection-cas-notice',
+        },
+        'group:inboxStore': <String, dynamic>{'ok': true},
+        'group:generateNextKey': <String, dynamic>{
+          'ok': true,
+          'groupKey': 'group-key-2',
+          'keyEpoch': 2,
+        },
+        'group:leave': <String, dynamic>{'ok': true},
+      });
+      var projectionBoundaryCalls = 0;
+      var sawDurableCompletionAtBoundary = false;
+      late final DurableGroupExitSurfaceHarness harness;
+      harness = await DurableGroupExitSurfaceHarness.createForSurface(
+        groupId: 'group-1',
+        bridge: bridge,
+        groupRepository: groupRepo,
+        messageRepository: messageRepo,
+        identityRepository: _identityRepo(),
+        sendP2PMessage: p2pService.sendMessage,
+        storeP2PMessageInInbox: p2pService.storeInInbox,
+        now: () => DateTime.utc(2026, 7, 26, 12),
+        beforeSurfaceCleanupProjection: () async {
+          projectionBoundaryCalls++;
+          sawDurableCompletionAtBoundary =
+              await harness.loadIntent() == null &&
+              !await harness.hasDurableGroup();
+          await groupRepo.saveMemberBypassingValidationForTest(
+            originalSelf.copyWith(
+              username: 'Self rejoined',
+              joinedAt: rejoinedAt,
+            ),
+          );
+        },
+      );
+      addTearDown(harness.close);
+
+      final result = await harness.requestLeaveForTest();
+
+      expect(result.status, GroupExitIntentRequestStatus.started);
+      expect(harness.lastRequestResult, same(result));
+      expect(projectionBoundaryCalls, 1);
+      expect(sawDurableCompletionAtBoundary, isTrue);
+      expect(await harness.loadIntent(), isNull);
+      expect(await harness.hasDurableGroup(), isFalse);
+      expect(harness.surfaceCleanupProjections, 0);
+      expect(harness.lastSurfaceCleanupProjectionError, isNull);
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      final currentSelf = await groupRepo.getMember('group-1', 'peer-self');
+      expect(currentSelf, isNotNull);
+      expect(currentSelf!.username, 'Self rejoined');
+      expect(currentSelf.joinedAt, rejoinedAt);
+      expect(
+        await messageRepo.getMessage('dtr10-preserved-history'),
+        isNotNull,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
+    },
+  );
+
   test(
     'PB264-08 unavailable storage or queue authority cannot authorize leave',
     () async {

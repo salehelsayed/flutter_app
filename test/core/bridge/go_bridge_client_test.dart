@@ -198,7 +198,6 @@ void main() {
       'group:publishReaction': 'groupPublishReaction',
       'group:updateConfig': 'groupUpdateConfig',
       'group:generateNextKey': 'groupGenerateNextKey',
-      'group:rotateKey': 'groupRotateKey',
       'group:updateKey': 'groupUpdateKey',
       'group:inboxStore': 'groupInboxStore',
       'group:inboxRetrieve': 'groupInboxRetrieve',
@@ -532,6 +531,24 @@ void main() {
       // The MethodChannel should never have been called.
       expect(lastCall, isNull);
     });
+
+    test(
+      'DTR10-ROT-02 retired group:rotateKey returns UNKNOWN_COMMAND without invoking native',
+      () async {
+        final request = jsonEncode({
+          'cmd': 'group:rotateKey',
+          'payload': {'groupId': 'group-dtr10-rotation-retired'},
+        });
+
+        final response = await client.send(request);
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+        expect(decoded['ok'], isFalse);
+        expect(decoded['errorCode'], 'UNKNOWN_COMMAND');
+        expect(decoded['errorMessage'], contains('group:rotateKey'));
+        expect(lastCall, isNull);
+      },
+    );
 
     test(
       'ST-010 malformed bridge requests and native group responses return safe errors',
@@ -3223,7 +3240,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 53 commands are covered', () async {
+  test('all 67 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -3240,6 +3257,11 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'payload.verify',
       'contactrequest.encrypt',
       'contactrequest.decrypt',
+      // Account migration crypto
+      'migration.session.encap',
+      'migration.session.decap',
+      'migration.chunk.encrypt',
+      'migration.chunk.decrypt',
       // Node
       'node:start',
       'node:stop',
@@ -3251,9 +3273,13 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       // Relay
       'relay:reconnect',
       'relay:probe',
+      'relay:presence_get',
+      'relay:presence_set',
       // Peer
       'peer:dial',
       'peer:disconnect',
+      'peer:ping',
+      'lan:peer_found',
       // Messaging
       'message:send',
       'message:confirm',
@@ -3264,11 +3290,13 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'inbox:ack',
       'inbox:register_token',
       'inbox:unregister_token',
+      'inbox:register_wake_tokens',
       // Media
       'media:upload',
       'media:download',
       'media:delete',
       'media:list',
+      'media:lan_send',
       // Profile
       'profile:upload',
       'profile:download',
@@ -3277,10 +3305,10 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'group:join',
       'group:leave',
       'group:publish',
+      'group:sendReliable',
       'group:publishReaction',
       'group:updateConfig',
       'group:generateNextKey',
-      'group:rotateKey',
       'group:updateKey',
       'group:inboxStore',
       'group:inboxRetrieve',
@@ -3290,9 +3318,15 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'group.keygen',
       'group.encrypt',
       'group.decrypt',
+      // Background task
+      'bg:begin',
+      'bg:end',
+      'bg:grantProbe',
+      'bg:timeRemaining',
     ];
 
-    expect(allCmds, hasLength(53));
+    expect(allCmds, hasLength(67));
+    expect(allCmds.toSet(), hasLength(67));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

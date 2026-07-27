@@ -1,5 +1,3 @@
-import 'package:flutter_app/features/groups/application/rotate_group_key_use_case.dart';
-import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,112 +14,7 @@ void main() {
   Future<void> pump([Duration d = const Duration(milliseconds: 50)]) =>
       Future.delayed(d);
 
-  Future<void> waitUntil(
-    Future<bool> Function() condition, {
-    int maxTicks = 80,
-    Duration interval = const Duration(milliseconds: 25),
-    String? reason,
-  }) async {
-    for (var i = 0; i < maxTicks; i++) {
-      if (await condition()) return;
-      await Future<void>.delayed(interval);
-    }
-    fail(reason ?? 'Timed out waiting for condition');
-  }
-
   group('Group edge cases and fault injection smoke tests', () {
-    test(
-      'KE-014 failed legacy rotation keeps later sends on previous key epoch',
-      () async {
-        final admin = GroupTestUser.create(
-          peerId: 'peer-ke014-admin',
-          username: 'Admin',
-          network: network,
-        );
-        final bob = GroupTestUser.create(
-          peerId: 'peer-ke014-bob',
-          username: 'Bob',
-          network: network,
-        );
-
-        final groupId = 'grp-ke014-legacy-rotate';
-        final now = DateTime.now().toUtc();
-        await admin.createGroup(groupId: groupId, name: 'KE-014 Group');
-        await admin.addMember(groupId: groupId, invitee: bob);
-        await admin.groupRepo.saveKey(
-          GroupKeyInfo(
-            groupId: groupId,
-            keyGeneration: 1,
-            encryptedKey: 'epoch1-admin-key',
-            createdAt: now,
-          ),
-        );
-        await bob.groupRepo.saveKey(
-          GroupKeyInfo(
-            groupId: groupId,
-            keyGeneration: 1,
-            encryptedKey: 'epoch1-bob-key',
-            createdAt: now,
-          ),
-        );
-        admin.bridge.responses['group:rotateKey'] = {
-          'ok': true,
-          'keyGeneration': 2,
-          'encryptedKey': 'dangerous-undistributed-epoch2',
-        };
-
-        admin.start();
-        bob.start();
-
-        await expectLater(
-          rotateGroupKey(
-            bridge: admin.bridge,
-            groupRepo: admin.groupRepo,
-            groupId: groupId,
-          ),
-          throwsA(
-            isA<Exception>().having(
-              (error) => error.toString(),
-              'message',
-              contains('rotateAndDistributeGroupKey'),
-            ),
-          ),
-        );
-
-        final adminLatestAfterRotate = await admin.groupRepo.getLatestKey(
-          groupId,
-        );
-        expect(adminLatestAfterRotate, isNotNull);
-        expect(adminLatestAfterRotate!.keyGeneration, 1);
-        expect(await admin.groupRepo.getKeyByGeneration(groupId, 2), isNull);
-        expect(admin.bridge.commandLog, isEmpty);
-
-        final sent = await admin.sendGroupMessage(
-          groupId: groupId,
-          text: 'Still on epoch 1',
-        );
-        expect(sent, isNotNull);
-        expect(sent!.keyGeneration, 1);
-        await waitUntil(
-          () async => (await bob.loadGroupMessages(groupId)).isNotEmpty,
-          reason: 'Bob should receive the post-failed-legacy-rotate message',
-        );
-
-        final bobMsgs = await bob.loadGroupMessages(groupId);
-        expect(bobMsgs, hasLength(1));
-        expect(bobMsgs.single.text, 'Still on epoch 1');
-        expect(bobMsgs.single.keyGeneration, 1);
-
-        final bobLatest = await bob.groupRepo.getLatestKey(groupId);
-        expect(bobLatest, isNotNull);
-        expect(bobLatest!.keyGeneration, 1);
-        expect(await bob.groupRepo.getKeyByGeneration(groupId, 2), isNull);
-
-        admin.dispose();
-        bob.dispose();
-      },
-    );
-
     // ---------------------------------------------------------------
     // 1. Delivery failure — messages not delivered when network fails
     // ---------------------------------------------------------------
@@ -336,60 +229,74 @@ void main() {
     // ---------------------------------------------------------------
     // 5. Leave group voluntarily — user stops receiving
     // ---------------------------------------------------------------
-    test('leave group voluntarily — user stops receiving', () async {
-      final admin = GroupTestUser.create(
-        peerId: 'peer-admin',
-        username: 'Admin',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'peer-bob',
-        username: 'Bob',
-        network: network,
-      );
-      final charlie = GroupTestUser.create(
-        peerId: 'peer-charlie',
-        username: 'Charlie',
-        network: network,
-      );
+    test(
+      'DTR-10 durable voluntary leave stops delivery and cleans leaver history',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
 
-      final groupId = 'grp-leave';
-      await admin.createGroup(groupId: groupId, name: 'Leave Group');
-      await admin.addMember(groupId: groupId, invitee: bob);
-      await admin.addMember(groupId: groupId, invitee: charlie);
+        final groupId = 'grp-leave';
+        await admin.createGroup(groupId: groupId, name: 'Leave Group');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
 
-      admin.start();
-      bob.start();
-      charlie.start();
+        admin.start();
+        bob.start();
+        charlie.start();
 
-      // Bob leaves the group voluntarily
-      await bob.leaveGroup(groupId);
+        // Bob leaves the group voluntarily
+        await bob.leaveGroup(groupId);
+        final exitEvidence = bob.lastDurableGroupExitEvidence;
+        expect(exitEvidence, isNotNull);
+        expect(exitEvidence!.coordinatorStatus?.name, 'started');
+        expect(exitEvidence.actionId, isNotEmpty);
+        expect(exitEvidence.sourceEventId, isNotEmpty);
+        expect(exitEvidence.pendingBroadcastId, isNotEmpty);
+        expect(exitEvidence.noticePrepareCount, 1);
+        expect(exitEvidence.noticeAttemptCount, 1);
+        expect(exitEvidence.rotationAttemptCount, 1);
+        expect(exitEvidence.nativeLeaveCount, 1);
+        expect(exitEvidence.intentPresentAfter, isFalse);
+        expect(exitEvidence.pendingBroadcastPresentAfter, isFalse);
 
-      // Admin sends a message after Bob left
-      await admin.sendGroupMessage(groupId: groupId, text: 'After Bob left');
-      await pump();
+        // Admin sends a message after Bob left
+        await admin.sendGroupMessage(groupId: groupId, text: 'After Bob left');
+        await pump();
 
-      // Charlie sees the leave timeline plus the post-leave chat message.
-      final charlieMsgs = await charlie.loadGroupMessages(groupId);
-      expect(charlieMsgs, hasLength(2));
-      expect(
-        charlieMsgs.map((message) => message.text),
-        containsAll(['Bob left the group', 'After Bob left']),
-      );
+        // Charlie sees the leave timeline plus the post-leave chat message.
+        final charlieMsgs = await charlie.loadGroupMessages(groupId);
+        expect(charlieMsgs, hasLength(2));
+        expect(
+          charlieMsgs.map((message) => message.text),
+          containsAll(['Bob left the group', 'After Bob left']),
+        );
 
-      // Bob keeps the local leave timeline even after the group is removed.
-      final bobMsgs = await bob.loadGroupMessages(groupId);
-      expect(bobMsgs, hasLength(1));
-      expect(bobMsgs.single.text, 'Bob left the group');
+        // Production cleanup removes Bob's target group and target history.
+        final bobMsgs = await bob.loadGroupMessages(groupId);
+        expect(bobMsgs, isEmpty);
 
-      // Bob's groupRepo should have no group
-      final bobGroup = await bob.groupRepo.getGroup(groupId);
-      expect(bobGroup, isNull);
+        // Bob's groupRepo should have no group
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        expect(bobGroup, isNull);
 
-      admin.dispose();
-      bob.dispose();
-      charlie.dispose();
-    });
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
 
     // ---------------------------------------------------------------
     // 6. Rapid message burst — 20 messages from single sender

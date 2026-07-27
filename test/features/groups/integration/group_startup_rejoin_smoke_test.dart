@@ -5,7 +5,6 @@ import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -1249,14 +1248,24 @@ void main() {
             createdAt: DateTime.now().toUtc(),
           ),
         );
+        alice.start();
+        charlie.start();
 
         expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
 
-        await leaveGroup(
-          bridge: charlie.bridge,
-          groupRepo: charlie.groupRepo,
-          groupId: groupId,
-        );
+        await charlie.leaveGroup(groupId);
+        final exitEvidence = charlie.lastDurableGroupExitEvidence;
+        expect(exitEvidence, isNotNull);
+        expect(exitEvidence!.coordinatorStatus?.name, 'started');
+        expect(exitEvidence.actionId, isNotEmpty);
+        expect(exitEvidence.sourceEventId, isNotEmpty);
+        expect(exitEvidence.pendingBroadcastId, isNotEmpty);
+        expect(exitEvidence.noticePrepareCount, 1);
+        expect(exitEvidence.noticeAttemptCount, 1);
+        expect(exitEvidence.rotationAttemptCount, 1);
+        expect(exitEvidence.nativeLeaveCount, 1);
+        expect(exitEvidence.intentPresentAfter, isFalse);
+        expect(exitEvidence.pendingBroadcastPresentAfter, isFalse);
 
         // Simulate stale transport/discovery state that outlives deleted app
         // persistence. Rejoin must be driven by stored groups/keys only.

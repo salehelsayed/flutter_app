@@ -1726,9 +1726,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get group_saved_safety => 'الأمان المحفوظ';
 
   @override
-  String get group_card_no_messages => 'لا توجد رسائل بعد';
-
-  @override
   String get group_security_encrypted => 'مشفّر من الطرف إلى الطرف';
 
   @override
@@ -1862,11 +1859,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'تعذر الإرسال: تعذر تجهيز دعوة آمنة لهذا الصديق.';
 
   @override
-  String group_backlog_mixed_list_summary(int days) {
-    return 'انتهت صلاحية السجل الأقدم بعد $days يومًا';
-  }
-
-  @override
   String group_backlog_mixed_banner(int days) {
     return 'انتهت صلاحية الرسائل الفائتة الأقدم بعد $days يومًا. تمت استعادة الرسائل الحديثة.';
   }
@@ -1877,11 +1869,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String group_backlog_mixed_empty_subtitle(int days) {
     return 'انتهت صلاحية الرسائل الفائتة الأقدم بعد $days يومًا أثناء غيابك.';
-  }
-
-  @override
-  String group_backlog_expired_list_summary(int days) {
-    return 'انتهت صلاحية السجل الفائت بعد $days يومًا';
   }
 
   @override
@@ -1978,28 +1965,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get group_info_sign_metadata_failed =>
       'فشل توقيع تحديث بيانات المجموعة';
-
-  @override
-  String get groups_title => 'المجموعات';
-
-  @override
-  String get groups_empty_title => 'لا توجد مجموعات بعد';
-
-  @override
-  String get groups_empty_desc => 'أنشئ مجموعة للبدء';
-
-  @override
-  String get groups_pending_invites => 'الدعوات المعلقة';
-
-  @override
-  String get groups_joined => 'المجموعات المنضم إليها';
-
-  @override
-  String get groups_unknown_sender => 'غير معروف';
-
-  @override
-  String get groups_no_joined =>
-      'لا توجد مجموعات منضم إليها بعد. اقبل دعوة لإضافتها هنا.';
 
   @override
   String get group_type_discussion => 'نقاش';
@@ -3275,6 +3240,13 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get account_migration_blocked_message =>
       'هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.';
+
+  @override
+  String get account_migration_unfinished_move_title => 'لم يكتمل نقل الحساب';
+
+  @override
+  String get account_migration_unfinished_move_message =>
+      'استورد هذا الهاتف حسابك، لكن التسليم النهائي مع الهاتف القديم لم يكتمل. احتفظ بكلا الهاتفين ولا تمحُ أيًا من النسختين.';
 
   @override
   String get contact_profile_verified_peer => 'جهة موثوقة';

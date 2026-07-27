@@ -27,7 +27,6 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
@@ -38,6 +37,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -53,7 +53,6 @@ import '../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/helpers/durable_group_exit_surface_harness.dart';
-import '../../../shared/helpers/legacy_group_exit_coordinator_fixture.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -5534,14 +5533,25 @@ void main() {
         );
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
         final p2pService = FakeP2PService();
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: msgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        expect(
+          exitHarness.coordinator.groupRepository,
+          isA<GroupRepositoryImpl>(),
         );
+        exitHarness.install();
 
         // Use a Navigator stack to verify popUntil(isFirst)
         await tester.pumpWidget(
@@ -5580,6 +5590,11 @@ void main() {
 
         // Tap Leave Group
         await tapLeaveGroupButton(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
         // Verify bridge received group:leave command
         expect(
@@ -5589,6 +5604,11 @@ void main() {
         expect(await msgRepo.getMessage('msg-left-group'), isNull);
         expect(await msgRepo.getMessage('msg-other-group'), isNotNull);
         expect(await groupRepo.getGroup(group.id), isNull);
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 1);
 
         // Verify popped back to first route
         expect(find.byType(GroupInfoScreen), findsNothing);
@@ -5838,14 +5858,21 @@ void main() {
       final bridge = FakeBridge();
       final identityRepo = FakeIdentityRepository(identity: testIdentity);
       final p2pService = FakeP2PService();
-      installLegacyGroupExitCoordinatorFixture(
-        bridge: bridge,
-        groupRepository: groupRepo,
-        messageRepository: null,
-        identityRepository: identityRepo,
-        sendP2PMessage: p2pService.sendMessage,
-        storeP2PMessageInInbox: p2pService.storeInInbox,
-      );
+      final exitHarness = (await tester.runAsync(
+        () => DurableGroupExitSurfaceHarness.createForSurface(
+          groupId: group.id,
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: null,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        ),
+      ))!;
+      addTearDown(() async {
+        await tester.runAsync(exitHarness.close);
+      });
+      exitHarness.install();
 
       await tester.pumpWidget(
         _localizedMaterialApp(
@@ -5879,18 +5906,29 @@ void main() {
       expect(find.byType(GroupInfoScreen), findsOneWidget);
 
       await tapLeaveGroupButton(tester);
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => exitHarness.requestLeaveCompletions >= 1,
+      );
+      await pumpFrames(tester);
 
       expect(bridge.commandLog, isNot(contains('group:leave')));
       expect(find.byType(GroupInfoScreen), findsOneWidget);
       expect(find.text('Open Info'), findsNothing);
       expect(find.text(lastAdminLeaveBlockedMessage), findsOneWidget);
       expect(await groupRepo.getGroup(group.id), isNotNull);
+      expect(exitHarness.noticePrepareAttempts, 0);
+      expect(exitHarness.noticeAttemptAttempts, 0);
+      expect(exitHarness.rotationAttempts, 0);
+      expect(exitHarness.nativeLeaveAttempts, 0);
+      expect(exitHarness.surfaceCleanupProjections, 0);
     });
 
     testWidgets(
-      'BB-010 native leave failure stays on info screen and shows failed leave',
+      'BB-010 native leave failure starts durable retry and pops from info',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
         await _saveGroupReplayKey(groupRepo);
@@ -5912,6 +5950,18 @@ void main() {
             mlKemPublicKey: 'mlkem-pk-alice',
           ),
         );
+        final seededHistory = GroupMessage(
+          id: 'bb010-existing-history',
+          groupId: group.id,
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          text: 'history retained while native leave is retryable',
+          timestamp: DateTime.utc(2026, 7, 26, 9),
+          createdAt: DateTime.utc(2026, 7, 26, 9),
+          isIncoming: true,
+          status: 'delivered',
+        );
+        await msgRepo.saveMessage(seededHistory);
 
         final bridge = FakeBridge(
           initialResponses: {
@@ -5929,14 +5979,21 @@ void main() {
         };
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
         final p2pService = FakeP2PService();
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: null,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -5949,6 +6006,7 @@ void main() {
                         builder: (_) => GroupInfoWired(
                           group: group,
                           groupRepo: groupRepo,
+                          msgRepo: msgRepo,
                           contactRepo: InMemoryContactRepository(),
                           bridge: bridge,
                           identityRepo: identityRepo,
@@ -5970,21 +6028,73 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
 
         await tapLeaveGroupButton(tester);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
         expect(
           bridge.commandLog.where((command) => command == 'group:leave'),
           hasLength(1),
         );
-        expect(find.byType(GroupInfoScreen), findsOneWidget);
-        expect(find.text('Open Info'), findsNothing);
-        expect(find.text('Failed to leave group'), findsOneWidget);
+        final retainedIntent = await tester.runAsync(exitHarness.loadIntent);
+        expect(retainedIntent, isNotNull);
+        expect(retainedIntent!.state, GroupExitIntentState.nativeLeavePending);
+        expect(retainedIntent.intentId, 'durable-exit-surface-1');
+        expect(
+          retainedIntent.pendingBroadcastId,
+          'group-exit-notice:durable-exit-surface-2',
+        );
+        expect(
+          retainedIntent.sourceEventId,
+          'member_removed:${group.id}:${testIdentity.peerId}:'
+          '${retainedIntent.intentId}',
+        );
+        final eventAt = retainedIntent.eventAt;
+        expect(eventAt, isNotNull);
+        final timeline = await tester.runAsync(
+          exitHarness.loadDurableTimelineMessage,
+        );
+        expect(timeline, isNotNull);
+        expect(
+          timeline!.id,
+          'sys-member_removed:${group.id}:${testIdentity.peerId}:'
+          '${testIdentity.peerId}:${eventAt!.microsecondsSinceEpoch}',
+        );
+        expect(timeline.timestamp.toUtc(), eventAt.toUtc());
+        expect(
+          (await tester.runAsync(
+            () => exitHarness.loadDurableMessage(seededHistory.id),
+          ))?.toMap(),
+          equals(seededHistory.toMap()),
+        );
+        expect(
+          exitHarness.lastRequestResult?.diagnosticFacts,
+          contains(const GroupExitProcessDiagnosticFact.nativeRejected()),
+        );
+        expect(
+          exitHarness.lastRequestResult?.diagnosticFacts,
+          isNot(
+            contains(const GroupExitProcessDiagnosticFact.nativeUncertain()),
+          ),
+        );
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 0);
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+        expect(find.text('Failed to leave group'), findsNothing);
         expect(await groupRepo.getGroup(group.id), isNotNull);
         expect(await groupRepo.getLatestKey(group.id), isNotNull);
+        expect(await msgRepo.getMessage('bb010-existing-history'), isNotNull);
       },
     );
 
     testWidgets(
-      'GCA-010 native leave failure rolls back local artifacts after pre-leave broadcast',
+      'GCA-010 native leave failure retains exact durable intent and local history for native-only retry',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
@@ -6020,6 +6130,18 @@ void main() {
             mlKemPublicKey: 'mlkem-pk-charlie',
           ),
         );
+        final seededHistory = GroupMessage(
+          id: 'gca010-existing-history',
+          groupId: group.id,
+          senderPeerId: 'peer-bob',
+          senderUsername: 'Bob',
+          text: 'history retained until native leave is confirmed',
+          timestamp: DateTime.utc(2026, 7, 26, 10),
+          createdAt: DateTime.utc(2026, 7, 26, 10),
+          isIncoming: true,
+          status: 'delivered',
+        );
+        await msgRepo.saveMessage(seededHistory);
 
         final bridge = PassthroughCryptoBridge();
         bridge.responses['group:leave'] = {
@@ -6039,14 +6161,21 @@ void main() {
         };
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: msgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -6081,6 +6210,11 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
 
         await tapLeaveGroupButton(tester, settleFrameCount: 30);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
         expect(
           bridge.commandLog.where((command) => command == 'group:leave'),
@@ -6099,7 +6233,7 @@ void main() {
         expect(inboxStoreIndex, lessThan(leaveIndex));
         expect(generateKeyIndex, lessThan(leaveIndex));
         expect(p2pService.sentMessageLog.length, 2);
-        expect(await msgRepo.getMessageCount('group-1'), 0);
+        expect(await msgRepo.getMessage('gca010-existing-history'), isNotNull);
         expect(await groupRepo.getGroup('group-1'), isNotNull);
         final members = await groupRepo.getMembers('group-1');
         expect(members.map((member) => member.peerId), [
@@ -6107,22 +6241,121 @@ void main() {
           'peer-bob',
           'peer-charlie',
         ]);
-        final latestKey = await groupRepo.getLatestKey('group-1');
+        final durableGroupRepo = exitHarness.coordinator.groupRepository;
+        expect(durableGroupRepo, isA<GroupRepositoryImpl>());
+        final latestKey = await tester.runAsync(
+          () => durableGroupRepo.getLatestKey('group-1'),
+        );
         expect(latestKey, isNotNull);
-        expect(latestKey!.keyGeneration, 8);
-        for (var generation = 1; generation <= 8; generation++) {
-          expect(
-            (await groupRepo.getKeyByGeneration(
-              'group-1',
-              generation,
-            ))?.encryptedKey,
-            'test-group-key-$generation',
-          );
-        }
-        expect(await groupRepo.getKeyByGeneration('group-1', 9), isNull);
-        expect(find.byType(GroupInfoScreen), findsOneWidget);
-        expect(find.text('Open Info'), findsNothing);
-        expect(find.text('Failed to leave group'), findsOneWidget);
+        expect(latestKey!.keyGeneration, 9);
+        expect(
+          (await tester.runAsync(
+            () => durableGroupRepo.getKeyByGeneration('group-1', 8),
+          ))?.encryptedKey,
+          'test-group-key-8',
+        );
+        expect(
+          (await tester.runAsync(
+            () => durableGroupRepo.getKeyByGeneration('group-1', 9),
+          ))?.encryptedKey,
+          'failed-leave-rotated-key',
+        );
+
+        final retainedIntent = await tester.runAsync(exitHarness.loadIntent);
+        expect(retainedIntent, isNotNull);
+        expect(retainedIntent!.state, GroupExitIntentState.nativeLeavePending);
+        expect(retainedIntent.intentId, 'durable-exit-surface-1');
+        expect(
+          retainedIntent.pendingBroadcastId,
+          'group-exit-notice:durable-exit-surface-2',
+        );
+        expect(
+          retainedIntent.sourceEventId,
+          'member_removed:${group.id}:${testIdentity.peerId}:'
+          '${retainedIntent.intentId}',
+        );
+        final eventAt = retainedIntent.eventAt;
+        expect(eventAt, isNotNull);
+        final timeline = await tester.runAsync(
+          exitHarness.loadDurableTimelineMessage,
+        );
+        expect(timeline, isNotNull);
+        expect(
+          timeline!.id,
+          'sys-member_removed:${group.id}:${testIdentity.peerId}:'
+          '${testIdentity.peerId}:${eventAt!.microsecondsSinceEpoch}',
+        );
+        expect(timeline.timestamp.toUtc(), eventAt.toUtc());
+        expect(
+          (await tester.runAsync(
+            () => exitHarness.loadDurableMessage(seededHistory.id),
+          ))?.toMap(),
+          equals(seededHistory.toMap()),
+        );
+        expect(
+          exitHarness.lastRequestResult?.diagnosticFacts,
+          contains(const GroupExitProcessDiagnosticFact.nativeRejected()),
+        );
+        expect(
+          exitHarness.lastRequestResult?.diagnosticFacts,
+          isNot(
+            contains(const GroupExitProcessDiagnosticFact.nativeUncertain()),
+          ),
+        );
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 0);
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+        expect(find.text('Failed to leave group'), findsNothing);
+
+        final publishCallsBeforeRetry = bridge.commandLog
+            .where((command) => command == 'group:publish')
+            .length;
+        final inboxCallsBeforeRetry = bridge.commandLog
+            .where((command) => command == 'group:inboxStore')
+            .length;
+        final keyCallsBeforeRetry = bridge.commandLog
+            .where((command) => command == 'group:generateNextKey')
+            .length;
+        final sentMessagesBeforeRetry = p2pService.sentMessageLog.length;
+        bridge.responses['group:leave'] = {'ok': true};
+
+        await tester.runAsync(exitHarness.retryForTest);
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(2),
+        );
+        expect(
+          bridge.commandLog
+              .where((command) => command == 'group:publish')
+              .length,
+          publishCallsBeforeRetry,
+        );
+        expect(
+          bridge.commandLog
+              .where((command) => command == 'group:inboxStore')
+              .length,
+          inboxCallsBeforeRetry,
+        );
+        expect(
+          bridge.commandLog
+              .where((command) => command == 'group:generateNextKey')
+              .length,
+          keyCallsBeforeRetry,
+        );
+        expect(p2pService.sentMessageLog.length, sentMessagesBeforeRetry);
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 2);
+        expect(await tester.runAsync(exitHarness.loadIntent), isNull);
+        expect(await groupRepo.getGroup(group.id), isNull);
+        expect(await msgRepo.getMessageCount(group.id), 0);
+        expect(exitHarness.surfaceCleanupProjections, 1);
       },
     );
 
@@ -6131,8 +6364,8 @@ void main() {
       (tester) async {
         // Non-creator writer voluntary leave: the leaver cannot rotate the key,
         // so the departure rotation is deferred (best-effort). The leave must
-        // still reach leaveGroup() and tear down local membership instead of
-        // dead-ending on the old "Failed to rotate group key before leaving".
+        // still complete the durable runner's native and local-cleanup phases
+        // instead of dead-ending on the old rotation failure.
         final writerIdentity = IdentityModel(
           peerId: 'peer-writer',
           publicKey: 'pk-writer',
@@ -6191,14 +6424,21 @@ void main() {
         bridge.responses['group:inboxStore'] = {'ok': true};
         final identityRepo = FakeIdentityRepository(identity: writerIdentity);
         final p2pService = FakeP2PService();
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: msgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -6233,9 +6473,14 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
 
         await tapLeaveGroupButton(tester, settleFrameCount: 30);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
-        // The member_removed was broadcast, then leaveGroup() ran and tore down
-        // local membership.
+        // The durable notice was broadcast before the runner tore down local
+        // membership.
         expect(bridge.commandLog, contains('group:publish'));
         expect(
           bridge.commandLog.where((command) => command == 'group:leave'),
@@ -6243,7 +6488,7 @@ void main() {
         );
         // Rotation was deferred, not performed: the writer never generated a key.
         expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
-        // Local membership torn down (leaveGroup deletes the group).
+        // The runner's terminal local cleanup deletes the group.
         expect(await groupRepo.getGroup('group-1'), isNull);
         // No rotation-failed error and no native-leave failure SnackBar.
         expect(
@@ -6251,6 +6496,11 @@ void main() {
           findsNothing,
         );
         expect(find.text('Failed to leave group'), findsNothing);
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 1);
         // Popped back to the first route.
         expect(find.byType(GroupInfoScreen), findsNothing);
         expect(find.text('Open Info'), findsOneWidget);
@@ -6551,14 +6801,21 @@ void main() {
         bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-1'};
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: msgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -6593,6 +6850,11 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
 
         await tapLeaveGroupButton(tester, settleFrameCount: 30);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
@@ -6630,6 +6892,11 @@ void main() {
         expect(await msgRepo.getMessageCount('group-1'), 0);
 
         expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 1);
         expect(find.byType(GroupInfoScreen), findsNothing);
         expect(find.text('Open Info'), findsOneWidget);
       },
@@ -6699,14 +6966,21 @@ void main() {
         };
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: leavingIdentity);
-        installLegacyGroupExitCoordinatorFixture(
-          bridge: bridge,
-          groupRepository: groupRepo,
-          messageRepository: msgRepo,
-          identityRepository: identityRepo,
-          sendP2PMessage: p2pService.sendMessage,
-          storeP2PMessageInInbox: p2pService.storeInInbox,
-        );
+        final exitHarness = (await tester.runAsync(
+          () => DurableGroupExitSurfaceHarness.createForSurface(
+            groupId: group.id,
+            bridge: bridge,
+            groupRepository: groupRepo,
+            messageRepository: msgRepo,
+            identityRepository: identityRepo,
+            sendP2PMessage: p2pService.sendMessage,
+            storeP2PMessageInInbox: p2pService.storeInInbox,
+          ),
+        ))!;
+        addTearDown(() async {
+          await tester.runAsync(exitHarness.close);
+        });
+        exitHarness.install();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -6741,6 +7015,11 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
 
         await tapLeaveGroupButton(tester, settleFrameCount: 30);
+        await pumpDurableGroupExitUntil(
+          tester,
+          () => exitHarness.requestLeaveCompletions >= 1,
+        );
+        await pumpFrames(tester);
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
@@ -6763,6 +7042,11 @@ void main() {
         expect(await msgRepo.getMessageCount('group-1'), 0);
 
         expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(exitHarness.noticePrepareAttempts, 1);
+        expect(exitHarness.noticeAttemptAttempts, 1);
+        expect(exitHarness.rotationAttempts, 1);
+        expect(exitHarness.nativeLeaveAttempts, 1);
+        expect(exitHarness.surfaceCleanupProjections, 1);
         expect(find.byType(GroupInfoScreen), findsNothing);
       },
     );

@@ -24,7 +24,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart'
     hide staleGroupMembershipEventMessage;
-import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -41,7 +40,6 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
-import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
@@ -74,6 +72,8 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import 'group_multi_device_real_harness.dart';
+import '_support/group_multi_party_harness_runtime_loader.dart';
+import '_support/group_multi_party_verdict_handshake.dart';
 import 'scripts/group_multi_party_runtime_config.dart';
 import '../test/shared/fakes/fake_group_dissolve_preflight.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -84,6 +84,7 @@ late final String _role;
 late final String _scenario;
 late final String _runId;
 late final String _mode;
+late final bool _requireVerdictHostCapture;
 const _regressionAdminPermissionsScenario =
     'regression_group_admin_permissions_and_message_reliability_four_users';
 const _regressionAdminPermissionsProofName =
@@ -99,9 +100,13 @@ late final String _configuredDbName;
 const _identityExchangeTimeout = Duration(minutes: 90);
 const _liveTopicLeavePropagationDelay = Duration(seconds: 3);
 
-Future<void> _initializeRuntimeConfig() async {
+Future<void> _initializeRuntimeConfig({
+  required bool requireAndroidRuntimeConfig,
+}) async {
   _runtimeConfig = resolveGroupMultiPartyConfig(
-    await _readRuntimeConfigValues(),
+    await _readRuntimeConfigValues(
+      requireAndroidRuntimeConfig: requireAndroidRuntimeConfig,
+    ),
   );
   _sharedDir = _runtimeConfig.sharedDir;
   setGroupMultiDeviceRuntimeSharedDir(_sharedDir);
@@ -109,29 +114,26 @@ Future<void> _initializeRuntimeConfig() async {
   _scenario = _runtimeConfig.scenario;
   _runId = _runtimeConfig.runId;
   _mode = _runtimeConfig.mode;
+  _requireVerdictHostCapture =
+      requireAndroidRuntimeConfig && Platform.isAndroid;
   _restoreMnemonic = _runtimeConfig.restoreMnemonic;
   _restoreIdentityPath = _runtimeConfig.restoreIdentityPath;
   _reuseExistingIdentity = _runtimeConfig.reuseExistingIdentity;
   _configuredDbName = _runtimeConfig.dbName;
 }
 
-Future<Map<String, String>> _readRuntimeConfigValues() async {
-  final documentsDir = await getApplicationDocumentsDirectory();
-  final configFile = File(
-    '${documentsDir.path}/$groupMultiPartyRuntimeConfigFileName',
+Future<Map<String, String>> _readRuntimeConfigValues({
+  required bool requireAndroidRuntimeConfig,
+}) async {
+  return loadGroupMultiPartyHarnessRuntimeConfigValues(
+    isAndroid: Platform.isAndroid,
+    requireAndroidRuntimeConfig: requireAndroidRuntimeConfig,
+    resolveFinalConfigFile: () async {
+      final documentsDir = await getApplicationDocumentsDirectory();
+      return File('${documentsDir.path}/$groupMultiPartyRuntimeConfigFileName');
+    },
+    timeout: const Duration(minutes: 2),
   );
-  if (!configFile.existsSync()) {
-    return const <String, String>{};
-  }
-  final decoded = jsonDecode(configFile.readAsStringSync());
-  if (decoded is! Map) {
-    throw StateError(
-      '$groupMultiPartyRuntimeConfigFileName must contain a JSON object',
-    );
-  }
-  return decoded.map<String, String>((key, value) {
-    return MapEntry('$key', '$value');
-  });
 }
 
 class _InMemoryGroupInviteDeliveryAttemptRepository
@@ -3752,8 +3754,18 @@ Future<void> _writeVerdict({
     'persistedMessageCounts': _persistedCounts(receivedMessages),
     ...extra,
   };
-  writeSharedJson(_signalName('${_role}_verdict.json'), verdict);
-  stdout.writeln(jsonEncode(verdict));
+  await writeGroupMultiPartyVerdictAndAwaitHostCapture(
+    role: _role,
+    requireHostCapture: _requireVerdictHostCapture,
+    writeVerdict: () {
+      writeSharedJson(_signalName('${_role}_verdict.json'), verdict);
+      stdout.writeln(jsonEncode(verdict));
+    },
+    waitForSignal: (signalName) => waitForSharedSignal(
+      _signalName(signalName),
+      timeout: const Duration(minutes: 20),
+    ),
+  );
 }
 
 String _staleRosterCharlieText() =>
@@ -17006,6 +17018,7 @@ Map<String, dynamic> _voluntaryLeaveConvergenceProof({
   required String role,
   required bool charlieExcludedFromRoster,
   required bool leaveTimelineRendered,
+  required int leaveTimelineRowCount,
   required bool keyEpochAdvanced,
   required bool leaveWasSilent,
   required bool groupHardDeletedLocally,
@@ -17016,6 +17029,7 @@ Map<String, dynamic> _voluntaryLeaveConvergenceProof({
   int? initialKeyEpoch,
   int? finalKeyEpoch,
   String? leaveTimelineText,
+  Map<String, Object?>? durableExitEvidence,
 }) {
   return <String, dynamic>{
     'rowId': 'H-01',
@@ -17023,6 +17037,7 @@ Map<String, dynamic> _voluntaryLeaveConvergenceProof({
     'proofRole': role,
     'charlieExcludedFromRoster': charlieExcludedFromRoster,
     'leaveTimelineRendered': leaveTimelineRendered,
+    'leaveTimelineRowCount': leaveTimelineRowCount,
     'keyEpochAdvanced': keyEpochAdvanced,
     'rotationDeferred': rotationDeferred,
     'leaveWasSilent': leaveWasSilent,
@@ -17030,7 +17045,21 @@ Map<String, dynamic> _voluntaryLeaveConvergenceProof({
     'initialKeyEpoch': ?initialKeyEpoch,
     'finalKeyEpoch': ?finalKeyEpoch,
     'leaveTimelineText': ?leaveTimelineText,
+    'durableExitEvidence': ?durableExitEvidence,
   };
+}
+
+Future<int> _voluntaryLeaveTimelineRowCount({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String leaverPeerId,
+}) async {
+  final messages = await stack.groupMsgRepo.getMessagesPage(
+    groupId,
+    limit: 200,
+  );
+  final idPrefix = 'sys-member_removed:$groupId:$leaverPeerId:';
+  return messages.where((message) => message.id.startsWith(idPrefix)).length;
 }
 
 Future<Map<String, dynamic>?> _latestVoluntaryLeaveTimelineEvent({
@@ -17154,7 +17183,7 @@ Future<void> _runVoluntaryLeaveConvergenceAlice(
   final initialKeyEpoch = await _keyEpoch(stack, groupId);
 
   // Charlie leaves voluntarily; alice converges on the departure.
-  await waitForSharedSignal(_signalName('charlie_voluntary_leave_broadcast'));
+  await waitForSharedSignal(_signalName('charlie_durable_exit_completed'));
   await _waitForMemberExclusion(
     stack: stack,
     groupId: groupId,
@@ -17176,6 +17205,11 @@ Future<void> _runVoluntaryLeaveConvergenceAlice(
   );
   final memberPeerIds = await _memberPeerIds(stack, groupId);
   final finalKeyEpoch = await _keyEpoch(stack, groupId);
+  final leaveTimelineRowCount = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: charliePeerId,
+  );
 
   await _writeVerdict(
     stack: stack,
@@ -17186,10 +17220,10 @@ Future<void> _runVoluntaryLeaveConvergenceAlice(
       'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
         role: 'alice',
         charlieExcludedFromRoster: !memberPeerIds.contains(charliePeerId),
-        // Convergence signal: charlie's departure materialized as a
-        // member_removed timeline row on this receiver. Exact text ("left the
-        // group") is render-path-dependent and is asserted only on the leaver.
+        // Convergence signal: charlie's departure materialized exactly once as
+        // a member_removed timeline row on this receiver.
         leaveTimelineRendered: leaveEvent['messageId'] != null,
+        leaveTimelineRowCount: leaveTimelineRowCount,
         keyEpochAdvanced: finalKeyEpoch > initialKeyEpoch,
         leaveWasSilent: true,
         groupHardDeletedLocally: false,
@@ -17215,7 +17249,7 @@ Future<void> _runVoluntaryLeaveConvergenceBob(
   final charliePeerId = identities['charlie']!['peerId'] as String;
   final initialKeyEpoch = await _keyEpoch(stack, groupId);
 
-  await waitForSharedSignal(_signalName('charlie_voluntary_leave_broadcast'));
+  await waitForSharedSignal(_signalName('charlie_durable_exit_completed'));
   await _waitForMemberExclusion(
     stack: stack,
     groupId: groupId,
@@ -17237,6 +17271,11 @@ Future<void> _runVoluntaryLeaveConvergenceBob(
   );
   final memberPeerIds = await _memberPeerIds(stack, groupId);
   final finalKeyEpoch = await _keyEpoch(stack, groupId);
+  final leaveTimelineRowCount = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: charliePeerId,
+  );
 
   await _writeVerdict(
     stack: stack,
@@ -17247,10 +17286,10 @@ Future<void> _runVoluntaryLeaveConvergenceBob(
       'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
         role: 'bob',
         charlieExcludedFromRoster: !memberPeerIds.contains(charliePeerId),
-        // Convergence signal: charlie's departure materialized as a
-        // member_removed timeline row on this receiver. Exact text ("left the
-        // group") is render-path-dependent and is asserted only on the leaver.
+        // Convergence signal: charlie's departure materialized exactly once as
+        // a member_removed timeline row on this receiver.
         leaveTimelineRendered: leaveEvent['messageId'] != null,
+        leaveTimelineRowCount: leaveTimelineRowCount,
         keyEpochAdvanced: finalKeyEpoch > initialKeyEpoch,
         leaveWasSilent: true,
         groupHardDeletedLocally: false,
@@ -17282,37 +17321,60 @@ Future<void> _runVoluntaryLeaveConvergenceCharlie(
   // Let alice observe both joins and settle the initial epoch before leaving.
   await Future<void>.delayed(const Duration(seconds: 10));
 
-  final group = await stack.groupRepo.getGroup(groupId);
-  if (group == null) {
+  final groupPresentBefore = await stack.groupRepo.getGroup(groupId) != null;
+  if (!groupPresentBefore) {
     throw StateError('H-01 charlie missing group before voluntary leave');
   }
-  final broadcastResult = await broadcastVoluntaryLeaveAndRotateKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    group: group,
-    identityRepo: stack.identityRepo,
-    msgRepo: stack.groupMsgRepo,
-    sendP2PMessage: (peerId, message) async {
-      return stack.p2pService.sendMessage(peerId, message);
-    },
+  final unrelatedMarkerId = 'identity:${stack.identity.peerId}';
+  final unrelatedIdentityBefore = await stack.identityRepo.loadIdentity();
+  final unrelatedMarkerPresentBefore =
+      unrelatedIdentityBefore?.peerId == stack.identity.peerId;
+  final leaveTimelineRowCountBefore = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: stack.identity.peerId,
   );
-  if (!broadcastResult.didBroadcast) {
+  final bridgeGroupLeaveCountBefore = stack.groupLeaveCommandCount;
+
+  final action = await stack.durableGroupExitDriver.requestLeave(groupId);
+  if (action.requestResult.status.name != 'started') {
     throw StateError(
-      'H-01 charlie voluntary-leave broadcast skipped: '
-      '${broadcastResult.skipReason?.name}',
+      'H-01 durable exit did not complete: '
+      '${action.requestResult.status.name} ${action.requestResult.cause}',
     );
   }
+  writeSharedText(_signalName('charlie_durable_exit_completed'), 'ok');
 
-  // Local cleanup: charlie hard-deletes the group (getGroup == null).
-  await leaveGroup(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    groupId: groupId,
-  );
-  writeSharedText(_signalName('charlie_voluntary_leave_broadcast'), 'ok');
-
+  final bridgeGroupLeaveCountAfter = stack.groupLeaveCommandCount;
   final groupHardDeletedLocally =
       await stack.groupRepo.getGroup(groupId) == null;
+  final targetMessagesAfter = await stack.groupMsgRepo.getMessagesPage(
+    groupId,
+    limit: 200,
+  );
+  final leaveTimelineRowCountAfter = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: stack.identity.peerId,
+  );
+  final unrelatedIdentityAfter = await stack.identityRepo.loadIdentity();
+  final unrelatedMarkerPresentAfter =
+      unrelatedIdentityAfter?.peerId == stack.identity.peerId;
+  final durableExitEvidence = <String, Object?>{
+    ...action.evidence.toJson(),
+    'bridgeGroupLeaveCountBefore': bridgeGroupLeaveCountBefore,
+    'bridgeGroupLeaveCountAfter': bridgeGroupLeaveCountAfter,
+    'bridgeGroupLeaveCountDelta':
+        bridgeGroupLeaveCountAfter - bridgeGroupLeaveCountBefore,
+    'targetGroupPresentBefore': groupPresentBefore,
+    'targetGroupPresentAfter': !groupHardDeletedLocally,
+    'targetMessageCountAfter': targetMessagesAfter.length,
+    'leaveTimelineRowCountBefore': leaveTimelineRowCountBefore,
+    'leaveTimelineRowCountAfter': leaveTimelineRowCountAfter,
+    'unrelatedMarkerId': unrelatedMarkerId,
+    'unrelatedMarkerPresentBefore': unrelatedMarkerPresentBefore,
+    'unrelatedMarkerPresentAfter': unrelatedMarkerPresentAfter,
+  };
 
   await _writeVerdict(
     stack: stack,
@@ -17323,14 +17385,15 @@ Future<void> _runVoluntaryLeaveConvergenceCharlie(
       'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
         role: 'charlie',
         charlieExcludedFromRoster: true,
-        leaveTimelineRendered: true,
-        // The departing writer cannot rotate; the leave is best-effort and the
-        // remaining creator (alice) re-keys. Charlie proves the deferral; alice
-        // and bob prove the epoch actually advanced.
-        keyEpochAdvanced: broadcastResult.rotatedKey != null,
-        rotationDeferred: broadcastResult.rotationDeferred,
+        leaveTimelineRendered: leaveTimelineRowCountAfter > 0,
+        leaveTimelineRowCount: leaveTimelineRowCountAfter,
+        // The departing writer cannot rotate; the durable runner records the
+        // deferral, then continues through one native leave and exact cleanup.
+        keyEpochAdvanced: false,
+        rotationDeferred: action.evidence.rotationOutcome == 'deferred',
         leaveWasSilent: true,
         groupHardDeletedLocally: groupHardDeletedLocally,
+        durableExitEvidence: durableExitEvidence,
       ),
     },
   );
@@ -38086,67 +38149,50 @@ Future<void> _runGm015Alice(
   final bobPeerId = identities['bob']!['peerId'] as String;
   final charliePeerId = identities['charlie']!['peerId'] as String;
   final initialKeyEpoch = await _keyEpoch(stack, groupId);
-
-  var selfRemovalOutcome = 'notRun';
-  String? selfRemovalReason;
-  try {
-    await removeGroupMember(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
-      groupId: groupId,
-      memberPeerId: alicePeerId,
-      selfPeerId: alicePeerId,
-      actorUsername: stack.identity.username,
-      msgRepo: stack.groupMsgRepo,
-    );
-    selfRemovalOutcome = 'success';
-  } on StateError catch (error) {
-    selfRemovalOutcome = 'blocked';
-    selfRemovalReason = error.message;
-  }
-
-  final group = await stack.groupRepo.getGroup(groupId);
-  if (group == null) {
-    throw StateError('GM-015 group disappeared after self-removal attempt');
-  }
-  final broadcastResult = await broadcastVoluntaryLeaveAndRotateKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    group: group,
-    identityRepo: stack.identityRepo,
-    msgRepo: stack.groupMsgRepo,
-    sendP2PMessage: (peerId, message) async {
-      return stack.p2pService.sendMessage(peerId, message);
-    },
+  final targetGroupPresentBefore =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final leaveTimelineRowCountBefore = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: alicePeerId,
   );
-  final voluntaryLeaveBroadcastOutcome = broadcastResult.didBroadcast
-      ? 'broadcast'
-      : 'skipped';
+  final bridgeGroupLeaveCountBefore = stack.groupLeaveCommandCount;
 
-  var leaveOutcome = 'notRun';
-  String? leaveReason;
-  try {
-    await leaveGroup(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
-      groupId: groupId,
+  final action = await stack.durableGroupExitDriver.requestLeave(groupId);
+  if (action.requestResult.status.name != 'blockedLastAdmin') {
+    throw StateError(
+      'GM-015 durable exit policy returned '
+      '${action.requestResult.status.name}: ${action.requestResult.cause}',
     );
-    leaveOutcome = 'success';
-  } on StateError catch (error) {
-    leaveOutcome = 'blocked';
-    leaveReason = error.message;
   }
 
-  final attempts = <String, dynamic>{
-    'selfRemovalOutcome': selfRemovalOutcome,
-    'selfRemovalReason': selfRemovalReason,
-    'voluntaryLeaveBroadcastOutcome': voluntaryLeaveBroadcastOutcome,
-    'voluntaryLeaveBroadcastSkipReason': broadcastResult.skipReason?.name,
-    'leaveOutcome': leaveOutcome,
-    'leaveReason': leaveReason,
+  final bridgeGroupLeaveCountAfter = stack.groupLeaveCommandCount;
+  final targetGroupPresentAfter =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final leaveTimelineRowCountAfter = await _voluntaryLeaveTimelineRowCount(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: alicePeerId,
+  );
+  final durableExitEvidence = <String, Object?>{
+    ...action.evidence.toJson(),
+    'bridgeGroupLeaveCountBefore': bridgeGroupLeaveCountBefore,
+    'bridgeGroupLeaveCountAfter': bridgeGroupLeaveCountAfter,
+    'bridgeGroupLeaveCountDelta':
+        bridgeGroupLeaveCountAfter - bridgeGroupLeaveCountBefore,
+    'targetGroupPresentBefore': targetGroupPresentBefore,
+    'targetGroupPresentAfter': targetGroupPresentAfter,
+    'leaveTimelineRowCountBefore': leaveTimelineRowCountBefore,
+    'leaveTimelineRowCountAfter': leaveTimelineRowCountAfter,
+  };
+  final actionSnapshot = <String, dynamic>{
+    'durableExitEvidence': durableExitEvidence,
     'initialKeyEpoch': initialKeyEpoch,
   };
-  writeSharedJson(_signalName('gm015_policy_attempts.json'), attempts);
+  writeSharedJson(
+    _signalName('gm015_durable_exit_attempt.json'),
+    actionSnapshot,
+  );
 
   final bobSent = await waitForSharedJson(
     _signalName('bob_sent_bobAfterBlockedAdminSelfRemoval.json'),
@@ -38184,7 +38230,7 @@ Future<void> _runGm015Alice(
         charliePeerId: charliePeerId,
         initialKeyEpoch: initialKeyEpoch,
         extra: <String, dynamic>{
-          ...attempts,
+          'durableExitEvidence': durableExitEvidence,
           'receivedBobPostAttemptSend': true,
           'receivedCharliePostAttemptSend': true,
         },
@@ -38204,13 +38250,13 @@ Future<void> _runGm015Bob(
   );
   writeSharedText(_signalName('bob_group_joined'), 'ok');
 
-  final attempts = await waitForSharedJson(
-    _signalName('gm015_policy_attempts.json'),
+  final actionSnapshot = await waitForSharedJson(
+    _signalName('gm015_durable_exit_attempt.json'),
   );
   final alicePeerId = identities['alice']!['peerId'] as String;
   final bobPeerId = stack.identity.peerId;
   final charliePeerId = identities['charlie']!['peerId'] as String;
-  final initialKeyEpoch = attempts['initialKeyEpoch'] as int;
+  final initialKeyEpoch = actionSnapshot['initialKeyEpoch'] as int;
 
   final bobSent = await _sendProofMessage(
     stack: stack,
@@ -38263,13 +38309,13 @@ Future<void> _runGm015Charlie(
   );
   writeSharedText(_signalName('charlie_group_joined'), 'ok');
 
-  final attempts = await waitForSharedJson(
-    _signalName('gm015_policy_attempts.json'),
+  final actionSnapshot = await waitForSharedJson(
+    _signalName('gm015_durable_exit_attempt.json'),
   );
   final alicePeerId = identities['alice']!['peerId'] as String;
   final bobPeerId = identities['bob']!['peerId'] as String;
   final charliePeerId = stack.identity.peerId;
-  final initialKeyEpoch = attempts['initialKeyEpoch'] as int;
+  final initialKeyEpoch = actionSnapshot['initialKeyEpoch'] as int;
 
   final bobSent = await waitForSharedJson(
     _signalName('bob_sent_bobAfterBlockedAdminSelfRemoval.json'),
@@ -49515,10 +49561,14 @@ Future<void> _runScenarioRole() async {
   }
 }
 
-Future<void> main() async {
+Future<void> runGroupMultiPartyDeviceRealHarness({
+  required bool requireAndroidRuntimeConfig,
+}) async {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
-  await _initializeRuntimeConfig();
+  await _initializeRuntimeConfig(
+    requireAndroidRuntimeConfig: requireAndroidRuntimeConfig,
+  );
 
   testWidgets(
     'group multi-party device proof scenario=$_scenario role=$_role run=$_runId',
@@ -49529,5 +49579,11 @@ Future<void> main() async {
       await _runScenarioRole();
     },
     semanticsEnabled: false,
+  );
+}
+
+Future<void> main() {
+  return runGroupMultiPartyDeviceRealHarness(
+    requireAndroidRuntimeConfig: false,
   );
 }

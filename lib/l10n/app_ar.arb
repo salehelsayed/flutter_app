@@ -790,7 +790,6 @@
   "group_identity_changed": "تغيّرت الهوية",
   "group_current_safety": "الأمان الحالي",
   "group_saved_safety": "الأمان المحفوظ",
-  "group_card_no_messages": "لا توجد رسائل بعد",
   "group_security_encrypted": "مشفّر من الطرف إلى الطرف",
   "group_security_pending": "التشفير معلّق",
   "group_security_no_key": "لا يوجد مفتاح مجموعة على هذا الجهاز",
@@ -871,14 +870,6 @@
   "invite_cannot_send_group_key_missing_snackbar": "تعذر الإرسال: تفتقد هذه المجموعة مفتاح الدعوة الآمن.",
   "invite_cannot_send_invalid_payload_snackbar": "تعذر الإرسال: تعذر تجهيز هذه الدعوة.",
   "invite_cannot_send_generic_snackbar": "تعذر الإرسال: تعذر تجهيز دعوة آمنة لهذا الصديق.",
-  "group_backlog_mixed_list_summary": "انتهت صلاحية السجل الأقدم بعد {days} يومًا",
-  "@group_backlog_mixed_list_summary": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
   "group_backlog_mixed_banner": "انتهت صلاحية الرسائل الفائتة الأقدم بعد {days} يومًا. تمت استعادة الرسائل الحديثة.",
   "@group_backlog_mixed_banner": {
     "placeholders": {
@@ -890,14 +881,6 @@
   "group_backlog_mixed_empty_title": "تمت استعادة الرسائل الحديثة",
   "group_backlog_mixed_empty_subtitle": "انتهت صلاحية الرسائل الفائتة الأقدم بعد {days} يومًا أثناء غيابك.",
   "@group_backlog_mixed_empty_subtitle": {
-    "placeholders": {
-      "days": {
-        "type": "int"
-      }
-    }
-  },
-  "group_backlog_expired_list_summary": "انتهت صلاحية السجل الفائت بعد {days} يومًا",
-  "@group_backlog_expired_list_summary": {
     "placeholders": {
       "days": {
         "type": "int"
@@ -944,13 +927,6 @@
   "group_info_member_not_found": "لم يتم العثور على العضو",
   "group_info_upload_photo_failed": "فشل رفع صورة المجموعة",
   "group_info_sign_metadata_failed": "فشل توقيع تحديث بيانات المجموعة",
-  "groups_title": "المجموعات",
-  "groups_empty_title": "لا توجد مجموعات بعد",
-  "groups_empty_desc": "أنشئ مجموعة للبدء",
-  "groups_pending_invites": "الدعوات المعلقة",
-  "groups_joined": "المجموعات المنضم إليها",
-  "groups_unknown_sender": "غير معروف",
-  "groups_no_joined": "لا توجد مجموعات منضم إليها بعد. اقبل دعوة لإضافتها هنا.",
   "group_type_discussion": "نقاش",
   "group_type_announce": "إعلان",
   "group_type_qa": "أسئلة",
@@ -1620,6 +1596,8 @@
   "account_migration_erase_failed": "تعذّر محو بيانات الحساب المحلية: {error}",
   "account_migration_blocked_title": "تم نقل الحساب إلى هاتف آخر",
   "account_migration_blocked_message": "هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.",
+  "account_migration_unfinished_move_title": "لم يكتمل نقل الحساب",
+  "account_migration_unfinished_move_message": "استورد هذا الهاتف حسابك، لكن التسليم النهائي مع الهاتف القديم لم يكتمل. احتفظ بكلا الهاتفين ولا تمحُ أيًا من النسختين.",
   "contact_profile_verified_peer": "جهة موثوقة",
   "contact_profile_blocked": "محظور",
   "contact_profile_archived": "مؤرشف",
