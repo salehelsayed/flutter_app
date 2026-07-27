@@ -2,7 +2,7 @@
 
 Status: Plan-green
 Type: Modification
-Spec: free-text DTR-07 item (roadmap `dead-code-and-technical-debt-removal-roadmap.md:220`, Wave 2)
+Spec: free-text DTR-07 item (roadmap DTR-07 registry row, Wave 2)
 Classification: implementation-complete — the reviewed exact retirement
 boundary is implemented and its causal, preservation, curated, and affected
 family evidence is recorded below. `DTR07-AUTH-01` remains the authorization
@@ -69,8 +69,8 @@ Closure tier: host
     button" — **refuted**. That button toggles `OrbitViewMode` in place
     (`orbit_wired.dart:2413`, `orbit_screen.dart:700`); it performs no
     navigation and reaches no island file.
-  - "`lastAdminLeaveBlockedMessage` is live in Group-list" (asserted by
-    `roadmap:649`, `DTR08-COMP-007`) — **refuted**. `group_list_wired.dart:953`
+  - "`lastAdminLeaveBlockedMessage` is live in Group-list" (asserted by the
+    roadmap `DTR08-COMP-007` row) — **refuted**. `group_list_wired.dart:953`
     and `:999` are dead code. The genuine live consumers are
     `group_info_wired.dart:560`, `:619` and `orbit_wired.dart:3131`; the
     constant is declared at `leave_group_use_case.dart:8` and is untouched by
@@ -79,8 +79,8 @@ Closure tier: host
     `group_list_wired.dart:128` is a `static const` on the **private**
     `_GroupListWiredState` (`:120`), not externally addressable;
     `orbit_wired.dart:372` is an independent duplicate declaration.
-- Unresolved findings: none. The only open item is the product decision, which
-  is a prerequisite, not missing evidence.
+- Pre-authorization finding: no evidence gaps remained; the only open item was
+  the product decision, resolved by `DTR07-AUTH-01` on 2026-07-26.
 - Affected production, test, gate, and documentation files:
   the three island sources; `tool/runtime_roots/runtime_roots.json`;
   `scripts/run_test_gates.sh` (`GROUP_TESTS`); five direct island test files;
@@ -123,9 +123,9 @@ Closure tier: host
 
 ## Authorization Recorded (`DTR07-AUTH-01`)
 
-The roadmap decision-ledger row (`roadmap:615`) is **Approved 2026-07-26**. The
-current authenticated project owner, as the sole implementation authority and
-acting as Product + Groups owner, approved this plan's exact boundary.
+The roadmap `DTR07-AUTH-01` decision-ledger row is **Approved 2026-07-26**.
+The current authenticated project owner, as the sole implementation authority
+and acting as Product + Groups owner, approved this plan's exact boundary.
 
 `DTR07-AUTH-01` records, in the `DTR03-AUTH-01/02` and `DTR05-AUTH-01` style:
 
@@ -155,8 +155,9 @@ receipt that does not name all eight l10n keys does not authorize their removal.
 
 ## Coverage Migration Versus Coverage Retirement
 
-`roadmap:355` requires: *"Still-relevant tests have moved to Feed/Orbit and
-current group navigation before any DTR-07 retired UI tests are deleted."*
+The roadmap Wave 2 exit contract requires: *"Still-relevant tests have moved
+to Feed/Orbit and current group navigation before any DTR-07 retired UI tests
+are deleted."*
 Each island-dependent assertion is dispositioned exactly once:
 
 | Island assertion | Disposition | Basis |
@@ -269,7 +270,8 @@ Deferred / accepted difference:
 
 Dependencies:
 
-- `DTR07-AUTH-01` (Product + groups) — **Approved 2026-07-26**, `roadmap:615`.
+- `DTR07-AUTH-01` (Product + groups) — **Approved 2026-07-26** in the roadmap
+  decision ledger.
 - DTR-01 runtime-root bookkeeping must change atomically with deletion, or
   `check_runtime_root_inventory.sh check` emits `stale-declaration` drift and
   exits non-zero (`runtime_root_inventory.dart:946`).
@@ -297,11 +299,11 @@ Zero empty cells. `HEAD state` is one of `causal RED` · `GREEN sentinel` ·
 | TC-286-09 | Flow-event privacy scrubbing still holds for every remaining fixed event row after the three `GROUP_LIST_FL_*` rows leave with their only emitter | `test/core/utils/flow_event_emitter_test.dart` (edited: drop the three `GROUP_LIST_FL_*` rows at `:349`, `:356`, `:363`) | Host source-scanning guard / fixed-block extraction over real `lib` sources | GREEN sentinel after edit (would throw on deletion if left unedited) → GREEN unchanged | Add `'groupId'` or `'error'` to any remaining live event block, e.g. an `ORBIT_FL_*` row → TC-286-09 red | `flutter test --no-pub test/core/utils/flow_event_emitter_test.dart` — direct path command only; `core-host-all` is deliberately not a per-plan gate here (no `lib/core/**` production source changes) |
 | TC-286-10 | The ambient-background chat-suppression leakage guard still covers every remaining non-chat surface, including the live Orbit screen | `test/features/identity/presentation/widgets/ambient_background_test.dart` (edited: drop `group_list_screen.dart` from `nonChatAmbientSurfaceFiles` at `:269` **and** from `expectedSurfaceFiles` at `:668`, and decrement the hardcoded "other 14" comment at `:261` to 13) | Host source-scanning guard / `File(path).readAsStringSync()` over real `lib` sources | GREEN sentinel after edit (would throw on deletion if left unedited) → GREEN unchanged | Make `orbit_screen.dart` opt into chat-surface ambient suppression → TC-286-10 red | `flutter test --no-pub test/features/identity/presentation/widgets/ambient_background_test.dart`; AUTO (glob) into `feature-host-all` |
 | TC-286-11 | The three island-dependent harnesses keep every non-island obligation; the two island-only cases are retired against a named live owner; and the retired ICU leg's accepted difference is test-locked | Edits: `test/features/loading_states_smoke_test.dart` and `integration_test/loading_states_smoke_test.dart` (delete only the `group list loading renders without overflow` case and the now-unused `group_list_screen.dart` import); `integration_test/group_conversation_polish_proof_test.dart` (delete only the `de group-list row` leg at `:151` and its doc claim at `:13`). Live owners that must stay green: `test/features/orbit/presentation/screens/orbit_screen_loading_test.dart::renders loading placeholders while all tab is still hydrating`; the three surviving conversation legs at `:105`, `:121`, `:135`. New lock: `test/features/orbit/presentation/screens/orbit_wired_test.dart::DTR-07 the all-chats group row renders relative activity time, not clock time` | Widget host / `WidgetTester` + the existing Orbit pump harness; the device leg stays on the existing proof file | **GREEN sentinel** — labeled honestly: the relative-time lock passes the moment it is written, because `group_row.dart:55` already calls `formatRelativeTime`, and the live loading owner is already green at `orbit_screen_loading_test.dart:230-241`. An absent test is not a RED. The two deletions are proven causally by TC-286-04's `test`/`integration_test` census, which is the row that actually reds on HEAD | Restore `DateFormat.jm` formatting to `GroupRow` → the relative-time lock re-reds; remove `_OrbitLoadingRow` (`orbit_screen.dart:1573`) → the live loading owner re-reds | `flutter test --no-pub test/features/loading_states_smoke_test.dart`; `flutter test --no-pub test/features/orbit/presentation/screens/orbit_screen_loading_test.dart`; `flutter test --no-pub test/features/orbit/presentation/screens/orbit_wired_test.dart --plain-name 'DTR-07 the all-chats group row renders relative activity time, not clock time'`; `test/features/loading_states_smoke_test.dart` stays in `OUT_OF_GATE_TESTS` (`run_test_gates.sh:737`) and `integration_test/loading_states_smoke_test.dart` stays in `BASELINE_TESTS` (`:12`) — **both entries are retained, not removed** |
-| TC-286-12 | The roadmap's DTR-07 rows are updated; the false `DTR08-COMP-007` three-surface claim is corrected without rewriting `DTR07-AUTH-01`; and still-executable Plans 279/280 no longer call the retired suite | Positive and negative source proofs over the exact `DTR08-COMP-007` row, the DTR-07/Wave-2 status rows, and Plans 279/280. Historical authorization and completed evidence remain untouched | Host source proof / ripgrep over exact current execution contracts | causal RED (the compatibility row and both downstream plans still require Group List / `group_list_wired_test.dart`) → GREEN: only Group Info and Orbit remain in the executable preservation contract; DTR-07 is Plan-green and Wave 2 awaits only its aggregate `host-all` | Restore a Group-list executable command/claim, erase the positive two-surface contract, or rewrite the historical receipt → TC-286-12 red | The targeted positive/negative commands in *Acceptance Gates*; N/A — documentation source proof needs no harness registration |
+| TC-286-12 | The roadmap's DTR-07 rows are updated; the false `DTR08-COMP-007` three-surface claim is corrected without rewriting `DTR07-AUTH-01`; and still-executable Plans 279/280 no longer call the retired suite | Positive and negative source proofs over the exact `DTR08-COMP-007` row, the DTR-07/Wave-2 status rows, and Plans 279/280. Historical authorization and completed evidence remain untouched | Host source proof / ripgrep over exact current execution contracts | causal RED (the compatibility row and both downstream plans still require Group List / `group_list_wired_test.dart`) → GREEN: only Group Info and Orbit remain in the executable preservation contract; at per-plan closure DTR-07 was Plan-green; the post-wave maintenance state requires the DTR-07 registry row and Wave 2 to be `Wave-accepted` with linked aggregate `host-all` evidence | Restore a Group-list executable command/claim, erase the positive two-surface contract, or rewrite the historical receipt → TC-286-12 red | The targeted positive/negative commands in *Acceptance Gates*; N/A — documentation source proof needs no harness registration |
 | TC-286-13 | The deferred `GroupBacklogRetentionNotice` field does not take live behavior with it: the live caller's own retention fields still render in group conversation | `test/features/groups/presentation/group_conversation_screen_test.dart::IR-016 shows expired backlog banner and empty-state override after retention expiry`; `::IR-016 shows mixed-window retention banner while retained messages stay visible`; `::PREREQ-HISTORY-GAP-REPAIR shows active failed and repaired gap state separately from retention expiry` | Widget host / `WidgetTester` over the real `groupBacklogRetentionNoticeFor` factory (invoked at `:1620`, `:1656`, `:1702`) | GREEN sentinel → GREEN unchanged after the island's `listSummary` reader is deleted | Stop populating the banner/empty-state fields that `groupBacklogRetentionNoticeFor` returns to the live caller at `group_conversation_wired.dart:7721` → the corresponding IR-016 sentinel re-reds | `flutter test --no-pub test/features/groups/presentation/group_conversation_screen_test.dart --plain-name 'IR-016'`; `./scripts/run_test_gates.sh groups`; already in `GROUP_TESTS` |
 
 | TC-286-15 | Relative to the pre-edit dirty-tree baseline and any explicitly source-attributed concurrent plan, this change deletes **exactly** its intended set and nothing else — staged or unstaged over-deletion is caught | Baseline-relative working-tree proof: capture tracked deletions and ARB keys before edits; require every post-edit deletion/addition to be either one of this plan's exact removals or an exact path/key independently authorized by a concurrently executing plan; and require the real cached deletion set to equal this plan's eight paths. TC-286-03 separately requires the retired localization-key set to equal exactly eight in every locale | Host source/diff proof / `git`, exact HEAD-versus-worktree ARB key sets, concurrent plans' scope contracts, and the real ARB files | GREEN sentinel evaluated after the edit → GREEN: the eight staged paths and eight retired keys belong only to Plan 286; Plan 280's two new deletions and Plan 285's two new keys are explicitly attributed; every pre-existing deletion remains preserved | Delete any unclassified tracked file whether staged or unstaged, restore a pre-existing user deletion, misattribute a concurrent deletion/key, or remove a ninth ARB key → TC-286-15 red | The baseline capture and literal working-tree/cached/ARB-set comparisons in *Acceptance Gates*; N/A — diff/source proof needs no harness registration |
-| TC-286-14 | Current structure/inventory documentation no longer presents the retired island as present or "not dead", while historical completion evidence remains untouched | Negative source proofs over `codebase-test-inventory.md`, `C4/file-structure.md`, `C4/components.md`, `06-dead-code-lib.md`, and the dangling `contact_picker_row.dart` comment; one positive/count proof updates the existing Plan-286 index row rather than duplicating it | Host source proof / ripgrep over the exact current documentation and comment files | causal RED (all named current files still present the island) → GREEN: exact current references are absent and the index contains one Plan-green row | Restore a retired current-structure reference, leave the "Verified NOT Dead" claim, or duplicate/delete the index row → TC-286-14 red | The literal targeted commands in *Acceptance Gates*; N/A — documentation/comment source proof needs no harness registration. Historical plans/session records are explicitly out of sweep |
+| TC-286-14 | Current structure/inventory documentation no longer presents the retired island as present or "not dead", while historical completion evidence remains untouched | Negative source proofs over `codebase-test-inventory.md`, `C4/file-structure.md`, `C4/components.md`, `06-dead-code-lib.md`, and the dangling `contact_picker_row.dart` comment; one positive/count proof updates the existing Plan-286 index row rather than duplicating it | Host source proof / ripgrep over the exact current documentation and comment files | causal RED (all named current files still present the island) → GREEN: exact current references are absent and the index contains exactly one Plan-286 row labeled Wave-accepted DTR-07 while retaining Plan 286's Plan-green status/date | Restore a retired current-structure reference, leave the "Verified NOT Dead" claim, or duplicate/delete the index row → TC-286-14 red | The literal targeted commands in *Acceptance Gates*; N/A — documentation/comment source proof needs no harness registration. Historical plans/session records are explicitly out of sweep |
 
 ### Test Notes
 
@@ -421,11 +423,11 @@ Zero empty cells. `HEAD state` is one of `causal RED` · `GREEN sentinel` ·
 8. Run `./graphify-arch/refresh_arch_graph.sh --incremental` once from the repo
    root — required by `AGENTS.md:25` after a coherent app-owned code change, and
    run by both accepted sibling plans 275 and 276.
-9. Update `roadmap:220`, the Wave-2 exit/status rows, the
+9. Update the roadmap DTR-07 registry row, the Wave-2 exit/status rows, the
    `Retired Group-list UI island` row in the grounding snapshot table, the
    `DTR08-COMP-007` correction (TC-286-12), and update the existing
    `00-INDEX.md` Plan-286 row under `## 4. Dead Code`. Preserve the historical
-   authorization receipt at `roadmap:615` byte-for-byte.
+   authorization receipt in the roadmap decision ledger byte-for-byte.
 
 ## Risks And Blind Spots
 
@@ -435,9 +437,9 @@ Zero empty cells. `HEAD state` is one of `causal RED` · `GREEN sentinel` ·
   family gates.
 - The `GroupCard` / `SettingsGroupCard` name collision invites an over-broad
   deletion → guarded by TC-286-04's path-scoped census and the hard `Do not`.
-- `roadmap:650` and executable Plans 279/280 currently preserve a dead third
-  surface and command a suite this plan deletes → guarded by TC-286-12's
-  targeted negative and positive two-surface assertions.
+- The roadmap `DTR08-COMP-007` row and executable Plans 279/280 initially
+  preserved a dead third surface and commanded a suite this plan deletes →
+  guarded by TC-286-12's targeted negative and positive two-surface assertions.
 - The shared worktree already contains two unrelated unstaged production
   deletions, so the raw runtime-root gate is red before this plan and a cached
   diff cannot bound this plan → guarded by TC-286-02's copied-index isolation
@@ -497,7 +499,7 @@ Zero empty cells. `HEAD state` is one of `causal RED` · `GREEN sentinel` ·
   TC-286-15 over-deletion bound, `runtime-roots`,
   `groups`, `feed`, and a justified `feature-host-all` sweep because app-owned
   feature sources are deleted. `feed` is required for two independent reasons:
-  the roadmap's DTR-07 proof floor names it (`roadmap:219`), and
+  the roadmap's DTR-07 registry row names it, and
   `ambient_background_test.dart` — which this plan edits — is registered in
   `FEED_TESTS` at `scripts/run_test_gates.sh:319`, so `feed` is the curated
   owner of that edit, not an optional extra.
@@ -512,25 +514,24 @@ Zero empty cells. `HEAD state` is one of `causal RED` · `GREEN sentinel` ·
   is analyzed. Both `integration_test/` edits in step 4 are therefore
   analyze-blocking, not merely test-blocking — an unedited import of a deleted
   file fails strict analysis before any test runs.
-- Full `host-all` is **not** a per-plan gate. It runs once after the Wave 2
-  DTR-06/DTR-07 batch is complete, and once again at final rollout/release
-  closure.
+- Full `host-all` is **not** a per-plan gate. The Wave 2 DTR-06/DTR-07 run
+  completed on 2026-07-27; the next full run is the separate final
+  rollout/release closure gate.
 - Any justified broad sweep runs batch-parallel:
   `--batch-flutter --concurrency 4 --reporter failures-only`.
 - Shared tests outside the feature/core globs:
   `test/unit/runtime_root_inventory_test.dart` (also covered by `runtime-roots`)
   and `test/l10n/l10n_integrity_test.dart` each get a direct
-  `flutter test --no-pub <exact path>` command below. They stay registered for
-  the later wave-level `host-all`; that registration is not a per-plan
-  execution obligation.
+  `flutter test --no-pub <exact path>` command below. They were included in the
+  completed Wave 2 `host-all`; that registration was not a per-plan execution
+  obligation.
 
 ## Acceptance Gates  (literal — copy/paste)
 
 ```bash
-# Prerequisite. A bare `rg -n 'DTR07-AUTH-01' <roadmap>` is NOT a valid gate:
-# it already exits 0 on HEAD, matching roadmap:219 and roadmap:614 — both of
-# which say the receipt is AWAITED. It cannot distinguish "recorded" from
-# "Open". Two complementary checks are required instead.
+# Prerequisite. A bare `rg -n 'DTR07-AUTH-01' <roadmap>` is insufficient:
+# it can match registry, historical, or compatibility prose without proving an
+# approved decision-ledger row. Two complementary checks are required.
 #
 # (a) The decision-ledger row must no longer be Open; expect status 1.
 DTR07_LEDGER_OPEN_STATUS=0
@@ -540,8 +541,8 @@ rg -n '^\| Retire Group-list UI after Feed/Orbit test migration \|.*\| Open \|' 
 test "$DTR07_LEDGER_OPEN_STATUS" -eq 1
 
 # (b) The recorded-receipt prose must exist, in the same shape DTR03-AUTH-01,
-#     DTR05-AUTH-01, DTR06-AUTH-01, and DTR09-AUTH-01 already use at
-#     roadmap:614; expect status 0.
+#     DTR05-AUTH-01, DTR06-AUTH-01, and DTR09-AUTH-01 use in the roadmap
+#     decision ledger; expect status 0.
 rg -n 'DTR07-AUTH-01`: the current authenticated project owner' \
   Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md
 
@@ -664,12 +665,13 @@ DTR07_ICU_NAME_COUNT=$(rg -c \
   integration_test/group_conversation_polish_proof_test.dart)
 test "$DTR07_ICU_NAME_COUNT" -eq 3
 
-# TC-286-12 targeted documentation correction. A global grep for
-# `group_list_wired_test.dart` is invalid because the immutable DTR07-AUTH-01
-# receipt deliberately names the approved deleted suite.
-rg -n '^\| DTR-07 \|.*\*\*Plan-green\*\*' \
+# TC-286-12 post-wave maintenance proof. The Wave 2 acceptance addendum
+# supersedes the earlier Plan-green/awaiting-host-all registry state. A global
+# grep for `group_list_wired_test.dart` is invalid because the immutable
+# DTR07-AUTH-01 receipt deliberately names the approved deleted suite.
+rg -n '^\| DTR-07 \|.*\*\*Wave-accepted\*\*.*Plan 286.*remains Plan-green' \
   Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md
-rg -n '^\| Wave 2 \|.*awaits only.*host-all' \
+rg -n '^\| Wave 2 \| DTR-06, DTR-07 \| \*\*Wave-accepted\*\*.*evidence/dtr-wave2/README\.md' \
   Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md
 rg -n '^\| Retire Group-list UI after Feed/Orbit test migration \|.*Approved 2026-07-26.*DTR07-AUTH-01' \
   Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md
@@ -724,7 +726,7 @@ test "$DTR07_COMMENT_STATUS" -eq 1
 
 test "$(rg -c '286-group-list-ui-island-retirement-tdd-plan\.md' \
   Test-Flight-Improv/00-INDEX.md)" -eq 1
-rg -n '286-group-list-ui-island-retirement-tdd-plan\.md.*\*\*Plan-green DTR-07' \
+rg -n '286-group-list-ui-island-retirement-tdd-plan\.md.*\*\*Wave-accepted DTR-07.*Plan-green' \
   Test-Flight-Improv/00-INDEX.md
 
 # TC-286-15 bounding proofs. TC-286-01 is a whitelist and cannot catch
@@ -908,8 +910,9 @@ git diff --check
 
 ## Handoff
 
-- **Complete / Plan-green.** `DTR07-AUTH-01` is recorded at `roadmap:615`
-  (Approved 2026-07-26), and the reviewed boundary is implemented.
+- **Complete / Plan-green.** `DTR07-AUTH-01` is recorded in the roadmap
+  decision ledger (Approved 2026-07-26), and the reviewed boundary is
+  implemented.
 - First causal RED command:
   `flutter test --no-pub test/unit/runtime_root_inventory_test.dart --plain-name 'DTR-07 retires the Group-list UI island and preserves the Orbit all-chats replacement'`.
 - Contract size: 15 rows — TC-286-01/03/04/07/12/14 are causal REDs;

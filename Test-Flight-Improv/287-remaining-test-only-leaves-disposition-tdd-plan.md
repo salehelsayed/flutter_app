@@ -1,6 +1,6 @@
 # 287 - Remaining Test-Only Leaves Disposition (DTR-11)
 
-Status: Approved — implementation and evidence in progress  
+Status: Wave-accepted — implemented, Plan-green, and closed 2026-07-27
 Type: Modification  
 Spec: DTR-11, roadmap Wave 3 — map and disposition remaining test-only leaves  
 Classification: owner-approved exact disposition boundary  
@@ -201,6 +201,109 @@ archived Wave-3 `host-all` passes.
 
 ## Execution Evidence
 
-Pending. This section will record causal RED, focused/curated/family results,
-the tested integrated tree, Graphify fingerprint, Wave-3 aggregate totals,
-stable log hashes, and the final roadmap transition.
+### Disposition result
+
+`DTR11-AUTH-01` was executed without widening its boundary:
+
+- the exact 11 app paths reconcile to 1,065 LOC;
+- ten app sources totaling 971 LOC and their ten SUT-only suites totaling
+  1,848 LOC were retired;
+- the 94-line push-preview calculator was moved byte-identically from `lib/`
+  to `tool/telemetry/` (content SHA-256
+  `9dfb00835db426f0883c6a568c8a2bc46fdd2754f27b36d9bcf51a52dc92468f`),
+  and its live test/gate import was retargeted;
+- the retained Feed parity suite now exercises `FeedStore`; stale
+  `ReactionDisplay` type-only assertions were removed; live Orbit and QR
+  assertions were added before their duplicate SUTs were retired;
+- all 11 matching `runtime_roots.json` declarations are gone;
+- only the write-only backlog `listSummary` plumbing and its two exact orphan
+  localization keys were removed; the live factory, banner, empty-state, and
+  history-gap behavior remain;
+- only the inert S15 event filter/derived signal/print output was removed; the
+  real S15 outcome, send-path, and end-to-end evidence remain;
+- every recursive `test/unit/**/*_test.dart` file is now registered once under
+  `core-host-all`; and
+- `_RaceResult.relayProbeEligible` was retained without a production edit.
+
+The conservative whole-file retirement increment is therefore 20 files /
+2,819 LOC. It excludes the tooling relocation, field/l10n/routing fragments,
+test-assertion rewrites, new tests, and all documentation/bookkeeping.
+
+### Causal and focused proof
+
+| Gate | Result |
+|---|---|
+| Pre-implementation TC-287-01 | RED, exit 1: the 11 app paths, direct tests, and manifest rows still existed; retained-live-owner assertions were already green |
+| Pre-registration shell contract | RED, exit 1: the exact `test/unit/**` inventory was absent from `core-host-all` |
+| TC-287-01 after implementation | 2/2 passed |
+| Host batch contract after registration | Passed, including exact sorted `test/unit/**` membership and help/documentation assertions |
+| Feed/FeedStore, LetterCard, Orbit, identity-startup/manual-restore, group-retention, and l10n selectors | 246 passed |
+| `_RaceResult.relayProbeEligible` causal sentinel | exact `FDC-03-03b`: 1 passed |
+| P2P discovery/send/stop, contact request, push telemetry, QR build/parse, and live scanner selectors | 183 passed |
+
+The causal RED logs were retained during execution at
+`/tmp/dtr11-structural-red.log` and
+`/tmp/dtr11-unit-family-red.log`. They are diagnostic receipts rather than
+wave-acceptance archives.
+
+### Curated, family, analysis, and graph proof
+
+| Gate | Accepted result |
+|---|---|
+| `runtime-roots` | 20 tests passed; 1,025 app files reconciled; trustworthy inventory true; deletion drift false |
+| `feed` | 310 passed |
+| `intro` | 294 passed |
+| `runtime-telemetry` | 4 passed |
+| `groups` | 3,235 Flutter tests plus all configured Go/relay tails passed |
+| `1to1` | 2,441 Flutter tests plus relay toolchain/server tails passed |
+| `feature-host-all --batch-flutter --concurrency 4 --reporter failures-only` | 805 exact paths; 8,410 passed, one skipped, zero failed; exit 0 |
+| `core-host-all --batch-flutter --concurrency 4 --reporter failures-only` | 354 exact paths; 2,794 passed, zero failed; profile/release renderer contract passed; exit 0 |
+| `./scripts/run_test_gates.sh completeness-check` | 1,339/1,339 host-run test files classified |
+| strict `flutter analyze` | no issues |
+| `git diff --check` | passed |
+
+The required one-time
+`./graphify-arch/refresh_arch_graph.sh --incremental` completed after the
+coherent app-owned change. Final fingerprints:
+
+- architecture graph:
+  `b21221340ff49799b0fd3cb30e4ea169c206025e2a7bad37af004a71424a27b2`;
+- deterministic TDD overlay:
+  `5f9747fa7fad772e23dc4b28462f5a5b4e8b26a24db9cda364399c5d3784b417`.
+
+### Frozen Plan and Wave acceptance
+
+The accepted broad gates ran against the repository-retained validation
+snapshot commit `ec268ce4a41d94450919170c9df2b1bf1a7ef987` (tag
+`dtr-wave3-tested-tree-20260727`), tree
+`897a285f68f1266dc6945f727f2425272151f068`, built with a separate index from
+the integrated dirty workspace. The snapshot is the direct parent of the
+closure-record commit. The shared index remained byte-identical at SHA-256
+`e3121a0ad4f4c712fc3eafaddcf5cb3caeaba158d148b9f85ec108c369b77009`.
+Git-ignored local configuration/native build prerequisites were copied
+byte-identically into the disposable worktree; the initial fixture-missing
+feature/core attempts were rejected as diagnostics, and no tracked correction
+was made in response.
+
+After every per-plan gate above was green, the separate Wave-3 aggregate ran:
+
+```bash
+./scripts/run_host_test_gates.sh host-all \
+  --continue-on-failure \
+  --batch-flutter \
+  --concurrency 4 \
+  --reporter failures-only
+```
+
+All 1,258 planned items passed: 1,250 exact Flutter paths produced 12,755
+passes and one expected skip, all eight Go tails passed, the final scope marker
+was present, and the process exited 0. The original aggregate log SHA-256 is
+`4b45449c2d064c8358fc895b580e249404faf995e95d12a7a6369600fab338d9`;
+the deterministic archive SHA-256 is
+`55ac78d1a0fd2a98b70884194e5cb6677ff0dba474ca24594f469165e97806f7`.
+Plan-family and aggregate logs are archived in
+[`evidence/dtr-wave3/README.md`](evidence/dtr-wave3/README.md).
+
+DTR-11 is Plan-green and Wave-accepted. Wave 3 is accepted. DTR-12 planning is
+unblocked, and DTR-13's temporal Wave-3 dependency is cleared while its
+separate QA + release owner decision remains open.

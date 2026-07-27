@@ -1,10 +1,10 @@
 # Dead Code and Technical Debt Removal — Master Roadmap
 
 Status: executing — Wave 0 was accepted on 2026-07-25, Wave 1 on 2026-07-26,
-and Wave 2 on 2026-07-27. DTR-06 remains terminal `Retained`, and the DTR-07
-registry row is `Wave-accepted` while Plan 286 remains Plan-green. DTR-10 is
-terminally complete; Wave 3 remains open separately for DTR-11 mapping and its
-later aggregate `host-all`.
+and Waves 2 and 3 on 2026-07-27. DTR-09 remains terminal `Retained`, DTR-10 is
+terminally complete, and DTR-11 is `Wave-accepted` under Plan 287. Wave 4A
+planning is unblocked; DTR-13 remains decision-blocked on DTR-12 and its
+separate QA + release owner decision.
 
 Snapshot date: 2026-07-27.
 
@@ -163,13 +163,14 @@ outdated dependency inventory that must be refreshed before upgrade planning.
 | Planned | Source-verified TDD plan exists and is linked |
 | In progress | Implementation has started |
 | Ledger-complete | Documentation-only safety or decision artifact is source-verified and requires no application mutation |
-| Plan-green | Focused, preservation, curated, and affected family gates passed; awaiting wave closure |
+| Plan-green | Focused, preservation, curated, and affected family gates passed; this retained plan-level state is separate from later registry-row and wave acceptance |
 | Wave-accepted | The wave-level full gate passed and evidence is linked |
 | Retained | Kept intentionally with owner, reason, and removal condition |
 | Deferred | Explicitly out of the current rollout with a revisit condition |
 | Dropped | Refuted as debt or superseded by another slice |
 
-No plan is promoted directly from `In progress` to `Wave-accepted`.
+No code-bearing registry row is promoted to `Wave-accepted` until its plan has
+reached `Plan-green`.
 
 ---
 
@@ -221,10 +222,10 @@ they must not share a batch with DTR-14 through DTR-18.
 | DTR-07 | P2 | Retire the Group-list UI island after moving valuable coverage to Feed/Orbit | DTR-04; `DTR07-AUTH-01`; current-navigation proof | `groups`; `feed`; `feature-host-all` | **Wave-accepted** — [Plan 286](286-group-list-ui-island-retirement-tdd-plan.md) remains Plan-green after retiring the unreachable 2,035-line three-source island, its five SUT-only suites, three runtime-root declarations, one `GROUP_TESTS` entry, and exactly eight orphan keys from each locale. Orbit's separate in-place `allChats` list and every live group/navigation/backend boundary remain. Causal RED/GREEN, representative mutation re-red, all preservation selectors, `runtime-roots` (18/18; trustworthy/no drift), `groups` (3,238 Flutter tests plus all Go tails), `feed` (310), stabilized `feature-host-all` evidence (8,476 pass, 1 skip, 0 fail across 816 paths), completeness (1,349/1,349), source/diff bounds, and Graphify refresh passed. Strict analysis found no DTR-07 issue; the unrelated concurrent Plan-285 warning observed during that run was later cleared by Plan 285's clean host-tier closure. The Wave 2 aggregate acceptance evidence is recorded below. |
 | DTR-08 | P3 | Compatibility ledger with owners, version floors, telemetry, and exact removal proof | DTR-01 | Ledger/schema contract test if automated; source verification | Wave-accepted (`Ledger-complete`) — documentation-only `DTR08-COMP-001` through `DTR08-COMP-011` source-verified and independently audited on 2026-07-25; both exact DTR-01 compatibility roots are covered, no implementation TDD plan was required, and no removal is authorized |
 | DTR-09 | P3 | Preserve the account-migration group and pending-work manifest islands as separately retained future Move Account completeness work | DTR-08; Move Account owner decision | Documentation/source verification; preserve existing direct tests; no application gate required while no code, schema, bundle, or runtime wiring changes are made | **Retained** — `DTR09-AUTH-01` records accepted retention on 2026-07-26; neither island is authorized for deletion or production wiring during this rollout, and each must be revisited separately when Move Account completeness implementation resumes |
-| DTR-10 | P3 | Retire seven bounded legacy/test-only group leaves while retaining live admission, recovery, exit, persistence, wire, crypto, and security boundaries | DTR-08; `DTR10-AUTH-01` through `DTR10-AUTH-08`; Plan 279 additionally depended on Plan 280 Plan-green | Per-plan causal/preservation contracts; `runtime-roots`; `groups`; justified `feature-host-all`; exact Go/native/device/SQLCipher proof only where named | **Terminally complete** — [Plans 277](277-old-join-group-removal-tdd-plan.md), [278](278-hydrate-groups-from-peers-disposition-tdd-plan.md), [279](279-dormant-group-leave-path-removal-tdd-plan.md), [280](280-superseded-leave-local-history-coordinator-removal-tdd-plan.md), [281](281-legacy-group-key-rotation-path-removal-tdd-plan.md), and [282](282-duplicate-dart-group-message-payload-removal-tdd-plan.md) are implementation-complete and Plan-green/closed; [Plan 283](283-unused-group-inbox-cursor-model-removal-tdd-plan.md) is also implementation-complete and Plan-green/closed after final strict-analysis and diff-hygiene closure; [Plan 284](284-legacy-group-secret-security-scrub-retention-evidence-tdd-plan.md) is acceptance-verified terminal `Retained`. The eight owner receipts disposition exact, separate boundaries rather than authorizing a legacy-group batch deletion. Wave 3 remains open independently for DTR-11 mapping and its later aggregate `host-all`. |
-| DTR-11 | P3 | Map and disposition remaining test-only leaves | DTR-08; replacement mapping; `DTR11-AUTH-01` | Focused replacement tests and affected curated/family gates | **In progress** — [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md) records the re-derived exact 11-file/1,065-LOC map, ten retirements, one tooling relocation, all direct-test dispositions, and the four upstream carry-ins. The current authenticated owner approved that exact boundary on 2026-07-27. Causal structural and unit-family registration REDs are recorded; implementation/evidence and the later Wave-3 aggregate remain open. |
-| DTR-12 | P4/P5 | Add enforceable architecture/layer boundary checks | DTR-01 | Exact boundary-tool tests; current exceptions pinned | Candidate |
-| DTR-13 | P4 | Move debug/E2E wiring behind a separate composition root while preserving proof entrypoints | DTR-01, DTR-12 | `sims-contracts`; affected simulations; startup/lifecycle preservation; affected family gate | Deferred until Wave 3 |
+| DTR-10 | P3 | Retire seven bounded legacy/test-only group leaves while retaining live admission, recovery, exit, persistence, wire, crypto, and security boundaries | DTR-08; `DTR10-AUTH-01` through `DTR10-AUTH-08`; Plan 279 additionally depended on Plan 280 Plan-green | Per-plan causal/preservation contracts; `runtime-roots`; `groups`; justified `feature-host-all`; exact Go/native/device/SQLCipher proof only where named | **Terminally complete / accepted in Wave 3** — [Plans 277](277-old-join-group-removal-tdd-plan.md), [278](278-hydrate-groups-from-peers-disposition-tdd-plan.md), [279](279-dormant-group-leave-path-removal-tdd-plan.md), [280](280-superseded-leave-local-history-coordinator-removal-tdd-plan.md), [281](281-legacy-group-key-rotation-path-removal-tdd-plan.md), and [282](282-duplicate-dart-group-message-payload-removal-tdd-plan.md) are implementation-complete and Plan-green/closed; [Plan 283](283-unused-group-inbox-cursor-model-removal-tdd-plan.md) is also implementation-complete and Plan-green/closed after final strict-analysis and diff-hygiene closure; [Plan 284](284-legacy-group-secret-security-scrub-retention-evidence-tdd-plan.md) is acceptance-verified terminal `Retained`. The eight owner receipts disposition exact, separate boundaries rather than authorizing a legacy-group batch deletion. |
+| DTR-11 | P3 | Map and disposition remaining test-only leaves | DTR-08; replacement mapping; `DTR11-AUTH-01` | Focused replacement tests and affected curated/family gates | **Wave-accepted** — [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md) re-derived and dispositioned the exact 11-file/1,065-LOC map: ten app sources and ten SUT-only suites retired, one 94-line telemetry calculator relocated byte-identically to tooling, all 11 runtime-root rows removed, live Feed/Orbit/QR/LetterCard owners preserved, only the dead backlog summary/two keys and inert S15 diagnostic retired, and `test/unit/**` registered under `core-host-all`. `_RaceResult.relayProbeEligible` remains behaviorally intact. Causal/focused/curated/family/analyzer/completeness/Graphify gates passed, followed by the accepted Wave-3 aggregate: 1,250 Flutter paths, 12,755 pass, one skip, all eight Go tails, exit 0. [Stable evidence](evidence/dtr-wave3/README.md). |
+| DTR-12 | P4/P5 | Add enforceable architecture/layer boundary checks | DTR-01 | Exact boundary-tool tests; current exceptions pinned | **Candidate — planning unblocked after Wave 3 acceptance** |
+| DTR-13 | P4 | Move debug/E2E wiring behind a separate composition root while preserving proof entrypoints | DTR-01, DTR-12 | `sims-contracts`; affected simulations; startup/lifecycle preservation; affected family gate | **Decision blocked — temporal Wave-3 dependency cleared; DTR-12 and the QA + release owner decision remain open** |
 | DTR-14 | P5 | Extract `main.dart` bootstrap phases behind stable application interfaces | DTR-13 | Startup, lifecycle, push, Move Account, and affected core/feature gates | Deferred until DTR-13 |
 | DTR-15 | P5 | Extract shared direct/group conversation controllers without a shared base `State` | DTR-12 | `1to1`; `groups`; `feature-host-all`; justified `performance-host` | Deferred until Wave 4A |
 | DTR-16 | P5 | Decompose `GroupMessageListener` behind its existing facade | DTR-15 | `groups`; `feature-host-all`; crypto/background preservation | Deferred until DTR-15 |
@@ -372,7 +373,7 @@ All five exit conditions are satisfied, so Wave 2 is accepted. Final-rollout
 
 ### Wave 3 — Disposition and bounded cleanup
 
-Slices: retained DTR-09, terminally complete DTR-10, and candidate DTR-11.
+Slices: retained DTR-09, terminally complete DTR-10, and Wave-accepted DTR-11.
 
 No production deletion begins while a slice is `Decision blocked`. A decision
 to wire code into production becomes a modification plan with new causal tests;
@@ -398,6 +399,10 @@ Specific caution:
 - Plan 284 acceptance-verifies terminal retention of the startup security scrub.
   No fleet-wide completion evidence exists, and marker/import/background
   alignment remains unresolved.
+- Plan 287 dispositioned the exact residual 11-file/1,065-LOC test-only map,
+  preserved every named live replacement and behavior boundary, retired only
+  its approved sources/tests/fragments, relocated telemetry unchanged, and
+  registered the missing `test/unit/**` core family.
 
 Exit:
 
@@ -406,9 +411,12 @@ Exit:
 - DTR-09 through DTR-11 are `Plan-green` or terminally retained/deferred.
 - Wave 3 full `host-all` passes.
 
-DTR-09 and DTR-10 already satisfy their terminal slice conditions. Wave 3
-remains open only for DTR-11 replacement mapping/disposition and the aggregate
-`host-all` after that mapping closes.
+All four exit conditions are satisfied. After Plan 287's focused, curated,
+family, analyzer, completeness, runtime-root, l10n, and Graphify gates passed,
+the Wave-3 aggregate passed all 1,258 planned items: 1,250 exact Flutter paths,
+12,755 passing tests, one expected skip, all eight Go tails, final scope marker,
+and exit 0. Wave 3 is accepted; the stable receipt is
+[`evidence/dtr-wave3/README.md`](evidence/dtr-wave3/README.md).
 
 ### Wave 4A — Boundaries and composition roots
 
@@ -417,6 +425,10 @@ Plans: DTR-12 and DTR-13.
 The goal is to make later refactors safer: enforce the desired layer direction,
 then remove debug/E2E construction from the production bootstrap without
 removing the workflows themselves.
+
+Planning is unblocked by Wave 3 acceptance. DTR-12 is a planning candidate.
+DTR-13 is no longer temporally deferred by Wave 3, but remains decision-blocked
+until DTR-12 and the separate QA + release owner decision are resolved.
 
 Exit:
 
@@ -559,8 +571,8 @@ Update this table in the same change that records a wave verdict.
 | Wave 0 | DTR-01, DTR-02, DTR-08 | Wave-accepted | Attempt 1: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 8 --reporter failures-only`; Attempt 2: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 1 --reporter failures-only`; each planned 1,269 exact Dart paths + 8 Go tails = 1,277 items | `a68aacee7482` + uncommitted DTR working-tree delta | Attempt 1: Flutter `+12,885 ~1 -2`, exit 1; Go 8/8 PASS; four narrow diagnostics passed but did not replace the failed gate. Attempt 2: exit 0; Flutter 12,887 passed and 1 skipped; Go 8/8 PASS; final `PASS: host tests completed for scope: host-all`. Retained log: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/dtr-wave0-host-all.XXXXXX.log`; SHA-256 `33563aacaa60919508b6779061d1d2236de2c2c999b36f7b4ab29d00be537d1c`. | 2026-07-25 / user-executed; Codex-verified |
 | Wave 1 | DTR-03, DTR-04, DTR-05 | **Wave-accepted** | Attempts 1 and 2: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 1 --reporter failures-only`; each planned 1,265 exact Dart paths + 8 Go tails = 1,273 items | Attempt 1: `95d754e03fc67e21d5006efd1fbec2dddaada394`; Attempt 2: the same commit plus the uncommitted test-only TCP-port-assertion correction in `account_migration_local_transfer_runtime_test.dart`. Concurrent documentation and Graphify-output changes did not alter the executed tests. | Attempt 1 completed non-green at Flutter `+12,862 ~1 -1`; all 8 Go tails passed. Its only failure was an invalid assertion that consecutive requests must share the exact TCP source port. After the test-only correction, the selector passed 20/20 repetitions, its full file passed 40 tests, and `move-feature` passed `+442 ~1`. Attempt 2 exited 0: Flutter `+12,863 ~1`, all 8 Go tails passed, and the final scope PASS marker is present. Original-log SHA-256 values: Attempt 1 `2a8d20fca9d4c60cab49194f89071153b9f9108fae1d1d8245b002dfae397401`; Attempt 2 `781a669fbfbdebf0b50bb7abad824fac9166aef83f5ddce0ee34efc9805b22b5`. [Stable evidence archives](evidence/dtr-wave1/README.md). | 2026-07-26 / user-executed; Codex-verified and archived |
 | Wave 2 | DTR-06, DTR-07 | **Wave-accepted** | Three completed attempts: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 4 --reporter failures-only`; each planned 1,259 exact Dart paths + 8 Go tails = 1,267 items. Attempt 2 additionally used a temporary `GIT_INDEX_FILE` and was rejected as an invalid environment. | `95d754e03fc67e21d5006efd1fbec2dddaada394` plus the integrated uncommitted working-tree delta, including Plan 286 and later DTR-10/Plan-285 work. The accepted attempt includes the discovery/test-only closure corrections and exact staging of seven already-deleted terminal DTR-10 source paths. | Attempt 1: Flutter `+12,819 ~1 -5`, exit 1; all 8 Go tails passed. Its five failures reduce to a missing Android-harness discovery classification (three consumers), one fixed-sleep timing race, and unstaged terminal DTR-10 deletion drift. Attempt 2: Flutter `+12,822 ~1 -5`, all 8 Go tails passed, exit 1; repository guards correctly rejected the temporary redirected index, so it was not acceptance evidence. Attempt 3 exited 0: Flutter `+12,827 ~1`, all 8 Go tails passed, and the final scope marker is present. Original-log SHA-256 values: Attempt 1 `c838804bb2095d3841ee8116da6b0e38b510e0345cf7070c395ca8f81fd564c3`; Attempt 2 `6167749d53ce32954e44c0e2ee6d98a39dcfe823443cac623ebe0e7b788285ab`; Attempt 3 `869a75236f97e34f610b4053540f7e7b449ea76103f5d807d52c82aae5d4c135`. [Stable evidence archives](evidence/dtr-wave2/README.md). | 2026-07-27 / user-requested; Codex-executed, verified, and archived |
-| Wave 3 | DTR-09, DTR-10, DTR-11 | DTR-09 terminal `Retained`; DTR-10 terminally complete with Plans 277–283 Plan-green/closed and Plan 284 acceptance-verified terminal `Retained`; Wave 3 remains open separately for DTR-11 mapping and the later aggregate `host-all` | Plans 277–284 are terminal; complete DTR-11 replacement mapping/disposition, then run one Wave-3 `host-all` | — | `DTR09-AUTH-01` retains both Move Account islands. `DTR10-AUTH-01` through `DTR10-AUTH-08` disposition eight separate group boundaries: seven removal plans are Plan-green and one retention plan is acceptance-verified. No DTR-10 work remains; DTR-11 and the wave gate remain open. | 2026-07-27 / Move Account + Groups + Crypto + Security + Release |
-| Wave 4A | DTR-12, DTR-13 | Deferred | `host-all` pending | — | — | — |
+| Wave 3 | DTR-09, DTR-10, DTR-11 | **Wave-accepted** | `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 4 --reporter failures-only`; 1,250 exact Dart paths + 8 Go tails = 1,258 items | Repository-retained validation snapshot `ec268ce4a41d94450919170c9df2b1bf1a7ef987` (tag `dtr-wave3-tested-tree-20260727`); tree `897a285f68f1266dc6945f727f2425272151f068` frozen from the integrated workspace with a separate index | Exit 0: Flutter `+12,755 ~1`, all eight Go tails passed, and the final scope marker is present. Original-log SHA-256 `4b45449c2d064c8358fc895b580e249404faf995e95d12a7a6369600fab338d9`; archive SHA-256 `55ac78d1a0fd2a98b70884194e5cb6677ff0dba474ca24594f469165e97806f7`. [Stable Plan 287 and Wave 3 evidence](evidence/dtr-wave3/README.md). | 2026-07-27 / user-authorized; Codex-executed, verified, and archived |
+| Wave 4A | DTR-12, DTR-13 | Planning unblocked; DTR-12 candidate, DTR-13 decision-blocked | `host-all` pending | — | Wave-3 temporal dependency cleared; DTR-12 plan and DTR-13 QA + release decision remain open | — |
 | Wave 4B | DTR-14, DTR-15 | Deferred | `host-all`; conditional `performance-host` | — | — | — |
 | Wave 4C | DTR-16, DTR-17, DTR-18 | Deferred | `host-all`; conditional `performance-host` | — | — | — |
 | Wave 5 child waves | DEP-01 children | Deferred | Per-child `host-all` plus platform gates | — | — | — |
@@ -651,6 +663,19 @@ completed attempts and original-log hashes are preserved in the
 `Retained`; Plan 286 remains Plan-green; the DTR-07 registry row and Wave 2 are
 now `Wave-accepted`. Final-rollout `host-all` remains a later, separate gate.
 
+Wave 3 used one complete frozen-snapshot acceptance run after DTR-09 and DTR-10
+were terminal and Plan 287 was Plan-green. The separate-index synthetic commit
+isolated the integrated code/test tree without rewriting the shared dirty
+workspace index. The 1,258-item gate exited 0 with 12,755 Flutter tests passed,
+one skipped, all eight Go tails passed, and the final scope marker present.
+The tested commit/tree, ignored-local-fixture disclosure, original/archive log
+hashes, and Plan 287 family receipts are preserved in the
+[Wave 3 evidence archive](evidence/dtr-wave3/README.md). DTR-11 and Wave 3 are
+`Wave-accepted`; DTR-12/DTR-13's temporal Wave-3 dependency is cleared.
+The tested snapshot is repository-reachable through
+`dtr-wave3-tested-tree-20260727` and as the direct parent of the closure-record
+commit. Final-rollout `host-all` remains a later, separate gate.
+
 ---
 
 ## Decision ledger
@@ -673,8 +698,8 @@ now `Wave-accepted`. Final-rollout `host-all` remains a later, separate gate.
 | Retire the duplicate Dart group-message payload | DTR-10 Plan 282 | Groups + crypto + release | Implemented 2026-07-27 | `DTR10-AUTH-06`: under the recorded copy/paste interpretation, removed only the unused Dart model/test/bookkeeping and preserved the live Go v3 envelope/parser/publish/receive protocol. Focused Dart/Go preservation, completeness, `groups`, `feature-host-all`, strict analysis, and scoped runtime-root closure are green; the plan is Plan-green and closed. |
 | Retire the orphan `GroupInboxCursor` model | DTR-10 Plan 283 | Groups + database + release | Plan-green / closed 2026-07-27 | `DTR10-AUTH-07`: removed only the unused model and exact runtime-root declaration while retaining migration 066, cursor/receipt tables, DB helpers, repository page transactions, production composition, and inbox replay. The final root strict-analysis run reported no issues and diff hygiene passed. |
 | Retain the legacy group-secret security scrub | DTR-10 Plan 284 / DEP-01 | Groups + crypto + security + release | Acceptance-verified terminal `Retained` 2026-07-27 | `DTR10-AUTH-08`: keep the startup scrub. The marker is not profile-qualified or owned by Move Account reset/import, and the background isolate does not invoke the foreground scrub; these remain unresolved, not repaired. A new removal plan is allowed only after Security + Release prove supported-data/marker and declared-backup completion, zero legacy rows, recovery safety, and crypto/client rollout compatibility. |
-| Ownership of remaining test-only leaves | DTR-11 planning | Feature owners | Approved 2026-07-27 | `DTR11-AUTH-01`: the current authenticated project owner explicitly identified themself as owner and approved [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md)'s exact 11-path/1,065-LOC boundary: retire ten app sources and their ten SUT-only suites; relocate the 94-line push preview release calculator unchanged to `tool/telemetry/` while retaining its test and `runtime-telemetry` gate; migrate the Feed parity suite to `FeedStore`, remove only stale `ReactionDisplay` type assertions, and add the missing live Orbit/QR assertions; remove all 11 matching runtime-root declarations; remove only `GroupBacklogRetentionNotice.listSummary` plus the two exact orphan l10n keys in every locale; remove only the inert S15 retired-event filter/derived signal/print output; and add `test/unit/**` to `core-host-all` with an exact shell contract. `_RaceResult.relayProbeEligible`, relay/failure semantics, automatic identity restore, live UI behavior, native/Go/wire/storage/schema boundaries, and DTR-13's QA + release decision are explicitly excluded. Rollback is the exact inverse of this boundary and does not erase the owner decision. |
-| Supported build profiles and debug/E2E entrypoints | DTR-13 planning | QA + release | Open | — |
+| Ownership of remaining test-only leaves | DTR-11 planning | Feature owners | Accepted and executed / Wave-accepted 2026-07-27 | `DTR11-AUTH-01`: the current authenticated project owner explicitly identified themself as owner and approved [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md)'s exact 11-path/1,065-LOC boundary: retire ten app sources and their ten SUT-only suites; relocate the 94-line push preview release calculator unchanged to `tool/telemetry/` while retaining its test and `runtime-telemetry` gate; migrate the Feed parity suite to `FeedStore`, remove only stale `ReactionDisplay` type assertions, and add the missing live Orbit/QR assertions; remove all 11 matching runtime-root declarations; remove only `GroupBacklogRetentionNotice.listSummary` plus the two exact orphan l10n keys in every locale; remove only the inert S15 retired-event filter/derived signal/print output; and add `test/unit/**` to `core-host-all` with an exact shell contract. `_RaceResult.relayProbeEligible`, relay/failure semantics, automatic identity restore, live UI behavior, native/Go/wire/storage/schema boundaries, and DTR-13's QA + release decision are explicitly excluded. The boundary was implemented exactly; all Plan 287 gates and the Wave-3 aggregate passed. [Stable evidence](evidence/dtr-wave3/README.md). Rollback is the exact inverse of this boundary and does not erase the owner decision. |
+| Supported build profiles and debug/E2E entrypoints | DTR-13 planning | QA + release | Open | Wave 3's temporal dependency is cleared by its accepted aggregate. DTR-12 predecessor planning and this explicit QA + release owner decision remain open; no DTR-13 execution is authorized. |
 
 ---
 
@@ -718,8 +743,9 @@ those proof floors:
 
 DTR-10 is terminally complete: its seven removal plans are Plan-green/closed
 and Plan 284 is acceptance-verified terminal `Retained`. No broader
-compatibility surface is deletion-ready. Wave 3 remains open independently for
-DTR-11 mapping and its later aggregate `host-all`.
+compatibility surface is deletion-ready. Plan 287 subsequently closed DTR-11,
+and the separate aggregate accepted Wave 3 without changing any retained
+compatibility boundary.
 
 ---
 
@@ -730,11 +756,11 @@ and newly wired code are part of the safety result.
 
 | Outcome | Files | LOC | Evidence |
 |---|---:|---:|---|
-| Removed | 26 | 9,308 | Accepted-wave total only: DTR-02 retired 3 files / 1,179 LOC. DTR-03 retired 3 whole files plus deprecated wrapper/test fragments / 339 lines. DTR-04 retired 12 whole files / 1,079 LOC plus 57 orphan catalog/generated-l10n lines. DTR-05 removed the 135-line dormant helper/comment block plus its 22-line suppression record. DTR-07 retired 8 whole files / 6,255 lines, plus 147 orphan ARB/generated-l10n lines and 95 indirect test/harness lines. Rewrites, additions, runtime-root/gate/documentation bookkeeping, and added preservation tests are excluded. Plans 273 through 276 and Plan 286 hold the per-plan proof, and Wave 0 through Wave 2 acceptance evidence is preserved above. Plan-green removals in pending Wave 3 are intentionally excluded until its aggregate wave gate is accepted. |
+| Removed | 59 | 14,067 | Conservative accepted-wave tally. The prior Wave 0–2 baseline was 26 files / 9,308 LOC: DTR-02 retired 3 files / 1,179 LOC; DTR-03 retired 3 whole files plus deprecated wrapper/test fragments / 339 lines; DTR-04 retired 12 whole files / 1,079 LOC plus 57 orphan catalog/generated-l10n lines; DTR-05 removed the 135-line dormant helper/comment block plus its 22-line suppression record; and DTR-07 retired 8 whole files / 6,255 lines, plus 147 orphan ARB/generated-l10n lines and 95 indirect test/harness lines. Accepted Wave 3 adds only exact whole-file retirements to avoid overclaiming: DTR-10 retired 13 files / 1,940 LOC, and DTR-11 retired 20 files / 2,819 LOC (ten 971-line app sources plus ten 1,848-line SUT-only suites). DTR-11's byte-identical 94-line tooling relocation, field/l10n/routing/test-assertion fragments, rewrites, additions, runtime-root/gate/documentation bookkeeping, and preservation tests are excluded. Per-plan proof lives in Plans 273–287; Wave 0–3 acceptance evidence is linked above. |
 | Wired into supported behavior | 0 | 0 | — |
 | Retained with owner/removal condition | 32 | 10,503 | DTR-01 keeps `smoke_test_runner.dart` (225 LOC) as `retained-unresolved`; `DTR06-AUTH-01` retains the 24-file Posts UI island (6,993 LOC) plus `post_pass_follow_on_support.dart` (192 LOC); `DTR09-AUTH-01` separately retains the six group/pending-work manifest source files (3,093 LOC) for future Move Account completeness work |
 | Deferred with revisit condition | 0 | 0 | — |
-| Classified candidates awaiting downstream execution or disposition | 0 | 0 | Plan 283 retired the 31-line `group_inbox_cursor.dart` leaf and its exact runtime-root declaration while preserving migration 066 and the persisted receipt/cursor boundary. The advisory manifest still labels the retained 192-line post helper as a candidate, but `DTR06-AUTH-01` supplies its terminal roadmap disposition and it is counted in the retained row above. |
+| Classified candidates awaiting downstream execution or disposition | 0 | 0 | DTR-10 and DTR-11 have terminal accepted dispositions. The advisory manifest still labels the retained 192-line post helper as a candidate, but `DTR06-AUTH-01` supplies its terminal roadmap disposition and it is counted in the retained row above. |
 | Remaining unclassified audit candidates | 0 | 0 | DTR-01 accounts for every current non-main-reachable Dart path; uncertainty is retained or classified rather than hidden |
 
 ## Maintenance protocol

@@ -2,6 +2,7 @@
 
 Date: 2026-07-27  
 Scope: retained DTR-06 and Plan-green DTR-07 / Plan 286  
+Wave verdict: **Wave-accepted** on 2026-07-27
 Execution shape: full `host-all`, batched Flutter, concurrency 4,
 `failures-only`, continue-on-failure
 
@@ -64,6 +65,12 @@ The tested state was Git
 working-tree delta, including Plan 286 and later DTR-10/Plan-285 work. The two
 closure corrections changed only a discovery script and a test. No production
 source changed.
+
+Durability note: the later integrated validation snapshot
+`ec268ce4a41d94450919170c9df2b1bf1a7ef987` contains this complete evidence
+pack and is retained in repository history. It is not claimed as the exact
+Wave 2 tested tree: the accepted Wave 2 receipt remains explicitly identified
+as `95d754e...` plus its then-current integrated working-tree delta.
 
 Before these completed attempts, a concurrency-1 process was stopped before
 completion when the repository gate audit confirmed concurrency 4 as the
