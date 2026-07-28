@@ -30,6 +30,202 @@ const _iosFixtureAuthorSelector = 'testAuthorAnnouncementReactionTarget';
 const _iosNotificationPrepareSelector = 'testPrepareWarmNotificationTap';
 const _iosSystemLogExecutable = 'idevicesyslog';
 
+/// Stable Android semantics identifier for Orbit's create-group FAB.
+///
+/// This is intentionally not localized: the host driver uses it as an exact
+/// automation identifier while the expanded actions retain localized labels.
+const String orbitCreateGroupFabSemanticId = 'orbit_create_group_fab';
+
+/// Returns the exact semantics-node center for Orbit's create-group FAB.
+///
+/// Generic top-right clickability is deliberately insufficient: other Orbit
+/// actions occupy the same quadrant and may be mounted before the FAB.
+(int, int)? findOrbitCreateGroupFabCenter(String xml) {
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    if (_fixtureXmlAttribute(raw, 'content-desc') !=
+        orbitCreateGroupFabSemanticId) {
+      continue;
+    }
+    final bounds = RegExp(
+      r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+    ).firstMatch(raw);
+    if (bounds == null) continue;
+    return (
+      (int.parse(bounds.group(1)!) + int.parse(bounds.group(3)!)) ~/ 2,
+      (int.parse(bounds.group(2)!) + int.parse(bounds.group(4)!)) ~/ 2,
+    );
+  }
+  return null;
+}
+
+/// Probes the exact FAB around one bounded Orbit re-establishment attempt.
+Future<(int, int)?> findOrbitCreateGroupFabWithRecovery({
+  required Future<String> Function() readUiDump,
+  required Future<void> Function() reestablishOrbit,
+  int probesBeforeRecovery = 4,
+  int probesAfterRecovery = 4,
+  Duration retryDelay = const Duration(milliseconds: 500),
+}) async {
+  if (probesBeforeRecovery <= 0 || probesAfterRecovery <= 0) {
+    throw ArgumentError('FAB recovery probe counts must be positive');
+  }
+
+  Future<(int, int)?> probe(int count) async {
+    for (var attempt = 0; attempt < count; attempt++) {
+      final center = findOrbitCreateGroupFabCenter(await readUiDump());
+      if (center != null) return center;
+      if (attempt + 1 < count && retryDelay > Duration.zero) {
+        await Future<void>.delayed(retryDelay);
+      }
+    }
+    return null;
+  }
+
+  final initial = await probe(probesBeforeRecovery);
+  if (initial != null) return initial;
+  await reestablishOrbit();
+  return probe(probesAfterRecovery);
+}
+
+/// Waits for the readiness event emitted by one already-pinned app process.
+///
+/// The caller owns process pinning (the live driver uses `logcat --pid`).
+/// Nearby diagnostic prose is not accepted as readiness.
+Future<bool> waitForCreatorSendableReadiness({
+  required Future<String> Function() readCurrentProcessLog,
+  int maximumPolls = 90,
+  Duration pollInterval = const Duration(seconds: 1),
+}) async {
+  if (maximumPolls <= 0) {
+    throw ArgumentError.value(maximumPolls, 'maximumPolls');
+  }
+  final event = RegExp(r'"event"\s*:\s*"TIME_TO_SENDABLE_BADGE"');
+  for (var poll = 0; poll < maximumPolls; poll++) {
+    if (event.hasMatch(await readCurrentProcessLog())) return true;
+    if (poll + 1 < maximumPolls && pollInterval > Duration.zero) {
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+  return false;
+}
+
+/// Waits for a real pending-group projection, not Orbit's empty review remnant.
+///
+/// A non-empty review dock is opened at most once per observed label. Recovery
+/// runs once at [recoveryPoll]; callers provide the bounded Orbit navigation.
+Future<String?> waitForPendingGroupInviteProjection({
+  required String groupName,
+  required Future<String> Function() readUiDump,
+  required Future<void> Function(String label) openReview,
+  required Future<void> Function() reestablishOrbit,
+  int maximumPolls = 180,
+  int recoveryPoll = 20,
+  Duration pollInterval = const Duration(seconds: 1),
+}) async {
+  if (maximumPolls <= 0) {
+    throw ArgumentError.value(maximumPolls, 'maximumPolls');
+  }
+  if (recoveryPoll <= 0 || recoveryPoll > maximumPolls) {
+    throw ArgumentError.value(recoveryPoll, 'recoveryPoll');
+  }
+
+  final openedLabels = <String>{};
+  for (var poll = 1; poll <= maximumPolls; poll++) {
+    final values = _fixtureSemanticValues(await readUiDump());
+    if (values.contains(groupName)) return groupName;
+    if (values.contains('Pending Group Invites')) {
+      return 'Pending Group Invites';
+    }
+
+    final nonEmptyReview = values.cast<String?>().firstWhere(
+      (value) =>
+          value != null &&
+          value.startsWith('Open introductions review, ') &&
+          value.endsWith(' new'),
+      orElse: () => null,
+    );
+    if (nonEmptyReview != null && openedLabels.add(nonEmptyReview)) {
+      await openReview(nonEmptyReview);
+    }
+
+    if (poll == recoveryPoll) {
+      await reestablishOrbit();
+    }
+    if (poll < maximumPolls && pollInterval > Duration.zero) {
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+  return null;
+}
+
+/// One-shot cleanup for child-owned transient fixture state.
+///
+/// App/private state and notification restoration remain owned by the outer
+/// AndroidAppStateGuard. This child cleanup removes only its temporary request,
+/// result, status-bar, and pending-proof residue and is safe to call twice.
+final class GroupFixtureTransientCleanup {
+  GroupFixtureTransientCleanup(Iterable<Future<void> Function()> actions)
+    : _actions = List<Future<void> Function()>.unmodifiable(actions);
+
+  final List<Future<void> Function()> _actions;
+  bool _completed = false;
+
+  bool get completed => _completed;
+
+  Future<void> run() async {
+    if (_completed) return;
+    _completed = true;
+    for (final action in _actions) {
+      await action();
+    }
+  }
+}
+
+/// Retries a read-only fixture command through a bounded transient failure.
+///
+/// Android emulators can briefly replace their adb transport while the app is
+/// backgrounded. Evidence collection must tolerate that reconnect, but the
+/// final non-success result is still returned for the caller to classify.
+Future<T> retryBoundedFixtureRead<T>({
+  required Future<T> Function() attempt,
+  required bool Function(T value) succeeded,
+  int maximumAttempts = 3,
+  Duration retryDelay = const Duration(milliseconds: 500),
+}) async {
+  if (maximumAttempts <= 0) {
+    throw ArgumentError.value(maximumAttempts, 'maximumAttempts');
+  }
+  late T result;
+  for (
+    var attemptNumber = 1;
+    attemptNumber <= maximumAttempts;
+    attemptNumber++
+  ) {
+    result = await attempt();
+    if (succeeded(result) || attemptNumber == maximumAttempts) return result;
+    if (retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return result;
+}
+
+Set<String> _fixtureSemanticValues(String xml) {
+  final values = <String>{};
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    for (final attribute in const <String>['text', 'content-desc']) {
+      final value = _fixtureXmlAttribute(raw, attribute);
+      if (value.isNotEmpty) values.add(value);
+    }
+  }
+  return values;
+}
+
+String _fixtureXmlAttribute(String raw, String name) =>
+    RegExp('$name="([^"]*)"').firstMatch(raw)?.group(1) ?? '';
+
 Future<void> main(List<String> args) async {
   final scenarioId = _valueFor(args, '--scenario');
   final senderId = _valueFor(args, '--sender');
@@ -101,7 +297,11 @@ Future<void> main(List<String> args) async {
   );
 
   try {
-    await capture.run();
+    try {
+      await capture.run();
+    } finally {
+      await capture.cleanupTransientState();
+    }
   } on _CaptureFailure catch (failure, stackTrace) {
     await capture.writeFailure(failure, stackTrace);
     stderr.writeln(
@@ -269,6 +469,12 @@ class _Plan257Capture {
   final Random _random = Random.secure();
   late final String _runtimeRunId = _runtimeToken('run');
   late final String _runtimeNonce = _runtimeToken('nonce');
+  late final GroupFixtureTransientCleanup _transientCleanup =
+      GroupFixtureTransientCleanup(<Future<void> Function()>[
+        _deleteTransientFixtureFiles,
+        _collapseAndroidStatusBars,
+        _deletePendingProofResidue,
+      ]);
 
   Map<String, Object?> get _iosCapture =>
       Map<String, Object?>.from(_staging['iosCapture'] as Map);
@@ -277,6 +483,8 @@ class _Plan257Capture {
     '${artifactDirectory.path}${Platform.pathSeparator}'
     'automation_command_journal.json',
   );
+
+  Future<void> cleanupTransientState() => _transientCleanup.run();
 
   Future<void> run() async {
     await artifactDirectory.create(recursive: true);
@@ -1188,13 +1396,7 @@ class _Plan257Capture {
 
   Future<void> _acceptIosCreatedGroupOnAndroid() async {
     await _launchAndroid(senderId);
-    final review = await _waitForAnyText(senderId, const <String>[
-      'Open introductions review',
-      'Pending Group Invites',
-    ], const Duration(minutes: 3));
-    if (review.startsWith('Open introductions review')) {
-      await _tapText(senderId, review);
-    }
+    await _waitForGroupInviteEntry(senderId, const Duration(minutes: 3));
     await _waitForUiText(senderId, _groupName, const Duration(minutes: 1));
     await _tapText(senderId, 'Accept');
     await _waitForUiText(
@@ -1268,12 +1470,7 @@ class _Plan257Capture {
     await Future<void>.delayed(const Duration(seconds: 10));
     _iosXcuitestOutput += await _runIosUiSelector(_iosTapSelector, tapConfig);
 
-    final senderLog = await _adb(senderId, const <String>[
-      'logcat',
-      '-d',
-      '-v',
-      'threadtime',
-    ]);
+    final senderLog = await _readAndroidLogcat(senderId);
     _senderLogcat = _flowLines(senderLog.stdout);
     _relayJournal = await _relayJournalSince(
       _captureWindowStart ?? firstWindow,
@@ -1654,15 +1851,17 @@ class _Plan257Capture {
     final invitee = identical(creator, sender) ? recipient : sender;
 
     await _launchAndroid(creator.deviceId);
+    await _waitForCreatorSendable(creator.deviceId);
     await _tapOrbitCreateFab(creator.deviceId);
     await _tapText(
       creator.deviceId,
       scenario.groupType == 'announcement' ? 'New Announce' : 'New Group',
     );
     await _tapText(creator.deviceId, invitee.username);
-    final groupNameField = findBottommostNodeCenterByClass(
-      await _uiDump(creator.deviceId),
-      'android.widget.EditText',
+    final groupNameField = await _retryUiCenter(
+      creator.deviceId,
+      (dump) =>
+          findBottommostNodeCenterByClass(dump, 'android.widget.EditText'),
     );
     if (groupNameField == null) {
       throw _CaptureFailure.capture(
@@ -1689,13 +1888,10 @@ class _Plan257Capture {
     );
 
     await _startAndroid(invitee.deviceId);
-    final review = await _waitForAnyText(invitee.deviceId, const <String>[
-      'Open introductions review',
-      'Pending Group Invites',
-    ], const Duration(minutes: 3));
-    if (review.startsWith('Open introductions review')) {
-      await _tapText(invitee.deviceId, review);
-    }
+    await _waitForGroupInviteEntry(
+      invitee.deviceId,
+      const Duration(minutes: 3),
+    );
     await _waitForUiText(
       invitee.deviceId,
       _groupName,
@@ -1710,6 +1906,39 @@ class _Plan257Capture {
           ? true
           : null,
     );
+  }
+
+  Future<void> _waitForCreatorSendable(String deviceId) async {
+    final rawPid = await _adbShell(deviceId, <String>[
+      'pidof',
+      appPackage,
+    ], environmentFailure: true);
+    final pid = RegExp(r'\b[1-9][0-9]*\b').firstMatch(rawPid)?.group(0);
+    if (pid == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'creator_process_missing_before_sendable_wait_on_$deviceId',
+      );
+    }
+
+    final ready = await waitForCreatorSendableReadiness(
+      readCurrentProcessLog: () async {
+        final output = await _adb(deviceId, <String>[
+          'logcat',
+          '-d',
+          '--pid=$pid',
+          '-v',
+          'brief',
+        ], allowFail: true);
+        return output.stdout;
+      },
+    );
+    if (!ready) {
+      throw _CaptureFailure.capture(
+        stage,
+        'creator_sendable_readiness_timeout_on_${deviceId}_pid_$pid',
+      );
+    }
   }
 
   Future<void> _runAndroidUnreadLifecycle() async {
@@ -1979,18 +2208,8 @@ class _Plan257Capture {
     // exactly the two expected sends (first ADD/message and replacement). A
     // late third send can no longer pass an earlier `>= 2` wait.
     await Future<void>.delayed(const Duration(seconds: 10));
-    final senderLog = await _adb(senderId, const <String>[
-      'logcat',
-      '-d',
-      '-v',
-      'threadtime',
-    ]);
-    final recipientLog = await _adb(recipientId, const <String>[
-      'logcat',
-      '-d',
-      '-v',
-      'threadtime',
-    ]);
+    final senderLog = await _readAndroidLogcat(senderId);
+    final recipientLog = await _readAndroidLogcat(recipientId);
     _senderLogcat = _flowLines(senderLog.stdout);
     _recipientLogcat = _flowLines(recipientLog.stdout);
     _relayJournal = await _relayJournalSince(
@@ -2007,8 +2226,10 @@ class _Plan257Capture {
   }
 
   Future<void> _tapOrbitCreateFab(String deviceId) async {
-    final dump = await _uiDump(deviceId);
-    final center = findTopRightClickableNodeCenter(dump);
+    final center = await findOrbitCreateGroupFabWithRecovery(
+      readUiDump: () => _uiDump(deviceId),
+      reestablishOrbit: () => _reestablishOrbitWithoutForceStop(deviceId),
+    );
     if (center == null) {
       throw _CaptureFailure.capture(
         stage,
@@ -2025,6 +2246,42 @@ class _Plan257Capture {
       'New Group',
       'New Announce',
     ], const Duration(seconds: 15));
+  }
+
+  Future<void> _reestablishOrbitWithoutForceStop(String deviceId) async {
+    // Resuming and bounded back navigation are sufficient to recover Orbit.
+    // Repeated force-stop/start cycles can reset relay readiness while fixture
+    // setup is trying to prove it, so recovery deliberately never calls
+    // _launchAndroid.
+    await _startAndroid(deviceId);
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final dump = await _uiDump(deviceId);
+      if (findOrbitCreateGroupFabCenter(dump) != null ||
+          _fixtureSemanticValues(dump).contains('Pending Group Invites') ||
+          _fixtureSemanticValues(
+            dump,
+          ).any((value) => value.startsWith('Open introductions review'))) {
+        return;
+      }
+      await _adbShell(deviceId, const <String>[
+        'input',
+        'keyevent',
+        'KEYCODE_BACK',
+      ], allowFail: true);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+
+  Future<(int, int)?> _retryUiCenter(
+    String deviceId,
+    (int, int)? Function(String dump) finder,
+  ) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final center = finder(await _uiDump(deviceId));
+      if (center != null) return center;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return null;
   }
 
   Future<void> _ensureOrbit(String deviceId) async {
@@ -3058,6 +3315,41 @@ class _Plan257Capture {
     }
   }
 
+  Future<void> _deleteTransientFixtureFiles() async {
+    final androidIds = <String>{
+      if (scenario.senderPlatform == 'android') senderId,
+      if (scenario.recipientPlatform == 'android') recipientId,
+    };
+    for (final deviceId in androidIds) {
+      await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+      await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    }
+  }
+
+  Future<void> _collapseAndroidStatusBars() async {
+    final androidIds = <String>{
+      if (scenario.senderPlatform == 'android') senderId,
+      if (scenario.recipientPlatform == 'android') recipientId,
+    };
+    for (final deviceId in androidIds) {
+      await _adbShell(deviceId, const <String>[
+        'cmd',
+        'statusbar',
+        'collapse',
+      ], allowFail: true);
+    }
+  }
+
+  Future<void> _deletePendingProofResidue() async {
+    final pending = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}'
+      '.json.pending',
+    );
+    if (pending.existsSync()) {
+      await pending.delete();
+    }
+  }
+
   Future<void> _grantNotificationPermission(String deviceId) async {
     await _adbShell(deviceId, <String>[
       'pm',
@@ -3204,6 +3496,28 @@ class _Plan257Capture {
     );
   }
 
+  Future<void> _waitForGroupInviteEntry(
+    String deviceId,
+    Duration timeout,
+  ) async {
+    final maximumPolls = max(1, timeout.inSeconds);
+    final observed = await waitForPendingGroupInviteProjection(
+      groupName: _groupName,
+      readUiDump: () => _uiDump(deviceId),
+      openReview: (label) => _tapText(deviceId, label),
+      reestablishOrbit: () => _reestablishOrbitWithoutForceStop(deviceId),
+      maximumPolls: maximumPolls,
+      recoveryPoll: min(20, maximumPolls),
+    );
+    if (observed == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'timed_out_waiting_for_pending_group_invite_$_groupName'
+        '_on_$deviceId',
+      );
+    }
+  }
+
   Future<(int, int)> _waitForBounds(
     String deviceId,
     String text,
@@ -3347,6 +3661,26 @@ class _Plan257Capture {
       allowFail: allowFail,
       environmentFailure: environmentFailure,
     );
+  }
+
+  Future<_CommandOutput> _readAndroidLogcat(String deviceId) async {
+    final output = await retryBoundedFixtureRead<_CommandOutput>(
+      attempt: () => _adb(deviceId, const <String>[
+        'logcat',
+        '-d',
+        '-v',
+        'threadtime',
+      ], allowFail: true),
+      succeeded: (value) => value.exitCode == 0,
+    );
+    if (output.exitCode != 0) {
+      throw _CaptureFailure.capture(
+        stage,
+        'adb logcat remained unavailable on $deviceId after bounded retry: '
+        '${_lastLine(output.combined)}',
+      );
+    }
+    return output;
   }
 
   Future<String> _adbShell(

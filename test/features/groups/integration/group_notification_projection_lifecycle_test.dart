@@ -1278,7 +1278,12 @@ void main() {
   test(
     'startup restore precedes push eligibility and migration rebuilds',
     () async {
-      final source = await File('lib/main.dart').readAsString();
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
       final identitySource = await File(
         'lib/features/identity/domain/repositories/identity_repository_impl.dart',
       ).readAsString();
@@ -1305,17 +1310,17 @@ void main() {
       expect(saveDirectOwner, inInclusiveRange(saveGroupOwner, saveSecret - 1));
       expect(saveSecret, inInclusiveRange(saveDirectOwner, saveDatabase - 1));
 
-      final identityOwner = source.indexOf(
+      final identityOwner = productionSource.indexOf(
         'groupReactionProjectionIdentityReady = repository.loadIdentity();',
       );
-      final contextKickoff = source.indexOf(
+      final contextKickoff = productionSource.indexOf(
         'keychainMirrorBackfill = () async {',
       );
       expect(identityOwner, inInclusiveRange(0, contextKickoff - 1));
-      final directContactBackfill = source.indexOf(
+      final directContactBackfill = productionSource.indexOf(
         'contactRepository.mirrorAllDirectReactionContacts()',
       );
-      final directIdentityAwait = source.lastIndexOf(
+      final directIdentityAwait = productionSource.lastIndexOf(
         'await groupReactionProjectionIdentityReady;',
         directContactBackfill,
       );
@@ -1324,21 +1329,32 @@ void main() {
         inInclusiveRange(identityOwner, directContactBackfill - 1),
       );
 
-      final start = source.indexOf('Future<void> startLiveServices() async {');
-      final firebase = source.indexOf('await ensureFirebaseReady();', start);
-      final contextAwait = source.indexOf('await groupContextBackfill;', start);
-      final comparandsAwait = source.indexOf(
+      final start = productionSource.indexOf(
+        'Future<void> startLiveServices() async {',
+      );
+      final firebase = productionSource.indexOf(
+        'await ensureFirebaseReady();',
+        start,
+      );
+      final contextAwait = productionSource.indexOf(
+        'await groupContextBackfill;',
+        start,
+      );
+      final comparandsAwait = productionSource.indexOf(
         'await groupReactionComparandBackfill;',
         start,
       );
       expect(contextAwait, inInclusiveRange(start, firebase - 1));
       expect(comparandsAwait, inInclusiveRange(contextAwait, firebase - 1));
 
-      final migration = source.indexOf(
+      final migration = applicationRootSource.indexOf(
         'Future<void> _handleAccountMigrationReceiverActivated() async {',
       );
-      final migrationEnd = source.indexOf('\n  }', migration);
-      final migrationBody = source.substring(migration, migrationEnd);
+      final migrationEnd = applicationRootSource.indexOf('\n  }', migration);
+      final migrationBody = applicationRootSource.substring(
+        migration,
+        migrationEnd,
+      );
       expect(
         migrationBody,
         contains('await widget.repository.loadIdentity();'),
@@ -1355,12 +1371,14 @@ void main() {
         contains('mirrorAllGroupReactionNotificationComparands'),
       );
 
-      final pushRegistration = source.indexOf('registerPushToken: () async {');
-      final pushRegistrationEnd = source.indexOf(
+      final pushRegistration = productionSource.indexOf(
+        'registerPushToken: () async {',
+      );
+      final pushRegistrationEnd = productionSource.indexOf(
         'return push_registration.registerPushToken(',
         pushRegistration,
       );
-      final pushRegistrationBody = source.substring(
+      final pushRegistrationBody = productionSource.substring(
         pushRegistration,
         pushRegistrationEnd,
       );

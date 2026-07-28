@@ -195,6 +195,52 @@ require(runtime_row.get("automationReady") is True,
 require(runtime_row.get("declaredBuildException") is False,
         "runtime-root row declared an unexpected build exception")
 
+architecture_rows = [row for row in rows if row.get("id") == "architecture.boundaries"]
+require(len(architecture_rows) == 1,
+        "major plan must contain architecture.boundaries exactly once")
+architecture_row = architecture_rows[0]
+require(architecture_row.get("owner") == "flutter-app",
+        "architecture-boundary row owner drifted")
+require(architecture_row.get("proofBoundary") ==
+        "host.architecture-boundaries.enforced",
+        "architecture-boundary proof boundary drifted")
+require(architecture_row.get("assertions") == [
+    "architecture_boundaries.current_exceptions_exact",
+], "architecture-boundary assertion contract drifted")
+require(architecture_row.get("lane") == "host-dart",
+        "architecture-boundary lane drifted")
+require(architecture_row.get("modes") == ["major"],
+        "architecture-boundary modes drifted")
+require(architecture_row.get("families") == ["infra"],
+        "architecture-boundary families drifted")
+require(architecture_row.get("required") is True,
+        "architecture-boundary row is not required")
+require(architecture_row.get("command") == [
+    "./scripts/run_test_gates.sh", "architecture-boundaries",
+], "architecture-boundary command drifted")
+require(architecture_row.get("buildProfile") == "host.flutter_tester",
+        "architecture-boundary build profile drifted")
+require(architecture_row.get("dependencies") == [],
+        "architecture-boundary dependencies must remain empty")
+require(architecture_row.get("resources") == [
+    {"name": "host.cpu", "access": "read"},
+], "architecture-boundary resource contract drifted")
+require(architecture_row.get("targetCapabilities") == [
+    "host.flutter-tester", "host.bash", "host.git",
+], "architecture-boundary target requirements drifted")
+require(architecture_row.get("artifactRequired") is False,
+        "architecture-boundary row must not require an artifact")
+require(architecture_row.get("artifactValidators", []) == [],
+        "architecture-boundary row must not declare artifact validators")
+require(architecture_row.get("allowedNaReason") is None,
+        "architecture-boundary row must not allow N/A")
+require(architecture_row.get("active") is True,
+        "architecture-boundary row is inactive")
+require(architecture_row.get("automationReady") is True,
+        "architecture-boundary row is not automation-ready")
+require(architecture_row.get("declaredBuildException") is False,
+        "architecture-boundary row declared an unexpected build exception")
+
 device_perf = next((row for row in rows if row.get("id") == "performance.device.critical"), None)
 require(device_perf is not None, "major plan omitted device performance boundary")
 require(device_perf.get("required") is True and device_perf.get("automationReady") is True,

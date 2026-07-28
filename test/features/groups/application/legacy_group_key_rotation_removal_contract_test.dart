@@ -230,7 +230,7 @@ void main() {
         'callGroupGenerateNextKey',
         'callGroupUpdateKey',
       ],
-      'lib/main.dart': <String>[
+      'lib/app/bootstrap/production_application_bootstrap.dart': <String>[
         'rotateGroupKeyAfterRemoteRemoval:',
         'rotateAndDistributeGroupKey(',
       ],

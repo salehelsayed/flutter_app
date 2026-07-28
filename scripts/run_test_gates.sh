@@ -6,6 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 readonly BASELINE_TESTS=(
+  # 293 DTR-14: stable application bootstrap seam and production phase owners.
+  "test/core/bootstrap/main_bootstrap_boundary_test.dart"
+  "test/core/bootstrap/application_bootstrap_test.dart"
+  "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart"
   "test/features/identity/presentation/screens/startup_router_recovery_test.dart"
   "test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
@@ -81,6 +85,13 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  # 294 DTR-15: shared compositional conversation-controller ownership,
+  # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   "test/features/conversation/presentation/widgets/attachment_preview_strip_test.dart"
   "test/features/conversation/domain/models/media_rejection_test.dart"
   "test/features/push/application/prepare_notification_open_use_case_test.dart"
@@ -370,6 +381,13 @@ readonly GROUP_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
   "test/features/groups/presentation/group_conversation_wired_test.dart"
+  # 294 DTR-15: the same shared controller contracts must stay reachable from
+  # the curated group lane as well as both 1:1 inventories.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
   # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
@@ -794,6 +812,7 @@ Usage:
   ./scripts/run_test_gates.sh performance-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim-host
+  ./scripts/run_test_gates.sh architecture-boundaries
   ./scripts/run_test_gates.sh runtime-roots
   ./scripts/run_test_gates.sh completeness-check
 
@@ -1245,6 +1264,17 @@ run_runtime_roots_gate() {
   ./scripts/check_runtime_root_inventory.sh check --format text
 }
 
+run_architecture_boundaries_gate() {
+  if (($# > 0)); then
+    printf 'architecture-boundaries does not accept arguments.\n' >&2
+    return 2
+  fi
+
+  flutter test --no-pub \
+    test/unit/architecture_boundary_checker_test.dart || return $?
+  ./scripts/check_architecture_boundaries.sh
+}
+
 has_host_batch_control() {
   local arg
   for arg in "$@"; do
@@ -1565,6 +1595,13 @@ main() {
         run_runtime_roots_gate
       else
         run_runtime_roots_gate "${gate_args[@]}"
+      fi
+      ;;
+    architecture-boundaries)
+      if ((${#gate_args[@]} == 0)); then
+        run_architecture_boundaries_gate
+      else
+        run_architecture_boundaries_gate "${gate_args[@]}"
       fi
       ;;
     completeness-check)

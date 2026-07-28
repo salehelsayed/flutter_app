@@ -116,9 +116,12 @@ void main() {
         reason: 'the production feature listener must remain',
       );
 
-      final mainSource = _read(repository, 'lib/main.dart');
+      final productionBootstrapSource = _read(
+        repository,
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      );
       expect(
-        mainSource,
+        productionBootstrapSource,
         contains(
           <String>[
             'features/contact_request/application/',
@@ -126,7 +129,8 @@ void main() {
             'listener.dart',
           ].join(),
         ),
-        reason: 'main.dart must retain the feature listener import',
+        reason:
+            'the production bootstrap must retain the feature listener import',
       );
 
       final manifest = _read(

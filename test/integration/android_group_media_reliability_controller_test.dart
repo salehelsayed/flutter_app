@@ -364,8 +364,21 @@ void main() {
         isNot(contains('sha256.convert(database.path.codeUnits)')),
       );
 
-      final mainSource = File('lib/main.dart').readAsStringSync();
-      expect(mainSource, contains('transportPeerId: transportPeerId'));
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      expect(
+        productionSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+      );
+      expect(
+        productionSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+      );
+      expect(compositionSource, contains('transportPeerId: transportPeerId'));
 
       final productionLeafSource = File(
         'lib/features/groups/application/foreground_group_media_upload.dart',

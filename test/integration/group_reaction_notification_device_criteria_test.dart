@@ -2,11 +2,111 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../integration_test/scripts/capture_group_reaction_notification_device.dart'
+    as fixture_driver;
 import '../../integration_test/scripts/group_reaction_notification_device_criteria.dart';
 
 void main() {
+  testWidgets('Orbit create FAB exposes its exact automation semantics', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: <Widget>[
+              ExpandableFab(
+                fabSemanticLabel: fixture_driver.orbitCreateGroupFabSemanticId,
+                items: <ExpandableFabItem>[
+                  ExpandableFabItem(
+                    label: 'New Group',
+                    icon: Icons.group_outlined,
+                    onTap: () {},
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.bySemanticsLabel(fixture_driver.orbitCreateGroupFabSemanticId),
+      findsOneWidget,
+    );
+  });
+
+  test(
+    'create FAB recovery is bounded and re-establishes Orbit once',
+    () async {
+      final dumps = <String>[
+        _uiNode(clickable: true, bounds: '[900,100][1000,200]'),
+        _uiNode(clickable: true, bounds: '[900,100][1000,200]'),
+        _uiNode(
+          contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+          clickable: true,
+          bounds: '[900,100][1000,200]',
+        ),
+      ];
+      var reads = 0;
+      var recoveries = 0;
+
+      final center = await fixture_driver.findOrbitCreateGroupFabWithRecovery(
+        readUiDump: () async => dumps[reads++],
+        reestablishOrbit: () async => recoveries += 1,
+        probesBeforeRecovery: 2,
+        probesAfterRecovery: 2,
+        retryDelay: Duration.zero,
+      );
+
+      expect(center, (950, 150));
+      expect(reads, 3);
+      expect(recoveries, 1);
+    },
+  );
+
+  test('create FAB recovery stops after its exact bounded probes', () async {
+    var reads = 0;
+    var recoveries = 0;
+
+    final center = await fixture_driver.findOrbitCreateGroupFabWithRecovery(
+      readUiDump: () async {
+        reads += 1;
+        return _uiNode(
+          contentDescription: 'unrelated-action',
+          clickable: true,
+          bounds: '[900,100][1000,200]',
+        );
+      },
+      reestablishOrbit: () async => recoveries += 1,
+      probesBeforeRecovery: 2,
+      probesAfterRecovery: 3,
+      retryDelay: Duration.zero,
+    );
+
+    expect(center, isNull);
+    expect(reads, 5);
+    expect(recoveries, 1);
+  });
+
+  test('group fixture uses exact FAB semantics without force-stop recovery', () {
+    final source = File(
+      'integration_test/scripts/capture_group_reaction_notification_device.dart',
+    ).readAsStringSync();
+    final orbitSource = File(
+      'lib/features/orbit/presentation/screens/orbit_screen.dart',
+    ).readAsStringSync();
+    expect(orbitSource, contains("fabSemanticLabel: 'orbit_create_group_fab'"));
+    expect(source, contains('findOrbitCreateGroupFabWithRecovery('));
+    expect(source, contains('_reestablishOrbitWithoutForceStop'));
+    expect(source, isNot(contains('findTopRightClickableNodeCenter(')));
+  });
+
   group('Plan 257 device scenario catalog', () {
     test('lists the five availability-bounded scenarios in stable order', () {
       expect(
@@ -702,6 +802,15 @@ void main() {
     });
   });
 }
+
+String _uiNode({
+  String text = '',
+  String contentDescription = '',
+  bool clickable = false,
+  String bounds = '[0,0][100,100]',
+}) =>
+    '<node text="$text" content-desc="$contentDescription" '
+    'clickable="$clickable" bounds="$bounds" />';
 
 Map<String, Object?> _validStagingManifest({
   required String provider,

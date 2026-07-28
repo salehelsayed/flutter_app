@@ -5751,6 +5751,77 @@ void main() {
       },
     );
 
+    testWidgets(
+      '1:1 total-size overflow (individually-valid attachments) shows a '
+      'strip-level note and disables Send (no per-chip)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_total_over_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        File video(String name) =>
+            File('${tempDir.path}/$name.mp4')..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialText: 'hello',
+          initialPendingMedia: [
+            // Each 200 MB video is below its 250 MB per-file cap, while their
+            // 600 MB total exceeds the 500 MB whole-message budget.
+            PendingComposerMedia(
+              file: video('v1'),
+              budgetBytes: 200 * 1024 * 1024,
+            ),
+            PendingComposerMedia(
+              file: video('v2'),
+              budgetBytes: 200 * 1024 * 1024,
+            ),
+            PendingComposerMedia(
+              file: video('v3'),
+              budgetBytes: 200 * 1024 * 1024,
+            ),
+          ],
+        );
+
+        for (var index = 0; index < 3; index++) {
+          expect(
+            find.byKey(ValueKey('attachment-invalid-$index')),
+            findsNothing,
+          );
+        }
+        expect(
+          find.byKey(const ValueKey('attachment-total-overflow')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isTrue,
+        );
+
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'hello',
+        );
+        expect(messageRepo.store, isEmpty);
+      },
+    );
+
     // 149 TC-12: removing a valid sibling shifts the invalid chip to the
     // correct remaining index (the set is recomputed, never a stale snapshot).
     testWidgets(
@@ -9124,6 +9195,117 @@ void main() {
       expect(find.text('Sending automatically…'), findsNothing);
       await tester.pump(const Duration(milliseconds: 500));
     });
+
+    testWidgets(
+      'disposing mid-upload detaches UI without releasing wake; terminal '
+      'completion releases the exact hold once',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_dispose_upload_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/dispose.jpg')
+          ..writeAsStringSync('0123456789');
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                uploadStarted.complete();
+                await uploadGate.future;
+                return MediaAttachment(
+                  id: blobId ?? 'uploaded-dispose-1',
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'Dispose during upload');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await uploadStarted.future;
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('upload-progress-banner')),
+          findsOneWidget,
+        );
+        expect(wakeLockDriver.enableCalls, 1);
+        expect(wakeLockDriver.disableCalls, 0);
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+
+        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+        await tester.pump();
+
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(
+          find.byKey(const ValueKey('upload-progress-banner')),
+          findsNothing,
+        );
+        expect(wakeLockDriver.disableCalls, 0);
+        expect(
+          UploadWakeLockController.debugActiveHolds,
+          1,
+          reason: 'view disposal must detach UI without ending the operation',
+        );
+
+        uploadGate.complete();
+        await pumpUntil(
+          tester,
+          () =>
+              wakeLockDriver.disableCalls == 1 &&
+              UploadWakeLockController.debugActiveHolds == 0,
+        );
+
+        expect(wakeLockDriver.enableCalls, 1);
+        expect(wakeLockDriver.disableCalls, 1);
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(wakeLockDriver.disableCalls, 1);
+      },
+    );
 
     testWidgets(
       'cancel on the active upload banner restores video composer state and suppresses the final send',

@@ -1068,7 +1068,9 @@ void main() {
   test(
     'PB264-10 production wiring preserves the typed preparation refusal',
     () async {
-      final source = await File('lib/main.dart').readAsString();
+      final source = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
       final runnerStart = source.indexOf(
         'final rawGroupExitIntentRunner = GroupExitIntentRunner(',
       );

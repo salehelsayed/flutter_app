@@ -1994,7 +1994,7 @@ flutter:
             "String cursor = (await msgRepo.getInboxCursor(groupId)) ?? '';",
             'await msgRepo.runInboxPageTransaction(',
           ],
-      'lib/main.dart': <String>[
+      'lib/app/bootstrap/production_application_bootstrap.dart': <String>[
         'dbLoadGroupInboxCursorFn: (groupId) async {',
         'final row = await dbLoadGroupInboxCursor(executor, groupId);',
         "return row?['cursor'] as String?;",
@@ -2090,6 +2090,13 @@ flutter:
         _file(first, 'lib/core/debug/smoke_test_runner.dart').disposition,
         ReviewDisposition.retainedUnresolved,
       );
+      final retainedSmokeRunner = manifest.declarations.singleWhere(
+        (entry) => entry.path == 'lib/core/debug/smoke_test_runner.dart',
+      );
+      expect(retainedSmokeRunner.rootKinds, isEmpty);
+      expect(retainedSmokeRunner.evidence, isEmpty);
+      expect(retainedSmokeRunner.reason, contains('DTR13-AUTH-01'));
+      expect(retainedSmokeRunner.condition, contains('current uncalled state'));
       for (final path in RuntimeRootInventory.allowedManualRootPaths) {
         expect(
           _file(first, path).bucket,

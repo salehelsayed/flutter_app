@@ -187,12 +187,16 @@ void main() {
       expect(reinitializeCalls, 0);
       expect(startCalls, 0);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final nativeStart = mainSource.indexOf('nativeLeave: (intent) async {');
-      final nativeEnd = mainSource.indexOf('\n    },', nativeStart);
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final nativeStart = productionSource.indexOf(
+        'nativeLeave: (intent) async {',
+      );
+      final nativeEnd = productionSource.indexOf('\n      },', nativeStart);
       expect(nativeStart, greaterThanOrEqualTo(0));
       expect(nativeEnd, greaterThan(nativeStart));
-      final nativeAdapter = mainSource.substring(nativeStart, nativeEnd);
+      final nativeAdapter = productionSource.substring(nativeStart, nativeEnd);
       expect(nativeAdapter, contains('runTypedGroupExitNativeLeave('));
       expect(nativeAdapter, isNot(contains('.reinitialize(')));
       expect(nativeAdapter, isNot(contains('.start(')));

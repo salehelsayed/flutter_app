@@ -82,6 +82,13 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/received_media_action_controller_test.dart"
   "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  # 294 DTR-15: shared compositional conversation-controller ownership,
+  # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   # 232: direct received-media forwarding draft, picker launch, retry/provenance,
   # migration, and frozen Dart transport boundary.
   "test/features/conversation/application/build_received_media_forward_test.dart"

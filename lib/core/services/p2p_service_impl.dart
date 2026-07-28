@@ -4814,12 +4814,37 @@ class P2PServiceImpl
       wakeToken = (await receivedWakeTokenStore.readTokenFor(toPeerId))?['tok'];
     }
 
+    var bridgeTimeoutMs = timeoutMs;
+    if (wakeToken != null && wakeToken.isNotEmpty && !_currentState.isStarted) {
+      // A notification-driven presenter can reach this shared production seam
+      // while startNodeCore is still crossing the native bridge. Keep the wait
+      // inside the caller's existing inbox-store deadline: it must not turn a
+      // 3 s operation into a 3 s wait followed by another 3 s bridge call.
+      final readinessStopwatch = Stopwatch()..start();
+      final totalBudgetMs = timeoutMs ?? 15000;
+      if (totalBudgetMs <= 0) {
+        return _inboxStoreReadinessFailure('startup_budget_exhausted');
+      }
+      final readinessBudgetMs = totalBudgetMs < 3000 ? totalBudgetMs : 3000;
+      final started = await _waitForNodeStart(
+        Duration(milliseconds: readinessBudgetMs),
+      );
+      final remainingMs =
+          totalBudgetMs - readinessStopwatch.elapsedMilliseconds;
+      if (!started || remainingMs <= 0) {
+        return _inboxStoreReadinessFailure(
+          started ? 'startup_budget_exhausted' : 'startup_not_ready',
+        );
+      }
+      bridgeTimeoutMs = remainingMs;
+    }
+
     try {
       final response = await callP2PInboxStore(
         _bridge,
         toPeerId: toPeerId,
         message: message,
-        timeoutMs: timeoutMs,
+        timeoutMs: bridgeTimeoutMs,
         wakeToken: wakeToken,
       );
       final outcome = InboxStoreOutcome.fromBridgeResponse(response);
@@ -4867,6 +4892,53 @@ class P2PServiceImpl
         errorMessage: e.toString(),
       );
     }
+  }
+
+  Future<bool> _waitForNodeStart(Duration timeout) async {
+    if (_currentState.isStarted) return true;
+
+    final ready = Completer<bool>();
+    late final StreamSubscription<NodeState> subscription;
+    subscription = stateStream.listen(
+      (state) {
+        if (state.isStarted && !ready.isCompleted) {
+          ready.complete(true);
+        }
+      },
+      onError: (_) {
+        if (!ready.isCompleted) ready.complete(false);
+      },
+      onDone: () {
+        if (!ready.isCompleted) ready.complete(false);
+      },
+    );
+    // Close the check/listen race: startNodeCore may emit synchronously between
+    // the caller's initial state read and this subscription being installed.
+    if (_currentState.isStarted && !ready.isCompleted) {
+      ready.complete(true);
+    }
+    try {
+      return await ready.future.timeout(timeout, onTimeout: () => false);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  InboxStoreOutcome _inboxStoreReadinessFailure(String reason) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_INBOX_STORE_ERROR',
+      details: {
+        'status': InboxStoreStatus.failed.name,
+        'errorCode': 'INBOX_STARTUP_NOT_READY',
+        'reason': reason,
+      },
+    );
+    return InboxStoreOutcome(
+      status: InboxStoreStatus.failed,
+      errorCode: 'INBOX_STARTUP_NOT_READY',
+      errorMessage: reason,
+    );
   }
 
   @override

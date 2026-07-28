@@ -14,9 +14,9 @@ void main() {
   tearDown(setGroupExitIntentAccessSinks);
 
   test(
-    'main keeps local opens exact while validated remote opens retain clear-all',
+    'application root keeps local opens exact while remote opens retain clear-all',
     () {
-      final source = File('lib/main.dart').readAsStringSync();
+      final source = File('lib/app/application_root.dart').readAsStringSync();
       final initialLocal = _between(
         source,
         'Future<void> _handleInitialLocalNotificationLaunch() async {',
@@ -53,7 +53,7 @@ void main() {
   );
 
   test('cold warm and remote opens build one immutable pair after validation', () {
-    final source = File('lib/main.dart').readAsStringSync();
+    final source = File('lib/app/application_root.dart').readAsStringSync();
     final initialLocal = _between(
       source,
       'Future<void> _handleInitialLocalNotificationLaunch() async {',
@@ -84,7 +84,7 @@ void main() {
   test(
     'tap timing state is coordinator-owned and never independently writable',
     () {
-      final source = File('lib/main.dart').readAsStringSync();
+      final source = File('lib/app/application_root.dart').readAsStringSync();
       final state = _between(
         source,
         'class _MyAppState extends State<MyApp> with WidgetsBindingObserver {',
@@ -110,7 +110,7 @@ void main() {
   test(
     'deferred flush keeps ownership, retries once, and catches internally',
     () {
-      final source = File('lib/main.dart').readAsStringSync();
+      final source = File('lib/app/application_root.dart').readAsStringSync();
       final flush = _between(
         source,
         'Future<void> _flushDeferredNotificationRouteTarget() async {',
@@ -152,7 +152,7 @@ void main() {
   );
 
   test('validated paired context reaches intro direct and group conversations', () {
-    final source = File('lib/main.dart').readAsStringSync();
+    final source = File('lib/app/application_root.dart').readAsStringSync();
     final notificationRouter = _between(
       source,
       'Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(',
@@ -207,7 +207,7 @@ void main() {
   test(
     'missing group is routed only by invite redirect or mounted feedback fallback',
     () {
-      final source = File('lib/main.dart').readAsStringSync();
+      final source = File('lib/app/application_root.dart').readAsStringSync();
       final notificationRouter = _between(
         source,
         'Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(',
@@ -252,7 +252,7 @@ void main() {
   );
 
   test('prepared dispatch validates identity and enters coordinator', () {
-    final source = File('lib/main.dart').readAsStringSync();
+    final source = File('lib/app/application_root.dart').readAsStringSync();
     final dispatch = _between(
       source,
       'Future<NotificationOpenRouteCompletion> _dispatchPreparedNotificationRoute(',
@@ -325,7 +325,7 @@ void main() {
   );
 
   test('startup initial remote begins then observes deferred completion', () {
-    final source = File('lib/main.dart').readAsStringSync();
+    final source = File('lib/app/application_root.dart').readAsStringSync();
     final begin = _between(
       source,
       'Future<void> _beginStartupNotificationRouteContext(',
@@ -355,7 +355,7 @@ void main() {
   });
 
   test('remote dedupe commits only from actual route completion', () {
-    final source = File('lib/main.dart').readAsStringSync();
+    final source = File('lib/app/application_root.dart').readAsStringSync();
     final remote = _between(
       source,
       'Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {',

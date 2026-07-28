@@ -1,12 +1,18 @@
 # Dead Code and Technical Debt Removal — Master Roadmap
 
 Status: executing — Wave 0 was accepted on 2026-07-25, Wave 1 on 2026-07-26,
-and Waves 2 and 3 on 2026-07-27. DTR-09 remains terminal `Retained`, DTR-10 is
-terminally complete, and DTR-11 is `Wave-accepted` under Plan 287. Wave 4A
-planning is unblocked; DTR-13 remains decision-blocked on DTR-12 and its
-separate QA + release owner decision.
+Waves 2 and 3 on 2026-07-27, and Wave 4A on 2026-07-28. DTR-09 remains
+terminal `Retained`, DTR-10 is terminally complete, and DTR-11 and DTR-12 are
+`Wave-accepted`. DTR-13 is `Plan-green` and `Wave-accepted`; the authorized
+implementation and acceptance scope of `DTR13-AUTH-01` is closed. The final
+coherent live receipts, integrated core/analyzer/Graphify receipts, and
+1,265-item aggregate `host-all` are green. DTR-14 is Plan-green under
+`DTR14-AUTH-01`, and DTR-15 is Plan-green under `DTR15-AUTH-01`. Wave 4B
+aggregate `host-all` and its same-tree `performance-host` replay remain
+pending. Final release-closure `host-all` is a separate later obligation.
+[Stable Wave 4A evidence](evidence/dtr-wave4a/README.md).
 
-Snapshot date: 2026-07-27.
+Snapshot date: 2026-07-28.
 
 This document is the sequencing, dependency, decision, and wave-gate ledger for
 the dead-code and technical-debt program. It is deliberately not an
@@ -224,12 +230,12 @@ they must not share a batch with DTR-14 through DTR-18.
 | DTR-09 | P3 | Preserve the account-migration group and pending-work manifest islands as separately retained future Move Account completeness work | DTR-08; Move Account owner decision | Documentation/source verification; preserve existing direct tests; no application gate required while no code, schema, bundle, or runtime wiring changes are made | **Retained** — `DTR09-AUTH-01` records accepted retention on 2026-07-26; neither island is authorized for deletion or production wiring during this rollout, and each must be revisited separately when Move Account completeness implementation resumes |
 | DTR-10 | P3 | Retire seven bounded legacy/test-only group leaves while retaining live admission, recovery, exit, persistence, wire, crypto, and security boundaries | DTR-08; `DTR10-AUTH-01` through `DTR10-AUTH-08`; Plan 279 additionally depended on Plan 280 Plan-green | Per-plan causal/preservation contracts; `runtime-roots`; `groups`; justified `feature-host-all`; exact Go/native/device/SQLCipher proof only where named | **Terminally complete / accepted in Wave 3** — [Plans 277](277-old-join-group-removal-tdd-plan.md), [278](278-hydrate-groups-from-peers-disposition-tdd-plan.md), [279](279-dormant-group-leave-path-removal-tdd-plan.md), [280](280-superseded-leave-local-history-coordinator-removal-tdd-plan.md), [281](281-legacy-group-key-rotation-path-removal-tdd-plan.md), and [282](282-duplicate-dart-group-message-payload-removal-tdd-plan.md) are implementation-complete and Plan-green/closed; [Plan 283](283-unused-group-inbox-cursor-model-removal-tdd-plan.md) is also implementation-complete and Plan-green/closed after final strict-analysis and diff-hygiene closure; [Plan 284](284-legacy-group-secret-security-scrub-retention-evidence-tdd-plan.md) is acceptance-verified terminal `Retained`. The eight owner receipts disposition exact, separate boundaries rather than authorizing a legacy-group batch deletion. |
 | DTR-11 | P3 | Map and disposition remaining test-only leaves | DTR-08; replacement mapping; `DTR11-AUTH-01` | Focused replacement tests and affected curated/family gates | **Wave-accepted** — [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md) re-derived and dispositioned the exact 11-file/1,065-LOC map: ten app sources and ten SUT-only suites retired, one 94-line telemetry calculator relocated byte-identically to tooling, all 11 runtime-root rows removed, live Feed/Orbit/QR/LetterCard owners preserved, only the dead backlog summary/two keys and inert S15 diagnostic retired, and `test/unit/**` registered under `core-host-all`. `_RaceResult.relayProbeEligible` remains behaviorally intact. Causal/focused/curated/family/analyzer/completeness/Graphify gates passed, followed by the accepted Wave-3 aggregate: 1,250 Flutter paths, 12,755 pass, one skip, all eight Go tails, exit 0. [Stable evidence](evidence/dtr-wave3/README.md). |
-| DTR-12 | P4/P5 | Add enforceable architecture/layer boundary checks | DTR-01 | Exact boundary-tool tests; current exceptions pinned | **Candidate — planning unblocked after Wave 3 acceptance** |
-| DTR-13 | P4 | Move debug/E2E wiring behind a separate composition root while preserving proof entrypoints | DTR-01, DTR-12 | `sims-contracts`; affected simulations; startup/lifecycle preservation; affected family gate | **Decision blocked — temporal Wave-3 dependency cleared; DTR-12 and the QA + release owner decision remain open** |
-| DTR-14 | P5 | Extract `main.dart` bootstrap phases behind stable application interfaces | DTR-13 | Startup, lifecycle, push, Move Account, and affected core/feature gates | Deferred until DTR-13 |
-| DTR-15 | P5 | Extract shared direct/group conversation controllers without a shared base `State` | DTR-12 | `1to1`; `groups`; `feature-host-all`; justified `performance-host` | Deferred until Wave 4A |
-| DTR-16 | P5 | Decompose `GroupMessageListener` behind its existing facade | DTR-15 | `groups`; `feature-host-all`; crypto/background preservation | Deferred until DTR-15 |
-| DTR-17 | P5 | Decompose `P2PServiceImpl` behind stable interfaces | DTR-14 | `1to1`; `transport`; `core-host-all`; justified `performance-host` | Deferred until DTR-14 |
+| DTR-12 | P4/P5 | Add enforceable architecture/layer boundary checks | DTR-01 | Exact boundary-tool tests; current exceptions pinned | **Wave-accepted — [Plan 288](288-architecture-layer-boundary-guard-tdd-plan.md) pins the corrected 182 forbidden dependency identities plus 24 concrete feature-domain repository placements; the AST/Git checker, strict reviewed manifest, no-argument `architecture-boundaries` lane, and required Sims-major capability are green. DTR-13 owned this wave's composition-root boundary without a rebaseline; DTR-18 owns any future broader reduction. The Wave 4A aggregate passed without changing the 182 forbidden dependencies, 24 placement pins, or 92 debug exceptions. [Stable evidence](evidence/dtr-wave4a/README.md).** |
+| DTR-13 | P4 | Move debug/E2E wiring behind a separate composition root while preserving proof entrypoints | DTR-01, DTR-12; `DTR13-AUTH-01`; narrow closure follow-ups under `W4A-BLOCKERS-AUTH-01` | `sims-contracts`; affected simulations; startup/lifecycle preservation; affected family gate | **Plan-green / Wave-accepted — [Plan 289](289-debug-e2e-composition-root-tdd-plan.md) moved only the authorized construction into `lib/debug/debug_e2e_composition_root.dart`. Default composition constructs none; every profile/root/define/command/workflow is preserved, including the three manual smoke roots and retained smoke runner. The corrected iOS verifier, Plans [290](290-android-wake-token-cold-start-reliability-tdd-plan.md)–[292](292-group-reaction-notification-fixture-driver-stability-tdd-plan.md), and the narrow Plan-252 correction produced independently reverified coherent reports: wake 2/2, intro 2/2, group/announcement 4/4, and iOS 7/7. Integrated core/analyzer/Graphify receipts and the 1,265-item Wave 4A aggregate are green; `DTR13-AUTH-01` is closed on its exact authorized scope. [Stable evidence](evidence/dtr-wave4a/README.md).** |
+| DTR-14 | P5 | Extract `main.dart` bootstrap phases behind stable application interfaces | DTR-13 | Startup, lifecycle, push, Move Account, and affected core/feature gates | **Plan-green — [Plan 293](293-main-bootstrap-application-interfaces-tdd-plan.md) reduced `main.dart` from 7,262 to 14 lines, introduced stable bootstrap/prepared/host interfaces, separated the concrete production graph from the application root, migrated exact-owner locks and runtime-root evidence, and preserved the public facade, startup, lifecycle, push, Move Account, DTR-13, profile, and headless-handler boundaries. Focused RED/GREEN plus five mutation re-reds, 825 lifecycle/push tests, curated lanes, `move-feature`, 365-item core and 805-path feature families, policy gates, strict analysis, and Graphify are green under `DTR14-AUTH-01`.** |
+| DTR-15 | P5 | Extract shared direct/group conversation controllers without a shared base `State` | DTR-12 | `1to1`; `groups`; `feature-host-all`; required `performance-host` | **Plan-green — [Plan 294](294-shared-conversation-controller-extraction-tdd-plan.md) extracted four plain compositional controllers under `DTR15-AUTH-01`, kept both private States independent, froze public facades/widget APIs, and preserved lane-specific send/security/cancellation/voice policy. Causal and mutation proof, 1:1 (2,458), groups (3,259), 810-path feature (8,438 pass / 1 skip), 21-path performance (106), policy, strict analysis, diff hygiene, and Graphify are green.** |
+| DTR-16 | P5 | Decompose `GroupMessageListener` behind its existing facade | DTR-15 | `groups`; `feature-host-all`; crypto/background preservation | DTR-15 dependency is Plan-green; DTR-16 remains separately deferred and unauthorized |
+| DTR-17 | P5 | Decompose `P2PServiceImpl` behind stable interfaces | DTR-14 | `1to1`; `transport`; `core-host-all`; justified `performance-host` | DTR-14 dependency is Plan-green; DTR-17 remains separately deferred and unauthorized |
 | DTR-18 | P5 | Move orchestration out of `core` and relocate misplaced repository implementations incrementally | DTR-12, DTR-14, DTR-16, DTR-17 | Boundary tests; affected `core-host-all` and `feature-host-all` | Deferred until predecessor facades stabilize |
 | DEP-01 | P4/P5 | Dependency modernization split by pure Dart, persistence/crypto, Android, and iOS boundaries | A green preceding wave; no concurrent architecture rewrite | Per-package causal proof, affected family/native gates, then child-wave closure | Split into child plans before execution |
 
@@ -426,17 +432,41 @@ The goal is to make later refactors safer: enforce the desired layer direction,
 then remove debug/E2E construction from the production bootstrap without
 removing the workflows themselves.
 
-Planning is unblocked by Wave 3 acceptance. DTR-12 is a planning candidate.
-DTR-13 is no longer temporally deferred by Wave 3, but remains decision-blocked
-until DTR-12 and the separate QA + release owner decision are resolved.
+Wave 4A is accepted. DTR-12 is `Wave-accepted`, and DTR-13 is `Plan-green` and
+`Wave-accepted`. `DTR13-AUTH-01` resolved the separate QA + release decision,
+authorized Plan 289 on its exact preservation boundary, and is now closed for
+that implemented and accepted scope.
+
+As point-in-time closure history, archived provenance, current owner-only
+inputs, and live EC2 checks first refuted the earlier missing-input
+classification for iOS payload fast-path and reaction notification. The
+owner-authorized narrow repairs retained every DTR-13 preservation boundary:
+the verifier inspects `result.apps`; Plan 290 closes cold-start wake readiness;
+Plan 291 closes only campaign budget/process ownership; Plan 292 closes
+fixture/driver stability; and Plan 252 owns the exact intro
+status-convergence correction. The final coherent reports independently
+reverified green at wake 2/2, intro 2/2, group/announcement 4/4, and iOS 7/7
+assertions under Sims digest
+`73f4339412d85b7846f45894a122aa174f87141771fa121666a3ff06a3f0e825`.
+The iOS journey also recorded `apps=[]`, no private-handoff residue, and zero
+child builds or manual actions.
+
+The integrated closeout passed 362 `core-host-all` items / 2,825 tests,
+strict analysis with zero diagnostics, the incremental Graphify refresh, and
+the full aggregate: 1,257 Flutter paths, 12,798 passed, one skipped, zero
+failed, all eight Go tails, final scope marker, exit 0, and 1,136 seconds.
+[Stable Wave 4A evidence](evidence/dtr-wave4a/README.md).
 
 Exit:
 
 - Boundary checks fail on newly introduced forbidden dependencies.
 - Production bootstrap no longer owns E2E polling/controller construction.
 - Manual smoke, simulation, and headless proof entrypoints remain discoverable.
-- DTR-12 and DTR-13 are `Plan-green`.
+- DTR-12 and DTR-13 are `Plan-green` and `Wave-accepted`.
 - Wave 4A full `host-all` passes.
+
+All five exit conditions are satisfied. The final release-closure `host-all`
+is still a separate later obligation.
 
 ### Wave 4B — Bootstrap and conversation seams
 
@@ -446,6 +476,10 @@ These are extraction plans, not deletion-by-LOC plans. Preserve current facade
 and widget APIs. Shared conversation behavior should move into compositional
 controllers; do not introduce a shared base `State` or perform a big-bang
 screen rewrite.
+
+Wave 4A acceptance cleared both predecessor dependencies. `DTR14-AUTH-01` and
+`DTR15-AUTH-01` separately authorized the reviewed Plans 293 and 294; both are
+now Plan-green. Neither authorization accepts the Wave 4B aggregate.
 
 Exit:
 
@@ -572,8 +606,8 @@ Update this table in the same change that records a wave verdict.
 | Wave 1 | DTR-03, DTR-04, DTR-05 | **Wave-accepted** | Attempts 1 and 2: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 1 --reporter failures-only`; each planned 1,265 exact Dart paths + 8 Go tails = 1,273 items | Attempt 1: `95d754e03fc67e21d5006efd1fbec2dddaada394`; Attempt 2: the same commit plus the uncommitted test-only TCP-port-assertion correction in `account_migration_local_transfer_runtime_test.dart`. Concurrent documentation and Graphify-output changes did not alter the executed tests. | Attempt 1 completed non-green at Flutter `+12,862 ~1 -1`; all 8 Go tails passed. Its only failure was an invalid assertion that consecutive requests must share the exact TCP source port. After the test-only correction, the selector passed 20/20 repetitions, its full file passed 40 tests, and `move-feature` passed `+442 ~1`. Attempt 2 exited 0: Flutter `+12,863 ~1`, all 8 Go tails passed, and the final scope PASS marker is present. Original-log SHA-256 values: Attempt 1 `2a8d20fca9d4c60cab49194f89071153b9f9108fae1d1d8245b002dfae397401`; Attempt 2 `781a669fbfbdebf0b50bb7abad824fac9166aef83f5ddce0ee34efc9805b22b5`. [Stable evidence archives](evidence/dtr-wave1/README.md). | 2026-07-26 / user-executed; Codex-verified and archived |
 | Wave 2 | DTR-06, DTR-07 | **Wave-accepted** | Three completed attempts: `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 4 --reporter failures-only`; each planned 1,259 exact Dart paths + 8 Go tails = 1,267 items. Attempt 2 additionally used a temporary `GIT_INDEX_FILE` and was rejected as an invalid environment. | `95d754e03fc67e21d5006efd1fbec2dddaada394` plus the integrated uncommitted working-tree delta, including Plan 286 and later DTR-10/Plan-285 work. The accepted attempt includes the discovery/test-only closure corrections and exact staging of seven already-deleted terminal DTR-10 source paths. | Attempt 1: Flutter `+12,819 ~1 -5`, exit 1; all 8 Go tails passed. Its five failures reduce to a missing Android-harness discovery classification (three consumers), one fixed-sleep timing race, and unstaged terminal DTR-10 deletion drift. Attempt 2: Flutter `+12,822 ~1 -5`, all 8 Go tails passed, exit 1; repository guards correctly rejected the temporary redirected index, so it was not acceptance evidence. Attempt 3 exited 0: Flutter `+12,827 ~1`, all 8 Go tails passed, and the final scope marker is present. Original-log SHA-256 values: Attempt 1 `c838804bb2095d3841ee8116da6b0e38b510e0345cf7070c395ca8f81fd564c3`; Attempt 2 `6167749d53ce32954e44c0e2ee6d98a39dcfe823443cac623ebe0e7b788285ab`; Attempt 3 `869a75236f97e34f610b4053540f7e7b449ea76103f5d807d52c82aae5d4c135`. [Stable evidence archives](evidence/dtr-wave2/README.md). | 2026-07-27 / user-requested; Codex-executed, verified, and archived |
 | Wave 3 | DTR-09, DTR-10, DTR-11 | **Wave-accepted** | `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 4 --reporter failures-only`; 1,250 exact Dart paths + 8 Go tails = 1,258 items | Repository-retained validation snapshot `ec268ce4a41d94450919170c9df2b1bf1a7ef987` (tag `dtr-wave3-tested-tree-20260727`); tree `897a285f68f1266dc6945f727f2425272151f068` frozen from the integrated workspace with a separate index | Exit 0: Flutter `+12,755 ~1`, all eight Go tails passed, and the final scope marker is present. Original-log SHA-256 `4b45449c2d064c8358fc895b580e249404faf995e95d12a7a6369600fab338d9`; archive SHA-256 `55ac78d1a0fd2a98b70884194e5cb6677ff0dba474ca24594f469165e97806f7`. [Stable Plan 287 and Wave 3 evidence](evidence/dtr-wave3/README.md). | 2026-07-27 / user-authorized; Codex-executed, verified, and archived |
-| Wave 4A | DTR-12, DTR-13 | Planning unblocked; DTR-12 candidate, DTR-13 decision-blocked | `host-all` pending | — | Wave-3 temporal dependency cleared; DTR-12 plan and DTR-13 QA + release decision remain open | — |
-| Wave 4B | DTR-14, DTR-15 | Deferred | `host-all`; conditional `performance-host` | — | — | — |
+| Wave 4A | DTR-12, DTR-13 | **Wave-accepted**; DTR-12 Wave-accepted and DTR-13 Plan-green/Wave-accepted | `./scripts/run_host_test_gates.sh host-all --continue-on-failure --batch-flutter --concurrency 4 --reporter failures-only`; 1,257 exact Flutter paths + 8 serial Go tails = 1,265 items | Base and unchanged `HEAD` `765be74523b25ce592ff200ff435653b35c66b4d`; alternate-index tested tree `14a72da9b5b702b37466e155a77007e0335d0559`; synthetic commit `669c7039846f321a8171b63df09e087e43b1f319`; annotated tag `dtr-wave4a-tested-tree-20260728` | Exit 0 in 1,136 s: Flutter 12,798 passed, 1 skipped, 0 failed; all eight Go tails passed; final scope marker present. `core-host-all` passed 362 items / 2,825 tests; strict analysis passed with zero diagnostics; Graphify graph SHA `af9593753ea0236ca568db561d8d6af2c0eacefb2ac7689b073483037c080b53`, overlay SHA `fc87b54355ea8eea9fb9b726cbd50c088c3c0d805da065c8c2acfa2d45cbe7cb`. Final coherent Sims digest `73f4339412d85b7846f45894a122aa174f87141771fa121666a3ff06a3f0e825`; all four report/proof sets independently reverified green. Original-log SHA `d61df5a5ab9949f44887bcf32c1e877dcc39a10ef110682e066bfb6cbbb4f899`; archive SHA `428e449eabfabda52828461df64badee532c6905673375017745c3b5280a7434`. [Stable evidence](evidence/dtr-wave4a/README.md). | 2026-07-28 / project owner + Codex |
+| Wave 4B | DTR-14, DTR-15 | Both plans Plan-green; aggregate pending | Full `host-all`, then required same-tree `performance-host` because DTR-15 changed performance surfaces | — | Plans 293 and 294 per-plan closure are green; no Wave 4B aggregate was run, per cadence | 2026-07-28 |
 | Wave 4C | DTR-16, DTR-17, DTR-18 | Deferred | `host-all`; conditional `performance-host` | — | — | — |
 | Wave 5 child waves | DEP-01 children | Deferred | Per-child `host-all` plus platform gates | — | — | — |
 | Final rollout | All accepted waves | Not started | Final `host-all` plus justified families | — | — | — |
@@ -676,6 +710,22 @@ The tested snapshot is repository-reachable through
 `dtr-wave3-tested-tree-20260727` and as the direct parent of the closure-record
 commit. Final-rollout `host-all` remains a later, separate gate.
 
+Wave 4A used one complete shared-workspace acceptance run after DTR-12 was
+Plan-green and DTR-13's coherent live, integrated core, analyzer, and Graphify
+receipts were green. The full 1,265-item gate exited 0 with 12,798 Flutter
+tests passed, one skipped, all eight Go tails passed, and the final scope
+marker present. An alternate index captured tracked plus untracked nonignored
+files without changing the shared index; the tested tree is durably tagged
+`dtr-wave4a-tested-tree-20260728`. The original/archive log hashes, exact
+tested-state identities, workspace disclosure, coherent Sims report/proof
+hashes, and preservation receipts are recorded in the
+[Wave 4A evidence archive](evidence/dtr-wave4a/README.md). DTR-12 and DTR-13
+are `Wave-accepted`, DTR-13 is `Plan-green`, and `DTR13-AUTH-01` is closed on
+its authorized scope. DTR-14 is Plan-green under `DTR14-AUTH-01`, and DTR-15
+is Plan-green under `DTR15-AUTH-01`. Wave 4B aggregate `host-all`, its
+same-tree `performance-host` replay, and final release-closure `host-all`
+remain later, separate gates.
+
 ---
 
 ## Decision ledger
@@ -699,7 +749,10 @@ commit. Final-rollout `host-all` remains a later, separate gate.
 | Retire the orphan `GroupInboxCursor` model | DTR-10 Plan 283 | Groups + database + release | Plan-green / closed 2026-07-27 | `DTR10-AUTH-07`: removed only the unused model and exact runtime-root declaration while retaining migration 066, cursor/receipt tables, DB helpers, repository page transactions, production composition, and inbox replay. The final root strict-analysis run reported no issues and diff hygiene passed. |
 | Retain the legacy group-secret security scrub | DTR-10 Plan 284 / DEP-01 | Groups + crypto + security + release | Acceptance-verified terminal `Retained` 2026-07-27 | `DTR10-AUTH-08`: keep the startup scrub. The marker is not profile-qualified or owned by Move Account reset/import, and the background isolate does not invoke the foreground scrub; these remain unresolved, not repaired. A new removal plan is allowed only after Security + Release prove supported-data/marker and declared-backup completion, zero legacy rows, recovery safety, and crypto/client rollout compatibility. |
 | Ownership of remaining test-only leaves | DTR-11 planning | Feature owners | Accepted and executed / Wave-accepted 2026-07-27 | `DTR11-AUTH-01`: the current authenticated project owner explicitly identified themself as owner and approved [Plan 287](287-remaining-test-only-leaves-disposition-tdd-plan.md)'s exact 11-path/1,065-LOC boundary: retire ten app sources and their ten SUT-only suites; relocate the 94-line push preview release calculator unchanged to `tool/telemetry/` while retaining its test and `runtime-telemetry` gate; migrate the Feed parity suite to `FeedStore`, remove only stale `ReactionDisplay` type assertions, and add the missing live Orbit/QR assertions; remove all 11 matching runtime-root declarations; remove only `GroupBacklogRetentionNotice.listSummary` plus the two exact orphan l10n keys in every locale; remove only the inert S15 retired-event filter/derived signal/print output; and add `test/unit/**` to `core-host-all` with an exact shell contract. `_RaceResult.relayProbeEligible`, relay/failure semantics, automatic identity restore, live UI behavior, native/Go/wire/storage/schema boundaries, and DTR-13's QA + release decision are explicitly excluded. The boundary was implemented exactly; all Plan 287 gates and the Wave-3 aggregate passed. [Stable evidence](evidence/dtr-wave3/README.md). Rollback is the exact inverse of this boundary and does not erase the owner decision. |
-| Supported build profiles and debug/E2E entrypoints | DTR-13 planning | QA + release | Open | Wave 3's temporal dependency is cleared by its accepted aggregate. DTR-12 predecessor planning and this explicit QA + release owner decision remain open; no DTR-13 execution is authorized. |
+| Supported build profiles and debug/E2E entrypoints | DTR-13 planning and execution | QA + release | **Accepted, executed, and closed / Plan-green and Wave-accepted 2026-07-28** | `DTR13-AUTH-01`: the current authenticated project owner, acting as QA + Release owner, requires preservation of every currently declared Sims build profile and define; the three registered manual smoke roots (`lib/smoke_test_main.dart`, `lib/smoke_test_messages.dart`, and `lib/smoke_test_restore.dart`); and every current manual, simulation, and headless debug/E2E workflow. Retain `lib/core/debug/smoke_test_runner.dart` without deleting or newly activating it. Move only the live debug/E2E controller, polling, reset, fixture, and simulator auto-setup construction currently owned by production `lib/main.dart` into a separate debug/E2E composition root. Do not delete or rename entrypoints, change commands/defines, reduce proof capability, or change runtime behavior. Production/default builds must construct none of the debug/E2E harness wiring. DTR-14 bootstrap extraction and DTR-18 general layering relocation remain excluded. No DTR-12 boundary exception may be added or rebaselined; remove only an exact exception genuinely eliminated by this move. [Plan 289](289-debug-e2e-composition-root-tdd-plan.md) executed that boundary exactly: no DTR-12 exception, profile, root, define, command, or workflow changed. The coherent Sims set, integrated core/analyzer/Graphify receipts, preservation inventory, and full Wave 4A aggregate are accepted. This closes the authorization receipt on its exact scope; it clears DTR-14's dependency for planning only and does not authorize DTR-14 execution. [Stable evidence](evidence/dtr-wave4a/README.md). |
+| Finish the four exact Wave 4A live blockers without weakening DTR-13 preservation | Plan 289 Plan-green and Wave 4A aggregate | Current authenticated project owner acting as QA + Release owner | **Accepted and closed 2026-07-28** | `W4A-BLOCKERS-AUTH-01`: the owner explicitly selected the fail-closed iOS verifier repair, ordered TDD plans and reviews for Plans 290–292, ordered their implementation, ordered live Sims proof on the booted available devices, and then ordered “finish Wave 4A blockers.” This authorized only the narrow repairs required by those reproduced rows: parse and inspect iOS `devicectl` `result.apps`; repair shared token-bearing inbox-store node readiness/deadline/disposal under Plan 290; repair Plan 291's absolute campaign/phase budget, acceptance discrimination, bounded child termination, and idempotent cleanup; repair Plan 292's exact FAB semantics, bounded recovery/readiness/invite/cleanup/log-read fixture behavior; and apply the exact-anchor convergence correction as a **narrow corrective amendment to Plan 252**. Plan 291 remains harness scope and does not absorb that product behavior. Every Sims profile/define, entrypoint, manual smoke root, command, registered simulation/headless workflow, DTR-12 182/24/92 boundary, and the unactivated `lib/core/debug/smoke_test_runner.dart` remains preserved. The final wake 2/2, intro 2/2, group/announcement 4/4, and iOS 7/7 reports were independently reverified green against coherent digest `73f4339412d85b7846f45894a122aa174f87141771fa121666a3ff06a3f0e825`; the integrated receipts and aggregate then accepted Wave 4A. The historical intermediate and causal-failure receipts remain preserved rather than rebaselined. This closure does not authorize DTR-14/DTR-15 execution, DTR-18 relocation, profile/workflow retirement, schema/protocol changes, or proof weakening. [Stable evidence](evidence/dtr-wave4a/README.md). |
+| Extract production bootstrap and application-root phases behind stable interfaces | DTR-14 / Plan 293 | Current authenticated project owner | **Plan-green / closed 2026-07-28** | `DTR14-AUTH-01`: the owner explicitly ordered `$tdd-plan`, an independent critical `$tdd-review` with only necessary repairs, and implementation of DTR-14. The authorized boundary adds stable `ApplicationBootstrap`, `PreparedApplication`, and `ApplicationHost` seams; reduces the supported `main.dart` entrypoint to one delegation while preserving its three public symbols; keeps the concrete graph in one production bootstrap; moves `MyApp` lifecycle/push/root ownership to `application_root.dart`; migrates only exact source locks and runtime-root evidence; and preserves DTR-13 profiles and the standalone FCM handler. It excludes DTR-15 through DTR-18 decomposition, payload/schema/native/wire/profile changes, and any DTR-12 rebaseline. Plan 293's focused, mutation, lifecycle/push, DTR-13, shared, curated, Move Account, core/feature, policy, analyzer, hygiene, and Graphify gates are green. Full `host-all` is deliberately deferred to Wave 4B after DTR-15 and again to final release closure. |
+| Extract shared direct/group conversation controllers without shared State inheritance | DTR-15 / Plan 294 | Current authenticated project owner | **Plan-green / closed 2026-07-28** | `DTR15-AUTH-01`: after ordering `$tdd-plan` and a critical `$tdd-review`, the owner explicitly ordered Codex to set the implementation goal and implement Plan 294. The authorized boundary extracts only composer snapshot, upload activity, recorder session, and reaction projection into four plain controllers; keeps both Wired States as independent composition roots; freezes public facades/widget APIs; and preserves lane-owned send, security, cancellation, auto-stop, background-task, reaction-admission, and batching policy. Retarget, ordinary-unmount, and ABA proof required captured group send-lane dependencies plus a monotonic binding generation distinct from mounted UI lifetime. All focused, curated, feature, performance, policy, analyzer, hygiene, and Graphify gates are green. Full Wave 4B `host-all` and its same-tree `performance-host` replay remain separate. |
 
 ---
 

@@ -597,7 +597,9 @@ void main() {
     final harness = File(
       'integration_test/scripts/capture_android_push_relay_registration.dart',
     ).readAsStringSync();
-    final main = File('lib/main.dart').readAsStringSync();
+    final productionSource = File(
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsStringSync();
     final proof = File(
       'lib/features/push/application/push_relay_registration_proof.dart',
     ).readAsStringSync();
@@ -668,9 +670,12 @@ void main() {
     expect(harness, contains("['test', '!', '-e', path]"));
     expect(harness, contains('_restoreExactHostAndCandidateState()'));
     expect(harness, contains('_forceStopAndRequireAbsent()'));
-    expect(main, contains('await loadPushRelayRegistrationProof()'));
     expect(
-      main,
+      productionSource,
+      contains('await loadPushRelayRegistrationProof()'),
+    );
+    expect(
+      productionSource,
       contains('relayRegistrationProof: pushRelayRegistrationProof'),
     );
     expect(proof, contains('pushRelayRegistrationProofMode'));

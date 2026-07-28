@@ -57,6 +57,16 @@ class _CapturingBridge extends Bridge {
   @override
   Future<String> send(String message) async {
     final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'node:start') {
+      return jsonEncode(<String, Object?>{
+        'ok': true,
+        'peerId': 'self-peer',
+        'isStarted': true,
+        'listenAddresses': <String>[],
+        'circuitAddresses': <String>[],
+        'connections': <Object?>[],
+      });
+    }
     if (req['cmd'] == 'inbox:store') {
       lastStorePayload = req['payload'] as Map<String, dynamic>;
       return jsonEncode(storeResponse);
@@ -79,6 +89,8 @@ void main() {
       inboxStagingRepository: InMemoryInboxStagingRepository(),
       receivedWakeTokenStore: received,
     );
+    addTearDown(service.dispose);
+    await _startService(service);
 
     // Send to a peer WITH a received token → wakeToken attached.
     await service.storeInInboxDetailed('peerB', 'hello');
@@ -120,6 +132,8 @@ void main() {
               'wake': wakeTokenSha256,
             }),
       );
+      addTearDown(accepted.dispose);
+      await _startService(accepted);
 
       await accepted.storeInInboxDetailed('peerB', 'exact-message');
       expect(observations, hasLength(1));
@@ -145,6 +159,8 @@ void main() {
               'unexpected': wakeTokenSha256,
             }),
       );
+      addTearDown(rejected.dispose);
+      await _startService(rejected);
       await rejected.storeInInboxDetailed('peerB', 'rejected-message');
       expect(observations, hasLength(1));
 
@@ -159,11 +175,20 @@ void main() {
               required wakeTokenSha256,
             }) => throw StateError('observer failure'),
       );
+      addTearDown(throwingObserver.dispose);
+      await _startService(throwingObserver);
       final outcome = await throwingObserver.storeInInboxDetailed(
         'peerB',
         'observer-must-not-change-outcome',
       );
       expect(outcome.accepted, isTrue);
     },
+  );
+}
+
+Future<void> _startService(P2PServiceImpl service) async {
+  expect(
+    await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+    isTrue,
   );
 }

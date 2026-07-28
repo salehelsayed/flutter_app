@@ -1684,16 +1684,29 @@ void main() {
         ),
       );
 
-      final mainSource = File('lib/main.dart').readAsStringSync();
-      final mainEntryStart = mainSource.indexOf(
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      final compositionEntryStart = compositionSource.indexOf(
         'runGroupMediaIosBackgroundE2E:',
       );
-      final mainEntry = mainSource.substring(
-        mainEntryStart,
-        mainSource.indexOf('resolveWakeToken:', mainEntryStart),
+      final compositionEntry = compositionSource.substring(
+        compositionEntryStart,
+        compositionSource.indexOf('resolveWakeToken:', compositionEntryStart),
       );
       expect(
-        mainEntry,
+        productionSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+      );
+      expect(
+        productionSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+      );
+      expect(
+        compositionEntry,
         matches(
           RegExp(
             r'onReceiverObservationAccepted:\s*'
@@ -1702,7 +1715,7 @@ void main() {
         ),
       );
       expect(
-        mainEntry,
+        compositionEntry,
         matches(
           RegExp(
             r'onReceiverObservationComplete:\s*'
@@ -1710,9 +1723,9 @@ void main() {
           ),
         ),
       );
-      expect(mainEntry, contains('reserveReceiveCriticalTask:'));
+      expect(compositionEntry, contains('reserveReceiveCriticalTask:'));
       expect(
-        mainEntry,
+        compositionEntry,
         matches(
           RegExp(
             r'groupMessageListener\s*'
@@ -1720,7 +1733,7 @@ void main() {
           ),
         ),
       );
-      expect(mainEntry, contains('return reservation.release;'));
+      expect(compositionEntry, contains('return reservation.release;'));
 
       final actionSource = File(
         'lib/core/debug/group_media_ios_background_e2e.dart',

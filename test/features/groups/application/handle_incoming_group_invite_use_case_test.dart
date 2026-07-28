@@ -780,9 +780,10 @@ void main() {
           ),
         );
 
+        final issuedAt = DateTime.utc(2026, 7, 20, 12);
         final payload = _makePayload(
           membershipWatermark: DateTime.utc(2026, 7, 20, 11).toIso8601String(),
-          membershipProofIssuedAt: DateTime.utc(2026, 7, 20, 12),
+          membershipProofIssuedAt: issuedAt,
         );
         final (result, _) = await handleIncomingGroupInvite(
           message: _makeV1Message(payload: payload),
@@ -790,6 +791,7 @@ void main() {
           contactRepo: contactRepo,
           bridge: bridge,
           ownPeerId: '12D3KooWBob',
+          now: issuedAt,
         );
 
         // Re-joins (success), re-materializes the key, and joins the topic.
@@ -839,6 +841,7 @@ void main() {
           contactRepo: contactRepo,
           bridge: bridge,
           ownPeerId: '12D3KooWBob',
+          now: issuedAt,
         );
 
         expect(result, HandleGroupInviteResult.success);
@@ -1032,6 +1035,7 @@ void main() {
             contactRepo: contactRepo,
             bridge: bridge,
             ownPeerId: selfPeerId,
+            now: candidate,
           );
           expect(result, HandleGroupInviteResult.invalidPayload);
           expect(acceptedId, isNull);
@@ -1051,6 +1055,7 @@ void main() {
           contactRepo: contactRepo,
           bridge: bridge,
           ownPeerId: selfPeerId,
+          now: laterIssuedAt,
         );
         expect(result, HandleGroupInviteResult.success);
         expect(acceptedId, groupId);

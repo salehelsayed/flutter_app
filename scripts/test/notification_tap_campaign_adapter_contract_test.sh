@@ -136,7 +136,8 @@ adapter=integration_test/scripts/notification_android_payload_campaign.dart
 protocol=lib/core/debug/android_notification_payload_e2e_protocol.dart
 app_action=lib/core/debug/android_notification_payload_e2e.dart
 app_runner=lib/core/debug/intro_e2e_runner.dart
-app_main=lib/main.dart
+app_bootstrap=lib/app/bootstrap/production_application_bootstrap.dart
+app_composition=lib/debug/debug_e2e_composition_root.dart
 python3 - "$adapter" <<'PY'
 import re
 import sys
@@ -229,9 +230,13 @@ grep -Fq '_deviceLogcatCursor' "$adapter" ||
   fail 'Android notification campaign lacks a non-destructive log window'
 grep -Fq 'runAndroidNotificationPayloadE2EAction' "$app_runner" ||
   fail 'installed app poller does not dispatch notification actions'
-grep -Fq 'pushEnvelopeStagingStore: pushEnvelopeStagingStore' \
-  "$app_runner" "$app_main" ||
-  fail 'production staging store is not wired through main into the poller'
+grep -Fq 'startIntroPollerAfterColdRecovery(' "$app_bootstrap" ||
+  fail 'production bootstrap does not preserve the post-recovery poller handoff'
+grep -Fq 'pushEnvelopeStagingStore: pushEnvelopeStagingStore' "$app_runner" ||
+  fail 'intro poller does not forward the production staging store'
+grep -Fq 'pushEnvelopeStagingStore: dependencies.pushEnvelopeStagingStore' \
+  "$app_composition" ||
+  fail 'production staging store is not wired through the composition root into the poller'
 grep -Fq 'androidNotificationPayloadE2EFailureReceipt' "$app_action" "$app_runner" ||
   fail 'notification action failures are not emitted as bounded receipts'
 if grep -Eq "Process\.(run|start)\([^\n]*(flutter|gradle|xcodebuild)" "$adapter"; then

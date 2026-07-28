@@ -16,15 +16,22 @@ void main() {
   test(
     'four group entry sites wire one complete or explicit null opener contract',
     () {
-      const mainPath = 'lib/main.dart';
+      const applicationRootPath = 'lib/app/application_root.dart';
+      const debugE2ERootPath = 'lib/debug/debug_e2e_composition_root.dart';
       const feedPath = 'lib/features/feed/presentation/screens/feed_wired.dart';
       const orbitPath =
           'lib/features/orbit/presentation/screens/orbit_wired.dart';
       const pickerPath =
           'lib/features/groups/presentation/screens/create_group_picker_wired.dart';
-      const sites = <String>[mainPath, feedPath, orbitPath, pickerPath];
+      const sites = <String>[
+        applicationRootPath,
+        feedPath,
+        orbitPath,
+        pickerPath,
+      ];
       final sources = <String, String>{
         for (final path in sites) path: File(path).readAsStringSync(),
+        debugE2ERootPath: File(debugE2ERootPath).readAsStringSync(),
       };
       final constructors = <String, String>{};
       for (final path in sites) {
@@ -43,41 +50,46 @@ void main() {
           hasLength(1),
           reason: '$path must own exactly one current group constructor',
         );
-        if (path == mainPath) {
-          expect(
-            renderProbeBlocks,
-            hasLength(1),
-            reason:
-                'main.dart may additionally own the compile-gated P269 '
-                'receiver render probe only',
-          );
-          expect(
-            renderProbeBlocks.single,
-            contains('openAnnouncementSenderConversation: null'),
-            reason:
-                'the render-only probe must make its absent announcement '
-                'navigation contract explicit',
-          );
-        } else {
-          expect(
-            renderProbeBlocks,
-            isEmpty,
-            reason: '$path must not acquire an E2E-only render constructor',
-          );
-        }
+        expect(
+          renderProbeBlocks,
+          isEmpty,
+          reason: '$path must not acquire an E2E-only render constructor',
+        );
         constructors[path] = entryBlocks.single;
       }
       expect(constructors, hasLength(4));
 
+      final debugE2ERenderProbeBlocks = _extractInvocations(
+        sources[debugE2ERootPath]!,
+        'GroupConversationWired',
+      ).where((block) => block.contains('mediaRenderedSemanticsLabels:'));
       expect(
-        constructors[mainPath],
+        debugE2ERenderProbeBlocks,
+        hasLength(1),
+        reason:
+            'the debug/E2E composition root must preserve exactly one '
+            'compile-gated P269 receiver render probe',
+      );
+      expect(
+        debugE2ERenderProbeBlocks.single,
+        contains('openAnnouncementSenderConversation: null'),
+        reason:
+            'the render-only probe must make its absent announcement '
+            'navigation contract explicit',
+      );
+
+      expect(
+        constructors[applicationRootPath],
         contains(
           'openAnnouncementSenderConversation: (contact) =>\n'
           '                  _openConversationForContact(',
         ),
       );
-      expect(constructors[mainPath], contains('navigator: navigator'));
-      expect(constructors[mainPath], contains('contact: contact'));
+      expect(
+        constructors[applicationRootPath],
+        contains('navigator: navigator'),
+      );
+      expect(constructors[applicationRootPath], contains('contact: contact'));
       expect(
         constructors[feedPath],
         contains(
@@ -108,7 +120,7 @@ void main() {
       );
 
       for (final entry in <(String, String)>[
-        (mainPath, 'Future<void> _openConversationForContact({'),
+        (applicationRootPath, 'Future<void> _openConversationForContact({'),
         (feedPath, 'Future<void> _openConversationForContact('),
         (orbitPath, 'Future<void> _openConversationForContact('),
       ]) {
