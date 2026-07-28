@@ -186,9 +186,11 @@ void main() {
   test(
     'P269 proof accept supplies the complete device-bound recipient tuple',
     () {
-      final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final acceptInvocations = _balancedInvocations(
-        mainSource,
+        compositionSource,
         'acceptPendingGroupInvite(',
       ).where((invocation) => invocation.contains('groupId: groupId'));
 
@@ -216,13 +218,28 @@ void main() {
     'P269 device proof invokes the exact production periodic retry callbacks',
     () {
       final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final actions = _balancedInvocations(
-        mainSource,
+        compositionSource,
         'runGroupMediaReliabilityE2EAction(',
       );
 
       expect(actions, hasLength(1));
-      final action = actions.single;
+      expect(
+        mainSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+        reason:
+            'production main must avoid constructing poller dependencies for '
+            'an inactive root',
+      );
+      expect(
+        mainSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+        reason: 'production main must retain the post-recovery phase handoff',
+      );
+      final action = _compactDart(actions.single);
       expect(
         action,
         contains('pendingMessageRetrier.retryIncompleteGroupUploadsPeriodicFn'),
@@ -275,9 +292,9 @@ void main() {
       }
 
       const expectedCoordinatorExpressionsByPath = <String, List<String>>{
-        'lib/main.dart': <String>[
-          'groupMediaDownloadCoordinator',
-          'widget.groupMediaDownloadCoordinator',
+        'lib/main.dart': <String>['widget.groupMediaDownloadCoordinator'],
+        'lib/debug/debug_e2e_composition_root.dart': <String>[
+          'dependencies.groupMediaDownloadCoordinator',
         ],
         'lib/features/groups/presentation/screens/create_group_picker_wired.dart':
             <String>['widget.groupMediaDownloadCoordinator'],
@@ -292,8 +309,9 @@ void main() {
         discovered.keys.toSet(),
         expectedCoordinatorExpressionsByPath.keys.toSet(),
         reason:
-            'The production baseline has exactly four direct group-conversation '
-            'paths. A new path must be enumerated and wired explicitly.',
+            'The production baseline has four direct paths plus the isolated '
+            'debug/E2E proof path. A new path must be enumerated and wired '
+            'explicitly.',
       );
 
       for (final entry in expectedCoordinatorExpressionsByPath.entries) {

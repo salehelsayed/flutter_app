@@ -88,12 +88,14 @@ jq -e '
 
 rg -Fq 'runAndroidVoiceMessageE2EAction(' lib/core/debug/intro_e2e_runner.dart ||
   fail 'production app poller does not dispatch the voice-message action'
+rg -Fq 'startIntroPollerAfterColdRecovery(' lib/main.dart ||
+  fail 'main app bootstrap omitted the post-recovery debug/E2E poller handoff'
 for dependency in \
-  'mediaAttachmentRepo: mediaAttachmentRepository' \
-  'mediaFileManager: mediaFileManager' \
-  'audioRecorderService: audioRecorderService'; do
-  rg -Fq "$dependency" lib/main.dart ||
-    fail "main app bootstrap omitted voice-message dependency: $dependency"
+  'mediaAttachmentRepo: dependencies.mediaAttachmentRepository' \
+  'mediaFileManager: dependencies.mediaFileManager' \
+  'audioRecorderService: dependencies.audioRecorderService'; do
+  rg -Fq "$dependency" lib/debug/debug_e2e_composition_root.dart ||
+    fail "debug/E2E composition omitted voice-message dependency: $dependency"
 done
 
 printf 'PASS: voice-message adapter is wired, fail-closed, and prebuilt-only\n'

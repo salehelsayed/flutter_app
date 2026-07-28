@@ -422,8 +422,8 @@
       "rootKinds": [],
       "disposition": "retained-unresolved",
       "owner": "DTR-13 / QA+release",
-      "reason": "No current caller is proven; absence of a Dart importer is not deletion proof.",
-      "condition": "Revisit in DTR-13 after supported debug/E2E entrypoint ownership is decided.",
+      "reason": "DTR13-AUTH-01 requires this uncalled support library to remain retained without activating it; no current caller is proven.",
+      "condition": "Retain in its current uncalled state unless a later authenticated owner decision explicitly changes DTR13-AUTH-01.",
       "evidence": []
     },
     {

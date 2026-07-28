@@ -17,6 +17,7 @@ void main() {
     'four group entry sites wire one complete or explicit null opener contract',
     () {
       const mainPath = 'lib/main.dart';
+      const debugE2ERootPath = 'lib/debug/debug_e2e_composition_root.dart';
       const feedPath = 'lib/features/feed/presentation/screens/feed_wired.dart';
       const orbitPath =
           'lib/features/orbit/presentation/screens/orbit_wired.dart';
@@ -25,6 +26,7 @@ void main() {
       const sites = <String>[mainPath, feedPath, orbitPath, pickerPath];
       final sources = <String, String>{
         for (final path in sites) path: File(path).readAsStringSync(),
+        debugE2ERootPath: File(debugE2ERootPath).readAsStringSync(),
       };
       final constructors = <String, String>{};
       for (final path in sites) {
@@ -43,31 +45,33 @@ void main() {
           hasLength(1),
           reason: '$path must own exactly one current group constructor',
         );
-        if (path == mainPath) {
-          expect(
-            renderProbeBlocks,
-            hasLength(1),
-            reason:
-                'main.dart may additionally own the compile-gated P269 '
-                'receiver render probe only',
-          );
-          expect(
-            renderProbeBlocks.single,
-            contains('openAnnouncementSenderConversation: null'),
-            reason:
-                'the render-only probe must make its absent announcement '
-                'navigation contract explicit',
-          );
-        } else {
-          expect(
-            renderProbeBlocks,
-            isEmpty,
-            reason: '$path must not acquire an E2E-only render constructor',
-          );
-        }
+        expect(
+          renderProbeBlocks,
+          isEmpty,
+          reason: '$path must not acquire an E2E-only render constructor',
+        );
         constructors[path] = entryBlocks.single;
       }
       expect(constructors, hasLength(4));
+
+      final debugE2ERenderProbeBlocks = _extractInvocations(
+        sources[debugE2ERootPath]!,
+        'GroupConversationWired',
+      ).where((block) => block.contains('mediaRenderedSemanticsLabels:'));
+      expect(
+        debugE2ERenderProbeBlocks,
+        hasLength(1),
+        reason:
+            'the debug/E2E composition root must preserve exactly one '
+            'compile-gated P269 receiver render probe',
+      );
+      expect(
+        debugE2ERenderProbeBlocks.single,
+        contains('openAnnouncementSenderConversation: null'),
+        reason:
+            'the render-only probe must make its absent announcement '
+            'navigation contract explicit',
+      );
 
       expect(
         constructors[mainPath],

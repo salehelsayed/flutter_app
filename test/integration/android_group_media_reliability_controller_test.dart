@@ -365,7 +365,18 @@ void main() {
       );
 
       final mainSource = File('lib/main.dart').readAsStringSync();
-      expect(mainSource, contains('transportPeerId: transportPeerId'));
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      expect(
+        mainSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+      );
+      expect(
+        mainSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+      );
+      expect(compositionSource, contains('transportPeerId: transportPeerId'));
 
       final productionLeafSource = File(
         'lib/features/groups/application/foreground_group_media_upload.dart',

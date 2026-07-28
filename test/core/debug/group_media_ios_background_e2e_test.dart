@@ -833,6 +833,9 @@ void main() {
     'P269 iOS production entry wiring exposes only the exact action and exact recovery callbacks',
     () {
       final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final introSource = File(
         'lib/core/debug/intro_e2e_runner.dart',
       ).readAsStringSync();
@@ -840,31 +843,43 @@ void main() {
       expect(
         RegExp(
           r'GroupMediaIosBackgroundE2EController\.forInstalledProfile\s*\(',
-        ).allMatches(mainSource),
+        ).allMatches(compositionSource),
         hasLength(1),
       );
       expect(
         RegExp(
           r'runGroupMediaIosBackgroundE2EAction\s*\(',
-        ).allMatches(mainSource),
+        ).allMatches(compositionSource),
         hasLength(1),
       );
       expect(
-        mainSource,
-        contains('groupMediaIosBackgroundE2EController.onPostClaimPreCommit'),
+        compositionSource,
+        contains('_iosBackgroundController.onPostClaimPreCommit'),
       );
       expect(
-        mainSource,
-        contains('pendingMessageRetrier.drainGroupOfflineInboxFn'),
+        compositionSource,
+        contains('_reliabilityController.onPostClaimPreCommit'),
       );
       expect(
-        mainSource,
-        contains(
-          'pendingMessageRetrier.retryIncompleteGroupDownloadsPeriodicFn',
+        compositionSource,
+        matches(
+          RegExp(
+            r'pendingMessageRetrier\s*'
+            r'\.\s*drainGroupOfflineInboxFn',
+          ),
         ),
       );
       expect(
-        mainSource,
+        compositionSource,
+        matches(
+          RegExp(
+            r'pendingMessageRetrier\s*'
+            r'\.\s*retryIncompleteGroupDownloadsPeriodicFn',
+          ),
+        ),
+      );
+      expect(
+        compositionSource,
         matches(
           RegExp(
             r'groupMediaIosIdentityPhase\s*=>\s*'
@@ -873,7 +888,7 @@ void main() {
         ),
       );
       expect(
-        mainSource,
+        compositionSource,
         matches(
           RegExp(
             r'groupMediaIosReceiverRecoverPhase\s*=>\s*'
@@ -881,12 +896,22 @@ void main() {
           ),
         ),
       );
-      expect(mainSource, contains('requirement: readiness'));
-      expect(mainSource, contains('GroupMediaIosBackgroundE2EOverlay('));
+      expect(compositionSource, contains('requirement: readiness'));
+      expect(compositionSource, contains('GroupMediaIosBackgroundE2EOverlay('));
+      expect(
+        compositionSource,
+        matches(RegExp(r'groupMediaIosBackgroundE2EController\s*\.\s*enabled')),
+      );
       expect(
         mainSource,
-        contains('groupMediaIosBackgroundE2EController.enabled'),
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
       );
+      expect(
+        mainSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+      );
+      expect(mainSource, contains('debugE2EOverlayBuilder:'));
+      expect(mainSource, isNot(contains('GroupMediaIosBackgroundE2EOverlay(')));
 
       final exactAction = introSource.indexOf(
         "config['transport_action'] == groupMediaIosBackgroundE2EAction",
@@ -1619,8 +1644,11 @@ void main() {
     'P269 dedicated iOS reset bootstrap precedes Firebase SQLCipher and shared namespaces',
     () {
       final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final reset = mainSource.indexOf(
-        'runGroupMediaIosDisposableResetIfRequested(',
+        'DebugE2ECompositionRoot.runDisposableResetIfRequested(',
       );
       expect(reset, greaterThan(mainSource.indexOf('void main() async')));
       for (final boundary in <String>[
@@ -1636,18 +1664,25 @@ void main() {
         );
       }
       expect(
-        mainSource,
-        contains('Platform.isIOS && !isGroupMediaIosDisposableProfile'),
+        compositionSource,
+        contains('isGroupMediaIosDisposableProfile && !Platform.isIOS'),
       );
-      expect(mainSource, contains('!isGroupMediaIosDisposableProfile) {'));
       expect(
-        mainSource,
+        compositionSource,
+        contains('isGroupMediaAndroidDisposableProfile && !Platform.isAndroid'),
+      );
+      expect(
+        compositionSource,
+        contains('runGroupMediaIosDisposableResetIfRequested('),
+      );
+      expect(
+        compositionSource,
         contains(
           "import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;",
         ),
       );
       expect(
-        mainSource,
+        compositionSource,
         contains(
           'final resetDatabasesPathProbe = sqlcipher.getDatabasesPath();',
         ),

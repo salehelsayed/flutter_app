@@ -280,26 +280,42 @@ void main() {
     });
 
     test(
-      'P269 main wires the override only through the disposable profiles',
+      'main delegates disposable profile start only through the debug E2E root',
       () {
-        final source = File('lib/main.dart').readAsStringSync();
-        final overrideStart = source.indexOf('startP2PNodeOverride:');
-        final overrideEnd = source.indexOf(
-          '// FDC-07: start LAN mDNS discovery early',
-          overrideStart,
-        );
-        expect(overrideStart, greaterThanOrEqualTo(0));
-        expect(overrideEnd, greaterThan(overrideStart));
-        final wiring = source.substring(overrideStart, overrideEnd);
-        expect(wiring, contains('isGroupMediaDisposableTransportProfile('));
+        final mainSource = File('lib/main.dart').readAsStringSync();
+        final compositionSource = File(
+          'lib/debug/debug_e2e_composition_root.dart',
+        ).readAsStringSync();
+        final wiring = compositionSource;
         expect(
           wiring,
-          contains("String.fromEnvironment('SIMS_BUILD_PROFILE_ID')"),
+          contains('isAndroidDisposableProfile || isIosDisposableProfile'),
         );
-        expect(wiring, contains('startGroupMediaDisposableTransportNode('));
+        expect(
+          wiring,
+          contains('if (!activation.suppliesDisposableNodeStart) return null;'),
+        );
+        expect(
+          RegExp(
+            r'startGroupMediaDisposableTransportNode\s*\(',
+          ).allMatches(wiring),
+          hasLength(1),
+        );
         expect(wiring, contains('generateIdentity:'));
-        expect(wiring, contains('startNode: widget.p2pService.startNode'));
-        expect(wiring, contains(': null,'));
+        expect(wiring, contains('startNode: p2pService.startNode'));
+        expect(
+          mainSource,
+          contains('debugE2EStartP2PNodeOverride:'),
+          reason: 'main must pass only the nullable root-owned start handoff',
+        );
+        expect(
+          mainSource,
+          contains('startP2PNodeOverride: widget.debugE2EStartP2PNodeOverride'),
+        );
+        expect(
+          mainSource,
+          isNot(contains('startGroupMediaDisposableTransportNode(')),
+        );
       },
     );
   });

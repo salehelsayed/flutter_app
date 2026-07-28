@@ -777,6 +777,25 @@
       "automationReady": false,
       "active": false,
       "declaredBuildException": false
+    },
+    {
+      "id": "architecture.boundaries",
+      "owner": "flutter-app",
+      "proofBoundary": "host.architecture-boundaries.enforced",
+      "assertions": ["architecture_boundaries.current_exceptions_exact"],
+      "lane": "host-dart",
+      "modes": ["major"],
+      "families": ["infra"],
+      "required": true,
+      "command": ["./scripts/run_test_gates.sh", "architecture-boundaries"],
+      "buildProfile": "host.flutter_tester",
+      "dependencies": [],
+      "resources": [{"name": "host.cpu", "access": "read"}],
+      "targetCapabilities": ["host.flutter-tester", "host.bash", "host.git"],
+      "artifactRequired": false,
+      "active": true,
+      "automationReady": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

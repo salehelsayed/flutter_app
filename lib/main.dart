@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -7,16 +6,8 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 import 'package:flutter_app/core/database/production_migration_registry.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
-import 'package:flutter_app/core/debug/group_media_disposable_transport_start.dart';
-import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
-import 'package:flutter_app/core/debug/group_media_ios_background_e2e_main_actions.dart';
-import 'package:flutter_app/core/debug/group_media_ios_background_e2e_overlay.dart';
-import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
-import 'package:flutter_app/core/debug/group_media_ios_disposable_reset.dart';
+import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
@@ -44,7 +35,6 @@ import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpe
 import 'package:flutter_app/core/database/helpers/intro_review_seen_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
-import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
@@ -92,7 +82,6 @@ import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storag
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
@@ -194,7 +183,6 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
-import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository_impl.dart';
@@ -219,17 +207,9 @@ import 'package:flutter_app/features/posts/application/pending_post_follow_on_re
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
-import 'package:flutter_app/core/debug/ios_receiver_bootstrap.dart';
-import 'package:flutter_app/core/debug/ios_sender_projection_fixture.dart';
-import 'package:flutter_app/core/debug/ios_sender_projection_fixture_contract.dart';
-import 'package:flutter_app/core/debug/auto_setup_config.dart';
-import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
-import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
-import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
-import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
-import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
+import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
@@ -281,7 +261,6 @@ import 'package:flutter/foundation.dart'
         kDebugMode,
         kIsWeb;
 import 'package:path_provider/path_provider.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -364,63 +343,16 @@ Stream<void> _mergeVoidStreams(Iterable<Stream<void>> inputs) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  const installedSimsProfile = String.fromEnvironment('SIMS_BUILD_PROFILE_ID');
-  final isGroupMediaIosDisposableProfile =
-      installedSimsProfile == groupMediaIosDisposableBuildProfile;
-  final isGroupMediaAndroidDisposableProfile =
-      installedSimsProfile == groupMediaAndroidDisposableBuildProfile;
-  if (isGroupMediaIosDisposableProfile ||
-      isGroupMediaAndroidDisposableProfile) {
-    if ((isGroupMediaIosDisposableProfile && !Platform.isIOS) ||
-        (isGroupMediaAndroidDisposableProfile && !Platform.isAndroid)) {
-      throw StateError('dedicated group-media reset platform rejected');
-    }
-    const configuredIosBundleId = String.fromEnvironment(
-      'SIMS_IOS_DISPOSABLE_BUNDLE_ID',
-    );
-    const configuredAndroidPackageId = String.fromEnvironment(
-      'SIMS_ANDROID_DISPOSABLE_PACKAGE_ID',
-    );
-    final expectedBundleId = isGroupMediaIosDisposableProfile
-        ? groupMediaIosDisposableBundleId
-        : groupMediaAndroidDisposablePackageId;
-    final expectedProfileId = isGroupMediaIosDisposableProfile
-        ? groupMediaIosDisposableBuildProfile
-        : groupMediaAndroidDisposableBuildProfile;
-    final configuredBundleId = isGroupMediaIosDisposableProfile
-        ? configuredIosBundleId
-        : configuredAndroidPackageId;
-    if (configuredBundleId != expectedBundleId) {
-      throw StateError('dedicated group-media reset bundle define rejected');
-    }
-    final resetPackageInfoProbe = PackageInfo.fromPlatform();
-    final resetDocumentsDirectoryProbe = getApplicationDocumentsDirectory();
-    final resetDatabasesPathProbe = sqlcipher.getDatabasesPath();
-    final resetApplicationSupportDirectoryProbe =
-        getApplicationSupportDirectory();
-    await Future.wait<Object?>([
-      resetPackageInfoProbe,
-      resetDocumentsDirectoryProbe,
-      resetDatabasesPathProbe,
-      resetApplicationSupportDirectoryProbe,
-    ]);
-    final packageInfo = await resetPackageInfoProbe;
-    final resetStore = FlutterSecureKeyStore();
-    final resetHandled = await runGroupMediaIosDisposableResetIfRequested(
-      documentsDirectory: await resetDocumentsDirectoryProbe,
-      databasesDirectory: Directory(await resetDatabasesPathProbe),
-      applicationSupportDirectory: await resetApplicationSupportDirectoryProbe,
-      installedProfileId: installedSimsProfile,
-      installedBundleId: packageInfo.packageName,
-      expectedProfileId: expectedProfileId,
-      expectedBundleId: expectedBundleId,
-      deleteDefaultSecureStorage: resetStore.deleteAll,
-      readDefaultSecureStorage: resetStore.readAll,
-    );
-    if (resetHandled) {
-      runApp(const SizedBox.shrink());
-      return;
-    }
+  const isGroupMediaIosDisposableProfile =
+      DebugE2ECompositionRoot.isInstalledIosDisposableProfile;
+  var resetHandled = false;
+  if (DebugE2ECompositionRoot.isInstalledDisposableProfile) {
+    resetHandled =
+        await DebugE2ECompositionRoot.runDisposableResetIfRequested();
+  }
+  if (resetHandled) {
+    runApp(const SizedBox.shrink());
+    return;
   }
   StartupTiming.instance.mark('app_start');
   // FDC-S1 measurement harness (observation-only, OFF by default): built with
@@ -455,14 +387,9 @@ void main() async {
   final initialShareIntent = await shareIntentProbe;
   final appDocDir = await appDocDirProbe;
   final isShareLaunch = initialShareIntent != null;
-  final groupMediaReliabilityE2EController =
-      GroupMediaReliabilityE2EController.forInstalledProfile(
-        stateDirectory: Directory(appDocDir.path),
-      );
-  final groupMediaIosBackgroundE2EController =
-      GroupMediaIosBackgroundE2EController.forInstalledProfile(
-        stateDirectory: Directory(appDocDir.path),
-      );
+  final debugE2EComposition = DebugE2ECompositionRoot.tryCreate(
+    stateDirectory: appDocDir,
+  );
   StartupTiming.instance.mark('share_launch_probe_complete');
 
   // Initialize Firebase (mobile only — not available on desktop)
@@ -2844,9 +2771,8 @@ void main() async {
 
   // Create audio recorder service
   final audioRecorderService = RecordAudioRecorderService();
-  final privateMediaOutboxE2EController = PrivateMediaOutboxE2EController(
-    enabled: kDebugMode && kE2ETestMode,
-  );
+  final privateMediaOutboxE2EController = debugE2EComposition
+      ?.initializePrivateMediaController();
 
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
@@ -2863,74 +2789,11 @@ void main() async {
       diagnosingDeleteDissolvedGroupShellAction.call;
 
   // ── Auto-setup for simulator scripts (debug/test harness only) ──
-  final autoSetupUsername = await resolveAutoSetupUsername(appDocDir.path);
-  if (autoSetupUsername != null) {
-    final existing = await repository.loadIdentity();
-    if (existing == null) {
-      final result = await generateNewIdentity(
-        callGenerate: () => callIdentityGenerate(bridge),
-        callMlKemKeygen: () => callMlKemKeygen(bridge),
-        repo: repository,
-      );
-      if (result == GenerateIdentityResult.success) {
-        final identity = await repository.loadIdentity();
-        if (identity != null) {
-          await repository.saveIdentity(
-            IdentityModel(
-              peerId: identity.peerId,
-              publicKey: identity.publicKey,
-              privateKey: identity.privateKey,
-              mnemonic12: identity.mnemonic12,
-              mlKemPublicKey: identity.mlKemPublicKey,
-              mlKemSecretKey: identity.mlKemSecretKey,
-              username: autoSetupUsername,
-              avatarBlob: identity.avatarBlob,
-              avatarVersion: identity.avatarVersion,
-              createdAt: identity.createdAt,
-              updatedAt: identity.updatedAt,
-            ),
-          );
-          if (kDebugMode) {
-            print('[AUTO-SETUP] Identity created: $autoSetupUsername');
-          }
-
-          // Export signed QR payload for cross-device smoke tests
-          final (qrResult, qrJson) = await buildQRPayload(
-            repo: repository,
-            callSign: (data, key) => callSignPayload(
-              bridge: bridge,
-              dataToSign: data,
-              privateKey: key,
-            ),
-            cachedIdentity: await repository.loadIdentity(),
-          );
-          if (qrResult == BuildQRPayloadResult.success && qrJson != null) {
-            final loadedId = await repository.loadIdentity();
-            await exportIdentityForIntroE2E(
-              signedQrPayloadJson: qrJson,
-              mlKemPublicKey: loadedId?.mlKemPublicKey,
-            );
-          }
-        }
-      }
-    } else {
-      if (kDebugMode) {
-        print('[AUTO-SETUP] Identity already exists, ensuring export');
-      }
-      final (qrResult, qrJson) = await buildQRPayload(
-        repo: repository,
-        callSign: (data, key) =>
-            callSignPayload(bridge: bridge, dataToSign: data, privateKey: key),
-        cachedIdentity: existing,
-      );
-      if (qrResult == BuildQRPayloadResult.success && qrJson != null) {
-        await exportIdentityForIntroE2E(
-          signedQrPayloadJson: qrJson,
-          mlKemPublicKey: existing.mlKemPublicKey,
-        );
-      }
-    }
-  }
+  await DebugE2ECompositionRoot.runSimulatorAutoSetupIfConfigured(
+    documentsPath: appDocDir.path,
+    identityRepository: repository,
+    bridge: bridge,
+  );
 
   // Create local P2P service for WiFi-first delivery
   final LocalDiscoveryService localDiscovery = kDisableLocalDiscovery
@@ -3282,7 +3145,8 @@ void main() async {
 
   // Hash-only and dormant unless the dedicated E2E action arms it. Production
   // builds pass no callback into P2PServiceImpl, preserving the normal path.
-  final wakeTokenAttachmentObserver = WakeTokenAcceptedAttachmentObserver();
+  final acceptedWakeTokenHashObserver = debugE2EComposition
+      ?.initializeWakeTokenObserver();
 
   // Create P2P service (uses the same bridge + local P2P)
   p2pService = P2PServiceImpl(
@@ -3292,9 +3156,7 @@ void main() async {
     // FDC-09 §12 / CV-14: the send funnel attaches received[toPeerId] on
     // `inbox:store` (1:1 contacts only). Inert until a peer distributes a `wt`.
     receivedWakeTokenStore: receivedWakeTokenStore,
-    acceptedInboxWakeTokenHashObserver: kE2ETestMode
-        ? wakeTokenAttachmentObserver.observeAccepted
-        : null,
+    acceptedInboxWakeTokenHashObserver: acceptedWakeTokenHashObserver,
     // 182: wire the OS connectivity source (FDC-04's anticipated "bounded
     // follow-up") so a foreground connectivity restore drains the offline inbox
     // immediately — instead of waiting for the next ~30s health-check poll or an
@@ -3752,6 +3614,10 @@ void main() async {
     await groupKeyRepairRequestSender.call(request);
   }
 
+  final debugE2EGroupMediaDownloadHooks = debugE2EComposition
+      ?.bindGroupMediaDownloadHooks(
+        loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
+      );
   final groupMediaDownloadCoordinator = RetryIncompleteGroupDownloadsUseCase(
     loadPage: ({required after, required limit}) async {
       final rows = await mediaAttachmentRepository
@@ -3778,8 +3644,7 @@ void main() async {
     loadCurrentGroup: groupRepository.getGroup,
     autoDownloadDecider: mediaAutoDownloadDecider,
     allowsNetworkSideEffects: () async {
-      if (groupMediaReliabilityE2EController.holdsAutomaticRecovery ||
-          groupMediaIosBackgroundE2EController.holdsAutomaticRecovery) {
+      if (debugE2EComposition?.holdsAutomaticGroupMediaRecovery ?? false) {
         return false;
       }
       return allowsAccountRuntimeNetworkSideEffects(
@@ -3796,19 +3661,10 @@ void main() async {
         owner: MediaOwnerLane.group,
         enforceGroupMediaPolicy: true,
         groupMessageRepo: groupMessageRepository,
-        groupMediaAutomaticDownloadAttemptStarted: (candidate) =>
-            groupMediaReliabilityE2EController
-                .onAutomaticDownloadAttemptStarted(attachment: candidate),
-        groupMediaPostClaimPreCommit: (claimed) async {
-          await groupMediaReliabilityE2EController.onPostClaimPreCommit(
-            attachment: claimed,
-            loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
-          );
-          await groupMediaIosBackgroundE2EController.onPostClaimPreCommit(
-            attachment: claimed,
-            loadCurrentAttachment: mediaAttachmentRepository.getAttachmentById,
-          );
-        },
+        groupMediaAutomaticDownloadAttemptStarted:
+            debugE2EGroupMediaDownloadHooks?.onAutomaticDownloadAttemptStarted,
+        groupMediaPostClaimPreCommit:
+            debugE2EGroupMediaDownloadHooks?.onPostClaimPreCommit,
       );
     },
   );
@@ -4996,9 +4852,23 @@ void main() async {
 
   // ── Smoke test Phase 1: pre-populate contacts before UI renders ──
   // This ensures StartupRouter sees contacts and routes to Feed, not FTE.
-  if (kDebugMode && !isShareLaunch) {
-    await prePopulateContactsFromIntroE2EConfig(contactRepo: contactRepository);
-  }
+  await debugE2EComposition?.prepopulateContactsBeforeRunApp(
+    isShareLaunch: isShareLaunch,
+    contactRepository: contactRepository,
+  );
+  final debugE2EOverlayBuilder = debugE2EComposition?.overlayBuilder;
+  final debugE2EStartP2PNodeOverride = debugE2EComposition
+      ?.buildDisposableNodeStart(
+        identityRepository: repository,
+        secureKeyStore: secureKeyStore,
+        bridge: bridge,
+        p2pService: p2pService,
+      );
+  final debugE2EAfterRuntimeReady = debugE2EComposition
+      ?.buildReceiverPublication(
+        identityRepository: repository,
+        p2pService: p2pService,
+      );
 
   runApp(
     MyApp(
@@ -5051,10 +4921,9 @@ void main() async {
       imageProcessor: imageProcessor,
       audioRecorderService: audioRecorderService,
       privateMediaOutboxE2EController: privateMediaOutboxE2EController,
-      groupMediaIosBackgroundProofLabels:
-          groupMediaIosBackgroundE2EController.enabled
-          ? groupMediaIosBackgroundE2EController.uiProofLabels
-          : null,
+      debugE2EOverlayBuilder: debugE2EOverlayBuilder,
+      debugE2EStartP2PNodeOverride: debugE2EStartP2PNodeOverride,
+      debugE2EAfterRuntimeReady: debugE2EAfterRuntimeReady,
       reactionRepository: reactionRepository,
       isDesktop: isDesktop,
       notificationService: notificationService,
@@ -5132,40 +5001,12 @@ void main() async {
       },
     ),
   );
-  if (directReactionNotificationProjection != null) {
-    final iosSenderFixtureStore = IosSenderProjectionFixtureStore(
-      loadLocalAccountPeerId: () async =>
-          (await repository.loadIdentity())?.peerId,
-      loadProjectionAccountPeerId:
-          directReactionNotificationProjection.readLocalAccountPeerId,
-      loadContact: contactRepository.getContact,
-      insertContactIfAbsent: (contact) =>
-          dbSimsInsertContactIfAbsent(db, contact.toMap()),
-      deleteContactIfExact: (contact) =>
-          dbSimsDeleteContactIfExact(db, contact.toMap()),
-      loadProjectedContact: (peerId) async =>
-          (await directReactionNotificationProjection.readContacts())[peerId],
-      insertProjectedContactIfAbsent: (request) =>
-          directReactionNotificationProjection.insertSimsFixtureContactIfAbsent(
-            peerId: request.senderPeerId,
-            username: request.senderUsername,
-            fixtureDigest: request.fixtureDigest,
-          ),
-      deleteProjectedContactIfExact: (request) =>
-          directReactionNotificationProjection.removeSimsFixtureContactIfExact(
-            peerId: request.senderPeerId,
-            username: request.senderUsername,
-            fixtureDigest: request.fixtureDigest,
-          ),
-    );
-    unawaited(
-      runIosSenderProjectionFixtureLoop(
-        coordinator: IosSenderProjectionFixtureCoordinator(
-          iosSenderFixtureStore,
-        ),
-      ),
-    );
-  }
+  debugE2EComposition?.startIosSenderProjectionAfterRunApp(
+    directReactionNotificationProjection: directReactionNotificationProjection,
+    identityRepository: repository,
+    contactRepository: contactRepository,
+    database: db,
+  );
   StartupTiming.instance.mark('run_app_called');
   // 234 Session 03: kick the same local-only future that startLiveServices
   // awaits. The call remains off the pre-runApp path, while network startup is
@@ -5214,495 +5055,52 @@ void main() async {
     }),
   );
 
-  Future<void> awaitGroupMediaProofEndpointReady(
-    String operation, {
-    GroupMediaIosProofReadiness requirement =
-        GroupMediaIosProofReadiness.fullRelayCustody,
-  }) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 120));
-    while (DateTime.now().isBefore(deadline)) {
-      final state = p2pService.currentState;
-      if (groupMediaIosProofEndpointReady(state, requirement: requirement) &&
-          await allowsAccountRuntimeNetworkSideEffects(operation)) {
-        return;
-      }
-      try {
-        await p2pService.performImmediateHealthCheck();
-      } catch (_) {}
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
-    throw StateError(
-      'group-media reliability endpoint did not reach gated readiness',
-    );
-  }
-
-  Future<Map<String, Object?>?> acceptGroupMediaProofInvite(
-    String groupId,
-  ) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 90));
-    while (DateTime.now().isBefore(deadline) &&
-        await pendingGroupInviteRepository.getPendingInvite(groupId) == null) {
-      await p2pService.performImmediateHealthCheck();
-      await p2pService.drainOfflineInbox();
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
-    if (await pendingGroupInviteRepository.getPendingInvite(groupId) == null) {
-      return null;
-    }
-    final identity = await repository.loadIdentity();
-    final transportPeerId = p2pService.currentState.peerId?.trim();
-    if (identity == null ||
-        transportPeerId == null ||
-        transportPeerId.isEmpty ||
-        identity.peerId == transportPeerId) {
-      return null;
-    }
-    final accepted = await acceptPendingGroupInvite(
-      pendingInviteRepo: pendingGroupInviteRepository,
-      groupRepo: groupRepository,
-      contactRepo: contactRepository,
-      msgRepo: groupMessageRepository,
-      bridge: bridge,
-      groupId: groupId,
-      mediaAttachmentRepo: mediaAttachmentRepository,
-      reactionRepo: reactionRepository,
-      groupMessageListener: groupMessageListener,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username,
-      ownDeviceId: transportPeerId,
-      ownTransportPeerId: transportPeerId,
-      ownMlKemPublicKey: identity.mlKemPublicKey,
-      ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
-        transportPeerId,
+  if (debugE2EComposition?.startsIntroPoller ?? false) {
+    debugE2EComposition!.startIntroPollerAfterColdRecovery(
+      DebugE2EPollerDependencies(
+        documentsDirectory: Directory(appDocDir.path),
+        navigatorKey: MyApp.navigatorKey,
+        p2pService: p2pService,
+        bridge: bridge,
+        identityRepository: repository,
+        contactRepository: contactRepository,
+        contactRequestRepository: contactRequestRepository,
+        introductionRepository: introductionRepository,
+        messageRepository: messageRepository,
+        pushEnvelopeStagingStore: pushEnvelopeStagingStore,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        mediaFileManager: mediaFileManager,
+        audioRecorderService: audioRecorderService,
+        database: db,
+        secureKeyStore: secureKeyStore,
+        wakeTokenStore: wakeTokenStore,
+        receivedWakeTokenStore: receivedWakeTokenStore,
+        pendingGroupInviteRepository: pendingGroupInviteRepository,
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        reactionRepository: reactionRepository,
+        groupMessageListener: groupMessageListener,
+        groupInviteDeliveryAttemptRepository:
+            groupInviteDeliveryAttemptRepository,
+        pendingMessageRetrier: pendingMessageRetrier,
+        groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
+        groupConversationTracker: groupConversationTracker,
+        conversationTracker: conversationTracker,
+        groupMediaDeleteForMeCoordinator: deleteGroupMediaForMeUseCase,
+        imageProcessor: imageProcessor,
+        appShellController: appShellController,
+        groupReactionReplayOutboxRepository:
+            groupReactionReplayOutboxRepository,
+        groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
+        chatMessageListener: chatMessageListener,
+        reactionListener: reactionListener,
+        transportMetrics: transportMetrics,
+        allowsAccountRuntimeNetworkSideEffects:
+            allowsAccountRuntimeNetworkSideEffects,
+        wakeTokenResolver: wakeTokenResolver,
       ),
-      ownKeyPackagePublicMaterial: identity.mlKemPublicKey,
     );
-    if (accepted.$1 != AcceptPendingGroupInviteResult.success ||
-        accepted.$2?.id != groupId) {
-      return null;
-    }
-    return <String, Object?>{
-      'accountPeerId': identity.peerId,
-      'transportPeerId': transportPeerId,
-    };
   }
-
-  // Keep polling for intro E2E config files in explicit test mode so
-  // simulator relaunch timing does not race a single startup timer.
-  startIntroE2EPoller(
-    p2pService: p2pService,
-    bridge: bridge,
-    identityRepo: repository,
-    contactRepo: contactRepository,
-    contactRequestRepo: contactRequestRepository,
-    introRepo: introductionRepository,
-    messageRepo: messageRepository,
-    pushEnvelopeStagingStore: pushEnvelopeStagingStore,
-    mediaAttachmentRepo: mediaAttachmentRepository,
-    mediaFileManager: mediaFileManager,
-    audioRecorderService: audioRecorderService,
-    groupReactionProbeDatabase: db,
-    groupReactionProbeSecureKeyStore: secureKeyStore,
-    wakeTokenStore: wakeTokenStore,
-    receivedWakeTokenStore: receivedWakeTokenStore,
-    registerWakeTokens: (tokens) => registerWakeTokensViaBridge(bridge, tokens),
-    detailedInboxStore: p2pService,
-    wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
-    privateMediaOutboxE2EController: privateMediaOutboxE2EController,
-    runGroupMediaReliabilityE2E: (config) async {
-      final request = GroupMediaReliabilityE2ERequest.fromConfig(config);
-      await awaitGroupMediaProofEndpointReady(
-        'p269_group_media_endpoint_ready',
-      );
-
-      return runGroupMediaReliabilityE2EAction(
-        config: config,
-        controller: groupMediaReliabilityE2EController,
-        loadAttachment: mediaAttachmentRepository.getAttachmentById,
-        probeIdentity: (role) async {
-          final identity = await repository.loadIdentity();
-          final transportPeerId = p2pService.currentState.peerId?.trim();
-          if (identity == null ||
-              transportPeerId == null ||
-              transportPeerId.isEmpty ||
-              transportPeerId == identity.peerId) {
-            throw StateError(
-              'group-media disposable identity authority did not settle',
-            );
-          }
-          return <String, Object?>{
-            'accountPeerId': identity.peerId,
-            'transportPeerId': transportPeerId,
-          };
-        },
-        setupSender: (receiverAccountPeerId, receiverTransportPeerId) =>
-            setupGroupMediaReliabilitySender(
-              receiverAccountPeerId: receiverAccountPeerId,
-              receiverTransportPeerId: receiverTransportPeerId,
-              bridge: bridge,
-              p2pService: p2pService,
-              identityRepository: repository,
-              contactRepository: contactRepository,
-              groupRepository: groupRepository,
-              inviteDeliveryAttemptRepository:
-                  groupInviteDeliveryAttemptRepository,
-            ),
-        acceptReceiver: acceptGroupMediaProofInvite,
-        sendMedia:
-            (
-              groupId,
-              messageIds,
-              attachmentIds,
-              receiverAccountPeerId,
-              receiverTransportPeerId,
-            ) => sendGroupMediaReliabilityFixtures(
-              runId: request.runId,
-              groupId: groupId,
-              messageIds: messageIds,
-              attachmentIds: attachmentIds,
-              receiverAccountPeerId: receiverAccountPeerId,
-              receiverTransportPeerId: receiverTransportPeerId,
-              fixtureDirectory: Directory(
-                '${appDocDir.path}/p269-group-media-fixtures',
-              ),
-              bridge: bridge,
-              p2pService: p2pService,
-              identityRepository: repository,
-              groupRepository: groupRepository,
-              groupMessageRepository: groupMessageRepository,
-              mediaAttachmentRepository: mediaAttachmentRepository,
-              mediaFileManager: mediaFileManager,
-              audioRecorderService: audioRecorderService,
-              inviteDeliveryAttemptRepository:
-                  groupInviteDeliveryAttemptRepository,
-            ),
-        probeRole: (role, messageIds, attachmentIds) => (() {
-          final transportPeerId = p2pService.currentState.peerId?.trim();
-          if (transportPeerId == null || transportPeerId.isEmpty) {
-            throw StateError(
-              'group-media role database lacks transport authority',
-            );
-          }
-          return probeGroupMediaReliabilityRoleDatabase(
-            role: role,
-            runId: request.runId,
-            transportPeerId: transportPeerId,
-            messageIds: messageIds,
-            attachmentIds: attachmentIds,
-            database: db,
-            mediaAttachmentRepository: mediaAttachmentRepository,
-          );
-        })(),
-        // TC-269-19 must exercise the exact production periodic callbacks,
-        // not a proof-only reconstruction that can drift from retrier wiring.
-        retryUploads: () {
-          final retry =
-              pendingMessageRetrier.retryIncompleteGroupUploadsPeriodicFn;
-          if (retry == null) {
-            throw StateError('periodic group upload retry is not wired');
-          }
-          return retry();
-        },
-        retryDownloads: () {
-          final retry =
-              pendingMessageRetrier.retryIncompleteGroupDownloadsPeriodicFn;
-          if (retry == null) {
-            throw StateError('periodic group download retry is not wired');
-          }
-          return retry();
-        },
-        renderReceiver: (groupId, messageIds, attachmentIds) async {
-          if (messageIds.keys.toSet().length != 3 ||
-              attachmentIds.keys.toSet().length != 3 ||
-              !messageIds.keys.toSet().containsAll(
-                groupMediaReliabilityRenderLabelsByKind.keys,
-              ) ||
-              !attachmentIds.keys.toSet().containsAll(
-                groupMediaReliabilityRenderLabelsByKind.keys,
-              )) {
-            throw StateError('group-media render tuple is incomplete');
-          }
-          final group = await groupRepository.getGroup(groupId);
-          if (group == null || group.id != groupId) {
-            throw StateError('group-media render group is unavailable');
-          }
-          NavigatorState? navigator;
-          for (var attempt = 0; attempt < 40; attempt++) {
-            navigator = MyApp.navigatorKey.currentState;
-            if (navigator != null) break;
-            await Future<void>.delayed(const Duration(milliseconds: 100));
-          }
-          if (navigator == null) {
-            throw StateError('group-media render navigator is unavailable');
-          }
-          final labelsByAttachment = <String, String>{
-            for (final kind in groupMediaReliabilityRenderLabelsByKind.keys)
-              attachmentIds[kind]!:
-                  groupMediaReliabilityRenderLabelsByKind[kind]!,
-          };
-          final routeBuilt = Completer<void>();
-          navigator.popUntil((route) => route.isFirst);
-          unawaited(
-            navigator.push(
-              MaterialPageRoute<void>(
-                builder: (_) {
-                  if (!routeBuilt.isCompleted) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!routeBuilt.isCompleted) routeBuilt.complete();
-                    });
-                  }
-                  return GroupConversationWired(
-                    group: group,
-                    groupRepo: groupRepository,
-                    msgRepo: groupMessageRepository,
-                    uploadRetryProjectionRepo: groupMessageRepository,
-                    groupMessageListener: groupMessageListener,
-                    groupMediaDownloadCoordinator:
-                        groupMediaDownloadCoordinator,
-                    inviteDeliveryAttemptRepo:
-                        groupInviteDeliveryAttemptRepository,
-                    bridge: bridge,
-                    identityRepo: repository,
-                    contactRepo: contactRepository,
-                    p2pService: p2pService,
-                    groupConversationTracker: groupConversationTracker,
-                    openAnnouncementSenderConversation: null,
-                    initialHighlightedMessageId: messageIds['jpeg'],
-                    mediaAttachmentRepo: mediaAttachmentRepository,
-                    mediaDeleteForMeCoordinator: deleteGroupMediaForMeUseCase,
-                    mediaFileManager: mediaFileManager,
-                    imageProcessor: imageProcessor,
-                    audioRecorderService: audioRecorderService,
-                    reactionRepo: reactionRepository,
-                    groupReactionReplayOutboxRepository:
-                        groupReactionReplayOutboxRepository,
-                    historyGapRepairRepo: groupHistoryGapRepairRepository,
-                    backgroundPreference:
-                        appShellController.backgroundPreference,
-                    forwardMessageRepository: messageRepository,
-                    forwardChatMessageListener: chatMessageListener,
-                    mediaRenderedSemanticsLabels: labelsByAttachment,
-                  );
-                },
-              ),
-            ),
-          );
-          await routeBuilt.future.timeout(const Duration(seconds: 10));
-          return <String, Object?>{'renderProbeArmed': true};
-        },
-      );
-    },
-    runGroupMediaIosBackgroundE2E:
-        (
-          config, {
-          onReceiverObservationAccepted,
-          onReceiverObservationComplete,
-        }) async {
-          final request = GroupMediaIosBackgroundE2ERequest.fromConfig(config);
-          final readiness = switch (request.phase) {
-            groupMediaIosIdentityPhase => GroupMediaIosProofReadiness.identity,
-            groupMediaIosReceiverRecoverPhase =>
-              GroupMediaIosProofReadiness.receiveRecovery,
-            _ => GroupMediaIosProofReadiness.fullRelayCustody,
-          };
-          await awaitGroupMediaProofEndpointReady(
-            'p269_group_media_ios_endpoint_ready',
-            requirement: readiness,
-          );
-          return runGroupMediaIosBackgroundE2EAction(
-            config: config,
-            controller: groupMediaIosBackgroundE2EController,
-            loadAttachment: mediaAttachmentRepository.getAttachmentById,
-            exportIdentity: () async {
-              final identity = await repository.loadIdentity();
-              final transportPeerId = p2pService.currentState.peerId?.trim();
-              if (identity == null ||
-                  transportPeerId == null ||
-                  transportPeerId.isEmpty ||
-                  identity.peerId == transportPeerId ||
-                  identity.mlKemPublicKey?.trim().isNotEmpty != true) {
-                throw StateError(
-                  'physical-iOS proof identity authority is unavailable',
-                );
-              }
-              final (result, qrPayload) = await buildQRPayload(
-                repo: repository,
-                callSign: (data, key) => callSignPayload(
-                  bridge: bridge,
-                  dataToSign: data,
-                  privateKey: key,
-                ),
-                cachedIdentity: identity,
-              );
-              if (result != BuildQRPayloadResult.success || qrPayload == null) {
-                throw StateError('physical-iOS signed identity export failed');
-              }
-              return <String, Object?>{
-                'accountPeerId': identity.peerId,
-                'transportPeerId': transportPeerId,
-                'qrPayload': qrPayload,
-                'mlKemPublicKey': identity.mlKemPublicKey!,
-              };
-            },
-            addContact: (qrPayload, mlKemPublicKey) async {
-              final decoded = jsonDecode(qrPayload);
-              if (decoded is! Map<String, dynamic>) {
-                throw const FormatException(
-                  'physical-iOS signed contact payload rejected',
-                );
-              }
-              if (mlKemPublicKey != null) decoded['mlkem'] = mlKemPublicKey;
-              final contact = ContactModel.fromQRPayload(decoded);
-              final result = await addContact(
-                repository: contactRepository,
-                contact: contact,
-              );
-              if (result != AddContactResult.success &&
-                  result != AddContactResult.alreadyExists) {
-                throw StateError('physical-iOS contact persistence failed');
-              }
-              final stored = await contactRepository.getContact(contact.peerId);
-              if (stored == null ||
-                  stored.publicKey != contact.publicKey ||
-                  stored.mlKemPublicKey?.trim().isNotEmpty != true) {
-                throw StateError(
-                  'physical-iOS contact authority did not settle',
-                );
-              }
-            },
-            setupSender:
-                (receiverAccountPeerId, receiverTransportPeerId, groupName) =>
-                    setupGroupMediaIosBackgroundSender(
-                      receiverAccountPeerId: receiverAccountPeerId,
-                      receiverTransportPeerId: receiverTransportPeerId,
-                      groupName: groupName,
-                      bridge: bridge,
-                      p2pService: p2pService,
-                      identityRepository: repository,
-                      contactRepository: contactRepository,
-                      groupRepository: groupRepository,
-                      inviteDeliveryAttemptRepository:
-                          groupInviteDeliveryAttemptRepository,
-                    ),
-            acceptReceiver: acceptGroupMediaProofInvite,
-            sendFixture:
-                (
-                  phase,
-                  groupId,
-                  messageId,
-                  attachmentId,
-                  marker,
-                  receiverAccountPeerId,
-                  receiverTransportPeerId,
-                ) => sendGroupMediaIosBackgroundFixture(
-                  runId: request.runId,
-                  phase: phase,
-                  groupId: groupId,
-                  messageId: messageId,
-                  attachmentId: attachmentId,
-                  marker: marker,
-                  receiverAccountPeerId: receiverAccountPeerId,
-                  receiverTransportPeerId: receiverTransportPeerId,
-                  fixtureDirectory: Directory(
-                    '${appDocDir.path}/p269-group-media-ios-fixtures',
-                  ),
-                  bridge: bridge,
-                  p2pService: p2pService,
-                  identityRepository: repository,
-                  groupRepository: groupRepository,
-                  groupMessageRepository: groupMessageRepository,
-                  mediaAttachmentRepository: mediaAttachmentRepository,
-                  mediaFileManager: mediaFileManager,
-                  inviteDeliveryAttemptRepository:
-                      groupInviteDeliveryAttemptRepository,
-                ),
-            probeDatabase: (phase, messageId, attachmentId) =>
-                reopenGroupMediaIosBackgroundDatabase(
-                  runId: request.runId,
-                  phase: phase,
-                  messageId: messageId,
-                  attachmentId: attachmentId,
-                  expectedParentMarker: groupMediaIosBackgroundParentMarker(
-                    request.runId,
-                    phase,
-                  ),
-                  liveDatabase: db,
-                  secureKeyStore: secureKeyStore,
-                ),
-            drainGroupInbox: () async {
-              final drain = pendingMessageRetrier.drainGroupOfflineInboxFn;
-              if (drain == null) {
-                throw StateError('group offline inbox drain is not wired');
-              }
-              await drain();
-            },
-            retryDownloads: () {
-              final retry =
-                  pendingMessageRetrier.retryIncompleteGroupDownloadsPeriodicFn;
-              if (retry == null) {
-                throw StateError('periodic group download retry is not wired');
-              }
-              return retry();
-            },
-            reserveReceiveCriticalTask: () async {
-              final reservation = await groupMessageListener
-                  .reserveGroupMediaReceiveCriticalTaskForForegroundHandoff();
-              return reservation.release;
-            },
-            onReceiverObservationAccepted: onReceiverObservationAccepted,
-            onReceiverObservationComplete: onReceiverObservationComplete,
-          );
-        },
-    resolveWakeToken: wakeTokenResolver,
-    openConversationByPeerId: (peerId) async {
-      for (var attempt = 0; attempt < 30; attempt++) {
-        final navigator = MyApp.navigatorKey.currentState;
-        final contact = await contactRepository.getContact(peerId);
-        if (navigator != null && contact != null) {
-          navigator.popUntil((route) => route.isFirst);
-          unawaited(
-            navigator.push(
-              buildConversationRoute(
-                builder: (_) => ConversationWired(
-                  contact: contact,
-                  identityRepo: repository,
-                  messageRepo: messageRepository,
-                  uploadRetryProjectionRepo: messageRepository,
-                  chatMessageListener: chatMessageListener,
-                  p2pService: p2pService,
-                  bridge: bridge,
-                  contactRepo: contactRepository,
-                  mediaAttachmentRepo: mediaAttachmentRepository,
-                  mediaFileManager: mediaFileManager,
-                  imageProcessor: imageProcessor,
-                  conversationTracker: conversationTracker,
-                  audioRecorderService: audioRecorderService,
-                  reactionRepo: reactionRepository,
-                  reactionListener: reactionListener,
-                  introductionRepository: introductionRepository,
-                  forwardGroupRepository: groupRepository,
-                  forwardGroupMessageRepository: groupMessageRepository,
-                  forwardGroupInviteDeliveryAttemptRepository:
-                      groupInviteDeliveryAttemptRepository,
-                  forwardGroupMessageListener: groupMessageListener,
-                  forwardGroupConversationTracker: groupConversationTracker,
-                  appShellController: appShellController,
-                  transportMetrics: transportMetrics,
-                  privateMediaOutboxE2EController:
-                      privateMediaOutboxE2EController,
-                ),
-              ),
-            ),
-          );
-          return true;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-      }
-      return false;
-    },
-  );
 }
 
 Future<void> openIntroNotificationOrbitRoute({
@@ -5787,7 +5185,9 @@ class MyApp extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
   final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
-  final ValueListenable<List<String>>? groupMediaIosBackgroundProofLabels;
+  final Widget Function(Widget)? debugE2EOverlayBuilder;
+  final Future<StartNodeResult> Function()? debugE2EStartP2PNodeOverride;
+  final Future<void> Function()? debugE2EAfterRuntimeReady;
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
@@ -5898,7 +5298,9 @@ class MyApp extends StatefulWidget {
     required this.imageProcessor,
     required this.audioRecorderService,
     this.privateMediaOutboxE2EController,
-    this.groupMediaIosBackgroundProofLabels,
+    this.debugE2EOverlayBuilder,
+    this.debugE2EStartP2PNodeOverride,
+    this.debugE2EAfterRuntimeReady,
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
@@ -6122,16 +5524,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // latch inside _setupPushListeners keeps this idempotent against the (no-op)
     // initState call above.
     unawaited(_ensureRuntimeServicesReady().then((_) => _setupPushListeners()));
-    unawaited(
-      _ensureRuntimeServicesReady().then(
-        (_) => publishIosReceiverBootstrapIdentityWhenReady(
-          currentPeerId: () => widget.p2pService.currentState.peerId,
-          peerIds: widget.p2pService.stateStream.map((state) => state.peerId),
-          loadMlKemPublicKey: () async =>
-              (await widget.repository.loadIdentity())?.mlKemPublicKey,
-        ),
-      ),
-    );
+    final debugE2EAfterRuntimeReady = widget.debugE2EAfterRuntimeReady;
+    if (debugE2EAfterRuntimeReady != null) {
+      unawaited(
+        _ensureRuntimeServicesReady().then((_) => debugE2EAfterRuntimeReady()),
+      );
+    }
     // 191 (Fix D2): a THIRD arm point rides Firebase first-success readiness —
     // the only event that flips Firebase.apps non-empty. If the
     // _ensureRuntimeServicesReady re-arm above fires while Firebase.apps is
@@ -6648,6 +6046,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             contactRepo: widget.contactRepository,
             loadOwnPeerId: () async =>
                 (await widget.repository.loadIdentity())?.peerId,
+            introStatusChanges:
+                widget.introductionListener.introStatusChangedStream,
           ),
           isConversationAlreadyActive: (conversationTarget) =>
               isNotificationRouteTargetAlreadyActive(
@@ -7771,12 +7171,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             observer: directPrivateMediaRouteObserver,
             child: child ?? const SizedBox.shrink(),
           );
-          final proofLabels = widget.groupMediaIosBackgroundProofLabels;
-          if (proofLabels == null) return routedChild;
-          return GroupMediaIosBackgroundE2EOverlay(
-            labels: proofLabels,
-            child: routedChild,
-          );
+          return widget.debugE2EOverlayBuilder?.call(routedChild) ??
+              routedChild;
         },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
@@ -7829,29 +7225,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           shareIntentService: widget.shareIntentService,
           initialShareIntentCapture: _initialShareIntentCapture,
           ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
-          startP2PNodeOverride:
-              isGroupMediaDisposableTransportProfile(
-                const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
-              )
-              ? () {
-                  final migrationGate = AccountMigrationRuntimeNetworkGate(
-                    authorityRepository:
-                        SecureKeyStoreAccountMigrationAuthorityRepository(
-                          secureKeyStore: widget.secureKeyStore,
-                        ),
-                  );
-                  return startGroupMediaDisposableTransportNode(
-                    identityRepository: widget.repository,
-                    secureKeyStore: widget.secureKeyStore,
-                    generateIdentity: () => callIdentityGenerate(widget.bridge),
-                    startNode: widget.p2pService.startNode,
-                    currentTransportPeerId: () =>
-                        widget.p2pService.currentState.peerId,
-                    accountMigrationNetworkGate:
-                        migrationGate.allowsAccountNetworkSideEffects,
-                  );
-                }
-              : null,
+          startP2PNodeOverride: widget.debugE2EStartP2PNodeOverride,
           // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
           // to the concrete impl method (off the P2PService interface to avoid
           // churning the fakes); idempotent with startNode's own early seam.

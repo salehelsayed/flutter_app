@@ -794,6 +794,7 @@ Usage:
   ./scripts/run_test_gates.sh performance-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim-host
+  ./scripts/run_test_gates.sh architecture-boundaries
   ./scripts/run_test_gates.sh runtime-roots
   ./scripts/run_test_gates.sh completeness-check
 
@@ -1245,6 +1246,17 @@ run_runtime_roots_gate() {
   ./scripts/check_runtime_root_inventory.sh check --format text
 }
 
+run_architecture_boundaries_gate() {
+  if (($# > 0)); then
+    printf 'architecture-boundaries does not accept arguments.\n' >&2
+    return 2
+  fi
+
+  flutter test --no-pub \
+    test/unit/architecture_boundary_checker_test.dart || return $?
+  ./scripts/check_architecture_boundaries.sh
+}
+
 has_host_batch_control() {
   local arg
   for arg in "$@"; do
@@ -1565,6 +1577,13 @@ main() {
         run_runtime_roots_gate
       else
         run_runtime_roots_gate "${gate_args[@]}"
+      fi
+      ;;
+    architecture-boundaries)
+      if ((${#gate_args[@]} == 0)); then
+        run_architecture_boundaries_gate
+      else
+        run_architecture_boundaries_gate "${gate_args[@]}"
       fi
       ;;
     completeness-check)

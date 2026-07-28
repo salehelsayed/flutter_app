@@ -12,6 +12,7 @@ conversation_endpoint='lib/core/debug/private_media_outbox_e2e_conversation.dart
 protocol='lib/core/debug/private_media_outbox_e2e_protocol.dart'
 observer='lib/core/debug/intro_e2e_runner.dart'
 main_wiring='lib/main.dart'
+composition_wiring='lib/debug/debug_e2e_composition_root.dart'
 conversation_wiring='lib/features/conversation/presentation/screens/conversation_wired.dart'
 
 fail() {
@@ -20,7 +21,7 @@ fail() {
 }
 
 for path in "$adapter" "$endpoint" "$conversation_endpoint" "$protocol" \
-  "$observer" "$main_wiring" "$conversation_wiring"; do
+  "$observer" "$main_wiring" "$composition_wiring" "$conversation_wiring"; do
   [[ -f "$path" ]] || fail "required production proof file is missing: $path"
 done
 
@@ -58,6 +59,7 @@ if rg -q "Process\.(run|start)\(['\"]flutter|flutter (build|drive|run)" "$adapte
 fi
 
 python3 - "$adapter" <<'PY'
+import re
 import sys
 
 source = open(sys.argv[1], encoding='utf-8').read()
@@ -122,7 +124,8 @@ assert resources['artifact:private-media-outbox'] == 'write'
 PY
 
 python3 - "$endpoint" "$conversation_endpoint" "$protocol" "$observer" \
-  "$main_wiring" "$conversation_wiring" <<'PY'
+  "$main_wiring" "$composition_wiring" "$conversation_wiring" <<'PY'
+import re
 import sys
 
 endpoint = open(sys.argv[1], encoding='utf-8').read()
@@ -130,7 +133,8 @@ conversation_endpoint = open(sys.argv[2], encoding='utf-8').read()
 protocol = open(sys.argv[3], encoding='utf-8').read()
 observer = open(sys.argv[4], encoding='utf-8').read()
 main = open(sys.argv[5], encoding='utf-8').read()
-conversation = open(sys.argv[6], encoding='utf-8').read()
+composition = open(sys.argv[6], encoding='utf-8').read()
+conversation = open(sys.argv[7], encoding='utf-8').read()
 
 for event in (
     'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER',
@@ -184,9 +188,14 @@ assert 0 < sender_armed < host_release < offline_confirmation < production_send
 assert production_send < delivery_signal < sender_settled < quiet_seal
 assert '_exactSenderEventOrder' in conversation_endpoint
 
-assert 'privateMediaOutboxE2EController' in main
-assert 'startIntroE2EPoller(' in main
-assert main.count('privateMediaOutboxE2EController:') >= 4
+assert re.search(
+    r'debugE2EComposition\s*\?\.\s*initializePrivateMediaController\s*\(',
+    main,
+)
+assert 'privateMediaOutboxE2EController:' in main
+assert 'PrivateMediaOutboxE2EController(' in composition
+assert 'startIntroE2EPoller(' in composition
+assert composition.count('privateMediaOutboxE2EController:') >= 1
 assert 'registerEndpoint(' in conversation
 assert '_runPrivateMediaOutboxE2E' in conversation
 assert 'createPrivateMediaOutboxE2ESource(' in conversation

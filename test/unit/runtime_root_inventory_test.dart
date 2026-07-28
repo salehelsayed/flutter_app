@@ -2090,6 +2090,13 @@ flutter:
         _file(first, 'lib/core/debug/smoke_test_runner.dart').disposition,
         ReviewDisposition.retainedUnresolved,
       );
+      final retainedSmokeRunner = manifest.declarations.singleWhere(
+        (entry) => entry.path == 'lib/core/debug/smoke_test_runner.dart',
+      );
+      expect(retainedSmokeRunner.rootKinds, isEmpty);
+      expect(retainedSmokeRunner.evidence, isEmpty);
+      expect(retainedSmokeRunner.reason, contains('DTR13-AUTH-01'));
+      expect(retainedSmokeRunner.condition, contains('current uncalled state'));
       for (final path in RuntimeRootInventory.allowedManualRootPaths) {
         expect(
           _file(first, path).bucket,

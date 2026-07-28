@@ -739,6 +739,9 @@ void main() {
       'lib/core/debug/intro_e2e_runner.dart',
     ).readAsStringSync();
     final mainSource = File('lib/main.dart').readAsStringSync();
+    final compositionSource = File(
+      'lib/debug/debug_e2e_composition_root.dart',
+    ).readAsStringSync();
     final probeBranch = runner.indexOf('isGroupReactionE2EProbeAction(');
     final genericActions = runner.indexOf(
       'await runIntroE2EActions(',
@@ -750,10 +753,21 @@ void main() {
     expect(runner, contains('runGroupReactionE2EProbeAction('));
     expect(runner, contains('groupReactionProbeDatabase'));
     expect(runner, contains('groupReactionProbeSecureKeyStore'));
-    expect(mainSource, contains('groupReactionProbeDatabase: db'));
     expect(
       mainSource,
-      contains('groupReactionProbeSecureKeyStore: secureKeyStore'),
+      contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+    );
+    expect(
+      mainSource,
+      contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+    );
+    expect(
+      compositionSource,
+      contains('groupReactionProbeDatabase: dependencies.database'),
+    );
+    expect(
+      compositionSource,
+      contains('groupReactionProbeSecureKeyStore: dependencies.secureKeyStore'),
     );
   });
 
@@ -896,13 +910,27 @@ void main() {
         'lib/core/debug/intro_e2e_runner.dart',
       ).readAsStringSync();
       final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
 
       expect(
         runner,
         contains('ResolveWakeTokenForIntroE2EFn? resolveWakeToken'),
       );
       expect(runner, contains('resolveWakeToken: resolveWakeToken,'));
-      expect(mainSource, contains('resolveWakeToken: wakeTokenResolver,'));
+      expect(
+        mainSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+      );
+      expect(
+        mainSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+      );
+      expect(
+        compositionSource,
+        contains('resolveWakeToken: dependencies.wakeTokenResolver,'),
+      );
     },
   );
 

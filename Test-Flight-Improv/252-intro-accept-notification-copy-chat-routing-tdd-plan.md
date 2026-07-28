@@ -1,9 +1,9 @@
 # 252 - Introduction Acceptance Notification Copy And Chat Routing
 
-Status: implemented — host/relay complete; D1/D2 device acceptance pending
+Status: implemented — D1/D2 coherent-source device acceptance green; Wave 4A corrective closeout in progress
 Type: Feature Improvement
 Spec: free-text intent (2026-07-10)
-Classification: implemented / device-acceptance-pending
+Classification: implemented / device-accepted; corrective strict/hygiene receipt pending
 Closure tier: device
 Review verdict: ready (2026-07-10); core bet confirmed; disposition execute
 
@@ -609,12 +609,11 @@ section after the test relay is running the Plan 252 relay build.
 - [x] `INTRO_TESTS` and gate documentation registration are implemented and
       synchronized, including the pre-existing documented-list omission, and
       completeness-check classifies every newly pinned/proof path (1106/1106).
-- [ ] D1 and D2 pass on available targets, or an unavailable leg is recorded
-      N/A exactly as project policy requires. — PENDING: all three targets are
-      live and the self-controlled harness + discovery registration are
-      complete, but the campaign requires a staging relay running the Plan 252
-      relay binary; relay redeploy is a user-owned deployment decision and the
-      device pool is shared with other live sessions.
+- [x] D1 and D2 pass on available targets, or an unavailable leg is recorded
+      N/A exactly as project policy requires. The final self-controlled run on
+      physical Pixel `21071FDF600CSC` plus API-35 `emulator-5558` and
+      `emulator-5560` passed both physical-introducer and emulator-introducer
+      assertions against source digest `e2ab677e…`.
 - [x] Touched-file `flutter analyze` has no issues; `git diff --check` is clean.
 - [x] Scope Contract And Guard is respected.
 
@@ -636,9 +635,10 @@ section after the test relay is running the Plan 252 relay build.
   render/tap remains explicit N/A by choice, not implied parity.
 - Unresolved product evidence: none. Runtime provenance of the originally
   observed `New Message` is unnecessary because TC-01 covers the confirmed
-  missing-copy fallback and TC-02 covers recognized acceptance pushes. Final
-  device closure remains blocked on a staging relay running the Plan-252 build
-  and an uncontended available Android pair, as recorded below.
+  missing-copy fallback and TC-02 covers recognized acceptance pushes. The
+  later Wave 4A live RED at the exact-anchor convergence seam is retained
+  below; its narrow correction and the final D1/D2 PASS supersede the obsolete
+  relay-deployment blocker without rewriting that historical row.
 - Independent `$tdd-review` is complete; the source-grounded deltas are included
   above and no unresolved user-owned decision remains.
 
@@ -653,3 +653,5 @@ section after the test relay is running the Plan 252 relay build.
 | 2026-07-10 13:40 CEST | device tier | integration_test/intro_accept_notification_android_proof_test.dart, integration_test/scripts/run_intro_accept_notification_android.dart | live matrix rediscovered: `21071FDF600CSC`, `emulator-5554`, booted `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` | full self-controlled orchestrator implemented (am-kill+pidof boundary, dumpsys/UIAutomator feasibility probe, bounded exact-title node tap, logcat `finalPeer`/`statusContext` markers, redacted artifacts) | D1/D2 PENDING: requires a staging relay running the Plan 252 relay binary (relay redeploy is a user-owned deployment decision) and an uncontended device pool (other live sessions share this host) | run D1 then D2 via the closure commands once the 252 relay build is on the test relay |
 | 2026-07-10 16:40 CEST | auto-glob gates | feature-host-all, core-host-all | fail-fast sweep: files #1-#644 PASS; abort at #645 `show_notification_use_case_test.dart` was an environmental sqlite3 native-asset fetch (`Failed host lookup: github.com`) and the file PASSES in isolation (+36); alphabetical tail (`push`..`theme`, 646 tests) re-run separately | tail shows 2 failures, both `test/features/settings/presentation/widgets/background_choice_control_test.dart` (missing Signal background description copy) — pre-existing at HEAD from the parallel 221/248 background workstream, zero overlap with 252 surfaces; exact baseline classification recorded | a concurrent session's mid-sweep `pub get`/clean killed one full-sweep attempt (shared-tree contention); segmented coverage is complete and equivalent | core-host-all completion |
 | 2026-07-10 17:15 CEST | gates complete | - | `core-host-all` -> 296/296 PASS, `PASS: host tests completed for scope: core-host-all` | all host/relay/gate tiers GREEN or exact-baseline-classified; done criteria updated | none | surgical commit (252-scope files only on the shared dirty tree); D1/D2 remain pending the 252 relay build on the test relay |
+| 2026-07-27 | Wave 4A causal RED — exact acceptance anchor | resolver/open-flow/wiring tests; `wave4a-intro-anchor-race-report.json` | Expanded Plan-291 budget reached the cold notification tap, then `intro.accept_notification_campaign` failed after one assertion; report SHA-256 `dad8b23c965df1de12302752798e9be390107ca1cdc43a3652421279af3492b2` | The listener edge could race the repository reread, leaving stale B-only status or a closed/error stream. Named tests pinned subscription-before-reread, matching-introduction/responder discrimination, immediate B navigation, exact C convergence, cancellation, and fail-open timeout. | Accepted as a narrow Plan-252 corrective amendment under `W4A-BLOCKERS-AUTH-01`; Plan 291 remains harness-only. | implement the minimum subscription/convergence ownership |
+| 2026-07-28 | Wave 4A corrective GREEN + D1/D2 acceptance | `resolve_introduction_notification_target_use_case.dart`; `intro_accept_notification_open_flow.dart`; exact tests; physical `21071FDF600CSC`; emulators `emulator-5558`, `emulator-5560` | Resolver/open-flow/wiring command passed 13/13; `1to1` passed 2,441 Flutter tests plus relay Go gates; `intro` passed 300 tests; `runtime-roots` passed 20/20. Final `intro.accept_notification_campaign` passed both assertions plus its build dependency. | The exact status subscription is armed before reread, only the matching responder acceptance completes convergence, B opens immediately, timeout/error stays fail-open, and all owners cancel. Report `build/sims/operator-inputs/wave4a-intro-pass-report.json`, SHA-256 `85ac10b661e90b2d3bccc5a09117d5962f83fb074eeab24ed9ba94e6d9e45a47`; artifact SHA-256 `87e42b8a657baed90edf445c57016c42b91d76871e422db36e52571cd649660b`; source digest `e2ab677e61688505cf0af0a1b3b3d5e62c4a7fc9fb94cc549b0c6bc0c0237f8e`. | D1/D2 device acceptance green; strict-analysis/final hygiene receipt is shared with Wave 4A closeout. | record terminal strict/hygiene result, then mark the corrective amendment closed |

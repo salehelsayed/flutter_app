@@ -70,5 +70,15 @@ void main() {
           'the coordinator call must resolve through the introducer-accept '
           'resolver use case',
     );
+    expect(
+      RegExp(
+        r'introStatusChanges:\s*'
+        r'widget\.introductionListener\.introStatusChangedStream',
+      ).hasMatch(introsCase),
+      isTrue,
+      reason:
+          'the production Intros coordinator must supply the real listener '
+          'status stream for exact-anchor convergence',
+    );
   });
 }

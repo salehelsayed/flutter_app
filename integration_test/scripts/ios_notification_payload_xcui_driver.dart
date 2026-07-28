@@ -21,6 +21,22 @@ const Duration _nseObservationWindow = Duration(
   seconds: _apnsDeliveryWindowSeconds + _nseTerminalMarkerGraceSeconds,
 );
 
+bool devicectlResultAppsAreEmpty(String source) {
+  final decoded = jsonDecode(source);
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('devicectl result must be a JSON object');
+  }
+  final result = decoded['result'];
+  if (result is! Map<String, dynamic>) {
+    throw const FormatException('devicectl result.result must be an object');
+  }
+  final apps = result['apps'];
+  if (apps is! List<dynamic>) {
+    throw const FormatException('devicectl result.apps must be a list');
+  }
+  return apps.isEmpty;
+}
+
 Future<void> main(List<String> args) async {
   if (args.contains('--help')) {
     stdout.writeln(
@@ -1640,7 +1656,16 @@ final class _IosPayloadDriver {
 
   Future<void> _verifyCandidateApplicationRemoved() async {
     final apps = await _installedApplicationsJson('after-cleanup');
-    if (apps.readAsStringSync().contains(_bundleId)) {
+    late final bool removed;
+    try {
+      removed = devicectlResultAppsAreEmpty(apps.readAsStringSync());
+    } on FormatException catch (error) {
+      throw _DriverFailure(
+        'The cleanup application inventory was malformed: ${error.message}.',
+        _assertionsAttempted,
+      );
+    }
+    if (!removed) {
       throw _DriverFailure(
         'The cleanup adapter claimed success but the dedicated receiver still '
         'has the candidate application installed.',
