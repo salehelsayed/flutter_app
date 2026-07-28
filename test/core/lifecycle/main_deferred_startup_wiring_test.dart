@@ -33,47 +33,53 @@ String _startupStepInvocation(
   throw StateError('Unterminated startup step $stepId');
 }
 
-// 164 (cold-start-1 / cold-start-3): source-substring wiring locks over
-// lib/main.dart. These assert the pre-runApp deferral structure (no eager
+// 164 (cold-start-1 / cold-start-3): source-substring wiring locks over the
+// production bootstrap and application root. These assert the pre-launch
+// deferral structure (no eager
 // startLiveServices / ensureFirebaseReady awaits, unconditional
 // deferredRuntimeStartup, preserved deferred-startup trigger) and that the
 // shared-Keychain mirror moved off the critical path while staying retained.
 //
 // Pattern mirrors main_resume_group_upload_wiring_test.dart: touch
-// app.MyApp.navigatorKey first to force the import, then read lib/main.dart as a
-// string and assert index-delimited substrings.
+// app.MyApp.navigatorKey first to force the public entrypoint export, then read
+// each exact implementation owner and assert index-delimited substrings.
 void main() {
   test(
     'migration-gated deferred startup uses retryable outcome latch',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
 
       expect(
-        mainSource,
+        applicationRootSource,
         contains('AccountMigrationRuntimeStartupLatch('),
         reason: 'MyApp must use the shared retryable runtime-startup latch',
       );
       expect(
-        mainSource,
+        applicationRootSource,
         contains('startRuntime: widget.deferredRuntimeStartup'),
         reason: 'the latch must own the injected boolean startup outcome',
       );
       expect(
-        mainSource,
+        productionSource,
         contains('Future<bool> startLiveServicesIfAllowed() async'),
         reason:
             'the existing void starter needs an outcome wrapper so a gated '
             'no-start can be retried',
       );
       expect(
-        mainSource,
+        productionSource,
         contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
         reason: 'MyApp must receive the outcome-returning startup wrapper',
       );
       expect(
-        mainSource,
+        applicationRootSource,
         contains('return runtimeStartupLatch.ensureStarted();'),
         reason:
             '_ensureRuntimeServicesReady must delegate to the retryable latch',
@@ -86,17 +92,19 @@ void main() {
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.indexOf(
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final start = productionSource.indexOf(
         'Future<void> startLiveServices() async {',
       );
-      final end = mainSource.indexOf(
+      final end = productionSource.indexOf(
         'Future<bool> startLiveServicesIfAllowed() async',
         start,
       );
       expect(start, isNonNegative);
       expect(end, greaterThan(start));
-      final startupBody = mainSource.substring(start, end);
+      final startupBody = productionSource.substring(start, end);
 
       const asyncSteps = <String, String>{
         'private_media_cold_recovery':
@@ -229,18 +237,23 @@ void main() {
       'awaits', () async {
     expect(app.MyApp.navigatorKey, isNotNull);
 
-    final mainSource = await File('lib/main.dart').readAsString();
+    final productionSource = await File(
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsString();
+    final applicationRootSource = await File(
+      'lib/app/application_root.dart',
+    ).readAsString();
 
     // (i) deferredRuntimeStartup is unconditional, not isShareLaunch-gated.
     expect(
-      mainSource,
+      productionSource,
       contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
       reason:
           'normal launch must take the same deferred startup path share '
           'launch already used',
     );
     expect(
-      mainSource,
+      productionSource,
       isNot(
         contains(
           'deferredRuntimeStartup: isShareLaunch '
@@ -252,7 +265,7 @@ void main() {
 
     // (ii) the eager normal-launch startLiveServices await is gone.
     expect(
-      mainSource,
+      productionSource,
       isNot(contains('if (!isShareLaunch) {\n    await startLiveServices();')),
       reason:
           'startLiveServices must not be awaited on the pre-runApp critical '
@@ -263,7 +276,7 @@ void main() {
     // startLiveServices await ensureFirebaseReady() at :3043 has no
     // `if (!isShareLaunch) {` prefix, so it is NOT matched).
     expect(
-      mainSource,
+      productionSource,
       isNot(
         contains('if (!isShareLaunch) {\n    await ensureFirebaseReady();'),
       ),
@@ -273,7 +286,7 @@ void main() {
     // (iv) INV-8: the deferred-startup trigger survives — it is the sole
     // driver of the deferred startup on an idle no-notification launch.
     expect(
-      mainSource,
+      applicationRootSource,
       contains('unawaited(_handleInitialLocalNotificationLaunchWhenReady())'),
       reason:
           'removing this trigger would mean the node/listeners never start on '
@@ -287,39 +300,43 @@ void main() {
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
       // A compile-gated disposable reset profile may render an inert app and
       // return before normal startup. Anchor this preservation sentinel to the
-      // production app launch, which remains the final runApp invocation.
-      final runAppIndex = mainSource.lastIndexOf('runApp(');
-      expect(runAppIndex, isNonNegative);
-      final preRunApp = mainSource.substring(0, runAppIndex);
+      // production root-build phase that precedes host launch.
+      final rootBuildIndex = productionSource.indexOf(
+        'Future<Widget> _buildRootWidget() async {',
+      );
+      expect(rootBuildIndex, isNonNegative);
+      final preRootBuild = productionSource.substring(0, rootBuildIndex);
 
       // (i) the bare top-level (2-space-indented) eager mirror await is gone
       // from the pre-runApp region. The retained-future closure re-uses the same
       // call but at a deeper indent, so the 2-space anchor only matched the old
       // eager form.
       expect(
-        preRunApp,
+        preRootBuild,
         isNot(
           contains('\n  await groupRepository.mirrorAllKeysToSecureStore();'),
         ),
         reason:
-            'the unbounded keychain backfill must not block the pre-runApp '
+            'the unbounded keychain backfill must not block the pre-launch '
             'critical path',
       );
 
       // (ii) it is still kicked off via a retained future (not a bare,
       // droppable unawaited(...)), and that kickoff drives both mirrors.
       expect(
-        preRunApp,
+        preRootBuild,
         contains('keychainMirrorBackfill = '),
         reason:
             'the backfill must be retained so the analyzer/GC cannot silently '
             'drop it',
       );
-      final kickoffIndex = preRunApp.indexOf('keychainMirrorBackfill = ');
-      final kickoffBlock = preRunApp.substring(kickoffIndex);
+      final kickoffIndex = preRootBuild.indexOf('keychainMirrorBackfill = ');
+      final kickoffBlock = preRootBuild.substring(kickoffIndex);
       expect(
         kickoffBlock,
         contains('mirrorAllKeysToSecureStore'),

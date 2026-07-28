@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -45,6 +47,7 @@ Future<void> openIntroAcceptNotificationRoute({
 
   final contact = resolution.contact;
   if (resolution.opensConversation && contact != null) {
+    final statusConvergence = resolution.statusConvergence;
     if (isConversationAlreadyActive(resolution.target)) {
       // Mirrors the conversation case's already-active guard: the mounted
       // screen self-refreshes on resume, so a second push would only stack a
@@ -54,18 +57,54 @@ Future<void> openIntroAcceptNotificationRoute({
         event: 'INTRO_ACCEPT_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
         details: {'finalPeer': _shortPeer(contact.peerId)},
       );
+      await statusConvergence?.cancel();
       return;
     }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'INTRO_ACCEPT_NOTIFICATION_CONVERSATION_REDIRECT',
-      details: {
-        'finalPeer': _shortPeer(contact.peerId),
-        'statusContext': resolution.statusContext ?? '',
-      },
+
+    // Calling the callback prompts Navigator.push synchronously. Its Future
+    // normally remains pending until the conversation is popped, so do not
+    // await it before the exact-anchor status wait and marker.
+    final openFuture = Future<void>.sync(
+      () => openConversation(contact, notificationTappedAt),
     );
-    await openConversation(contact, notificationTappedAt);
-    return;
+
+    try {
+      var statusContext = resolution.statusContext ?? '';
+      if (statusConvergence != null) {
+        final convergenceFuture = statusConvergence.wait();
+        final firstSettled = await Future.any<Object>([
+          convergenceFuture,
+          openFuture.then<Object>((_) => _openCompletedNormally),
+        ]);
+        final convergence = identical(firstSettled, _openCompletedNormally)
+            ? await convergenceFuture
+            : firstSettled as IntroductionNotificationStatusConvergenceResult;
+        statusContext = convergence.statusContext;
+        if (!convergence.converged) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'INTRO_ACCEPT_NOTIFICATION_STATUS_CONVERGENCE_FALLBACK',
+            details: {
+              'finalPeer': _shortPeer(contact.peerId),
+              'reason': convergence.fallbackReason ?? 'unknown',
+            },
+          );
+        }
+      }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'INTRO_ACCEPT_NOTIFICATION_CONVERSATION_REDIRECT',
+        details: {
+          'finalPeer': _shortPeer(contact.peerId),
+          'statusContext': statusContext,
+        },
+      );
+      await openFuture;
+      return;
+    } finally {
+      await statusConvergence?.cancel();
+    }
   }
 
   emitFlowEvent(
@@ -81,3 +120,5 @@ Future<void> openIntroAcceptNotificationRoute({
 String _shortPeer(String peerId) {
   return peerId.length > 12 ? peerId.substring(0, 12) : peerId;
 }
+
+final Object _openCompletedNormally = Object();

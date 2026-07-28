@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -359,7 +359,12 @@ void main() {
     test(
       'PB264-18 production resume starts global exit recovery only after rejoin and records normal deferred rotation',
       () async {
-        final source = await File('lib/main.dart').readAsString();
+        final source = await File(
+          'lib/app/application_root.dart',
+        ).readAsString();
+        final productionSource = await File(
+          'lib/app/bootstrap/production_application_bootstrap.dart',
+        ).readAsString();
         final resumeStart = source.indexOf('Future<void> _onResumed() async {');
         final resumeEnd = source.indexOf(
           '  void _setupPushListeners()',
@@ -385,14 +390,16 @@ void main() {
           reason: 'global recovery must not race watchdog/topic rejoin',
         );
 
-        final rotationStart = source.indexOf('rotateKeys: (intent) async {');
-        final rotationEnd = source.indexOf(
+        final rotationStart = productionSource.indexOf(
+          'rotateKeys: (intent) async {',
+        );
+        final rotationEnd = productionSource.indexOf(
           'nativeLeave: (intent) async {',
           rotationStart,
         );
         expect(rotationStart, isNonNegative);
         expect(rotationEnd, greaterThan(rotationStart));
-        final rotation = source.substring(rotationStart, rotationEnd);
+        final rotation = productionSource.substring(rotationStart, rotationEnd);
         expect(
           rotation,
           contains(

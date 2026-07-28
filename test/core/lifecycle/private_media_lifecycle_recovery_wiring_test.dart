@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -83,35 +83,40 @@ void main() {
   test(
     'production uses one engine per private lane with shared recovery and scheduler lifecycle',
     () {
-      final source = File('lib/main.dart').readAsStringSync();
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final applicationRootSource = File(
+        'lib/app/application_root.dart',
+      ).readAsStringSync();
       expect(
         RegExp(
           r'final directPrivateMediaLifecycleEngine =\s*PrivateMediaLifecycleEngine\(',
-        ).allMatches(source),
+        ).allMatches(productionSource),
         hasLength(1),
         reason: 'the direct lane must share one durable engine instance',
       );
       expect(
-        'GroupPrivateMediaLifecycleEngine('.allMatches(source),
+        'GroupPrivateMediaLifecycleEngine('.allMatches(productionSource),
         hasLength(1),
         reason: 'the group lane must share one durable engine instance',
       );
       expect(
-        source,
+        productionSource,
         contains(
           'final directPrivateMediaLifecycleEngine = PrivateMediaLifecycleEngine(',
         ),
       );
       expect(
-        source,
+        productionSource,
         contains('directPrivateMediaLifecycleEngine.reconcileLocalLifecycle()'),
       );
       expect(
-        source,
+        productionSource,
         contains('groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle()'),
       );
       expect(
-        source,
+        productionSource,
         contains(
           'dbLoadOutgoingDirectPrivateCommittedPendingCleanupCandidates:',
         ),
@@ -119,54 +124,68 @@ void main() {
             'production must wire the bounded real-repository cleanup query',
       );
       expect(
-        'retryDirectPrivateCommittedPendingCleanup('.allMatches(source),
+        'retryDirectPrivateCommittedPendingCleanup('.allMatches(
+          productionSource,
+        ),
         hasLength(1),
         reason:
             'cold start and every real resume must share one cleanup callback',
       );
-      expect(source, contains('privateMediaLifecycleRecoveryFn:'));
-      expect(source, contains('widget.privateMediaLifecycleRecovery'));
-      expect(source, contains('PrivateMediaLifecycleForegroundRuntime('));
       expect(
-        source,
+        applicationRootSource,
+        contains('privateMediaLifecycleRecoveryFn:'),
+      );
+      expect(
+        applicationRootSource,
+        contains('widget.privateMediaLifecycleRecovery'),
+      );
+      expect(
+        productionSource,
+        contains('PrivateMediaLifecycleForegroundRuntime('),
+      );
+      expect(
+        productionSource,
         allOf(
           contains('isForeground: () =>'),
-          contains(
-            'WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed',
+          matches(
+            RegExp(
+              r'WidgetsBinding\.instance\.lifecycleState\s*==\s*'
+              r'AppLifecycleState\.resumed',
+            ),
           ),
         ),
         reason: 'a hidden/paused cold launch must never arm the expiry timer',
       );
       expect(
-        source,
+        productionSource,
         contains('startScheduler: privateMediaExpiryScheduler.start'),
       );
       expect(
-        source,
+        applicationRootSource,
         contains('widget.stopPrivateMediaExpiryScheduler?.call()'),
       );
       expect(
-        source,
+        applicationRootSource,
         contains('widget.disposePrivateMediaExpiryScheduler?.call()'),
       );
       expect(
-        source,
+        applicationRootSource,
         isNot(contains('widget.startPrivateMediaExpiryScheduler?.call()')),
         reason: 'resume completion cannot unconditionally undo a later pause',
       );
 
-      final sharedLocalRecovery = source.indexOf(
+      final sharedLocalRecovery = productionSource.indexOf(
         'recoverLocalLifecycle: () async',
       );
-      final directRecovery = source.indexOf(
+      final directRecovery = productionSource.indexOf(
         'directPrivateMediaLifecycleEngine.reconcileLocalLifecycle()',
         sharedLocalRecovery,
       );
-      final committedPendingCleanup = source.indexOf(
+      final committedPendingCleanup = productionSource.indexOf(
         'retryDirectPrivateCommittedPendingCleanup(',
         sharedLocalRecovery,
       );
-      final groupRecovery = source.indexOf(
+      final groupRecovery = productionSource.indexOf(
         'groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle()',
         sharedLocalRecovery,
       );
@@ -180,37 +199,42 @@ void main() {
             'pending cleanup load failures are isolated before group recovery',
       );
 
-      final runAppMark = source.indexOf(
+      final runAppMark = productionSource.indexOf(
         "StartupTiming.instance.mark('run_app_called')",
       );
       expect(runAppMark, isNonNegative);
-      final coldRecovery = source.indexOf(
+      final coldRecovery = productionSource.indexOf(
         'unawaited(ensurePrivateMediaColdRecovery());',
         runAppMark,
       );
       expect(coldRecovery, greaterThan(runAppMark));
 
-      final liveServices = source.indexOf(
+      final liveServices = productionSource.indexOf(
         'Future<void> startLiveServices() async',
       );
-      final recoveryGate = source.indexOf(
+      final recoveryGate = productionSource.indexOf(
         'await ensurePrivateMediaColdRecovery();',
         liveServices,
       );
-      final networkGate = source.indexOf(
-        "allowsAccountRuntimeNetworkSideEffects('live_services_start')",
+      final networkGate = productionSource.indexOf(
+        "'live_services_start'",
         liveServices,
       );
       expect(liveServices, isNonNegative);
       expect(recoveryGate, greaterThan(liveServices));
       expect(networkGate, greaterThan(recoveryGate));
 
-      final resumeMethod = source.indexOf('Future<void> _onResumed() async');
-      final beginPrivateResume = source.indexOf(
+      final resumeMethod = applicationRootSource.indexOf(
+        'Future<void> _onResumed() async',
+      );
+      final beginPrivateResume = applicationRootSource.indexOf(
         'widget.privateMediaLifecycleRecovery?.call()',
         resumeMethod,
       );
-      final broadResumeGuard = source.indexOf('if (_isResuming)', resumeMethod);
+      final broadResumeGuard = applicationRootSource.indexOf(
+        'if (_isResuming)',
+        resumeMethod,
+      );
       expect(beginPrivateResume, greaterThan(resumeMethod));
       expect(
         broadResumeGuard,

@@ -17,7 +17,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_consumpti
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
-import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/pending_group_invite_repository_impl.dart';
 
 void main() {
   late Database db;

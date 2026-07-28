@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 
 void main() {
   // In-memory storage for faked DB helper closures
@@ -43,11 +43,12 @@ void main() {
 
     repo = ContactRequestRepositoryImpl(
       dbLoadPendingRequests: () async {
-        return store.values
-            .where((r) => r['status'] == 'pending')
-            .toList()
-          ..sort((a, b) =>
-              (b['received_at'] as String).compareTo(a['received_at'] as String));
+        return store.values.where((r) => r['status'] == 'pending').toList()
+          ..sort(
+            (a, b) => (b['received_at'] as String).compareTo(
+              a['received_at'] as String,
+            ),
+          );
       },
       dbLoadRequest: (peerId) async {
         return store[peerId];
@@ -112,8 +113,14 @@ void main() {
     });
 
     test('handles all status values', () async {
-      store['peer-accepted'] = makeRow(peerId: 'peer-accepted', status: 'accepted');
-      store['peer-declined'] = makeRow(peerId: 'peer-declined', status: 'declined');
+      store['peer-accepted'] = makeRow(
+        peerId: 'peer-accepted',
+        status: 'accepted',
+      );
+      store['peer-declined'] = makeRow(
+        peerId: 'peer-declined',
+        status: 'declined',
+      );
 
       final accepted = await repo.getRequest('peer-accepted');
       final declined = await repo.getRequest('peer-declined');
@@ -137,7 +144,10 @@ void main() {
       final result = await repo.getPendingRequests();
 
       expect(result.length, 2);
-      expect(result.every((r) => r.status == ContactRequestStatus.pending), isTrue);
+      expect(
+        result.every((r) => r.status == ContactRequestStatus.pending),
+        isTrue,
+      );
     });
   });
 

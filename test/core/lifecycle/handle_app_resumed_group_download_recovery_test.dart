@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';

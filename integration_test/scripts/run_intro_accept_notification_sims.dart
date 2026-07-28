@@ -1,5 +1,6 @@
 #!/usr/bin/env dart
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -19,6 +20,96 @@ const String _secondEmulatorEnvironmentKey =
     'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID';
 const String _validatorId =
     'integration_test/intro_accept_notification_android_proof_test.dart';
+const Duration _scenarioCampaignBudget = Duration(minutes: 24);
+const Duration _childTerminationGrace = Duration(seconds: 5);
+
+abstract interface class IntroChildProcess {
+  Future<int> get exitCode;
+
+  bool kill(ProcessSignal signal);
+}
+
+final class IntroChildSupervisor {
+  IntroChildSupervisor(this._child) : _exitCode = _child.exitCode;
+
+  final IntroChildProcess _child;
+  final Future<int> _exitCode;
+  Future<void>? _termination;
+  bool _exited = false;
+
+  Future<int> waitUntil(
+    DateTime deadline, {
+    Duration terminationGrace = _childTerminationGrace,
+  }) async {
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      await terminate(terminationGrace: terminationGrace);
+      throw TimeoutException(
+        'Intro campaign child reached the shared campaign deadline.',
+        Duration.zero,
+      );
+    }
+    try {
+      final code = await _exitCode.timeout(remaining);
+      _exited = true;
+      return code;
+    } on TimeoutException {
+      await terminate(terminationGrace: terminationGrace);
+      throw TimeoutException(
+        'Intro campaign child reached the shared campaign deadline.',
+        remaining,
+      );
+    }
+  }
+
+  Future<void> terminate({Duration terminationGrace = _childTerminationGrace}) {
+    return _termination ??= _terminate(terminationGrace);
+  }
+
+  Future<void> _terminate(Duration terminationGrace) async {
+    if (_exited) return;
+    final terminationRequested = _child.kill(ProcessSignal.sigterm);
+    if (terminationRequested) {
+      try {
+        await _exitCode.timeout(terminationGrace);
+        _exited = true;
+        return;
+      } on TimeoutException {
+        // Escalate below.
+      }
+    } else {
+      try {
+        await _exitCode.timeout(terminationGrace);
+        _exited = true;
+        return;
+      } on TimeoutException {
+        // A false return can race process exit; fail closed with SIGKILL.
+      }
+    }
+
+    _child.kill(ProcessSignal.sigkill);
+    await _exitCode.timeout(
+      terminationGrace,
+      onTimeout: () => throw TimeoutException(
+        'Timed out terminating intro campaign child.',
+        terminationGrace,
+      ),
+    );
+    _exited = true;
+  }
+}
+
+final class _ProcessIntroChild implements IntroChildProcess {
+  const _ProcessIntroChild(this.process);
+
+  final Process process;
+
+  @override
+  Future<int> get exitCode => process.exitCode;
+
+  @override
+  bool kill(ProcessSignal signal) => process.kill(signal);
+}
 
 const List<({String id, String testCase})> _scenarios =
     <({String id, String testCase})>[
@@ -206,6 +297,7 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
     'capture-${DateTime.now().toUtc().microsecondsSinceEpoch}-$pid',
   )..createSync(recursive: true);
   final capturedArtifacts = <Map<String, Object?>>[];
+  IntroChildSupervisor? activeChild;
 
   try {
     for (final scenario in _scenarios) {
@@ -219,6 +311,9 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
       final recipient = scenario.id == 'physical_introducer'
           ? firstEmulator
           : physical;
+      final scenarioDeadline = DateTime.now().toUtc().add(
+        _scenarioCampaignBudget,
+      );
 
       late final Process child;
       try {
@@ -237,6 +332,8 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
           artifact.path,
           '--artifact-dir',
           scenarioDirectory.path,
+          '--campaign-deadline-epoch-ms',
+          '${scenarioDeadline.millisecondsSinceEpoch}',
           '--android-state-prepared',
         ], environment: environment);
       } on ProcessException catch (error) {
@@ -249,8 +346,23 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
       // The adapter alone owns stdout's structured Sims result sentinel.
       final stdoutDone = child.stdout.listen(stderr.add).asFuture<void>();
       final stderrDone = child.stderr.listen(stderr.add).asFuture<void>();
-      final childExitCode = await child.exitCode;
-      await Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]);
+      activeChild = IntroChildSupervisor(_ProcessIntroChild(child));
+      late final int childExitCode;
+      try {
+        childExitCode = await activeChild.waitUntil(scenarioDeadline);
+      } on TimeoutException {
+        await _awaitChildOutputDrain(stdoutDone, stderrDone);
+        return _failed(
+          detail:
+              '${scenario.id} intro acceptance capture exceeded its shared '
+              '${_scenarioCampaignBudget.inMinutes}-minute campaign deadline; '
+              'the child was terminated before app-state restoration.',
+          childExitCode: 1,
+          artifactPresent: false,
+          assertionsAttempted: capturedArtifacts.length + 1,
+        );
+      }
+      await _awaitChildOutputDrain(stdoutDone, stderrDone);
       if (childExitCode != 0) {
         return _failed(
           detail:
@@ -283,9 +395,14 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
         'path': captured.resolveSymbolicLinksSync(),
         'sha256': sha256.convert(captured.readAsBytesSync()).toString(),
       });
+      activeChild = null;
     }
   } finally {
-    await stateGuard.restoreAll();
+    try {
+      await activeChild?.terminate();
+    } finally {
+      await stateGuard.restoreAll();
+    }
   }
 
   final evidence = writeSimsArtifactEvidenceSync(
@@ -305,6 +422,19 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
     },
   );
   return _passed(evidence);
+}
+
+Future<void> _awaitChildOutputDrain(
+  Future<void> stdoutDone,
+  Future<void> stderrDone,
+) {
+  return Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]).timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => throw TimeoutException(
+      'Timed out draining terminated intro campaign child output.',
+      const Duration(seconds: 10),
+    ),
+  );
 }
 
 String? _validateArtifact(

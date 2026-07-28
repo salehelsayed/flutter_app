@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';

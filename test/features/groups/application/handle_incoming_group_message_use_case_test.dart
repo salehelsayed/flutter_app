@@ -15,8 +15,8 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';

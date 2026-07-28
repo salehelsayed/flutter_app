@@ -9,7 +9,7 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';

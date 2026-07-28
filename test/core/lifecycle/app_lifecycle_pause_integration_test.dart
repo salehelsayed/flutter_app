@@ -14,7 +14,7 @@ import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.da
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 void main() {
   late Database db;

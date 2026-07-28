@@ -1,5 +1,5 @@
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_invite_delivery_attempt_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

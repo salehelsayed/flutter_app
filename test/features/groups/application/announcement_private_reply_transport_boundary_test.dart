@@ -14,7 +14,7 @@ void main() {
       'lib/features/groups/domain/repositories/group_message_repository.dart',
     ).readAsStringSync();
     final implementationSource = File(
-      'lib/features/groups/domain/repositories/group_message_repository_impl.dart',
+      'lib/features/groups/data/repositories/group_message_repository_impl.dart',
     ).readAsStringSync();
     final applicationSource = '$requestSource\n$policySource';
 

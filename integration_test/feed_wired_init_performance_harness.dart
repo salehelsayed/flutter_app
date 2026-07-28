@@ -21,7 +21,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';

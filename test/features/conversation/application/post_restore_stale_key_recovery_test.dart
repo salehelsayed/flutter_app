@@ -11,7 +11,7 @@ import 'package:flutter_app/features/conversation/application/handle_incoming_ch
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 

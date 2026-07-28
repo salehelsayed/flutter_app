@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 import '../../shared/fakes/in_memory_message_repository.dart';

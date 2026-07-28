@@ -169,11 +169,13 @@ void main() {
       );
     });
 
-    test('main.dart keeps foreground remote presentation quiet', () async {
-      final mainDart = await File('lib/main.dart').readAsString();
+    test('production bootstrap keeps foreground presentation quiet', () async {
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
 
       expect(
-        mainDart,
+        productionSource,
         matches(
           RegExp(
             r'setForegroundNotificationPresentationOptions\(\s*'
@@ -189,14 +191,18 @@ void main() {
     test(
       'foreground push fallback is migration-gated before display',
       () async {
-        final mainDart = await File('lib/main.dart').readAsString();
+        final applicationRoot = await File(
+          'lib/app/application_root.dart',
+        ).readAsString();
 
-        final handlerIndex = mainDart.indexOf('_handleForegroundRemotePush');
-        final gateIndex = mainDart.indexOf(
+        final handlerIndex = applicationRoot.indexOf(
+          '_handleForegroundRemotePush',
+        );
+        final gateIndex = applicationRoot.indexOf(
           'push_foreground_notification_display',
           handlerIndex,
         );
-        final fallbackIndex = mainDart.indexOf(
+        final fallbackIndex = applicationRoot.indexOf(
           'showForegroundPushFallbackNotificationIfNeeded',
           handlerIndex,
         );

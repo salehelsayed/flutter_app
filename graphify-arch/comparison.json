@@ -140,36 +140,36 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 55855,
-    "edges": 87112,
-    "communities": 1111,
-    "source_files": 2751,
-    "avg_edges_per_node": 1.5596,
-    "avg_nodes_per_community": 50.27,
-    "app_owned_nodes": 53554,
-    "app_owned_ratio": 0.9588,
+    "nodes": 63016,
+    "edges": 96398,
+    "communities": 1195,
+    "source_files": 2885,
+    "avg_edges_per_node": 1.5297,
+    "avg_nodes_per_community": 52.73,
+    "app_owned_nodes": 60513,
+    "app_owned_ratio": 0.9603,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
-    "unknown_source_nodes": 2301,
-    "unknown_source_ratio": 0.0412,
+    "unknown_source_nodes": 2503,
+    "unknown_source_ratio": 0.0397,
     "top_hub_noise_count": 0,
     "top_hub_noise_ratio": 0.0,
     "top_source_dirs": [
       [
         "lib",
-        21775
+        24658
       ],
       [
         "test",
-        18174
+        20593
       ],
       [
         "integration_test",
-        9823
+        11433
       ],
       [
         "go-mknoon",
-        2250
+        2251
       ],
       [
         "go-relay-server",
@@ -177,7 +177,7 @@
       ],
       [
         "scripts",
-        653
+        699
       ],
       [
         "ios/NotificationService",
@@ -188,35 +188,35 @@
       {
         "id": "integration_test_group_multi_party_device_real_harness",
         "label": "group_multi_party_device_real_harness.dart",
-        "degree": 2032,
+        "degree": 2045,
         "source_file": "integration_test/group_multi_party_device_real_harness.dart",
         "noise": false
       },
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1339,
+        "degree": 1406,
         "source_file": "",
         "noise": false
       },
       {
         "id": "integration_test_scripts_group_multi_party_device_criteria",
         "label": "group_multi_party_device_criteria.dart",
-        "degree": 683,
+        "degree": 690,
         "source_file": "integration_test/scripts/group_multi_party_device_criteria.dart",
-        "noise": false
-      },
-      {
-        "id": "lib_main",
-        "label": "main.dart",
-        "degree": 587,
-        "source_file": "lib/main.dart",
         "noise": false
       },
       {
         "id": "dart_convert",
         "label": "dart:convert",
-        "degree": 564,
+        "degree": 608,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "dart_io",
+        "label": "dart:io",
+        "degree": 586,
         "source_file": "",
         "noise": false
       },
@@ -228,40 +228,40 @@
         "noise": false
       },
       {
-        "id": "package_flutter_material_dart",
-        "label": "package:flutter/material.dart",
-        "degree": 519,
-        "source_file": "",
-        "noise": false
-      },
-      {
         "id": "lib_features_groups_presentation_screens_group_conversation_wired",
         "label": "group_conversation_wired.dart",
-        "degree": 501,
+        "degree": 524,
         "source_file": "lib/features/groups/presentation/screens/group_conversation_wired.dart",
         "noise": false
       },
       {
-        "id": "dart_io",
-        "label": "dart:io",
-        "degree": 500,
+        "id": "package_flutter_material_dart",
+        "label": "package:flutter/material.dart",
+        "degree": 521,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "dart_async",
+        "label": "dart:async",
+        "degree": 487,
         "source_file": "",
         "noise": false
       },
       {
         "id": "lib_features_conversation_presentation_screens_conversation_wired",
         "label": "conversation_wired.dart",
-        "degree": 443,
+        "degree": 473,
         "source_file": "lib/features/conversation/presentation/screens/conversation_wired.dart",
         "noise": false
       }
     ]
   },
   "deltas": {
-    "nodes": -0.5564,
-    "edges": -0.5921,
-    "communities": -0.7725,
-    "app_owned_ratio": 0.9847,
+    "nodes": -0.4996,
+    "edges": -0.5486,
+    "communities": -0.7553,
+    "app_owned_ratio": 0.9878,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }

@@ -9,7 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';

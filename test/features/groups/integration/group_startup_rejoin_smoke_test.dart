@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';

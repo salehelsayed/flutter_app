@@ -1,6 +1,6 @@
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';

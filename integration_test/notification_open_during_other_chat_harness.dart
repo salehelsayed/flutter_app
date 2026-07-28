@@ -67,7 +67,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';

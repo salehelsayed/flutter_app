@@ -51,7 +51,7 @@ import 'package:flutter_app/features/groups/domain/models/pending_group_invite.d
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';

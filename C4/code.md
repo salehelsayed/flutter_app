@@ -1,5 +1,11 @@
 ## Level 4: Code Diagram
 
+Repository `implements` arrows below cross a feature-layer boundary: repository
+interfaces live in `lib/features/<feature>/domain/repositories/`, while concrete
+`*RepositoryImpl` adapters live in
+`lib/features/<feature>/data/repositories/`. The section labels group related
+types by feature; they do not place the concrete adapters in the domain layer.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CODE DIAGRAM                                    │

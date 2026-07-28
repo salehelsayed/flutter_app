@@ -4,7 +4,7 @@ import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
-import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
+import 'package:flutter_app/features/posts/data/repositories/posts_privacy_settings_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {

@@ -937,6 +937,7 @@ class _OrbitScreenView extends StatelessWidget {
             ExpandableFab(
               anchor: ExpandableFabAnchor.topRight,
               fabSize: 40,
+              fabSemanticLabel: 'orbit_create_group_fab',
               safeAreaPadding: MediaQuery.of(context).padding,
               items: [
                 ExpandableFabItem(

@@ -105,6 +105,7 @@ void main() {
       'if retryIncompleteUploads throws in cold-start sweep, retryFailedMessages still runs',
       () async {
         final callOrder = <String>[];
+        final retryFailedStarted = Completer<void>();
 
         Future<int> fakeRecoverStuck() async {
           callOrder.add('recoverStuckSendingMessages');
@@ -126,20 +127,26 @@ void main() {
           bridge: bridge,
           recoverStuckSendingMessagesFn: fakeRecoverStuck,
           retryIncompleteUploadsFn: fakeRetryIncompleteUploadsThatThrows,
+          retryFailedMessagesOverride: () async {
+            callOrder.add('retryFailedMessages');
+            retryFailedStarted.complete();
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async => 0,
+          retryDebounce: const Duration(milliseconds: 10),
         );
         retrier.start();
 
-        // Wait for 5-second debounce
-        await Future.delayed(const Duration(seconds: 6));
+        await retryFailedStarted.future.timeout(const Duration(seconds: 1));
 
         // retryIncompleteUploads threw, but the sweep continued
-        expect(callOrder, contains('recoverStuckSendingMessages'));
-        expect(callOrder, contains('retryIncompleteUploads'));
-
-        // retryFailedMessages still ran (proxy: identityRepo was queried)
-        expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
+        expect(callOrder, <String>[
+          'recoverStuckSendingMessages',
+          'retryIncompleteUploads',
+          'retryFailedMessages',
+        ]);
       },
-      timeout: const Timeout(Duration(seconds: 10)),
+      timeout: const Timeout(Duration(seconds: 3)),
     );
 
     test(

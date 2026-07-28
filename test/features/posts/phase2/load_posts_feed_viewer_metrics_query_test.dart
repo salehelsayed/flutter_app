@@ -11,7 +11,7 @@ import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
-import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -51,7 +51,8 @@ void main() {
       dbInsertPostComment: (row) async {},
       dbLoadPostComments: (postId) async => const <Map<String, Object?>>[],
       dbLoadPostReactions: (postId) async => const <Map<String, Object?>>[],
-      dbLoadPostMediaForPosts: (postIds) async => const <Map<String, Object?>>[],
+      dbLoadPostMediaForPosts: (postIds) async =>
+          const <Map<String, Object?>>[],
       dbLoadRepostHeartBaselinePeersForPosts: (postIds) async =>
           const <Map<String, Object?>>[],
       dbLoadPassAvatarSnapshotsForPosts: (postIds) async =>

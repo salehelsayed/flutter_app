@@ -823,6 +823,93 @@ void main() {
       },
     );
 
+    testWidgets(
+      'ordinary media upload success after unmount still publishes and persists sent parent status',
+      (tester) async {
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        final bridge = _OrderRecordingBridge();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-bg-unmount-media-success-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File(p.join(tempDir.path, 'photo.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes, flush: true);
+
+        await _pumpGroupConversationWired(
+          tester,
+          bridge: bridge,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: mediaFileManager,
+          initialAttachments: [attachment],
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                if (!uploadStarted.isCompleted) {
+                  uploadStarted.complete();
+                }
+                await uploadGate.future;
+                return _uploadedMediaOutcome(
+                  id: blobId!,
+                  messageId: '',
+                  mime: mime,
+                  localPath: mediaFileManager!.relativePathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId,
+                    mime: mime,
+                  ),
+                );
+              },
+        );
+
+        final sendFuture = await _startTextSend(tester, 'unmount media sent');
+        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpFrames(tester, count: 5);
+
+        final messageId = (await mediaRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        )).single.messageId;
+        expect((await msgRepo.getMessage(messageId))!.status, 'sending');
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        uploadGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
+        await pumpFrames(tester, count: 20);
+
+        final persistedAfterSend = await msgRepo.getMessage(messageId);
+        expect(persistedAfterSend, isNotNull);
+        expect(persistedAfterSend!.status, 'sent');
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('bg:end'));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('text-only send acquires background task before publish', (
       tester,
     ) async {

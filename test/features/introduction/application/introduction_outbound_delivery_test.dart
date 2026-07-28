@@ -5,7 +5,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';

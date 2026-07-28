@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
-import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
 
 void main() {
   test(

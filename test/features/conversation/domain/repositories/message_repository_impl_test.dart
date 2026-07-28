@@ -4,7 +4,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

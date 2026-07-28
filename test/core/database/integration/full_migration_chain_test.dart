@@ -91,10 +91,10 @@ import 'package:flutter_app/core/database/migrations/103_group_exit_intents.dart
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
-import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 

@@ -85,17 +85,19 @@ void main() {
   test(
     'initial-local production wiring emits marker before route preparation',
     () {
-      final mainSource = File('lib/main.dart').readAsStringSync();
-      final start = mainSource.indexOf(
+      final applicationRoot = File(
+        'lib/app/application_root.dart',
+      ).readAsStringSync();
+      final start = applicationRoot.indexOf(
         'Future<void> _handleInitialLocalNotificationLaunch() async',
       );
-      final end = mainSource.indexOf(
+      final end = applicationRoot.indexOf(
         'Future<void> _onNotificationTap(String payload) async',
         start,
       );
       expect(start, greaterThan(0));
       expect(end, greaterThan(start));
-      final method = mainSource.substring(start, end);
+      final method = applicationRoot.substring(start, end);
 
       final consume = method.indexOf('consumeInitialPayload: () async');
       final beforeRoute = method.indexOf('onBeforeRouteTarget: (target) async');

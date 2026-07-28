@@ -6,7 +6,7 @@ import 'package:flutter_app/core/database/migrations/082_message_reaction_tombst
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class _TwoPartyBarrier {

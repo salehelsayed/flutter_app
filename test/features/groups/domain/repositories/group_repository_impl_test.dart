@@ -25,7 +25,7 @@ import 'package:flutter_app/core/notifications/group_reaction_notification_proje
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 

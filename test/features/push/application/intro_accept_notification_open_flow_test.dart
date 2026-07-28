@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/resolve_introduction_notification_target_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -149,7 +152,10 @@ void main() {
       );
 
       expect(events, ['prepare', 'drain', 'resolve', 'intros']);
-      expect(events.where((event) => event.startsWith('conversation:')), isEmpty);
+      expect(
+        events.where((event) => event.startsWith('conversation:')),
+        isEmpty,
+      );
     },
   );
 
@@ -186,6 +192,176 @@ void main() {
       );
 
       expect(activeGuardEvents, ['guard:peer-B']);
+    },
+  );
+
+  test(
+    'opens B before exact C convergence then emits the bc_connected marker',
+    () async {
+      final statusChanges = StreamController<IntroductionModel>.broadcast();
+      addTearDown(statusChanges.close);
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-flow',
+          introducerId: 'own-peer',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.pending,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-B',
+          publicKey: 'pk-peer-B',
+          rendezvous: '/rv/peer-B',
+          username: 'Lina',
+          signature: 'sig-peer-B',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+
+      var routeCompleted = false;
+      final routeFuture = openIntroAcceptNotificationRoute(
+        routeTarget: const NotificationRouteTarget.intros(
+          messageId: canonicalAcceptId,
+        ),
+        notificationTappedAt: notificationTappedAt,
+        resolveTarget: (target) => resolveIntroductionNotificationTarget(
+          routeTarget: target,
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          loadOwnPeerId: () async => 'own-peer',
+          introStatusChanges: statusChanges.stream,
+          statusConvergenceTimeout: const Duration(seconds: 1),
+        ),
+        isConversationAlreadyActive: (_) => false,
+        openConversation: (contact, _) async {
+          events.add('conversation:${contact.peerId}');
+        },
+        openIntros: () async {
+          events.add('intros');
+        },
+      ).whenComplete(() => routeCompleted = true);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['conversation:peer-B']);
+      expect(
+        routeCompleted,
+        isFalse,
+        reason: 'navigation must happen before the final C marker settles',
+      );
+
+      statusChanges.add(
+        IntroductionModel(
+          id: 'intro-flow',
+          introducerId: 'own-peer',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.mutualAccepted,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      await routeFuture;
+      expect(
+        statusChanges.hasListener,
+        isFalse,
+        reason: 'successful convergence must release the broadcast listener',
+      );
+
+      final redirect = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'INTRO_ACCEPT_NOTIFICATION_CONVERSATION_REDIRECT',
+      );
+      expect(
+        (redirect['details'] as Map<String, dynamic>)['statusContext'],
+        'bc_connected',
+      );
+    },
+  );
+
+  test(
+    'C convergence timeout keeps the B redirect and reports fail-open telemetry',
+    () async {
+      final statusChanges = StreamController<IntroductionModel>.broadcast();
+      addTearDown(statusChanges.close);
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-flow',
+          introducerId: 'own-peer',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.pending,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-B',
+          publicKey: 'pk-peer-B',
+          rendezvous: '/rv/peer-B',
+          username: 'Lina',
+          signature: 'sig-peer-B',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+
+      await openIntroAcceptNotificationRoute(
+        routeTarget: const NotificationRouteTarget.intros(
+          messageId: canonicalAcceptId,
+        ),
+        notificationTappedAt: notificationTappedAt,
+        resolveTarget: (target) => resolveIntroductionNotificationTarget(
+          routeTarget: target,
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          loadOwnPeerId: () async => 'own-peer',
+          introStatusChanges: statusChanges.stream,
+          statusConvergenceTimeout: const Duration(milliseconds: 5),
+        ),
+        isConversationAlreadyActive: (_) => false,
+        openConversation: (contact, _) async {
+          events.add('conversation:${contact.peerId}');
+        },
+        openIntros: () async {
+          events.add('intros');
+        },
+      );
+
+      expect(events, ['conversation:peer-B']);
+      expect(
+        statusChanges.hasListener,
+        isFalse,
+        reason: 'timeout fallback must release the broadcast listener',
+      );
+      final timeout = flowEvents.singleWhere(
+        (event) =>
+            event['event'] ==
+            'INTRO_ACCEPT_NOTIFICATION_STATUS_CONVERGENCE_FALLBACK',
+      );
+      expect((timeout['details'] as Map<String, dynamic>)['reason'], 'timeout');
+      final redirect = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'INTRO_ACCEPT_NOTIFICATION_CONVERSATION_REDIRECT',
+      );
+      expect(
+        (redirect['details'] as Map<String, dynamic>)['statusContext'],
+        'b_accept_recorded',
+      );
     },
   );
 }

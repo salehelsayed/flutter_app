@@ -1,1134 +1,1218 @@
-# Graph Report - graphify-arch  (2026-07-18)
+# Graph Report - graphify-arch  (2026-07-28)
 
 ## Corpus Check
 - cluster-only mode — file stats not available
 
 ## Summary
-- 55855 nodes · 87112 edges · 1111 communities (1042 shown, 69 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 3371 edges (avg confidence: 0.8)
+- 63016 nodes · 96398 edges · 1195 communities (1120 shown, 75 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 3371 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `57096c86`
+- Built from commit: `765be745`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- Group Multi-Party Device Harness
-- Group Multi-Party Device Criteria
-- Cross-Feature Wired UI Tests
-- Group Domain Fakes & Tests
+- group_multi_party_device_real_harness.dart
+- package:flutter_app/features/p2p/domain/models/chat_message.dart
+- dart:async
+- group_multi_party_device_criteria.dart
 - Background Crypto Proof Support
-- Database Seeding & Migration Tests
-- Posts Encrypted Media Tests
-- Widget Readability & L10n Tests
-- Failed Message Retry Tests
-- Media Forwarding Policy Tests
-- Group Multi-Party Criteria Tests
-- Core Lifecycle Wiring Tests
-- Contact Request Flow Tests
-- Group Conversation Wired Screen
-- StatelessWidget Screens Hub
-- Main Wiring & Repository Tests
-- Transport E2E Harnesses
-- Conversation Wired Screen
-- Post Pass Integration Tests
-- Orbit Visualization UI Tests
-- Group Invite Flow Tests
-- Group Media Replay DB Tests
-- Group Crypto Onboarding Proof Tests
-- P2P Service Implementation
-- StatefulWidget UI Hub
-- Feed Wired & Read Tests
-- Group Messaging Smoke Tests
-- Orbit Wired Screen
-- Fake P2P Network Delivery Tests
-- SQLCipher Migrations & Helpers
-- Group Reaction Capture Script
-- Group Message Use Case Tests
-- Go Node Core Tests (Go)
-- Posts Wired UI Tests
-- Push Background Handler Tests
-- Orbit Avatars & Arc Widgets
-- 1:1 Reaction Provenance Script
-- Node Inbox Streams (Go)
-- Android Background Crypto Script
-- PubSub Delivery Tests (Go)
-- Orbit Screen & Intros Tab
-- Group Pending Key DB Tests
-- Group Conversation Wired Tests
-- PubSub Envelope Validation (Go)
-- Reaction & Deletion Tests
-- Conversation Screen Widgets
-- Group Message Listener
-- Conversation Media Upload Tests
-- Group Membership Use Cases
-- Group PubSub Core (Go)
-- Account Migration Bundle Transfer
-- Group Resume Recovery Tests
-- Send Group Message Use Case
-- Conversation Wired Tests
-- APNs Provider Probe Harnesses
-- Group Reaction Notification Criteria
-- Group Admin Metadata Tests
-- Node Relay Sessions (Go)
-- Identity Repository Tests
-- Transport E2E Runner Script
-- iOS Notification XCUI Driver
-- Posts DB Repository Tests
-- Send Chat Message Tests
-- Orbit Wired Tests
-- Orbit Painters & Indicators
-- Post Engagement Listener Tests
-- Send Chat Message Use Case
-- Secure Key Store Tests
-- Background Push Message Handler
-- Group Offline Inbox Drain
-- Orbit Inner Circle UI
-- Feed Letter Card Tests
-- Intro E2E Debug Runner
-- Migration Local Transfer Runtime
-- Android Background Crypto Harness
-- Group Offline Replay Envelope
-- Migration Journey UI
-- Foreground Push Drain Harnesses
-- Android App State Guard
-- Conversation Performance Harness
-- Conversation BG Task Tests
-- Group Creation & Invite Use Cases
-- Group Conversation Screen Widgets
-- Group Key Rotation Tests
-- Relay Redis Backend (Go)
-- Group Membership Smoke Tests
-- Group Info Wired Tests
-- Group Private Media Proof Tests
-- Group Multi-Party Runner Script
-- Media Journey E2E Harness
-- Go Bridge Tests (Go)
-- Notification Sound Smoke Runner
-- Android Notification Payload Script
-- Identity Onboarding UI
-- Handle Incoming Group Message
-- Group Info Wired Screen
-- Push Decrypt Preview
-- Production Migration Registry
-- Delete Contact Use Case Tests
-- Group Message Repository Tests
-- Group & Friend Row Widgets
-- Share Batch Coordinator Tests
-- Direct Private Media Journey Script
-- Relay Media Store (Go)
-- Two-User Exchange Tests
-- Live Direct Notification Tests
-- Group Message Listener Tests
-- Durable Notification Tone Lease
-- Group Inbox Drain Tests
-- Notification Open UI Smoke Tests
-- Orbit Arc Layout Geometry
-- Settings Preference Use Cases
-- Share Intent & Startup Routing
-- Relay Inbox Tests (Go)
-- Group Invite Payload Parsing
-- Posts Nearby & Privacy Settings
-- Migration Database Import
-- Migration Segmented Transfer
-- In-Memory Post Repository Fake
-- 1:1 Device Real Runner Script
-- LAN Dial & Holepunch (Go)
-- Migration Pairing & QR Tests
-- iOS Notification Adapter (Python)
-- Introduction Send Use Cases
-- Feed Init Performance Harness
-- Migration Group Manifest
-- Shared Text & Media Widgets
-- Media Attachment Repositories
-- Posts Wired Screen
-- Share Batch Delivery Coordinator
-- Chat Message Listener Tests
-- Fake P2P Service
-- Full-Screen Media Viewer
-- Performance Benchmark Tests
-- Avatar Widgets & Painters
-- Conversation Subscription Perf Harness
-- Picker & Composer Widgets
-- Letter Card & Bubble Widgets
-- Group Messages DB Tests
-- Relay Push Notifications (Go)
-- Group Config Payload
-- Received Media Egress Tests
-- Share Picker & Reaction Wiring
-- Feed BG Task Tests
-- Feed Wired Tests
-- Incoming Chat Message Tests
-- Handle Incoming Group Invite
-- Migration Transfer Runtime Tests
-- Media Download Use Case
-- WiFi Relay Fallback Script
-- Performance Benchmark Harnesses
-- Feed Cleared Repository Wiring
-- Group Messages DB Helpers
-- Private Media Journey Harness
-- Bridge Client & Profile Tests
-- Download Media Tests
-- Sibling Device Admission Tests
-- App Resume Group Recovery
-- Media Upload Use Cases
-- Group Member Model
-- Migration Cutover Coordinator
-- Media Attachment Repository Impl
-- Media Read Gating Test Fakes
-- Group Key Repair Service
-- Android Push Registration Script
-- Send Then Lock Tests
-- Picture-in-Picture Controllers
-- Orbit Edit & Dialog Widgets
-- Intro Accept Notification Script
-- P2P LAN Discovery Tests
-- Push Registration Coordinator
-- Go Bridge Command API (Go)
-- Delivery Retriers & Presence
-- QR Scanner & Listener Wiring
-- Composer & Text Input Widgets
-- Group Reaction Notification Projection
-- Group Creation Use Case Tests
-- Profile Upload Use Case Tests
-- Post Delivery Runner
-- Bridge Client Tests
-- Group List Wired Screen
-- Bridge Group Helpers
-- Contact Profile & Picker UI
-- Ambient Backgrounds & Gates
-- Accept Group Invite Use Case
-- Received Media Action Controller
-- PubSub Authorization Tests (Go)
-- Soak E2E Runner Script
-- Chat & Reaction Listeners
-- Delete Message Use Case
-- Theme Backgrounds & FAB Widgets
-- Media Attachments DB Helpers
-- Group Media Forward Picker
-- Migration Secure Storage Registry
-- Contact Repository & Pin Listeners
-- Group Recovery E2E Script
-- Migration Authority & Startup
-- Migration Bundle Transfer Tests
-- Shared Media Go-To-Message Tests
-- Post Repository Impl
-- Reaction & Avatar Use Cases
-- Post Repository Interface
-- Settings Wired Tests
-- Create Group Picker Wired
-- Picture-in-Picture Gateway
-- Node Media Streams (Go)
-- Android Transport Campaign Support
-- Notification Open Routing
-- Group Key Update Listeners
-- Group Media Forward Tests
-- P2P Transport State Tests
-- Pass Post Along Tests
-- Direct Shared Media Library
-- Bridge Node Lifecycle Tests (Go)
-- Android Voice Message Campaign
-- P2P Bridge Client
-- Media Storage Manager
-- Contact & Introduction Wiring
-- Handle Incoming Chat Message
-- Feed Projection Tests
-- Migration End-to-End Tests
-- Group Message Repository Impl
-- Compose Area & Recording Overlay
-- Intro Wiring Smoke Tests
-- Android Wake Token Campaign
-- Feed Screen
-- Group Shared Media Library
-- Contact Request & Peer Model
-- Lifecycle Bridge Fake
-- Settings Cards & Headers
-- Group Onboarding Smoke Tests
-- Relay Config & Limits (Go)
-- Migration Scale Benchmark
-- Migration Segment Crypto
-- Nav Bar & Identity Progress UI
-- Wake Token Use Cases
-- Transport Census Tests
-- Private Media Lifecycle Engine
-- Orbit & Conversation Loaders
-- Feed Item Models
-- Group Media Boundary Tests
-- Messages DB Helpers
-- Notification Open Chat Harness
-- Message Repository Impl
-- Direct Media Forward Picker
-- Android Keepalive Drop Campaign
-- Group Message Repository Interface
-- Send Chat No-BG-Task Tests
-- Send Voice No-BG-Task Tests
-- Migration & Intent Coordinators
-- Profile Update Listener Tests
-- Group Crypto Tests (Go)
-- Private Media Journey Criteria
-- Group Reaction Criteria Tests
-- Posts & Feed DB Helpers
-- Durable LAN P2P Fake
-- P2P Service Impl Tests
-- Background Readable Colors
-- Share Target Picker Screen
-- Group Key Rotation Use Case
-- Direct Media Forward Coordinator
-- Contact Request Listener Tests
-- Load Feed Use Case Tests
-- Crypto Interop & Migration (Go)
-- Android Voice E2E Debug
-- Relay Main & Rendezvous (Go)
-- Post Delivery Retry Listeners
-- Introduction Outbound Delivery
-- Background Push Fallback
-- Shared Test User Fakes
-- Group Pending Reaction Repository
-- Group Repository Impl
-- Migration Local Discovery Tests
-- Orbit Performance Harness
-- iOS Notification Payload Campaign
-- Group Reaction E2E Probe
-- Message Context Overlay
-- Send Group Invite Use Case
-- Group Media Forward Coordinator
-- In-Memory Group Message Repository
-- PiP Resume Store Tests
-- Notification Tap Routing Tests
-- Signed Group Transition Audit
-- Media Playback Adapters
-- Incoming Router Posts Tests
-- Migration Snapshot Exporter
-- Connectivity Restore Sims Script
-- Migration Transfer Manifest
-- Post Pass Media Tests
-- iOS Notification Campaign Script
-- Direct Private Media Viewer Controller
-- Android Payload E2E Tests
-- Pass Post Along Use Case
-- Group BG Task Wired Tests
-- Media Viewer Item Models
-- Group PubSub Network Fake
-- Reaction Repository DB Tests
-- Direct Media Forward Picker Tests
-- Accept & Reciprocate Tests
-- Relay Integration Tests (Go)
-- Relay Reaction Push (Go)
-- Transport Census CLI Script
-- Encrypted DB Opener
-- Media Owner Lane & Library
-- Direct Reaction Notification Projection
-- Intro Contact Request Recovery
-- Compose Post Sheet
-- Group Invite Listener & Decline
-- Group List Screen
-- Private Media Cleanup Race Tests
-- Compose & Member Row Tests
-- Settings Screen & Nav
-- Received Video PiP Proof Tests
-- Sims Runtime Protocol
-- Local WebSocket Server
-- Group Shared Media Batch Actions
-- Contact Picker Wired Tests
-- Push Relay Registration Proof
-- Load Orbit Data Tests
-- Slow Media Transfer Tests
-- Post Delivery Parallel Tests
-- Local Relay Harness Tests (Go)
-- Feed Performance Tests
-- Inbox Staging Repository Tests
-- Info Sheets & Date Formatting
-- On-Join Config Resync
-- Post Pins Use Cases
-- Post Pass Envelope
-- Offline Send UX Tests
-- Incoming Contact Message Tests
-- Chat Media Hydration Tests
-- Startup Router Tests
-- Settings Nearby Posts Tests
-- Group Invite Matrix Harness
-- P2P Service Contract & Fakes
-- Pending Message Retrier
-- Migration File Manifest Builder
-- Swipeable Row Widgets
-- Post Pin Use Cases
-- Timer & Backoff Tests
-- Group Reaction Sims Runner
-- Relay Group Inbox (Go)
-- Benchmark Node Helpers
-- Media Egress Path Tests
-- Retry Failed Group Messages
-- Handle Incoming Introduction
-- Introduction Listener & Acceptance
-- Address Visibility Tests (Go)
-- Group Repository Interfaces
-- Feed Load Use Cases
-- Group Leave & Key Repair
-- Group Repository Interface
-- Introduction Model
-- Post Comment Use Cases
-- Push Envelope Staging
-- Fake Group PubSub Network
-- Media Repository DB Tests
-- Durable Notification ID Registry
-- GIF & Route Target Tests
-- Posts Media DB Helpers
-- Direct Media Batch Builders
-- Shared Media Viewer Tests
-- Group Message Model
-- Group Private Media Platform Proof
-- 1:1 Reaction Closure Script
-- Group Multi-Device Runner Script
-- Wake Token Directionality E2E
-- Local Presence & Chat Model
-- Migration Checkpoint Store
-- P2P Service Interface
-- Android PiP System UI Control
-- Incoming Message Router
-- Migration Transfer Flow
-- Group Multi-Device Policy
-- Sibling Key Distribution Tests
-- Group Shared Media Controller
-- Group Invite Revocation Payload
-- Post Reaction Use Cases
-- Fake Message Repository
-- Fake Media Playback Adapter
-- Go Bridge Platform Client
-- Voice Recording & Audio Tests
-- Bridge Event Streams
-- Announcement Reply Policy Tests
-- QR Section & Polish Tests
-- Intro Accept Sims Runner
-- Peer Keepalive Use Case
-- Received Media Forward Builders
-- Post Reaction Send Use Cases
-- Contact Request Notification Tests
-- Group Key Repair DB Helpers
-- Bonsoir Discovery Service
-- Contact Request Listener
-- Retry Failed Messages Use Case
-- Media Auto-Download Policy
-- Notification Preview Resolver (iOS)
-- Profile Picture Download Tests
-- Keepalive Drop E2E Debug
-- Inbox Staging Repository
-- Private Media Protection Coordinator
-- Migration Pending Work Builder
-- Group Media Forward Policy
-- Group Missed Message Telemetry
-- Group Invite Decline Ack
-- PiP Policy Tests
-- Media Viewer Widget Tests
-- Transport Metrics Debug
-- Conversation Message Model
-- Conversation Shared Media Tests
-- Notification Tap Benchmark Harness
-- Post Pass DB Helpers
-- Media File Manager
-- Migration Cutover Record
-- Group Invite Auth
-- Load Conversation Tests
-- Push Token Registration Tests
-- X25519 Crypto (Go)
-- Relay Presence Store (Go)
-- Testpeer CLI Commands (Go)
-- Private Media Eligibility Tests
-- App Paused Lifecycle
-- Migration Secure Storage Staging
-- Media Storage Models
-- Group Pending Broadcast Runner
-- Load Introductions Use Case
-- External Share Media Tests
-- iOS Push Route Decoding (iOS)
-- LAN Media Transfer (Go)
-- Group Publish Benchmark Script
-- App State Guard Tests
-- Android Notification Campaign Support
-- Group Private Media Viewer Controller
-- Orbit Friend & Preview Models
-- Media Size Policy Tests
-- FCM Provider Probe Scripts
-- Fake Local P2P Service
-- Sending-to-Failed UX Tests
-- In-Memory Message Repository
-- Send Introduction Tests
-- Recent Remote Notification Gate
-- Share & Forward Intent Models
-- Migration Database Manifest
-- Direct Private Media Viewer
-- Post Follow-On Outbox
-- ACK Drop Resilience Tests
-- Partial Drain Resilience Tests
-- Stale Key Recovery Tests
-- Private Media Viewer Tests
-- Testpeer Command Tests (Go)
-- Relay Session Tests (Go)
-- Libp2p Contract Tests (Go)
-- Relay Group Inbox Tests (Go)
-- Swipe Back Navigation Tests
-- iOS Relay Remote Helper (Python)
-- Keepalive Evidence Support
-- Local Discovery Models
-- Local Media Server
-- Group Private Media Viewer Tests
-- Media Attachment Model
-- Nearby Posts Refresh Tests
-- Post Model
-- PiP Resume & Avatar Tests
-- P2P Fault Injection Tests
-- Fake Just Audio
-- Group Model
-- Debug Test Hooks Hub
-- Transport Stream Stubs (Go)
-- Secure Key Storage
-- Group Private Media Lifecycle
-- Group Event Log DB Helpers
-- Migration Storage Preflight
-- Group Private Media Policy
-- Media Grid Cell Widget
-- Test Gates Runner Script
-- Half-Open Resilience Tests
-- Group Multi-Party Sims Runner
-- Feed Swipe Card
-- Audio Player Widget
-- Just Audio Regression Tests
-- Relay Rendezvous Failover (Go)
-- Migration Media Durability Tests
-- Message Repository Contracts
-- iOS Relay Fixture Driver (Python)
-- Group Reaction Device Runner
-- Upload Media Use Case
-- Feed Store Projection
-- Create Group Picker Screen
-- Avatar Storage & Media Tests
-- Incoming Router Tests
-- Direct Library Test Stubs
-- Message Payload Models
-- Group Pending Membership Repository
-- Key Distribution Service Tests
-- Keyless Rotation Converge Proof
-- Upload Wake Lock Tests
-- Private Media Policy
-- Flow Event Emitter
-- Migration Size Estimator
-- Send Group Reaction Use Case
-- Attach Post Media Use Case
-- Android PiP Validators (Python)
-- Incoming Router Profile Tests
-- Contact Request Replay Tests
-- Contact Request & QR Payload
-- iOS Receiver Bootstrap (Python)
-- Routing Smoke Runner Script
-- Device Campaign Criteria Tests
-- Feed Projection Models
-- Accept Introduction Use Case
-- Post Create Envelope
-- Full-Screen Image Viewer
-- Profile Picture Flow Tests
-- Router Posts Engagement Tests
-- Router Posts Pass Tests
-- Router Posts Pins Tests
-- Invite Matrix Sim Runner
-- Voice Message Evidence Schema
-- Introduction Outbox DB Helpers
-- Migration Group Manifest Builder
-- Migration Pending Work Manifest
-- Message Threading Utils
-- Group Media Delete Tests
-- Remove Group Reaction Use Case
-- Cosmic Background Widget
-- Handle Incoming Passed Post
-- Post Engagement Follow-On
-- Post Follow-On Delivery
-- Direct Media Library Controller
-- Group Reaction Replay Outbox
-- iOS Sender Projection Fixture
-- Identity & Reaction Repositories
-- Intro Notification Routing
-- Ring Avatar Generator
-- Presence Cache Tests
-- iOS PiP Fail-Closed Tests
-- Fake Audio Recorder Service
-- Identity Repository Impl Tests
-- Timeout Accuracy Benchmark Script
-- Group Media Integrity Policy
-- Show Notification Use Case
-- Nav Bar Theme
-- Group Received Media Actions
-- Post Pin Delivery Support
-- Post Repost Engagement Support
-- Post Media Attachment Model
-- Host Test Gates Script
-- Fake Bridge
-- P2P Health Drain Tests
-- Android Performance Evidence Schema
-- Audio Recorder Service
-- Group History Gap Repair
-- Inbox Proof Kick Tests
-- Received Video PiP Fixture
-- Group Media Deletion Journal
-- Notification Route Dispatch
-- Message Repository Interface
-- Orbit & Feed Data Loading
-- Group Welcome Key Packages
-- Post Sending Use Case
-- Post Comments Sheet UI
-- iOS Notification Tap Smoke Script
-- Media Attachment Repository Tests
-- Group Pending Key Distribution Repository
-- Android Notification E2E Protocol
-- iOS APNs Notification Open Bridge
-- Pending Group Invite Persistence
-- Introduction Pass Use Case
-- Staged Push Envelope Ingestion
-- Group Media Forward Authorization Tests
-- In-Memory Introduction Repository Fake
-- Android Performance Campaign Harness
-- iOS Payload Producer (Go)
-- Group Media Fanout Tests
-- Posts DB Schema Capabilities
-- Direct Private Media Lifecycle
-- Private Media Lifecycle Tests
-- Received Media Egress Proof Tests
-- Group Multi-Party Runtime Config
-- Group Routing Smoke Criteria
-- Identity Restore & Key Exchange Retry
-- Incoming Message Deletion Handling
-- Introduction Outbox Delivery Model
-- Post Pin Envelopes
-- Reliability Simulation Discovery Script
-- Bridge Group Topics (Go)
-- Xctestrun Relocator Support Tests
-- Received Media Egress Gateway
-- Relay Failover Integration Tests (Go)
-- Conversation Media Library Tests
-- Wake Token Directionality E2E
-- Invite Reliability Multi-Device Runner
-- iOS Sender Projection Fixture
-- Migration QR Payload Use Case
-- Contact Request Use Cases
-- Inbox Custody Verification
-- Group History Gap Repair Model
-- Pending Group Invite Model
-- Introduction Payload Model
-- Avatar & Image Processing
-- Nearby Post Eligibility Service
-- Contact Presence Snapshot Repository
-- Reliability Simulations Runner Script
-- Encrypted Media Test Bridge Fake
-- Notification Service Extension (iOS)
-- Peer Session Management (Go)
-- App Group Push Stores (iOS)
-- Group Invite Delivery Attempt Repository
-- 1:1 Reaction Notification Device Runner
-- Sibling Device Convergence Runner
-- Benchmark Suite Runner
-- Foreground Group Push Smoke Runner
-- Notification Open UI Smoke Runner
-- Introduction Repository Implementation
-- Relay Presence Set Use Case
-- Migration File Manifest Model
-- Contact Domain Model
-- Feed Quote & Color Widgets
-- Introduction Repository Interface
-- QR Scanner Screen
-- Sims Tooling Tests
-- Fake Contact Repository
-- Push Ingest & Reaction Payload Tests
-- Conversation Wiring Coalesce Tests
-- Media Delivery UI Smoke Runner
-- Posts Repost Delivery Migration
-- Keepalive Drop E2E Contract
-- In-App QR Smoke Test Runner
-- Local Discovery Service Fakes
-- Private Media Action Eligibility
-- Group Received Media Actions Tests
-- Notification Open Dedupe Gate
-- Notification Route Targets
-- Private Media Expiry Scheduler
-- Feed Reaction Store
-- Group Membership Timeline Messages
-- Group Topic Rejoin Use Case
-- Introduction UI Copy
-- Incoming Post Presence Handling
-- Media Video Controls Widget
-- P2P Inbox Ack Ordering Tests
-- Sims Verification Tests
-- QR Display Screen
-- Claude Host Tool Bridge Script
-- Contact Request Repository
-- Group Sync Receipts DB Helpers
-- Node Event Dispatcher (Go)
-- Media Message Journey E2E Runner
-- Notification Open During Chat Runner
-- Android Notification E2E Harness
-- LAN Local Media Sender
-- Received Media Egress Models
-- Ring Avatar Spec
-- Group Creation Use Case
-- Group Pending Key Repair Model
-- Push Token Registration Use Case
-- Push Token Store
-- Bonsoir Discovery Contract Tests
-- Add Contact Use Case Tests
-- Inbox Custody Verify Tests
-- Post Follow-On Delivery Tests
-- In-Memory Group Invite Fake
-- Sims Device Binding Tests
-- Bonsoir Native Resolver Tests
-- P2P Node State Model
-- Flutter Local Notification Service
-- Real Device Notification Tap Runner
-- Integration Test Signal Files
-- Contacts DB Helpers
-- Group Pending Membership DB Helpers
-- Local P2P WebSocket Service
-- Reaction Change Models & Fakes
-- Sibling Device Admission Use Case
-- Group Offline Replay Envelope Tests
-- Group Join Use Case
-- Group Notification Route Resolution
-- Chaos P2P Network Fake
-- iOS Notification Provider Adapter Tests
-- Post Pin Test Fixtures
-- Android Push Registration Contract Tests
-- Testpeer Event Listener (Go)
-- Fake P2P Network Harness
-- Node Feature Flags (Go)
-- Group Message Repositories
-- Android Connectivity Restore Campaign
-- Voice Recorder Smoke Tests
-- Media Attachment Lifecycle Lock
-- App Root Notification Open Tests
-- Share Intent Service
-- Migration Export Authorization
-- Group Feed Media Verification
-- Group Media Batch Forward Policy
-- Post Follow-On Retry
-- Received Wake Token Store
-- Fake Notification Service
-- iOS Notification Relay Fixture Tests
-- Fake Media Attachment Repository
-- Direct Text Gate Authorization Tests
-- Media Thumbnail Widget
-- 1:1 Reaction Notification Proof Tests
-- Reactions DB Helpers
-- Mic Permission Gateway
-- Feed Theme Tokens
-- Migration Entry Streaming
-- Contact Request Message Handling
-- Group Upload Retry Use Case
-- Group Invite Revocation Use Case
-- Group Pending Key Distribution Model
-- Group Reaction Replay Outbox
-- Push Preview Telemetry Gate
-- Push Envelope Staging Tests
-- Post Presence Handling Tests
-- Benchmark Harness Tests
-- Contact Repository Implementation
-- Local Media Server Tests
-- Identity Progress Performance Tests
-- Media Stable ID Smoke Runner
-- Inbox Staging DB Helpers
-- P2P Inbound Transport Tests
-- Group Media MIME Policy
-- Media Storage Usage Settings
-- Recent Background Notification Gate
-- Migration QR Payload Model
-- Contact Request Model
-- Feed Letter Models
-- Trusted Group System Events
-- Inbox Custody Use Case Tests
-- Archive Contact Tests
-- Unarchive Contact Tests
-- Unblock Contact Tests
-- Post Presence Listener Tests
-- Notification Cancellation Wiring Tests
-- Fake Contact Request Repository
-- Group Media Action Policy Tests
-- P2P Node Use Cases
-- Connection Status Indicator UI
-- Bridge Group Key Rotation (Go)
-- Node Config & Timeouts (Go)
-- Media Delete Telemetry
-- Video Thumbnail Cache
-- Send Presence Emphasis Tests
-- Reaction Payload Model
-- Group Invite Decline Use Case
-- Group Sender Device Binding
-- Group Key Repair Repositories
-- Pending Group Invite Repository
-- Nearby Posts & Surface Hydration
-- Group Gap Repair DB Helpers
-- PubSub Unsubscribe Tests (Go)
-- Multi-Party Runtime Channel Probe
-- Notification Preview Resolver (iOS)
-- Group Pending Reactions DB Helpers
-- Identity Secrets DB Migration
-- Inbox Store Outcomes
-- Feed Color Palette
-- Migration Authority State
-- Local Media Linking Use Case
-- Group Key Repair Responder
-- Group Invite Policy
-- Group Reaction Payload
-- Post Recipient Delivery Model
-- Posts Privacy Settings
-- Readability Widget Test Helpers
-- Identity Generation (Go)
-- Personal Rendezvous Integration Tests (Go)
-- Group Thread Previews
-- Reaction Notification Proof Support Tests
-- Android PiP UI Control Tests
-- Group Media Size Policy
-- Pending Composer Media Model
-- Migration Group Manifest Validation
-- Contact Repository Interface
-- Message Reaction Model
-- Group Key Repair Backoff Timer
-- Group Invite Delivery Attempt Model
-- Group Pending Membership Message Model
-- Group Pending Reaction Model
-- Post Pass Model
-- Post Reaction Envelope
-- Media Library Batch Forward Tests
-- Announcement Private Reply Tests
-- Nearby Post Sending Tests
-- Seeded Group Reproduction Log Fake
-- Sims Proof Binding Tests
-- Bridge Callback Initialization (Go)
-- Testpeer Envelope Handling (Go)
-- Relay Business Metrics (Go)
-- App Color Theme
-- Message Deletion Listener
-- Reaction Repository Interface
-- Group Inbox Store Retry
-- Group Backlog Retention Notices
-- Identity Domain Model
-- P2P Chat Message Model
-- macOS Clipboard Bridge Script
-- Rendezvous Discovery (Go)
-- Relay Push Token Store (Go)
-- Android PiP Selection Scripts
-- Android Campaign Evidence Validation
-- Pending Introduction Response Model
-- Group Members DB Helpers
-- Secret Columns DB Migration
-- Wake Token E2E Protocol
-- LAN Address Classifier
-- Media Picker & Fakes
-- Message Repository Tests
-- Notification Channel Constants
-- Group Membership Watermarks
-- Group Config Resync Payload
-- Group Message Receipt Model
-- Post Comment Model
-- Post Media Upload Recovery
-- Post Pin State Model
-- QR Payload Model
-- Media Download Preferences
-- Media Display & Path Helpers
-- Sims Device Resolver Tests
-- Localization Integrity Tests
-- Audio Player Widget Tests
-- Invite Delivery Attempt Repository Impl
-- Android PiP Selection Result
-- Introductions DB Helpers
-- Pending Group Broadcast DB Helpers
-- Native mDNS Resolver
-- Chat Console Logger
-- Migration Pending Work Manifests
-- Private Media Lifecycle Repository
-- Group Recovery Gate
-- Text Sanitization & Sender Names
-- Group Membership Limit Policy
-- Group Key Repair Repository Interface
-- Post Audience Model
-- Post Follow-On Outbox Delivery
-- QR Payload Parsing Use Case
-- Android PiP Validation Scripts
-- Delivery Receipt Tests
-- DB Write Transaction Guard
-- Android Voice Message Campaign Tests
-- Private Media Journey Criteria Tests
-- Android Performance Budget
-- Group Keys DB Helpers
-- Group Sync Receipts Migration
-- Migration Import Preconditions
-- Group Pending Broadcast Model
-- Welcome Key Package Tombstones
-- Pending Sibling Device Model
-- Post Presence Listener
-- Post Presence Publishing
-- Post Comment Envelope
-- Share Target Selection Model
-- Group Convergence & Mute Tests
-- Video PiP Proof Script
-- Android PiP Ownership Validation Script
-- Sims Device Preparer Tests
-- Migration DB Schema Inventory Tests
-- Push Message Test Fixtures
-- Initial Identity Tables Migration
-- Relay Wake Token Store (Go)
-- Group Key Repair Repository Impl
-- Local WS Server Tests
-- Inbox Staging Repository
-- Android App Package Resolver
-- Post Follow-On Outbox DB Helpers
-- Group Gap Repairs Migration
-- Pending Membership Messages Migration
-- Group Media Deletion Journal Migration
-- Upload Wake Lock
-- LAN Inbound Ack Handling
-- iOS Remote Gate Wiring
-- Remote Notification Identity
-- Text Sanitizer Utility
-- Message Run Grouping
-- Member Identity Safety Numbers
-- Feed Thread Grouping Tests
-- Sims Build Cache Tests
-- Sims Executor Tests
-- Media Egress Receiver (Android)
-- App Shell Theme Tests
-- Sims Dispatcher Harness
-- Intro Review Seen Repository
-- Groups DB Helpers
-- Pending Key Repairs Migration
-- Media Upload In-Flight Tracker
-- Group Private Media Availability
-- Expired Invite Sweep Use Case
-- Group Key Info Model
-- Posts Feed Loading Use Case
-- Post Comment Reaction Model
-- Post Origin Model
-- Repost Visual State
-- Fake mDNS Resolver
-- Wake Token Binary Freshness Script
-- Push Decrypt Simulator Smoke Script
-- Gomobile Bindings Verification Script
-- Media Byte Fixtures
-- Push Diagnostics Logger
-- File Encryption (Go)
-- Invite Delivery Attempts DB Helpers
-- Reaction Replay Outbox DB Helpers
-- Media Library DB Helpers
-- Messages Table Migration
-- Pending Key Distributions Migration
-- Pending Reactions Migration
-- Pending Broadcasts Migration
-- Startup Timing Utility
-- Feed Session Reply Tracker
-- Group Shared Media Navigation
-- Group Invite Revocation Model
-- Group Message Payload
-- Group Message Ordering
-- Identity Generation Use Case
-- Send Message Result Model
-- Post Pending Child Events
-- Post Reaction Model
-- Claude Docker Runner Script
-- Contact Request Model Tests
-- Performance Test Harnesses
-- Fake Path Provider Stubs
-- Stuck Sending Query Tests
-- Message Envelope Parsing (Go)
-- Contact Requests DB Helpers
-- Group Rejoin State DB Helpers
-- Sibling Devices DB Helpers
-- Group Messages Tables Migration
-- Invite Consumptions Migration
-- Key Package Tombstones Migration
-- Invite Delivery Attempts Migration
-- URL Text Parser
-- Migration Import Cleanup
-- Audio Recording Model
-- Feed Route Change Signals
-- Group Invite Consumption Model
-- Personal Rendezvous Refresh (Go)
-- iOS Receiver Bootstrap Tests
-- Group Local Deletions DB Helpers
-- Intro Review Seen DB Helpers
-- Read-At Column Migration
-- Groups Tables Migration
-- Local Deletions Migration
-- Key Rotation Drafts Migration
-- Pending Sibling Devices Migration
-- Android Voice Message E2E Protocol
-- iOS Receiver Bootstrap Contract
-- Disk Space Channel
-- Audio Amplitude Buffer
-- App Group Path Channel (iOS)
-- Notification Service Interface
-- Device Announce Marker
-- Group Key Update Signatures
-- Group Inbox Cursor Model
-- Orbit Geometry Preferences
-- Post Media Draft Model
-- Group Missed Message Telemetry Tests
-- Host Test Gate Contract Tests
-- Sims Checkpoint Contract Tests
-- Sims Test Gate Contract Tests
-- Voice Message Sims Runner
-- Testpeer Inbox Store Commands (Go)
-- Relay Transport Smoke Tests (Go)
-- Group Reaction Artifact Validation
-- Group Rejoin State DB Tests
-- iOS Notification Payload Sims Runner
-- Pending Group Invites DB Helpers
-- Post Location Presence DB Helpers
-- Pending Child Events DB Helpers
-- Post Pin Dismissals DB Helpers
-- Introductions Table Migration
-- Message Reliability Columns Migration
-- Messages Deleted State Migration
-- Pending Group Invites Migration
-- Removed Member Snapshots Migration
-- Member Device Snapshots Migration
-- Connectivity Restore E2E Contract
-- Private Media Transfer Registry
-- Media File Path Convention
-- Secure Storage Key References
-- Pending Sibling Device Repository
-- Push Release Gate Script
-- Gomobile Binding Inputs Script
-- Simulation Discovery Contract Tests
-- Push Tone Reservation (iOS)
-- Bridge Entrypoint Contract Tests (Go)
-- Messages Index Migration
-- Video Process Result Model
-- App Shell Tab Enum
-- Feed Session Reply Model
-- Announcement Private Reply Model
-- iOS Bootstrap Contract Tests
-- Multi-Party Probe Script
-- Multi-Party Sims Adapter Tests
-- Group Reaction Sims Adapter Tests
-- Intro Accept Sims Adapter Tests
-- Sims Build Count Contract Tests
-- Sims iOS Bundle Contract Tests
-- Sims Simultaneous Contract Tests
-- Sims Verdict Contract Tests
-- Testpeer Offline Replay (Go)
-- Gosigar Stub (Go)
-- Posts Phase 1 Smoke Script
-- Posts Phase 2 Smoke Script
-- Posts Phase 3 Smoke Script
-- Posts Phase 4 Smoke Script
-- Posts Phase 5 Smoke Script
-- Notification Preview Errors (iOS)
-- Invite Revocations DB Helpers
-- Key Package Tombstones DB Helpers
-- Post Feed State DB Helpers
-- E2E Test Mode Flags
-- Delivery Receipt Use Case
-- Group Role Authorization
-- Unseen Review Count
-- Post Route Target Model
-- Private Reply Request Tests
-- Android Push Fixture Script
-- Transport Census Script
-- Go Binding Staleness Tests
-- Performance Runner Contract Tests
-- Group Tier Contract Tests
-- Sims Fingerprint Contract Tests
-- Sims Skill Adapter Tests
-- Voice Recorder Runner Contract Tests
-- Bonsoir Discovery Fakes
-- Keychain Push Key Reader (iOS)
-- Retry Constants
-- Waveform Downsampling
-- Message Window Cap
-- Group Backlog Retention Policy
-- Group Key Retention Policy
-- Bonsoir Peer Eviction Tests
-- Simulator Push Fixture Script
-- Group Flake Budget Script
-- Keepalive Runner Contract Tests
-- Notification Tap Adapter Tests
-- Docker Update Contract Tests
-- Sims Continuity Contract Tests
-- Sims Mutation Contract Tests
-- Sims iOS Cache Contract Tests
-- Wake Token Runner Contract Tests
-- Bonsoir Broadcast Fake
-- Theme Context Extensions
-- Android App State Guard
-- Startup Config
-- Peer Ping (Go)
-- Node Test Hooks (Go)
-- Amplitude Buffer Tests
-- Waveform Downsampling Tests
-- Outbound Envelope Policy Tests
-- Message Window Cap Tests
-- Go Module Declarations
-- Android PiP Proof Build Script
-- Android Go Bindings Script
-- iOS Go Bindings Script
-- macOS Go Bindings Script
-- Xcode Pods Setup Script
-- C07 Scenario Rerun Script
-- Multi-Party Rerun Script
-- New Rows Campaign Script
-- Connectivity Restore Adapter Tests
-- Relay Go Toolchain Tests
-- Sims Causal Failure Tests
-- Sims Inventory Contract Tests
-- Sims Major Plan Contract Tests
-- Voice Message Runner Tests
-- Service Resolver Test Fakes
-- Deprecated Group Join Bridge
-- Bridge Event Callback (Go)
-- Bridge Noop Callback (Go)
-- Bridge Test Frame Reader (Go)
-- Bridge Test Frame Writer (Go)
-- Testpeer Param Parsing (Go)
-- Group Validation Feedback (Go)
-- Relay Token Capabilities (Go)
-- Forward Rotate Feature Flag
-- Multi-Device Sync Flag
-- Join Metadata Resync Flag
-- Media Size Constants
-- Network Address Constants
-- Database Version Constant
-- Early Reserve Dispatch (Go)
-- iOS App Store Build Script
-- Group Send Flow Capture Script
-- PiP Engine Detach Build Script
-- Android Renderer Manifest Script
-- Flutter Analyze Baseline Script
-- Egress Receiver Install Script
-- iOS Device Console Script
-- iOS Assets Cache Reset Script
-- Detached Sims Runner Script
-- Intro Accept Sims Shim Fixture
-- Group Reaction Device Contract Tests
-- Intro Accept Window Contract Tests
-- DateTime Type Hub
-- Duration Type Hub
-- Error Type Hub
-- Exception Type Hub
-- GroupKeyInfo Symbol Node
-- GroupMember Symbol Node
-- GroupType Symbol Node
-- Identity Symbol Node
-- Message Symbol Node
-- NodeState Symbol Node
-- Stream Type Hub
-- Subscription Type Hub
-- Timer Type Hub
+- package:flutter_test/flutter_test.dart
+- package:flutter/material.dart
+- package:flutter_app/features/conversation/domain/models/media_attachment.dart
+- group_multi_party_device_criteria_test.dart
+- package:flutter_app/features/contacts/domain/models/contact_model.dart
+- group_conversation_wired.dart
+- conversation_wired.dart
+- share_target_picker_wired_test.dart
+- StatelessWidget
+- p2p_service_impl.dart
+- orbit_screen.dart
+- package:flutter_app/features/identity/domain/models/identity_model.dart
+- self_removed_group_shell_db_helpers.dart
+- package:sqflite_sqlcipher/sqflite.dart
+- orbit_wired.dart
+- group_invite_listener_test.dart
+- capture_group_reaction_notification_device.dart
+- soak_e2e_test.dart
+- group_multi_device_real_harness.dart
+- group_message_listener.dart
+- feed_wired.dart
+- ../shared/fakes/fake_p2p_network.dart
+- group_messaging_smoke_test.dart
+- NewNode
+- production_application_bootstrap.dart
+- conversation_screen.dart
+- group_conversation_wired_test.dart
+- group_media_ios_background_recovery.dart
+- contact_request_listener_test.dart
+- invite_reliability_runner_contract.dart
+- package:flutter_app/core/utils/flow_event_emitter.dart
+- group_conversation_wired_bg_task_test.dart
+- conversation_controller_notification_budget_test.dart
+- pubsub.go
+- background_message_handler.dart
+- Database
+- generateEd25519KeyPair
+- capture_1to1_reaction_head_provenance.dart
+- capture_android_background_crypto_preflight.dart
+- New
+- orbital_visualization.dart
+- conversation_wired_test.dart
+- FakeP2PService
+- post_pass_engagement_baseline_integration_test.dart
+- account_migration_journey_wired.dart
+- first_time_experience_wired.dart
+- contact_profile_screen.dart
+- package:flutter_app/features/posts/domain/models/post_model.dart
+- android_app_state_guard.dart
+- package:flutter_app/features/settings/domain/models/background_preference.dart
+- media_attachments_db_helpers.dart
+- send_group_message_use_case.dart
+- account_migration_bundle_transfer.dart
+- send_chat_message_use_case_test.dart
+- group_resume_recovery_test.dart
+- retry_incomplete_group_uploads_use_case_test.dart
+- inner_circle_interactive_surface.dart
+- media_picture_in_picture_resume_contract_test.dart
+- State
+- group_reaction_notification_device_criteria.dart
+- orbit_wired_test.dart
+- group_admin_metadata_convergence_test.dart
+- account_migration_local_transfer_runtime.dart
+- package:flutter_app/core/database/production_migration_registry.dart
+- send_chat_message_use_case.dart
+- ios_notification_payload_xcui_driver.dart
+- android_group_media_reliability_controller.dart
+- application_root.dart
+- transport_census_harness.dart
+- run_transport_e2e.dart
+- feed_screen.dart
+- group_conversation_screen.dart
+- InMemoryGroupMessageRepository
+- drain_group_offline_inbox_use_case.dart
+- group_conversation_screen_test.dart
+- startLocalNodeForMultiRelayTest
+- run_group_multi_party_device_real.dart
+- intro_e2e_runner.dart
+- recover_intro_contact_request_use_case.dart
+- cosmic_background_mirrored.dart
+- group_offline_replay_envelope.dart
+- group_info_wired_test.dart
+- android_background_crypto_preflight_app.dart
+- group_message_listener_test.dart
+- post_create_encrypted_media_integration_test.dart
+- pending_message_retrier.dart
+- startup_router.dart
+- conversation_wired_performance_harness.dart
+- orbit_sculpt_summon_wired_test.dart
+- create_group_picker_wired_test.dart
+- package:flutter_app/features/conversation/domain/models/conversation_message.dart
+- account_migration_local_transfer_runtime_test.dart
+- account_migration_local_transfer_timeout_simulator_test.dart
+- conversation_wired_bg_task_test.dart
+- group_membership_smoke_test.dart
+- IdentityRepository
+- post_pin_retry_integration_test.dart
+- handle_incoming_group_message_use_case.dart
+- letter_card.dart
+- migration_file_manifest_builder.dart
+- run_intro_accept_notification_android.dart
+- handle_incoming_group_message_use_case_test.dart
+- first_time_experience_screen.dart
+- direct_private_media_device_local_journey_harness.dart
+- dart:io
+- bridge_test.go
+- package:flutter_app/features/conversation/domain/repositories/message_repository.dart
+- handle_incoming_group_invite_use_case.dart
+- production_migration_registry.dart
+- run_notification_sound_smoke.dart
+- media_message_journey_e2e_test.dart
+- sims_verification_test.dart
+- group_media_ios_fixture_driver.dart
+- notification_android_payload_campaign.dart
+- run_invite_reliability_multi_device.dart
+- retry_failed_messages_use_case.dart
+- delete_contact_use_case_test.dart
+- media_stable_id_smoke_test.dart
+- group_repository_impl.dart
+- post_reaction_listener.dart
+- group_info_wired.dart
+- push_decrypt_preview.dart
+- full_screen_typed_media_viewer.dart
+- run_1to1_device_real.dart
+- drain_group_offline_inbox_use_case_test.dart
+- dart:typed_data
+- debug_e2e_composition_root.dart
+- account_migration_full_transfer_test.dart
+- run_direct_private_media_device_local_journey.dart
+- media_attachment_repository_impl.dart
+- announcement_private_media_platform_proof_test.dart
+- notification_open_ui_smoke_test.dart
+- setupTestEnv
+- inbox.go
+- durable_notification_tone_lease.dart
+- post_engagement_follow_on_support.dart
+- two_user_message_exchange_test.dart
+- Node
+- send_post_comment_use_case.dart
+- orbit_arc_layout.dart
+- share_batch_delivery_coordinator.dart
+- download_media_use_case_test.dart
+- class
+- inbox_test.go
+- messages_db_helpers.dart
+- ContactRepository
+- group_invite_payload.dart
+- group_media_reliability_criteria.dart
+- download_media_use_case.dart
+- group_media_reliability_e2e.dart
+- in_memory_post_repository.dart
+- dart:ui
+- ios_notification_provider_adapter.py
+- group_private_media_stale_library_boundary_test.dart
+- group_info_screen.dart
+- self_removed_group_shell_db_helpers_test.dart
+- voluntary_leave_prework_degradation_test.dart
+- group_messages_db_helpers.dart
+- group_media_batch_forward_delivery_coordinator.dart
+- settings_wired.dart
+- InMemoryContactRepository
+- media_attachment_repository.dart
+- feed_wired_init_performance_harness.dart
+- migration_group_manifest.dart
+- group_message_repository_impl_test.dart
+- conversation_shared_media_library_test.dart
+- conversation_wired_subscription_performance_harness.dart
+- pending_post_media_upload_retrier.dart
+- posts_wired.dart
+- chat_message_listener_test.dart
+- fake_p2p_service.dart
+- send_group_message_use_case_test.dart
+- handle_incoming_passed_post_use_case.dart
+- group_member_row.dart
+- package:flutter_app/core/local_discovery/local_discovery_service.dart
+- private_media_lifecycle_engine.dart
+- package:flutter_app/core/bridge/bridge_group_helpers.dart
+- group_media_ios_background_e2e.dart
+- direct_private_media_viewer_controller.dart
+- group_config_payload.dart
+- group_pending_key_repair_service.dart
+- linkable_text.dart
+- feed_wired_bg_task_test.dart
+- assertOk
+- conversation_received_media_actions_test.dart
+- package:flutter_app/core/services/p2p_service_impl.dart
+- group_reaction_notification_projection.dart
+- package:flutter_app/features/home/presentation/widgets/user_avatar.dart
+- group_repository_impl_test.dart
+- account_migration_bundle_transfer_test.dart
+- SecureKeyStore
+- run_wifi_relay_fallback_smoke.dart
+- handle_incoming_chat_message_use_case_test.dart
+- newTestRedisClient
+- package:flutter_app/core/notifications/recent_remote_notification_gate.dart
+- group_repository.dart
+- create_group_picker_wired.dart
+- dart:math
+- migration_database_import_staging.dart
+- group_member.dart
+- group_exit_intent_runner_test.dart
+- delete_message_use_case.dart
+- accept_pending_group_invite_use_case.dart
+- bridge.go
+- capture_android_push_relay_registration.dart
+- android_app_file_broker.dart
+- package:flutter_app/core/secure_storage/secure_key_store.dart
+- send_group_reaction_use_case.dart
+- media_picture_in_picture_controller.dart
+- group_sibling_device_admission_test.dart
+- share_target_picker_wired.dart
+- Bridge
+- group_media_ios_background_recovery_test.dart
+- introduction_listener.dart
+- send_group_invite_use_case.dart
+- dart:convert
+- group_message_repository_impl.dart
+- send_then_lock_delivery_test.dart
+- message_repository_impl.dart
+- group_exit_intents_db_helpers.dart
+- migration_secure_storage_registry.dart
+- package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart
+- upload_profile_picture_use_case_test.dart
+- post_delivery_runner.dart
+- group_media_reliability_runner_contract.dart
+- local_ws_durable_ack_integration_test.dart
+- package:flutter_app/core/notifications/notification_route_target.dart
+- durable_group_exit_surface_harness.dart
+- newNodeHolePunchTracer
+- android_keepalive_drop_campaign.dart
+- transport_e2e_test.dart
+- feed_wired_test.dart
+- in_memory_group_repository.dart
+- package:integration_test/integration_test.dart
+- run_soak_e2e.dart
+- group_message_repository.dart
+- benchmark_background_resume_harness.dart
+- account_migration_scale_benchmark_test.dart
+- run_connectivity_restore_media_outbox_sims.dart
+- group_exit_intent_runner.dart
+- pass_post_along_use_case.dart
+- android_notification_payload_e2e_test.dart
+- group_media_batch_forward_picker_wired.dart
+- group_media_info_sheet.dart
+- bridge_group_helpers.dart
+- media_test.go
+- run_group_recovery_e2e.dart
+- group_exit_intent_coordinator_test.dart
+- group_invite_listener.dart
+- group_shared_media_go_to_message_test.dart
+- post_repository_impl.dart
+- settings_wired_test.dart
+- direct_private_media_viewer.dart
+- post_repository.dart
+- handle_incoming_message_use_case.dart
+- group_media_ios_background_recovery_evidence.dart
+- android_transport_campaign.dart
+- wifi_relay_fallback_smoke_test.dart
+- app_root_notification_open.dart
+- broadcast_voluntary_leave_use_case.dart
+- group_media_batch_forward.dart
+- send_post_reaction_use_case.dart
+- pass_post_along_use_case_test.dart
+- direct_shared_media_library_screen.dart
+- durable_conversation_notification_id_registry.dart
+- group_test_user.dart
+- newControlPlaneStores
+- android_voice_message_device_campaign.dart
+- p2p_bridge_client.dart
+- private_media_committed_pending_cleanup_recovery_test.dart
+- handle_incoming_chat_message_use_case.dart
+- account_migration_end_to_end_test.dart
+- android_group_media_reliability_controller_test.dart
+- send_contact_request_use_case_test.dart
+- group_message_listener_decomposition_contract_test.dart
+- intro_wiring_smoke_test.dart
+- reaction_notification_pipeline_test.dart
+- background_message_handler_test.dart
+- android_wake_token_directionality_campaign.dart
+- group_reaction_notification_device_criteria_test.dart
+- direct_private_media_device_local_journey_criteria.dart
+- post_pass_envelope.dart
+- lifecycle_bridge.dart
+- retry_incomplete_group_downloads_use_case.dart
+- p2p_service_impl_composition_contract_test.dart
+- migration_segment_crypto.dart
+- p2p_service_impl_lan_media_test.dart
+- create_group_with_members_use_case.dart
+- feed_projection_test.dart
+- p2p_service_transport_census_test.dart
+- group_invite_status_matrix_harness.dart
+- group_received_media_actions_test.dart
+- send_introduction_use_case.dart
+- ValueChanged
+- share_target_picker_screen.dart
+- feed_item.dart
+- group_shared_media_library_screen.dart
+- orbit_performance_harness.dart
+- group_private_media_viewer_test.dart
+- package:flutter_app/features/posts/domain/repositories/post_repository.dart
+- send_post_use_case.dart
+- received_video_picture_in_picture_proof_test.dart
+- StateError
+- p2p_service_impl_test.dart
+- in_memory_group_message_repository.dart
+- send_chat_message_no_bg_task_test.dart
+- send_voice_message_no_bg_task_test.dart
+- main
+- background_readable_colors.dart
+- package:flutter_app/features/groups/application/group_config_payload.dart
+- rotate_and_distribute_group_key_use_case.dart
+- signed_group_transition_audit.dart
+- load_feed_use_case_test.dart
+- SignPayload
+- android_voice_message_e2e.dart
+- conversation_controller_composition_contract_test.dart
+- run_intro_accept_notification_sims.dart
+- identity_progress_screen.dart
+- compose_area.dart
+- contact_picker_wired_test.dart
+- introduction_outbound_delivery.dart
+- background_push_notification_fallback.dart
+- ios_notification_payload_campaign.dart
+- group_reaction_e2e_probe.dart
+- private_media_outbox_e2e_conversation.dart
+- group_exit_diagnosing_processor.dart
+- direct_media_batch_forward_delivery_coordinator.dart
+- p2p_service.dart
+- foreground_group_push_drain_test.dart
+- notification_open_during_other_chat_harness.dart
+- media_picture_in_picture_handoff_test.dart
+- run_connectivity_restore_sims.dart
+- android_app_state_guard_test.dart
+- group_received_media_actions.dart
+- migration_pending_work_manifest_builder.dart
+- compose_post_sheet.dart
+- media_playback_adapter.dart
+- fake_p2p_service_integration.dart
+- group_media_android_disposable_app.dart
+- bonsoir_discovery_native_resolver_test.dart
+- show_notification_use_case_test.dart
+- generatePeerIDStr
+- RelaySessionManager
+- migration_database_snapshot_exporter.dart
+- picture_in_picture_gateway.dart
+- migration_transfer_manifest.dart
+- group_exit_actions_test.dart
+- StreamController
+- post_pass_media_avatar_smoke_test.dart
+- in_memory_pending_group_invite_repository.dart
+- media_picture_in_picture_policy_test.dart
+- notification_ios_payload_campaign.dart
+- chat_message_listener.dart
+- register_push_token_use_case.dart
+- runtime_root_inventory_test.dart
+- conversation_upload_activity_controller.dart
+- group_reaction_replay_outbox_db_helpers.dart
+- ContactModel
+- group_exit_release_diagnostics.dart
+- contact_picker_wired.dart
+- accept_and_reciprocate_use_case_test.dart
+- qr_display_wired.dart
+- pending_group_broadcasts_db_helpers.dart
+- requireRelay
+- reaction_push.go
+- reaction_repository_impl_test.dart
+- run_transport_census_cli.dart
+- encrypted_db_opener.dart
+- direct_reaction_notification_projection.dart
+- message_context_overlay.dart
+- direct_media_batch_forward_picker_wired_test.dart
+- conversation_voice_capture_controller.dart
+- Directory
+- package:flutter_app/core/bridge/p2p_bridge_client.dart
+- flutter_notification_service.dart
+- local_relay_harness_test.go
+- sims_runtime_protocol.dart
+- local_ws_server.dart
+- outgoing_direct_private_mutation_coordinator.dart
+- migration_group_manifest_builder.dart
+- group_shared_media_batch_actions.dart
+- push_relay_registration_proof.dart
+- load_orbit_data_use_case_test.dart
+- direct_private_media_sender_pending_open_test.dart
+- post_delivery_runner_parallel_test.dart
+- private_media_outbox_e2e.dart
+- upload_media_use_case.dart
+- on_join_group_config_resync_use_case.dart
+- change_group_member_role_and_broadcast_use_case.dart
+- retry_incomplete_group_uploads_use_case.dart
+- group_exit_intent_sink.dart
+- sims_device_binding_test.dart
+- handle_incoming_message_use_case_test.dart
+- handle_incoming_chat_message_media_hydration_test.dart
+- orbit_qr_entry_migration_test.dart
+- settings_wired_posts_nearby_test.dart
+- run_group_reaction_notification_sims.dart
+- external_share_media_ux_test.dart
+- announcement_private_reply_policy_test.dart
+- package:path/path.dart
+- package:flutter_app/features/groups/domain/repositories/group_repository.dart
+- wake_token_directionality_e2e.dart
+- main_presence_lifecycle_wiring_test.dart
+- conversation_wired_offline_send_ux_test.dart
+- direct_private_media_tile_tap_test.dart
+- benchmark_helpers.dart
+- wake_token_directionality_e2e_test.dart
+- retry_failed_group_messages_use_case.dart
+- handle_incoming_introduction_use_case.dart
+- bonsoir_discovery_service.dart
+- build_received_media_forward_test.dart
+- received_media_action_controller.dart
+- introduction_model.dart
+- issue_wake_tokens_use_case_test.dart
+- fake_group_pubsub_network.dart
+- group_message.dart
+- run_group_multi_device_real.dart
+- migration_transfer_checkpoint_store.dart
+- create_group_with_members_use_case_test.dart
+- PassthroughCryptoBridge
+- in_memory_media_attachment_repository.dart
+- android_picture_in_picture_system_ui_control.dart
+- group_media_ios_disposable_reset.dart
+- record_audio_recorder_service_test.dart
+- upload_media_use_case_test.dart
+- incoming_message_router.dart
+- package:flutter/foundation.dart
+- migration_qr_payload_use_case.dart
+- group_exit_terminal_diagnostics.dart
+- group_shared_media_library_controller.dart
+- group_invite_revocation_payload.dart
+- conversation_wired_sending_to_failed_test.dart
+- fake_message_repository.dart
+- fake_media_playback_adapter.dart
+- go_bridge_client.dart
+- bridge.dart
+- File
+- group_event_log_db_helpers.dart
+- incoming_message_router_posts_pins_test.dart
+- share_intent_service.dart
+- build_received_media_forward.dart
+- direct_private_media_viewer_test.dart
+- swipeable_friend_row.dart
+- architecture_boundary_checker_test.dart
+- group_avatar_storage_test.dart
+- post_engagement_fanout_test.dart
+- handle_app_paused.dart
+- media_storage_manager.dart
+- package:flutter_app/features/groups/application/group_membership_event_watermark.dart
+- download_profile_picture_use_case_test.dart
+- keepalive_drop_e2e.dart
+- private_media_protection_coordinator.dart
+- group_media_forward_policy.dart
+- group_missed_message_telemetry.dart
+- group_invite_decline_ack_payload.dart
+- resolve_introduction_notification_target_use_case.dart
+- conversation_wired_gif_test.dart
+- register_push_token_use_case_test.dart
+- durable_group_exit_driver.dart
+- build_direct_media_library_batch_forward.dart
+- orbit_edit_handle.dart
+- transport_metrics.dart
+- image_processor.dart
+- media_file_manager.dart
+- package:flutter_app/core/media/media_file_manager.dart
+- conversation_message.dart
+- handle_incoming_group_reaction_use_case.dart
+- group_exit_intent.dart
+- push_envelope_staging.dart
+- media_storage_manager_test.dart
+- local_media_sender.dart
+- verify_inbox_custody_use_case_test.dart
+- benchmark_notification_tap_harness.dart
+- notification_sound_smoke_harness.dart
+- group_multi_party_runtime_config.dart
+- post_passes_db_helpers.dart
+- flow_event_emitter.dart
+- migration_secure_storage_staging.dart
+- migration_cutover_record.dart
+- group_invite_auth.dart
+- group_invite_send_latency_trace.dart
+- load_conversation_use_case_test.dart
+- x25519_test.go
+- newPresenceTestEnv
+- commands.go
+- buildPushMessage
+- ../../tool/sims/artifact_evidence.dart
+- android_keepalive_drop_campaign.dart
+- direct_private_media_lifecycle.dart
+- admit_sibling_device_use_case.dart
+- group_exit_policy.dart
+- load_introductions_use_case.dart
+- post_pass_encrypted_delivery_integration_test.dart
+- media_viewer_item.dart
+- one_to_one_test_user.dart
+- media_lan_test.go
+- run_group_publish_benchmark.dart
+- p2p_service_peer_liveness_test.dart
+- media_grid_cell_test.dart
+- fake_reaction_repository.dart
+- analyzer_suppression_ratchet_test.dart
+- send_fcm_provider_probe.js
+- fake_local_p2p_service.dart
+- group_notification_projection_lifecycle_test.dart
+- in_memory_message_repository.dart
+- migrate_secrets_to_secure_storage.dart
+- String
+- package:flutter_app/core/media/group_media_integrity_policy.dart
+- recent_remote_notification_gate.dart
+- migration_database_manifest.dart
+- direct_received_media_action_sheet.dart
+- group_exit_recovery_sheet.dart
+- run_test_gates.sh
+- c2_ack_drop_test.dart
+- c4_partial_drain_test.dart
+- p2p_service_fault_injection_test.dart
+- post_restore_stale_key_recovery_test.dart
+- group_model.dart
+- handleCommand
+- EncryptGroupMessage
+- NewRelaySessionManager
+- nearby_location_service.dart
+- ios_notification_relay_remote_helper.py
+- go_bridge_client_test.dart
+- ios_sender_projection_fixture_contract.dart
+- local_discovery_service.dart
+- local_media_server.dart
+- media_attachment.dart
+- post_model.dart
+- post_pin_media_crypto_preservation_test.dart
+- profile_picture_flow_test.dart
+- fake_just_audio.dart
+- audio_player_widget.dart
+- node_state.dart
+- stubStreamConn
+- libp2p_refactor_contract_test.go
+- group_media_integrity_policy.dart
+- group_private_media_viewer_controller.dart
+- package:crypto/crypto.dart
+- group_private_media_policy.dart
+- media_grid_cell.dart
+- group_exit_intents_db_helpers_test.dart
+- announcement_forward_test_harness.dart
+- @immutable
+- conversation_audio_source_regression_test.dart
+- typedef
+- group_media_reliability_runner_contract_test.dart
+- group_inbox_test.go
+- account_migration_group_media_durability_simulator_test.dart
+- ios_notification_relay_fixture_driver.py
+- run_group_reaction_notification_device.dart
+- android_notification_payload_campaign.dart
+- consume_private_media_use_case_test.dart
+- package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart
+- orbit_friend.dart
+- message_repository.dart
+- feed_store.dart
+- load_feed_use_case.dart
+- group_private_media_lifecycle_test_fixture.dart
+- settings_screen.dart
+- direct_library_test_stubs.dart
+- reconcile_missed_group_dissolves_use_case_test.dart
+- profile_update_listener_test.dart
+- group_removal_rotation_keyless_converge_proof_test.dart
+- ios_apns_notification_open_bridge.dart
+- private_media_policy.dart
+- migration_account_size_estimator.dart
+- group_private_media_lifecycle.dart
+- cosmic_background.dart
+- validate_android_picture_in_picture_interruption.py
+- incoming_message_router_posts_test.dart
+- incoming_message_router_test.dart
+- dtr18_layering_relocation_contract_test.dart
+- expandable_fab.dart
+- ingest_staged_push_envelopes_use_case.dart
+- buildTestEnvelopeWithPlaintext
+- NewRendezvousStore
+- MessageRepository
+- direct_private_media_platform_protection_proof_test.dart
+- ios_receiver_bootstrap.py
+- run_routing_smoke_e2e.dart
+- P2PService
+- group_exit_intent_coordinator.dart
+- group_exit_diagnostic.dart
+- post_create_envelope.dart
+- live_direct_notification_integration_test.dart
+- incoming_message_router_posts_engagement_test.dart
+- incoming_message_router_posts_pass_test.dart
+- incoming_message_router_posts_presence_test.dart
+- incoming_message_router_profile_test.dart
+- direct_media_batch_forward_picker_wired.dart
+- send_voice_message_durable_copy_test.dart
+- group_pending_key_distributions_db_helpers.dart
+- group_pending_key_repairs_db_helpers.dart
+- run_group_invite_status_matrix_sim.dart
+- android_voice_message_evidence.dart
+- introduction_outbox_db_helpers.dart
+- migration_pending_work_manifest.dart
+- group_group_messages_into_threads.dart
+- orbit_geometry_prefs.dart
+- post_follow_on_delivery.dart
+- p2p_service_impl_presence_cache_test.dart
+- in_memory_introduction_repository.dart
+- p2p_service_contact_request_inbox_replay_test.dart
+- post_delivery_runner_test.dart
+- upload_retry_projection.dart
+- direct_media_library_controller.dart
+- direct_private_media_lifecycle_repository.dart
+- inbox_staging_entry.dart
+- send_voice_message_use_case_test.dart
+- ring_avatar_generator.dart
+- send_voice_message_use_case.dart
+- group_exit_diagnostics_sheet.dart
+- media_download_slow_transfer_simulator_test.dart
+- run_group_multi_party_sims.dart
+- identity_repository_impl_test.dart
+- Bool
+- run_timeout_accuracy_benchmark.dart
+- show_notification_use_case.dart
+- nav_bar_theme.dart
+- delete_self_removed_group_shell_use_case_test.dart
+- post_repost_engagement_support.dart
+- post_media_attachment_model.dart
+- push_registration_coordinator.dart
+- retry_incomplete_group_downloads_use_case_test.dart
+- direct_media_batch_forward_picker_screen.dart
+- media_grid.dart
+- run_host_test_gates.sh
+- run_reliability_simulations.sh
+- fake_bridge.dart
+- p2p_service_impl_health_drain_test.dart
+- post_pass_retry_integration_test.dart
+- android_critical_performance_evidence.dart
+- record_audio_recorder_service.dart
+- group_smoke_harness.dart
+- group_media_deletion_journal_db_helpers.dart
+- fake_media_attachment_repository.dart
+- group_avatar_storage.dart
+- group_welcome_key_package.dart
+- p2p_service_stop_race_test.dart
+- run_ios_notification_tap_ui_smoke.sh
+- NotificationPreviewResolver.swift
+- in_memory_group_pending_membership_message_repository.dart
+- inboxMessage
+- group_multi_party_launch_spec_test.dart
+- android_notification_payload_e2e_protocol.dart
+- migration_cutover_coordinator.dart
+- load_orbit_data_use_case.dart
+- group_history_gap_repair.dart
+- full_screen_image_viewer.dart
+- android_push_relay_registration_contract_test.dart
+- check_reliability_simulation_discovery.sh
+- fake_audio_recorder_service.dart
+- android_critical_performance_campaign.dart
+- group_reaction_e2e_probe_test.dart
+- media_thumbnail_image.dart
+- main.go
+- introduction_repository_impl.dart
+- post_schema_capabilities.dart
+- nearby_location_service_test.dart
+- AppGroupNotificationToneLeaseStore
+- received_media_native_egress_proof_test.dart
+- routing_smoke_group_criteria.dart
+- android_notification_payload_e2e.dart
+- introduction_outbox_delivery.dart
+- post_pin_envelope.dart
+- addr_visibility_denial_test.go
+- group_history_gap_repairs_db_helpers.dart
+- watchdog_failover_test.go
+- group_pending_key_distribution_repository.dart
+- posts_db_helpers.dart
+- ios_sender_projection_fixture_contract_test.dart
+- pending_group_invite.dart
+- introduction_payload.dart
+- introduction_repository.dart
+- nearby_eligibility_service.dart
+- media_download_preferences.dart
+- member_removal_integration_test.dart
+- p2p_service_impl_inbox_proof_kick_test.dart
+- encrypted_media_test_bridge.dart
+- group_pending_key_repair_repository_impl.dart
+- group_private_media_platform_proof_test.dart
+- run_1to1_reaction_notification_device.dart
+- run_b1b_sibling_device_convergence.dart
+- run_benchmark_suite.dart
+- run_foreground_group_push_simulator_smoke.dart
+- run_notification_open_ui_smoke.dart
+- private_media_action_eligibility.dart
+- message_payload.dart
+- rejoin_group_topics_use_case.dart
+- pending_post_delivery_retrier.dart
+- qr_scanner_screen.dart
+- media_video_controls.dart
+- fake_contact_repository.dart
+- direct_media_library_batch_actions.dart
+- run_media_delivery_ui_smoke.dart
+- group_pending_membership_messages_db_helpers.dart
+- 035_posts_repost_delivery_state.dart
+- keepalive_drop_e2e_contract.dart
+- fake_local_discovery_service.dart
+- native_mdns_resolver.dart
+- app_root_notification_open_test.dart
+- notification_route_target.dart
+- private_media_expiry_scheduler.dart
+- verify_inbox_custody_use_case.dart
+- group_membership_timeline_message.dart
+- retry_failed_group_inbox_stores_use_case.dart
+- group_pending_key_repair.dart
+- introduction_copy.dart
+- handle_incoming_post_presence_use_case.dart
+- group_exit_diagnostics_sheet_test.dart
+- p2p_service_inbox_ack_ordering_test.dart
+- claude_host_tool_bridge.py
+- package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart
+- chaos_p2p_network.dart
+- group_sync_receipts_db_helpers.dart
+- EventDispatcher
+- quic_identify_revalidation_test.go
+- group_pending_key_distribution_service_test.dart
+- run_media_message_journey_e2e.dart
+- run_notification_open_during_other_chat.dart
+- ring_avatar_painter.dart
+- ring_avatar_spec.dart
+- undo_bar.dart
+- create_group_use_case.dart
+- group_key_update_listener_test.dart
+- group_pending_key_repair_repository.dart
+- resolve_group_notification_route_target_use_case.dart
+- fake_push_token_store.dart
+- group_private_media_notification_test.dart
+- conversation_voice_capture_controller_test.dart
+- inbox_custody_verify_test.dart
+- DefaultFeatureFlags
+- GroupMessageRepositoryImpl
+- package:flutter/widgets.dart
+- run_notification_tap_device_real.dart
+- signal_files.dart
+- contacts_db_helpers.dart
+- active_peer_keepalive_use_case.dart
+- group_offline_replay_envelope_test.dart
+- _Fixture
+- strict_direct_media_library_repository.dart
+- shared_media_test_fakes.dart
+- post_pin_fixtures.dart
+- fake_media_file_manager.dart
+- GroupMessage
+- production_application_bootstrap_phase_contract_test.dart
+- messageCollector
+- cold_start_notif_anchor.dart
+- NotificationService
+- benchmark_timeout_accuracy_harness.dart
+- group_media_prepared_artifact_custody.dart
+- android_background_crypto_preflight_contract_test.dart
+- android_connectivity_restore_campaign.dart
+- android_voice_recorder_smoke.dart
+- ios_xctestrun_relocator.dart
+- groups_db_helpers.dart
+- media_attachment_lifecycle_lock.dart
+- media_library.dart
+- group_pending_broadcast_sink.dart
+- group_pending_key_distribution_service.dart
+- group_pending_key_distribution.dart
+- package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart
+- p2p_service_impl_wake_attach_test.dart
+- _load
+- direct_text_gate_a_authorization_test.dart
+- dtr18_placement_closure_contract_test.dart
+- group_parent_write_guard.dart
+- contact_repository_impl.dart
+- one_to_one_reaction_notification_proof_test.dart
+- application_bootstrap_test.dart
+- reactions_db_helpers.dart
+- group_media_disposable_transport_start.dart
+- private_media_outbox_e2e_protocol.dart
+- announcement_media_forward_request.dart
+- feed_tokens.dart
+- revoke_pending_group_invite_use_case.dart
+- group_reaction_replay_outbox_entry.dart
+- handle_incoming_post_presence_use_case_test.dart
+- group_pending_reaction_repository_impl.dart
+- identity_progress_performance_test.dart
+- group_media_reliability_criteria_test.dart
+- run_media_stable_id_smoke.dart
+- group_pending_reactions_db_helpers.dart
+- inbox_staging_db_helpers.dart
+- p2p_service_inbound_transport_test.dart
+- group_media_mime_policy.dart
+- contact_request_model.dart
+- trusted_private_group_system_event.dart
+- block_contact_use_case_test.dart
+- unblock_contact_use_case_test.dart
+- post_presence_listener_test.dart
+- wake_token_directionality_readiness_test.dart
+- local_notification_exact_cancellation_wiring_test.dart
+- p2p_service_lan_forward_test.dart
+- group_received_media_action_policy_test.dart
+- group_media_reliability_wiring_test.dart
+- connection_status_indicator_test.dart
+- contact_request_repository_impl.dart
+- NodeConfig
+- lanDialHandler
+- pubsub_unsubscribe_exit_paths_test.go
+- app_owned_media_delete_telemetry.dart
+- media_upload_in_flight_tracker.dart
+- video_thumbnail_cache.dart
+- notification_route_dispatch.dart
+- send_presence_emphasis_test.dart
+- conversation_reaction_projection_controller.dart
+- media_storage.dart
+- reaction_payload.dart
+- group_sender_device_binding.dart
+- pending_group_invite_repository.dart
+- load_orbit_groups_use_case.dart
+- in_memory_contact_presence_snapshot_repository.dart
+- announcement_private_reply_entry_surface_test.dart
+- application_bootstrap.dart
+- reaction_repository_impl.dart
+- reaction_notification_proof_support_test.dart
+- 005_secret_null_checks.dart
+- group_media_ios_disposable_profile.dart
+- inbox_store_outcome.dart
+- share_intent_model.dart
+- feed_colors.dart
+- reaction_repository.dart
+- group_invite_identity_callbacks.dart
+- group_invite_policy.dart
+- group_reaction_payload.dart
+- post_recipient_delivery.dart
+- posts_privacy_settings.dart
+- group_pending_key_distribution_repository_impl_test.dart
+- refresh_nearby_on_startup_use_case_test.dart
+- p2p_service_transport_upgrade_test.dart
+- android_picture_in_picture_interruption_ownership_test.dart
+- group_exit_intent_repository_impl.dart
+- contact_presence_snapshot.dart
+- GenerateIdentity
+- android_picture_in_picture_system_ui_control_test.dart
+- group_media_size_policy.dart
+- contact_repository.dart
+- group_pending_key_repair_backoff_timer.dart
+- group_history_gap_repair_repository.dart
+- group_invite_delivery_attempt.dart
+- group_pending_membership_message.dart
+- group_pending_reaction.dart
+- orbit_find_matches.dart
+- group_media_disposable_transport_start_test.dart
+- handle_app_resumed_nearby_test.dart
+- seeded_group_reproduction_log.dart
+- TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents
+- group_pending_key_distribution_repository_impl.dart
+- main_bootstrap_boundary_test.dart
+- enrichChatMessageResult
+- startNodeWithRelays
+- startLANDialTestNode
+- businessMetrics
+- group_media_ios_background_e2e_contract.dart
+- app_colors.dart
+- identity_model.dart
+- chat_message.dart
+- claude_macos_clipboard.py
+- dtr03_dead_core_surface_contract_test.dart
+- direct_media_batch_forward_delivery_coordinator_test.dart
+- memoryPushTokenStore
+- select_android_picture_in_picture_pixel6_api36_geometry.dart
+- android_campaign_evidence_validation.dart
+- ios_notification_payload_campaign_support_test.dart
+- pending_introduction_response.dart
+- 004_nullify_secret_columns.dart
+- wake_token_directionality_e2e_protocol.dart
+- lan_address_classifier.dart
+- message_repository_impl_test.dart
+- fake_mic_permission_gateway.dart
+- group_media_deletion_journal_reconciler.dart
+- group_config_resync_payload.dart
+- group_message_receipt.dart
+- post_media_upload_recovery_item.dart
+- post_pin_state_model.dart
+- set_presence_use_case.dart
+- bridge_contact_request_crypto_test.dart
+- legacy_group_key_rotation_removal_contract_test.dart
+- old_join_group_removal_contract_test.dart
+- l10n_integrity_test.dart
+- Any
+- direct_media_library_batch_delete.dart
+- group_history_gap_repair_repository_impl.dart
+- direct_private_media_device_local_journey_criteria_test.dart
+- android_picture_in_picture_system_ui_selection_result.dart
+- received_video_picture_in_picture_fixture_seed.dart
+- introductions_db_helpers.dart
+- app_shell_theme_binding.dart
+- package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart
+- post_follow_on_outbox_recipient_delivery.dart
+- ValueError
+- handle_delivery_receipt_use_case_test.dart
+- hydrate_groups_from_peers_removal_contract_test.dart
+- db_write_transaction.dart
+- android_voice_message_device_campaign_test.dart
+- intro_e2e_runner_test.dart
+- android_critical_performance_budget.dart
+- node_readiness.dart
+- package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart
+- group_keys_db_helpers.dart
+- 066_group_sync_receipts.dart
+- migration_transfer_keep_alive.dart
+- group_exit_diagnostic_sink.dart
+- group_welcome_key_package_tombstone.dart
+- pending_sibling_device.dart
+- group_invite_delivery_attempt_repository.dart
+- post_presence_listener.dart
+- direct_notification_projection_lifecycle_test.dart
+- media_attachment_repository_descriptors_test.dart
+- run_received_video_picture_in_picture_proof.sh
+- main
+- group_group_messages_into_threads_test.dart
+- remote_message_fixtures.dart
+- run_group_media_send_reliability.dart
+- 001_identity_table.dart
+- group_forward_authorization_db_helpers.dart
+- memoryWakeTokenStore
+- post_follow_on_outbox_db_helpers.dart
+- 065_group_history_gap_repairs.dart
+- 072_group_pending_membership_messages.dart
+- 098_group_media_deletion_journal.dart
+- text_sanitizer.dart
+- message_run_grouping.dart
+- feed_reaction_store.dart
+- fake_media_picker.dart
+- group_messages_into_threads_test.dart
+- benchmark_harness.dart
+- ReceiverActivity
+- decodeGroupBridgeMessageParams
+- app_shell_theme_binding_test.dart
+- 063_group_pending_key_repairs.dart
+- direct_private_media_transfer_registry.dart
+- message_deletion_payload.dart
+- voice_record_button.dart
+- group_private_media_availability.dart
+- sweep_expired_group_invites_use_case.dart
+- group_key_info.dart
+- post_comment_reaction_model.dart
+- post_origin_model.dart
+- post_repost_visual_state.dart
+- prepare_notification_open_use_case.dart
+- in_memory_group_pending_key_distribution_repository.dart
+- check_wake_token_binary_freshness.sh
+- smoke_test_push_decrypt_simulator.sh
+- flutter_analyze_strict_contract_test.sh
+- verify_gomobile_bindings.sh
+- orbit_arc_layout_test.dart
+- media_bytes.dart
+- GenerateIdentity
+- GenerateSymmetricKey
+- group_announcement_reaction_notification_proof_test.dart
+- group_invite_delivery_attempts_db_helpers.dart
+- media_library_db_helpers.dart
+- 002_messages_table.dart
+- 055_group_invite_revocations.dart
+- 078_group_pending_key_distributions.dart
+- 081_group_pending_reactions.dart
+- audio_recorder_service.dart
+- startup_timing.dart
+- key_exchange_retry_coordinator.dart
+- feed_pending_projection.dart
+- session_reply.dart
+- group_shared_media_navigation.dart
+- GroupRepositoryImpl
+- group_invite_revocation.dart
+- identity_avatar_resolver.dart
+- send_message_result.dart
+- post_pending_child_event.dart
+- post_reaction_model.dart
+- pass_post_along_sheet.dart
+- run_claude_docker.sh
+- contact_request_model_test.dart
+- readability_test_helpers.dart
+- performance_harness.dart
+- envelope.go
+- contact_requests_db_helpers.dart
+- 018_group_messages_tables.dart
+- 056_group_invite_consumptions.dart
+- 064_group_welcome_key_package_tombstones.dart
+- ios_apns_notification_open_bridge_test.dart
+- url_parser.dart
+- audio_recording.dart
+- full_emoji_picker.dart
+- feed_route_changes.dart
+- group_invite_consumption.dart
+- group_multi_device_policy.dart
+- NearbyLocationService
+- wake_token_reissue_coalescer.dart
+- IosReceiverBootstrapTest
+- reliability_simulation_discovery_contract_test.sh
+- android_picture_in_picture_restored_ownership_test.dart
+- dtr11_remaining_test_only_leaves_disposition_test.dart
+- group.go
+- notification_tap_proof_artifact.dart
+- group_message_local_deletions_db_helpers.dart
+- intro_review_seen_db_helpers.dart
+- 006_read_at_column.dart
+- 017_groups_tables.dart
+- 070_group_key_rotation_drafts.dart
+- 085_pending_sibling_devices.dart
+- 103_group_exit_intents.dart
+- android_voice_message_e2e_protocol.dart
+- amplitude_buffer.dart
+- notification_service.dart
+- secret_storage_references.dart
+- contact_request_presentation_gate.dart
+- post_media_draft.dart
+- group_missed_message_telemetry_test.dart
+- host_test_gate_batch_contract_test.sh
+- sims_checkpoint_process_contract_test.sh
+- sims_test_gate_contract_test.sh
+- received_media_action_transport_boundary_test.dart
+- group_key_repair_wiring_test.dart
+- cmdInboxStoreV1
+- quic_smoke_test.go
+- validate_group_reaction_notification_artifacts.dart
+- ios_notification_payload_xcui_contract_test.dart
+- run_ios_notification_payload_sims.dart
+- intro_accept_notification_proof_artifact.dart
+- feed_cleared_threads_db_helpers.dart
+- pending_group_invites_db_helpers.dart
+- post_comment_reactions_db_helpers.dart
+- post_location_presence_db_helpers.dart
+- post_pending_child_events_db_helpers.dart
+- post_pin_dismissals_db_helpers.dart
+- post_reactions_db_helpers.dart
+- 019_introductions_table.dart
+- 041_group_message_reliability_columns.dart
+- 044_messages_deleted_state.dart
+- 051_pending_group_invites.dart
+- 084_group_member_device_snapshots.dart
+- 094_group_messages_group_ts_index.dart
+- connectivity_restore_e2e_contract.dart
+- pending_sibling_device_repository.dart
+- package:flutter_app/features/posts/domain/models/contact_presence_snapshot.dart
+- check_push_release_gate.sh
+- gomobile_binding_inputs.sh
+- sims_ios_device_companion_bundle_contract_test.sh
+- CountingMediaAttachmentRepository
+- TestBridgeGroupPublishContractsPreservedAfterHelperExtraction
+- group_multi_party_verdict_handshake.dart
+- 080_group_pending_key_repairs_status_index.dart
+- 093_messages_contact_ts_index.dart
+- video_process_result.dart
+- app_shell_tab.dart
+- feed_session_reply.dart
+- letter_line.dart
+- announcement_private_reply_request.dart
+- group_member_device_safety.dart
+- GroupHistoryGapRepairRepository
+- firebase_readiness.dart
+- push_listener_armer.dart
+- run_group_multi_party_phase0_probe.sh
+- group_multi_party_sims_adapter_contract_test.sh
+- group_reaction_notification_sims_adapter_contract_test.sh
+- intro_accept_notification_sims_adapter_contract_test.sh
+- sims_build_count_contract_test.sh
+- sims_simultaneous_contract_test.sh
+- sims_verdict_process_contract_test.sh
+- private_media_ux_strings_test.dart
+- intro_review_seen_repository_impl.dart
+- TestBridgeGroupHistoryRepairRange_ReturnsRelayReplayEnvelopes
+- buildGroupOfflineReplayEnvelope
+- sigar.go
+- group_multi_party_scenarios_to_run_test.dart
+- posts_phase1_smoke.sh
+- posts_phase2_smoke.sh
+- posts_phase3_smoke.sh
+- posts_phase4_smoke.sh
+- posts_phase5_smoke.sh
+- NotificationPreviewError
+- 052_groups_dissolve_columns.dart
+- 059_media_attachment_encryption_columns.dart
+- 104_group_exit_diagnostics.dart
+- e2e_test_mode.dart
+- group_role_update_authorization.dart
+- unseen_review_count.dart
+- post_route_target.dart
+- RecursiveAstVisitor
+- push_fixture_to_android_emulator.sh
+- run_transport_census.sh
+- architecture_boundary_checker_contract_test.sh
+- go_binding_staleness_contract_test.sh
+- performance_prebuilt_runner_contract_test.sh
+- reliability_group_tier_contract_test.sh
+- sims_profile_build_fingerprint_contract_test.sh
+- sims_skill_adapter_contract_test.sh
+- voice_recorder_prebuilt_runner_contract_test.sh
+- _DownloadWritingBridge
+- group_multi_party_device_real_android_harness.dart
+- retry_constants.dart
+- downsample_waveform.dart
+- message_window_cap.dart
+- IncomingGroupMessageDetailedOutcome
+- group_backlog_retention_policy.dart
+- group_key_retention_policy.dart
+- push_fixture_to_simulator.sh
+- run_group_fake_flake_budget.sh
+- keepalive_prebuilt_runner_contract_test.sh
+- notification_tap_campaign_adapter_contract_test.sh
+- run_claude_docker_update_contract_test.sh
+- runtime_root_inventory_contract_test.sh
+- sims_checkpoint_preparation_continuity_contract_test.sh
+- sims_command_family_mutation_contract_test.sh
+- sims_ios_app_cache_contract_test.sh
+- wake_token_prebuilt_runner_contract_test.sh
+- @pragma
+- BuildContext
+- FakeDecryptBridge
+- group_multi_party_sweep_continue_test.dart
+- AndroidAppFileTransport
+- startup_config.dart
+- .PingPeer
+- .SetWaitForCircuitAddressHookForTests
+- package:flutter_app/core/notifications/notification_tone_tracker.dart
+- conversation_upload_activity_controller_test.dart
+- github.com/elastic/gosigar
+- check_android_picture_in_picture_interruption_proof_build.sh
+- ensure_go_android_bindings.sh
+- ensure_go_ios_bindings.sh
+- ensure_go_macos_bindings.sh
+- ensure_xcode_project_pods.sh
+- _rerun_c07_b02_26_1.sh
+- _rerun_mp_26_1.sh
+- _run_new_rows_26_1.sh
+- connectivity_restore_sims_adapter_contract_test.sh
+- group_media_reliability_group_gate_registration_contract_test.sh
+- private_media_outbox_restore_sims_adapter_contract_test.sh
+- relay_go_toolchain_contract_test.sh
+- sims_checkpoint_causal_failure_contract_test.sh
+- sims_full_inventory_contract_test.sh
+- sims_major_plan_contract_test.sh
+- voice_message_prebuilt_runner_contract_test.sh
+- TrackingDurableMediaFileManager
+- EventCallback
+- noopCallback
+- stringSliceParam
+- group_validation_feedback.go
+- .hasCapability
+- _JourneyHarnessApp
+- forward_rotate_on_add_flag.dart
+- multi_device_sync_flag.dart
+- on_join_metadata_resync_flag.dart
+- media_constants.dart
+- network_constants.dart
+- app_database_version.dart
+- FakeMediaAttachmentRepository
+- .emitReserveDispatchAnchor
+- build_ios_appstore_ipa.sh
+- capture_group_send_flow.sh
+- check_android_picture_in_picture_engine_detach_proof_build.sh
+- check_android_renderer_manifest_contract.sh
+- check_architecture_boundaries.sh
+- check_flutter_analyze_baseline.sh
+- check_flutter_analyze_strict.sh
+- check_runtime_root_inventory.sh
+- host_git_push.sh
+- install_received_media_egress_receiver.sh
+- launch_ios_device_console.sh
+- reset_ios_native_assets_cache.sh
+- run_sims_detached.sh
+- dtr13_profile_entrypoint_preservation_contract_test.sh
+- intro_accept_notification_sims_dart_shim.sh
+- group_reaction_notification_device_contract_test.sh
+- intro_e2e_accept_window_contract_test.sh
+- @objc
+- DateTime
+- Duration
+- Error
+- Event
+- Exception
+- GroupKeyInfo
+- GroupMember
+- GroupType
+- _Identity
+- Message
+- NodeState
+- Stream
+- Subscription
+- Timer
 
 ## God Nodes (most connected - your core abstractions)
 1. `generateEd25519KeyPair()` - 213 edges
 2. `parseJSON()` - 190 edges
-3. `NewNode()` - 169 edges
+3. `NewNode()` - 170 edges
 4. `startLocalNodeForMultiRelayTest()` - 165 edges
-5. `generateTestKey()` - 161 edges
+5. `generateTestKey()` - 162 edges
 6. `New()` - 149 edges
 7. `assertNotOk()` - 133 edges
-8. `Bridge` - 122 edges
-9. `_FlowEvent` - 104 edges
-10. `class` - 104 edges
+8. `Bridge` - 123 edges
+9. `InMemoryGroupRepository` - 117 edges
+10. `_FlowEvent` - 110 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `newHLLRegister()` --calls--> `New()`  [INFERRED]
@@ -1145,4163 +1229,4476 @@
 ## Import Cycles
 - None detected.
 
-## Communities (1111 total, 69 thin omitted)
+## Communities (1195 total, 75 thin omitted)
 
-### Community 0 - "Group Multi-Party Device Harness"
+### Community 0 - "group_multi_party_device_real_harness.dart"
 Cohesion: 0.00
-Nodes (1948): 0, acceptedGroup, acceptedGroupAvatarBlobId, acceptedGroupMetadataFresh, acceptedRecipientPeerId, _acceptPromptPendingInvite, _acceptRa013DeviceInvite, acceptResult (+1940 more)
+Nodes (1961): 0, acceptedGroup, acceptedGroupAvatarBlobId, acceptedGroupMetadataFresh, acceptedRecipientPeerId, _acceptPromptPendingInvite, _acceptRa013DeviceInvite, acceptResult (+1953 more)
 
-### Community 1 - "Group Multi-Party Device Criteria"
+### Community 1 - "package:flutter_app/features/p2p/domain/models/chat_message.dart"
 Cohesion: 0.00
-Nodes (683): activeAvatarHashes, activeMemberPeerIds, activePeerIds, activeStateHashes, actual, actualPeerIds, adminPeerIds, afterCount (+675 more)
+Nodes (688): AnimatedOpacity, ../contact_request/domain/repositories/fake_contact_request_repository.dart, ContactUpdate, ../../core/secure_storage/fake_secure_key_store.dart, domain/repositories/fake_identity_repository.dart, FakeContactRequestRepository, FakeMediaFileManager, FakeSecureKeyStore (+680 more)
 
-### Community 2 - "Cross-Feature Wired UI Tests"
+### Community 2 - "dart:async"
 Cohesion: 0.00
-Nodes (646): AnimatedOpacity, ChangeNotifier, ../contact_request/domain/repositories/fake_contact_request_repository.dart, ContactRequestListener, ../../core/secure_storage/fake_secure_key_store.dart, domain/repositories/fake_identity_repository.dart, FakeContactRequestRepository, FakeMediaFileManager (+638 more)
+Nodes (663): AppLifecycleState, Completer, ../../conversation/application/helpers/fake_upload_media_fn.dart, dart:async, FakeBridge, GroupRole, in_memory_media_attachment_repository.dart, _JourneyDownloadBridge (+655 more)
 
-### Community 3 - "Group Domain Fakes & Tests"
-Cohesion: 0.01
-Nodes (510): ../../conversation/application/helpers/fake_upload_media_fn.dart, ../../conversation/domain/repositories/fake_reaction_repository.dart, ../core/bridge/fake_bridge.dart, GroupRole, SignalTimeoutException, BridgeCommandException, allowedPeers, groupMediaAllowedPeersForMembers (+502 more)
+### Community 3 - "group_multi_party_device_criteria.dart"
+Cohesion: 0.00
+Nodes (690): activeAvatarHashes, activeMemberPeerIds, activePeerIds, activeStateHashes, actual, actualPeerIds, adminPeerIds, after (+682 more)
 
 ### Community 4 - "Background Crypto Proof Support"
 Cohesion: 0.00
 Nodes (527): acquireBackgroundCryptoFreshFcmToken, activeSection, actor, age, androidActivityIsAttached, _androidColdLocalNotificationEvidenceDetails, _androidColdLocalNotificationEvidenceLine, androidColdLocalNotificationOpenErrorEvents (+519 more)
 
-### Community 5 - "Database Seeding & Migration Tests"
+### Community 5 - "package:flutter_test/flutter_test.dart"
 Cohesion: 0.01
-Nodes (432): Database, DatabaseException, fake_secure_key_store.dart, runNodeStartupBenchmark, main, groupRow, main, memberRow (+424 more)
+Nodes (374): ../bridge/fake_bridge.dart, ../../conversation/domain/repositories/fake_media_attachment_repository.dart, ../core/bridge/fake_bridge.dart, ../core/services/fake_p2p_service.dart, ../domain/repositories/fake_message_repository.dart, fake_p2p_service.dart, FakeMessageRepository, ../features/contact_request/domain/repositories/fake_contact_request_repository.dart (+366 more)
 
-### Community 6 - "Posts Encrypted Media Tests"
+### Community 6 - "package:flutter/material.dart"
 Cohesion: 0.01
-Nodes (456): ImagePicker, _picker, pickImage, pickMultipleMedia, pickVideo, candidate, contactRepo, copyWith (+448 more)
+Nodes (347): AlertDialog, AnimatedContainer, BackdropFilter, BoxDecoration, CircularProgressIndicator, Column, Container, Directionality (+339 more)
 
-### Community 7 - "Widget Readability & L10n Tests"
+### Community 7 - "package:flutter_app/features/conversation/domain/models/media_attachment.dart"
 Cohesion: 0.01
-Nodes (372): AlertDialog, AnimatedContainer, AnnotatedRegion, BoxDecoration, CircularProgressIndicator, Column, Container, Directionality (+364 more)
+Nodes (366): ArgumentError, ../domain/repositories/fake_media_attachment_repository.dart, fake_media_attachment_repository.dart, applyGroupUploadCompletionAuthority, OutgoingDirectPrivatePendingPreparationRefused, DirectPrivateMediaViewerController, capabilitiesFor, GroupReceivedMediaAction (+358 more)
 
-### Community 8 - "Failed Message Retry Tests"
+### Community 8 - "group_multi_party_device_criteria_test.dart"
 Cohesion: 0.01
-Nodes (366): ../bridge/fake_bridge.dart, fake_p2p_service.dart, FakeContactRepository, FakeIdentityRepository, FakeP2PService, ../features/contacts/domain/repositories/fake_contact_repository.dart, ../../../features/conversation/domain/repositories/fake_media_attachment_repository.dart, ../features/conversation/domain/repositories/fake_message_repository.dart (+358 more)
+Nodes (396): activeBobDevices, activeKeyPackageIds, activeMembers, activeProof, activeProofFor, activeRole, add, addMessage (+388 more)
 
-### Community 9 - "Media Forwarding Policy Tests"
+### Community 9 - "package:flutter_app/features/contacts/domain/models/contact_model.dart"
 Cohesion: 0.01
-Nodes (366): announcement_forward_test_harness.dart, hasMedia, LetterLine, media, messageId, text, capabilitiesFor, GroupReceivedMediaAction (+358 more)
+Nodes (328): _ControlledP2PService, ../domain/repositories/fake_contact_request_repository.dart, in_memory_introduction_repository.dart, in_memory_message_repository.dart, IntroductionModel, package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart, package:flutter_app/features/contact_request/application/resolve_contact_request_notification_target_use_case.dart, package:flutter_app/features/contacts/domain/models/contact_model.dart (+320 more)
 
-### Community 10 - "Group Multi-Party Criteria Tests"
+### Community 10 - "group_conversation_wired.dart"
 Cohesion: 0.01
-Nodes (395): activeBobDevices, activeKeyPackageIds, activeMembers, activeProof, activeProofFor, activeRole, add, addMessage (+387 more)
+Nodes (353): absoluteDurablePath, _activeGroupConversationKey, _activeMessageLoadGenerations, _activeQuoteMessageId, _activeSharedMediaAnchorGroupId, _activeSharedMediaAnchorInjectedIds, _activeSharedMediaAnchorTargetId, _activeVisualUploadOwnersByAttachmentId (+345 more)
 
-### Community 11 - "Core Lifecycle Wiring Tests"
+### Community 11 - "conversation_wired.dart"
 Cohesion: 0.01
-Nodes (291): dart:io, fake_local_discovery_service.dart, main, runEncryptionBenchmark, main, registerAdminMetadataSim, artifact, _artifactFor (+283 more)
+Nodes (303): conversation_screen.dart, direct_private_media_viewer.dart, direct_shared_media_library_screen.dart, absoluteDurablePath, _activeQuoteMessageId, _activeVisualUploadOwnersByAttachmentId, _appLifecycleGeneration, _appLifecycleState (+295 more)
 
-### Community 12 - "Contact Request Flow Tests"
+### Community 12 - "share_target_picker_wired_test.dart"
 Cohesion: 0.01
-Nodes (335): in_memory_introduction_repository.dart, in_memory_message_repository.dart, InMemoryContactRepository, RelayProbeResult, IntroductionModel, IntroductionPayload, package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart, package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart (+327 more)
+Nodes (284): announcement_forward_test_harness.dart, ../application/announcement_forward_test_harness.dart, DefaultShareBatchDeliveryCoordinator, ShareBatchDeliveryCoordinator, package:flutter_app/core/media/pending_composer_media.dart, package:flutter_app/core/media/video_process_result.dart, package:flutter_app/core/services/share_intent_model.dart, package:flutter_app/features/conversation/domain/models/media_rejection.dart (+276 more)
 
-### Community 13 - "Group Conversation Wired Screen"
+### Community 13 - "StatelessWidget"
 Cohesion: 0.01
-Nodes (342): absoluteDurablePath, _activeAttachmentUpload, _activeGroupConversationKey, _activeMessageLoadGenerations, _activeQuoteMessageId, _activeSharedMediaAnchorGroupId, _activeSharedMediaAnchorInjectedIds, _activeSharedMediaAnchorTargetId (+334 more)
+Nodes (287): IconData, _PreflightApp, Key, LanAvailabilitySnapshot, AccountMigrationJourneyScreen, actionLabel, active, backgroundPreference (+279 more)
 
-### Community 14 - "StatelessWidget Screens Hub"
+### Community 14 - "p2p_service_impl.dart"
 Cohesion: 0.01
-Nodes (313): IconData, _PreflightApp, Key, LanAvailabilitySnapshot, AccountMigrationJourneyScreen, actionLabel, active, backgroundPreference (+305 more)
+Nodes (300): ../bridge/bridge.dart, ../bridge/p2p_bridge_client.dart, ../debug/transport_metrics.dart, ../../features/account_migration/application/account_migration_runtime_network_gate.dart, ../../features/push/domain/push_token_store.dart, ../../features/push/domain/received_wake_token_store.dart, ../inbox/inbox_staging_entry.dart, ../inbox/inbox_staging_repository.dart (+292 more)
 
-### Community 15 - "Main Wiring & Repository Tests"
+### Community 15 - "orbit_screen.dart"
 Cohesion: 0.01
-Nodes (288): mapMessageDeletionReplayResultToDisposition, mapReactionReplayResultToDisposition, addOnReadyListener, ensureReady, FirebaseReadiness, isReady, _ready, accountMigrationAuthorityRepository (+280 more)
+Nodes (266): FocusNode, build, _controller, createState, didUpdateWidget, dispose, _finishEditing, _focusNode (+258 more)
 
-### Community 16 - "Transport E2E Harnesses"
+### Community 16 - "package:flutter_app/features/identity/domain/models/identity_model.dart"
 Cohesion: 0.01
-Nodes (288): GroupDiagnosticEvent, _badgeLabel, containsKey, env, _isPlainOnline, _isRelayReady, _isSendable, main (+280 more)
+Nodes (263): ../contacts/domain/repositories/fake_contact_repository.dart, FakeContactRepository, FakeIdentityRepository, _FakeNearbyLocationService, ../identity/domain/repositories/fake_identity_repository.dart, _TrackingIdentityRepository, _TrackingContactRepository, IdentityRepository (+255 more)
 
-### Community 17 - "Conversation Wired Screen"
+### Community 17 - "self_removed_group_shell_db_helpers.dart"
 Cohesion: 0.01
-Nodes (290): conversation_screen.dart, direct_private_media_viewer.dart, direct_shared_media_library_screen.dart, absoluteDurablePath, _ActiveAttachmentUpload, _activeQuoteMessageId, _allowPopDuringActiveUpload, _amplitudeBuffer (+282 more)
+Nodes (280): group_event_log_db_helpers.dart, acceptedAddressIsRetainedOrPurged, acceptedAt, acceptedAtRaw, _AcceptedBindingEvidence, _acceptedBindingFromEventRow, _acceptedBindingKeyTupleStillPresent, _acceptedBindingPayload (+272 more)
 
-### Community 18 - "Post Pass Integration Tests"
+### Community 18 - "package:sqflite_sqlcipher/sqflite.dart"
 Cohesion: 0.01
-Nodes (270): ../improvement/support/controlled_post_pin_delivery_harness.dart, _contact, main, peerId, username, _contact, main, peerId (+262 more)
+Nodes (194): dbDeleteExpiredGroupInviteConsumptions, dbLoadGroupInviteConsumption, dbUpsertGroupInviteConsumption, inviteId, dbDeleteExpiredGroupInviteRevocations, dbLoadGroupInviteRevocation, dbUpsertGroupInviteRevocation, inviteId (+186 more)
 
-### Community 19 - "Orbit Visualization UI Tests"
+### Community 19 - "orbit_wired.dart"
 Cohesion: 0.01
-Nodes (260): FadeTransition, items, mergeInnerCircleItems, active, chips, computeOrbitFind, hasMatches, inactive (+252 more)
+Nodes (257): CurvedAnimation, IntroReviewSeenRepository, loadSeenKeys, markAllSeen, _acceptPendingInviteWithRecoveryRetry, _acceptRecoveryRetryCount, _acceptRecoveryRetryDelay, _acceptRequest (+249 more)
 
-### Community 20 - "Group Invite Flow Tests"
+### Community 20 - "group_invite_listener_test.dart"
 Cohesion: 0.01
-Nodes (263): canonicalPayload, declinedAt, envelopeJson, payload, sendGroupInviteDeclineAck, SendGroupInviteDeclineAckResult, signedPayload, lastAdminRoleChangeBlockedMessage (+255 more)
+Nodes (245): actorPayload, _buildConfigResponsePayload, canonical, _generateIdentity, groupConfig, identity, identityResponse, identityResult (+237 more)
 
-### Community 21 - "Group Media Replay DB Tests"
+### Community 21 - "capture_group_reaction_notification_device.dart"
 Cohesion: 0.01
-Nodes (222): group_admin_metadata_convergence_simulator_test.dart, group_delete_preserves_friends_simulator_test.dart, group_invite_accept_spinner_simulator_test.dart, group_new_member_media_simulator_proof_test.dart, ../helpers/group_private_media_lifecycle_test_fixture.dart, main, _indexColumns, main (+214 more)
+Nodes (246): _CommandOutput, _acceptIosCreatedGroupOnAndroid, _activeNotificationRecords, _adb, _adbShell, add, _AndroidBuilds, _appNotificationRecords (+238 more)
 
-### Community 22 - "Group Crypto Onboarding Proof Tests"
+### Community 22 - "soak_e2e_test.dart"
+Cohesion: 0.02
+Nodes (199): DatabaseException, main, main, _username, addresses, buildStats, configuredDir, _configuredRelayAddresses (+191 more)
+
+### Community 23 - "group_multi_device_real_harness.dart"
 Cohesion: 0.01
-Nodes (240): ../application/announcement_forward_test_harness.dart, core_fake_p2p.FakeP2PService, advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, _attachmentId, attempts, completeGroupPrivateMediaCleanup, consumeGroupPrivateMedia (+232 more)
+Nodes (228): GroupDiagnosticEvent, appCachePath, applicationResult, baseGroup, bridge, bridgeExchanges, _buildCliJoinFixture, buildGroupFixture (+220 more)
 
-### Community 23 - "P2P Service Implementation"
+### Community 24 - "group_message_listener.dart"
 Cohesion: 0.01
-Nodes (244): ../bridge/bridge.dart, ../bridge/p2p_bridge_client.dart, ../debug/transport_metrics.dart, ../../features/account_migration/application/account_migration_runtime_network_gate.dart, ../../features/push/domain/push_token_store.dart, ../../features/push/domain/received_wake_token_store.dart, ../inbox/inbox_staging_entry.dart, ../inbox/inbox_staging_repository.dart (+236 more)
+Nodes (229): _accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _appendGroupEventLogEntry, _awaitInFlightHandlers, BeginGroupMediaReceiveCriticalTask, _bridge, _cachedSelfPeerId, _diagnosticSubscription (+221 more)
 
-### Community 24 - "StatefulWidget UI Hub"
+### Community 25 - "feed_wired.dart"
 Cohesion: 0.01
-Nodes (218): _ConversationPerfHost, _ConversationPerfHostState, _ConversationHost, _ConversationHostState, _NotificationOpenHarnessApp, _NotificationOpenHarnessAppState, _StateAwareConversationHarnessApp, _StateAwareConversationHarnessAppState (+210 more)
+Nodes (224): ../conversation/domain/repositories/fake_message_repository.dart, DeleteMessageForEveryoneFn, DeleteMessageForMeFn, EditChatMessageFn, feed_screen.dart, _acceptRequest, accountMigrationRunTransfer, accountMigrationSizeGate (+216 more)
 
-### Community 25 - "Feed Wired & Read Tests"
+### Community 26 - "../shared/fakes/fake_p2p_network.dart"
 Cohesion: 0.01
-Nodes (222): ../conversation/domain/repositories/fake_message_repository.dart, DeleteMessageForEveryoneFn, DeleteMessageForMeFn, EditChatMessageFn, feed_screen.dart, _acceptRequest, accountMigrationRunTransfer, accountMigrationSizeGate (+214 more)
+Nodes (198): ../application/send_chat_message_use_case_test.dart, FakeP2PNetwork, ../../features/conversation/integration/two_user_message_exchange_test.dart, runOneToOneSendBenchmark, package:flutter_app/features/conversation/application/remove_reaction_use_case.dart, package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart, package:flutter_app/features/conversation/application/send_chat_message_use_case.dart, package:flutter_app/features/conversation/application/send_reaction_use_case.dart (+190 more)
 
-### Community 26 - "Group Messaging Smoke Tests"
+### Community 27 - "group_messaging_smoke_test.dart"
 Cohesion: 0.01
 Nodes (225): ../../../shared/fakes/seeded_group_reproduction_log.dart, active, activePeerIds, activeUsers, addOrReadd, alice, _attempts, baseTime (+217 more)
 
-### Community 27 - "Orbit Wired Screen"
-Cohesion: 0.01
-Nodes (221): CurvedAnimation, _acceptPendingInviteWithRecoveryRetry, _acceptRecoveryRetryCount, _acceptRecoveryRetryDelay, _acceptRequest, accountMigrationRunTransfer, accountMigrationSizeGate, _activeFriends (+213 more)
+### Community 28 - "NewNode"
+Cohesion: 0.02
+Nodes (207): TestBenchmark_NodeStart_EmitsStartupTiming(), TestBenchmark_NodeStart_NoRelays_NoRelayWarmDoneEvent(), TestBenchmark_NodeStart_RelayWarmDoneEvent(), TestBenchmark_NodeStart_ReturnsValidState(), TestBenchmark_NodeStart_StopStart_Succeeds(), NewEventDispatcher(), TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof(), TestNodeStatus_DisablesReservationAwareHealthWhenFlagFalse() (+199 more)
 
-### Community 28 - "Fake P2P Network Delivery Tests"
-Cohesion: 0.01
-Nodes (194): FakeP2PNetwork, ../../features/conversation/integration/two_user_message_exchange_test.dart, package:flutter_app/features/conversation/application/remove_reaction_use_case.dart, package:flutter_app/features/conversation/application/send_chat_message_use_case.dart, package:flutter_app/features/conversation/application/send_reaction_use_case.dart, package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart, package:flutter_app/features/conversation/domain/models/message_payload.dart, package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart (+186 more)
+### Community 29 - "production_application_bootstrap.dart"
+Cohesion: 0.02
+Nodes (182): runNodeStartupBenchmark, afterRunApp, allowsAccountRuntimeNetworkSideEffects, authorizeCurrentAccountGroupRejoin, _buildInertRootWidget, buildRootWidget, createGroupMessageRepository, ensureFirebaseReady (+174 more)
 
-### Community 29 - "SQLCipher Migrations & Helpers"
+### Community 30 - "conversation_screen.dart"
 Cohesion: 0.01
-Nodes (146): dbDeleteExpiredGroupInviteConsumptions, dbLoadGroupInviteConsumption, dbUpsertGroupInviteConsumption, inviteId, dbLoadIdentityRow, dbUpsertIdentityRow, identityId, dbDeletePendingIntroductionResponse (+138 more)
+Nodes (212): InheritedWidget, directPrivateMediaRouteObserver, DirectPrivateMediaRouteObserverScope, maybeOf, observer, updateShouldNotify, activeQuoteText, alignment (+204 more)
 
-### Community 30 - "Group Reaction Capture Script"
+### Community 31 - "group_conversation_wired_test.dart"
 Cohesion: 0.01
-Nodes (214): _acceptIosCreatedGroupOnAndroid, _activeNotificationRecords, _adb, _adbShell, add, _AndroidBuilds, _appNotificationRecords, appPackage (+206 more)
+Nodes (216): appliedProjectionCalls, armed, armNotFound, _attempts, beginGate, beginStarted, buildRecordingWidget, buildWidget (+208 more)
 
-### Community 31 - "Group Message Use Case Tests"
+### Community 32 - "group_media_ios_background_recovery.dart"
 Cohesion: 0.01
-Nodes (204): FakeBridge, _DownloadWritingBridge, package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart, package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart, _DelayedGroupLeaveBridge, _DelayedMediaDownloadBridge, SequencedUpdateConfigBridge, _aliceContact (+196 more)
+Nodes (214): _androidBoundary, _androidBoundaryCommandAudits, _androidCleanupArtifact, androidCompanionArtifact, androidCompanionArtifactSha256, _androidDisposableBoundary, _androidFixtureCommandAudits, _androidPostResetReceipts (+206 more)
 
-### Community 32 - "Go Node Core Tests (Go)"
+### Community 33 - "contact_request_listener_test.dart"
+Cohesion: 0.01
+Nodes (201): acceptContactRequest, AcceptContactRequestResult, contact, peerIdPrefix, request, ContactAutoAddRateLimiter, maxPerWindow, _recent (+193 more)
+
+### Community 34 - "invite_reliability_runner_contract.dart"
+Cohesion: 0.01
+Nodes (207): actual, _admissionCanaryKeys, appGitDirty, appGitRevision, _applicationResults, appSourceFingerprintSha256, _asStringMap, _attemptStatuses (+199 more)
+
+### Community 35 - "package:flutter_app/core/utils/flow_event_emitter.dart"
+Cohesion: 0.01
+Nodes (179): runMessageStatusCleanupMigration, config, configFile, delayed, delete, dir, exportIdentityForSmokeTest, file (+171 more)
+
+### Community 36 - "group_conversation_wired_bg_task_test.dart"
+Cohesion: 0.01
+Nodes (190): helpers/direct_library_test_stubs.dart, GroupConversationScreen, DirectMediaBatchForwardLibraryLaunchResult, package:flutter_app/core/permissions/mic_permission_prompt.dart, package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart, package:flutter_app/features/conversation/presentation/screens/direct_shared_media_library_screen.dart, package:flutter_app/features/groups/application/group_exit_intent_sink.dart, package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart (+182 more)
+
+### Community 37 - "conversation_controller_notification_budget_test.dart"
+Cohesion: 0.01
+Nodes (186): _ControlledGroupMessageListener, ../domain/repositories/fake_reaction_repository.dart, FakeReactionRepository, ../features/conversation/domain/repositories/fake_reaction_repository.dart, ../helpers/lifecycle_helpers.dart, _TrackingReactionRepository, package:flutter_app/features/conversation/application/load_reactions_use_case.dart, package:flutter_app/features/conversation/application/message_deletion_listener.dart (+178 more)
+
+### Community 38 - "pubsub.go"
 Cohesion: 0.03
-Nodes (187): TestConcurrentSendDialNoSerialize(), TestBenchmark_NodeStart_EmitsStartupTiming(), TestBenchmark_NodeStart_NoRelays_NoRelayWarmDoneEvent(), TestBenchmark_NodeStart_RelayWarmDoneEvent(), TestBenchmark_NodeStart_ReturnsValidState(), TestBenchmark_NodeStart_StopStart_Succeeds(), NewEventDispatcher(), TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof() (+179 more)
+Nodes (148): activeGroupInboxRecipientsForConfig(), deriveActiveGroupInboxRecipients(), activeGroupMemberDialTargets(), activeGroupMemberDialTargetSet(), activeGroupMemberDialTargetSummary(), activeMemberDeviceForEnvelope(), buildGroupMessageEnvelope(), buildGroupMessageExtra() (+140 more)
 
-### Community 33 - "Posts Wired UI Tests"
+### Community 39 - "background_message_handler.dart"
 Cohesion: 0.01
-Nodes (181): _FakeNearbyLocationService, IdentityRepository, loadIdentity, saveIdentity, clear, PendingPostTargetStore, setTarget, showStatus (+173 more)
+Nodes (189): @visibleForTesting, recordSanitizedFlowEvent, debugSetGroupLeaveDelayForTest, releaseFirstBarrierForTest, awaitIntroducerAcceptanceCustodyForIntroE2E, clear, _coerceTimestamp, debugResetRecentBackgroundNotificationGate (+181 more)
 
-### Community 34 - "Push Background Handler Tests"
+### Community 40 - "Database"
 Cohesion: 0.01
-Nodes (170): dart:isolate, fake_media_file_manager.dart, File, BackgroundCryptoStagedFileFailure, NotificationIdAllocationException, DurableNotificationStorageException, GroupReactionNotificationIntegrityException, OrdinaryMessageNotificationIntegrityException (+162 more)
+Nodes (159): Database, fake_secure_key_store.dart, bridge, cliContact, cliPeer, contactRepo, db, _dbName (+151 more)
 
-### Community 35 - "Orbit Avatars & Arc Widgets"
-Cohesion: 0.01
-Nodes (169): AnimatedBuilder, Animation, AnimationController, CustomPaint, DecoratedBox, anchorY, build, _controller (+161 more)
+### Community 41 - "generateEd25519KeyPair"
+Cohesion: 0.03
+Nodes (173): BuildGroupSignatureData(), IsGroupEnvelope(), MarshalGroupEnvelope(), MarshalGroupPayload(), ParseGroupEnvelope(), ParseGroupPayload(), requiredGroupPayloadString(), TestGK010ParseGroupEnvelopeRejectsMissingGroupID() (+165 more)
 
-### Community 36 - "1:1 Reaction Provenance Script"
+### Community 42 - "capture_1to1_reaction_head_provenance.dart"
 Cohesion: 0.01
 Nodes (185): _CampaignFailure, _adb, _adbShell, _androidBuildProfile, androidSdk, apkBackups, apkSha256, _appNotificationRecords (+177 more)
 
-### Community 37 - "Node Inbox Streams (Go)"
-Cohesion: 0.03
-Nodes (141): TestBenchmark_DirectAck_FastConfirm(), TestBenchmark_DirectAck_MultipleMessages(), TestBenchmark_EventQueue_BurstDelivery(), TestBenchmark_EventQueue_IdleDelivery(), TestBenchmark_EventQueue_NoDropUnderLoad(), TestBenchmark_InboxRetrieve_ReturnsEmpty(), TestBenchmark_InboxStore_RequiresConnection(), TestBenchmark_MediaUpload_ProgressEvents() (+133 more)
-
-### Community 38 - "Android Background Crypto Script"
+### Community 43 - "capture_android_background_crypto_preflight.dart"
 Cohesion: 0.01
 Nodes (185): _activeNotificationCards, _adb, _adbShell, _androidSdk, _androidTargetPlatform, appPackage, artifactDir, artifactPath (+177 more)
 
-### Community 39 - "PubSub Delivery Tests (Go)"
-Cohesion: 0.06
-Nodes (173): BuildGroupSignatureData(), MarshalGroupEnvelope(), ParseGroupEnvelope(), TestMarshalParseGroupEnvelope_RoundTrip(), TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope(), TestSV014GroupInboxStoreRequest_OmitsMembershipReplayPlaintext(), TestGPL12PrivatePolicyUsesExistingEncryptedExtras(), buildGroupEnvelopeWithPlaintext() (+165 more)
-
-### Community 40 - "Orbit Screen & Intros Tab"
-Cohesion: 0.01
-Nodes (167): blockedPeerIds, build, _buildFoldedIntroRow, _displayName, foldedReviewItems, groupedIntros, introducerUsernames, IntrosTab (+159 more)
-
-### Community 41 - "Group Pending Key DB Tests"
-Cohesion: 0.01
-Nodes (165): bridge, bridgeExchanges, _buildCliJoinFixture, buildGroupFixture, buildMemberRoleUpdatedSystemPayload, callGroupJoinWithConfig, cliContact, cliPeerFixture (+157 more)
-
-### Community 42 - "Group Conversation Wired Tests"
-Cohesion: 0.01
-Nodes (172): CountingGroupMessageRepository, CountingMediaAttachmentRepository, armed, _attempts, buildRecordingWidget, buildWidget, calls, _captured (+164 more)
-
-### Community 43 - "PubSub Envelope Validation (Go)"
+### Community 44 - "New"
 Cohesion: 0.03
-Nodes (160): buildGroupKeyInfoWithGrace(), activeGroupMemberDialTargets(), activeGroupMemberDialTargetSet(), buildGroupMessageExtra(), countRemoteGroupMembers(), decryptGroupEnvelopePayload(), filterDiscoveredGroupMembers(), filterDiscoveredPeers() (+152 more)
+Nodes (135): TestBenchmark_DirectAck_FastConfirm(), TestBenchmark_DirectAck_MultipleMessages(), TestBenchmark_EventQueue_BurstDelivery(), TestBenchmark_EventQueue_IdleDelivery(), TestBenchmark_EventQueue_NoDropUnderLoad(), TestBenchmark_InboxRetrieve_ReturnsEmpty(), TestBenchmark_InboxStore_RequiresConnection(), TestBenchmark_MediaUpload_ProgressEvents() (+127 more)
 
-### Community 44 - "Reaction & Deletion Tests"
+### Community 45 - "orbital_visualization.dart"
 Cohesion: 0.01
-Nodes (161): ../application/send_chat_message_use_case_test.dart, ../domain/repositories/fake_media_attachment_repository.dart, ../domain/repositories/fake_reaction_repository.dart, FakeMediaAttachmentRepository, FakeMessageRepository, FakeReactionRepository, _TrackingReactionRepository, package:flutter_app/features/conversation/application/load_reactions_use_case.dart (+153 more)
+Nodes (166): FadeTransition, items, mergeInnerCircleItems, OrbitFriend, OrbitGroup, friend, group, OrbitFriendItem (+158 more)
 
-### Community 45 - "Conversation Screen Widgets"
+### Community 46 - "conversation_wired_test.dart"
 Cohesion: 0.01
-Nodes (170): activeQuoteText, alignment, allowEditAction, amplitudeValues, backgroundPreference, bannerContactUsername, build, _buildComposerSection (+162 more)
+Nodes (183): ../../../shared/helpers/legacy_upload_media_fn.dart, activeParent, addContact, archiveContact, attachment, attachmentId, attemptedStoredPaths, blockContact (+175 more)
 
-### Community 46 - "Group Message Listener"
+### Community 47 - "FakeP2PService"
 Cohesion: 0.01
-Nodes (170): _acceptedSignedTransitionAuditHashesBySourceId, _accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _allowsSnapshotBackedSystemSender, _appendGroupEventLogEntry, appendSystemEventLog, _applyAuthoritativeGroupConfigSnapshot, _autoDownloadMedia (+162 more)
+Nodes (173): FakeP2PService, RelayProbeResult, IntroductionPayload, package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart, package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart, package:flutter_app/features/p2p/application/start_node_use_case.dart, package:flutter_app/features/p2p/domain/models/discovered_peer.dart, captureFlowEvents (+165 more)
 
-### Community 47 - "Conversation Media Upload Tests"
+### Community 48 - "post_pass_engagement_baseline_integration_test.dart"
 Cohesion: 0.01
-Nodes (157): ../contacts/domain/repositories/fake_contact_repository.dart, ../core/services/fake_p2p_service.dart, ../domain/repositories/fake_message_repository.dart, helpers/fake_upload_media_fn.dart, ../identity/domain/repositories/fake_identity_repository.dart, copyWith, hiddenAt, isOutgoingDeletedTombstone (+149 more)
+Nodes (169): in_memory_contact_repository.dart, in_memory_post_repository.dart, _contact, main, peerId, username, _contact, main (+161 more)
 
-### Community 48 - "Group Membership Use Cases"
+### Community 49 - "account_migration_journey_wired.dart"
 Cohesion: 0.01
-Nodes (145): runMessageStatusCleanupMigration, appBuildGitDirty, appBuildGitSha, appBuildTimestamp, emitAppBuildInfo, kMlKemSecretKeyRingCap, kMlKemSecretKeyRingKey, loadMlKemSecretKeyRing (+137 more)
+Nodes (170): accountMigrationBundleSourceFailedSafeMessage, accountMigrationBundleSourceFailureReason, accountMigrationFinalHandoffStalledSafeMessage, accountMigrationLocalTransferStalledSafeMessage, AccountMigrationReceiverEvent, AccountMigrationReceiverEvents, AccountMigrationReceiverEventType, AccountMigrationReceiverStartFailureCode (+162 more)
 
-### Community 49 - "Group PubSub Core (Go)"
-Cohesion: 0.03
-Nodes (116): activeGroupInboxRecipientsForConfig(), deriveActiveGroupInboxRecipients(), normalizeGroupInboxRecipientPeerIds(), activeGroupMemberDialTargetSummary(), activeMemberDeviceForEnvelope(), buildGroupMessageEnvelope(), buildGroupMessageReceivedEvent(), cloneGroupConfig() (+108 more)
+### Community 50 - "first_time_experience_wired.dart"
+Cohesion: 0.01
+Nodes (167): feed_cleared_repository.dart, first_time_experience_screen.dart, ImageSource, _SimGroupInviteListener, JoinedGroup, ShareIntentService, clearCleared, FeedClearedRepository (+159 more)
 
-### Community 50 - "Account Migration Bundle Transfer"
+### Community 51 - "contact_profile_screen.dart"
+Cohesion: 0.01
+Nodes (162): Alignment, Color, CustomPainter, build, child, GroupMediaIosBackgroundE2EOverlay, labels, _accent (+154 more)
+
+### Community 52 - "package:flutter_app/features/posts/domain/models/post_model.dart"
+Cohesion: 0.02
+Nodes (149): comments, loadPostComments, wait, package:flutter_app/features/posts/application/attach_post_media_use_case.dart, package:flutter_app/features/posts/application/load_post_comments_use_case.dart, package:flutter_app/features/posts/application/load_posts_feed_use_case.dart, package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart, package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart (+141 more)
+
+### Community 53 - "android_app_state_guard.dart"
+Cohesion: 0.01
+Nodes (167): absent, _adb, AndroidAppStateBlocked, AndroidPackageRestoreAction, AndroidPrivateArchiveCapturer, AndroidPrivateArchiveProcessStarter, _apkAnalyzerCandidates, apkDigests (+159 more)
+
+### Community 54 - "package:flutter_app/features/settings/domain/models/background_preference.dart"
+Cohesion: 0.01
+Nodes (148): AnnotatedRegion, _assertBackgroundScrollDoesNotRegress, _assertThresholds, average, averageBuildMs, backgroundP99, backgroundPreference, baselineP99 (+140 more)
+
+### Community 55 - "media_attachments_db_helpers.dart"
+Cohesion: 0.01
+Nodes (162): ../../constants/retry_constants.dart, active_group, activeDissolutionGuard, activeGroup, affected, allowedStatuses, _applyMediaAttachmentPreservingSave, _applyOutgoingDirectPrivateNonCompletionMutation (+154 more)
+
+### Community 56 - "send_group_message_use_case.dart"
+Cohesion: 0.01
+Nodes (162): addRecipient, _areExpectedOutgoingMediaDurable, attachmentIds, candidate, _canReuseOutgoingMessageId, _classifyGroupPublishLiveFanout, code, containsKey (+154 more)
+
+### Community 57 - "account_migration_bundle_transfer.dart"
 Cohesion: 0.01
 Nodes (161): ByteConversionSink, _DigestSink, absolutePath, acceptChunk, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript (+153 more)
 
-### Community 51 - "Group Resume Recovery Tests"
+### Community 58 - "send_chat_message_use_case_test.dart"
+Cohesion: 0.01
+Nodes (161): action, applyOutgoingDirectPrivateNonCompletionMutation, captureFlowEvents, capturePrintedLines, circuitOnlyState, clearResumeStarted, commitOutgoingDirectPrivateWireEnvelope, conditionalTransitionStatus (+153 more)
+
+### Community 59 - "group_resume_recovery_test.dart"
 Cohesion: 0.01
 Nodes (160): addMember, addPage, _addRelayStoredMessagePage, addRepairResponse, admin, attachment, bridgePayloads, ciphertext (+152 more)
 
-### Community 52 - "Send Group Message Use Case"
+### Community 60 - "retry_incomplete_group_uploads_use_case_test.dart"
 Cohesion: 0.01
-Nodes (159): addRecipient, _areExpectedOutgoingMediaDurable, attachmentIds, candidate, _canReuseOutgoingMessageId, _classifyGroupPublishLiveFanout, code, containsKey (+151 more)
+Nodes (152): MediaUploadInFlightTracker, DirectManualUploadRetryRearmRepository, package:flutter_app/core/constants/retry_constants.dart, package:flutter_app/core/media/media_upload_in_flight_tracker.dart, package:flutter_app/core/media/upload_media_outcome.dart, package:flutter_app/core/media/upload_retry_projection.dart, attachment, db (+144 more)
 
-### Community 53 - "Conversation Wired Tests"
+### Community 61 - "inner_circle_interactive_surface.dart"
 Cohesion: 0.01
-Nodes (158): activeParent, addContact, archiveContact, attachment, blockContact, callOrder, calls, conditionalTransitionStatus (+150 more)
+Nodes (152): BorderRadius, BoxConstraints, IoMigrationEntryFileReader, MigrationEntryFileReader, avatarBytes, avatarPath, borderRadius, build (+144 more)
 
-### Community 54 - "APNs Provider Probe Harnesses"
+### Community 62 - "media_picture_in_picture_resume_contract_test.dart"
 Cohesion: 0.01
-Nodes (133): dart:convert, apnsToken, build, deadline, encoded, fcmToken, initial, main (+125 more)
+Nodes (144): fake_media_playback_adapter.dart, GestureDetector, InkWell, PictureInPictureCapability, PictureInPictureStartOutcome, _attachmentRepository, MediaViewerRepositoryResumeStore, readResumePosition (+136 more)
 
-### Community 55 - "Group Reaction Notification Criteria"
+### Community 63 - "State"
+Cohesion: 0.02
+Nodes (156): _FeedTestHarness, _FeedTestHarnessState, _FlowEvent, MyApp, _MyAppState, LocalMediaSender, AccountMigrationProductionBundleSource, _ReceiverStageTracker (+148 more)
+
+### Community 64 - "group_reaction_notification_device_criteria.dart"
 Cohesion: 0.01
 Nodes (155): actorName, actual, appPackage, artifactDirectory, artifactFile, _asStringMap, blocks, buffer (+147 more)
 
-### Community 56 - "Group Admin Metadata Tests"
+### Community 65 - "orbit_wired_test.dart"
+Cohesion: 0.01
+Nodes (154): IgnorePointer, _RecordingNavigatorObserver, NavigatorObserver, Route, _RecordingNavigatorObserver, _RecordingNavigatorObserver, acceptedUpdates, acceptGate (+146 more)
+
+### Community 66 - "group_admin_metadata_convergence_test.dart"
 Cohesion: 0.01
 Nodes (153): acceptedGroup, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptResult, actualSha, addGroupMember, addingAdmin, addMember (+145 more)
 
-### Community 57 - "Node Relay Sessions (Go)"
-Cohesion: 0.03
-Nodes (63): EventTracer, relayPeerHasCircuitAddress(), DefaultRelayAddresses(), limitRelayAddresses(), TestStartLocalNodeForMultiRelayTestAdvertisesLoopbackOnly(), defaultNewHost(), extractIP(), filterAddresses() (+55 more)
+### Community 67 - "account_migration_local_transfer_runtime.dart"
+Cohesion: 0.01
+Nodes (151): _DelayingBundleReceiver, AccountMigrationProductionBundleReceiver, acceptChunk, acceptedOldBlockProof, acceptedOldBlockProofFingerprint, acceptedSegmentIndexes, acceptManifest, acceptOldBlockProof (+143 more)
 
-### Community 58 - "Identity Repository Tests"
+### Community 68 - "package:flutter_app/core/database/production_migration_registry.dart"
 Cohesion: 0.02
-Nodes (138): _FakeIdentityRepo, IdentityRepository, _TrackingIdentityRepository, _MatrixIdentityRepository, _kMnemonic12, recoverIdentityFromSecureStore, result, SecureStoreIdentityRecoveryResult (+130 more)
+Nodes (133): main, _indexColumns, main, map, ordered, rows, _userVersion, _cipherVersion (+125 more)
 
-### Community 59 - "Transport E2E Runner Script"
+### Community 69 - "send_chat_message_use_case.dart"
+Cohesion: 0.01
+Nodes (150): ackKind, acknowledged, action, actualTransport, attachmentRepository, attachments, best, bridge (+142 more)
+
+### Community 70 - "ios_notification_payload_xcui_driver.dart"
+Cohesion: 0.01
+Nodes (149): actual, allMatches, _apnsDeliveryWindowSeconds, _apnsPayloadFile, _apnsPayloadSha256, application, _applicationSha256, apps (+141 more)
+
+### Community 71 - "android_group_media_reliability_controller.dart"
+Cohesion: 0.01
+Nodes (148): accountPeerId, _adb, aggregateAndroidGroupMediaReliabilityEvidence, allowedPeers, AndroidGroupMediaCommandSafetyEvidence, _AndroidGroupMediaHost, androidGroupMediaPackageOwnsForeground, AndroidGroupMediaProcessDeathController (+140 more)
+
+### Community 72 - "application_root.dart"
+Cohesion: 0.01
+Nodes (146): accountMigrationReceiverEvents, accountMigrationRunTransfer, accountMigrationSizeGate, accountMigrationStartReceiver, accountMigrationStopReceiver, _allowsAccountRuntimeNetworkSideEffects, appShellController, _armHomeReadyFallback (+138 more)
+
+### Community 73 - "transport_census_harness.dart"
+Cohesion: 0.01
+Nodes (141): _badgeLabel, containsKey, env, _isPlainOnline, _isRelayReady, _isSendable, main, _relayPeerId (+133 more)
+
+### Community 74 - "run_transport_e2e.dart"
 Cohesion: 0.01
 Nodes (147): a4Proof, a6Proof, _adb, _adbPath, allowPhysicalDevice, _androidDeviceId, _appFileExists, _appPackage (+139 more)
 
-### Community 60 - "iOS Notification XCUI Driver"
+### Community 75 - "feed_screen.dart"
+Cohesion: 0.02
+Nodes (136): BackgroundReadableColors, FeedTokens, canWrite, contactPeerId, displayName, FeedLetter, fromConnection, fromThread (+128 more)
+
+### Community 76 - "group_conversation_screen.dart"
 Cohesion: 0.01
-Nodes (146): actual, allMatches, _apnsDeliveryWindowSeconds, _apnsPayloadFile, _apnsPayloadSha256, application, _applicationSha256, _assertionsAttempted (+138 more)
+Nodes (138): bannerText, emptySubtitle, emptyTitle, GroupBacklogRetentionNotice, groupBacklogRetentionNoticeFor, GroupBacklogRetentionNoticeKind, GroupHistoryGapRepairNotice, groupHistoryGapRepairNoticeFor (+130 more)
 
-### Community 61 - "Posts DB Repository Tests"
-Cohesion: 0.02
-Nodes (117): PostRepositoryImpl, package:flutter_app/core/database/helpers/post_comments_db_helpers.dart, package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart, package:flutter_app/core/database/helpers/post_follow_on_outbox_db_helpers.dart, package:flutter_app/core/database/helpers/post_location_presence_db_helpers.dart, package:flutter_app/core/database/helpers/post_media_db_helpers.dart, package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart, package:flutter_app/core/database/helpers/post_origin_db_helpers.dart (+109 more)
-
-### Community 62 - "Send Chat Message Tests"
+### Community 77 - "InMemoryGroupMessageRepository"
 Cohesion: 0.01
-Nodes (144): action, captureFlowEvents, capturePrintedLines, circuitOnlyState, clearResumeStarted, conditionalTransitionStatus, _currentState, decodeWirePayload (+136 more)
+Nodes (139): _Clock, InMemoryGroupMessageRepository, _InstrumentedBridge, _InstrumentedGroupMessageRepository, _InstrumentedGroupRepository, GroupManualUploadRetryRearmRepository, package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart, ../../../shared/fakes/nth_exact_media_read_gated_repository.dart (+131 more)
 
-### Community 63 - "Orbit Wired Tests"
+### Community 78 - "drain_group_offline_inbox_use_case.dart"
 Cohesion: 0.01
-Nodes (140): IgnorePointer, Route, acceptedUpdates, acceptGate, allGroupsGate, alphaGroup, archivedContactsGate, bridge (+132 more)
+Nodes (143): allowDeletedGroupUnknownSender, anyFirstPageStopped, appliedMessageIds, _applyRepairedHistoryMessages, attempted, authorizedPeerIds, canonical, ciphertext (+135 more)
 
-### Community 64 - "Orbit Painters & Indicators"
-Cohesion: 0.02
-Nodes (129): Color, CustomPainter, _BackdropPainter, _OrbitRingsPainter, AmplitudeBars, AmplitudeBarsPainter, _barGap, _barWidth (+121 more)
-
-### Community 65 - "Post Engagement Listener Tests"
-Cohesion: 0.02
-Nodes (131): Iterable, _commentController, contactRepo, dispose, incomingCommentStream, notificationService, _onMessage, _pendingMessageHandling (+123 more)
-
-### Community 66 - "Send Chat Message Use Case"
+### Community 79 - "group_conversation_screen_test.dart"
 Cohesion: 0.01
-Nodes (138): ackKind, acknowledged, action, actualTransport, attachments, best, bridge, completer (+130 more)
+Nodes (130): appWith, chatScreen, edgeDrag, logicalSize, main, seedMessages, settleFrames, build (+122 more)
 
-### Community 67 - "Secure Key Store Tests"
-Cohesion: 0.02
-Nodes (129): BackgroundPushCrypto, FormatException, _MemorySecureKeyStore, containsKey, db, delete, deleteDatabase, _deleteRekeyArtifacts (+121 more)
+### Community 80 - "startLocalNodeForMultiRelayTest"
+Cohesion: 0.07
+Nodes (136): TestGPL12PrivatePolicyUsesExistingEncryptedExtras(), connectLocalGroupNodes(), mutateGroupEnvelope(), publishRawGroupEnvelope(), waitForCollectedEvent(), TestHolePunchNegativeControl_RelayOnly_NoUpgradeNoThrash(), startLocalNodeForMultiRelayTest(), TestGA002NonMemberCannotPublishValidEnvelope() (+128 more)
 
-### Community 68 - "Background Push Message Handler"
+### Community 81 - "run_group_multi_party_device_real.dart"
 Cohesion: 0.01
-Nodes (134): @pragma, accountNetworkAllowed, action, _activeGroupMemberDeviceForTransport, actorDevice, actorPeerId, actorUsername, allowCurrentMember (+126 more)
+Nodes (140): activeProcessLabelByRole, _androidDocumentsDirectory, androidFileTransport, androidSignalDirectory, _androidTargetedVerdictDrainTimeout, args, brokerSignalName, buildHarnessLaunchSpec (+132 more)
 
-### Community 69 - "Group Offline Inbox Drain"
+### Community 82 - "intro_e2e_runner.dart"
 Cohesion: 0.01
-Nodes (134): allowDeletedGroupUnknownSender, anyFirstPageStopped, appliedMessageIds, _applyRepairedHistoryMessages, authorizedPeerIds, canonical, ciphertext, computedHash (+126 more)
+Nodes (136): accountIdentitySha256, actedOn, age, allowsIosReleaseFileChannel, authorizationArtifactSha256, authorizationGenerationId, authorizationKind, boundToken (+128 more)
 
-### Community 70 - "Orbit Inner Circle UI"
+### Community 83 - "recover_intro_contact_request_use_case.dart"
+Cohesion: 0.01
+Nodes (132): _acceptRemoteSide, action, contact, contactKeyUpdated, contactKeyWasMissing, _contactNeedsRecoveryMerge, continueAsContactRequest, convergedIntro (+124 more)
+
+### Community 84 - "cosmic_background_mirrored.dart"
 Cohesion: 0.02
-Nodes (132): BoxConstraints, arcWrap, arcWrapStep, avatarScale, avatarScaleStep, copyWith, defaults, fromStorageString (+124 more)
+Nodes (126): Animation, AnimationController, anchorY, build, _controller, createState, currentEmoji, dispose (+118 more)
 
-### Community 71 - "Feed Letter Card Tests"
+### Community 85 - "group_offline_replay_envelope.dart"
 Cohesion: 0.02
-Nodes (114): FileImage, Image, build, CompactOriginMarker, connectionDate, contactPeerId, build, CaughtUpEmptyState (+106 more)
+Nodes (132): _accountSignedUnboundTransportDevice, action, activeOnly, allowLegacyFallback, any, baseEnvelope, baseEnvelopeHash, bridge (+124 more)
 
-### Community 72 - "Intro E2E Debug Runner"
+### Community 86 - "group_info_wired_test.dart"
 Cohesion: 0.02
-Nodes (131): accountIdentitySha256, actedOn, age, authorizationArtifactSha256, authorizationGenerationId, authorizationKind, boundToken, captureInstalled (+123 more)
+Nodes (131): actionButton, attempts, beginRecoveryOnNextLoad, bridge, button, captureRejectedUpload, captureUpload, ciphertext (+123 more)
 
-### Community 73 - "Migration Local Transfer Runtime"
-Cohesion: 0.02
-Nodes (130): _DelayingBundleReceiver, AccountMigrationProductionBundleReceiver, acceptChunk, acceptedSegmentIndexes, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript (+122 more)
-
-### Community 74 - "Android Background Crypto Harness"
+### Community 87 - "android_background_crypto_preflight_app.dart"
 Cohesion: 0.02
 Nodes (127): active, _activeNotificationCard, _actorPeerId, _actorTransportPeerId, _actorUsername, addReservedRawClaim, backup, boundedClaimNames (+119 more)
 
-### Community 75 - "Group Offline Replay Envelope"
+### Community 88 - "group_message_listener_test.dart"
 Cohesion: 0.02
-Nodes (126): _accountSignedUnboundTransportDevice, action, activeOnly, allowLegacyFallback, any, baseEnvelope, baseEnvelopeHash, bridge (+118 more)
+Nodes (124): DebugPrintCallback, _absentMarker, acceptedGroup, acceptedRoster, addDeleteEvent, adminMember, append, attempts (+116 more)
 
-### Community 76 - "Migration Journey UI"
+### Community 89 - "post_create_encrypted_media_integration_test.dart"
 Cohesion: 0.02
-Nodes (121): AccountMigrationMoveSizeEstimate, AccountMigrationOldPhonePresentationState, AccountMigrationOldPhoneStatus, AccountMigrationProgressStage, AccountMigrationProgressStageStatus, AccountMigrationQrPresentationState, AccountMigrationQrPresentationStatus, AccountMigrationRole (+113 more)
+Nodes (118): ImagePicker, MediaPicker, _picker, pickImage, pickMultipleMedia, pickVideo, SystemMediaPicker, package:flutter_app/features/posts/application/download_post_media_use_case.dart (+110 more)
 
-### Community 77 - "Foreground Push Drain Harnesses"
+### Community 90 - "pending_message_retrier.dart"
 Cohesion: 0.02
-Nodes (119): group_multi_device_real_harness.dart, _buildCliJoinFixture, _configuredRunId, _configuredSharedDir, _createCliGroupNode, deadline, file, runGroupPublishBenchmark (+111 more)
+Nodes (120): _TempMediaFileManager, MediaFileManager, connectivityRestoredSignal, controller, restoredEdges, sub, wasConnected, _acknowledgeGroupRecoveryIfEligible (+112 more)
 
-### Community 78 - "Android App State Guard"
+### Community 91 - "startup_router.dart"
 Cohesion: 0.02
-Nodes (123): absent, _adb, AndroidAppStateBlocked, AndroidPackageRestoreAction, AndroidPrivateArchiveCapturer, apkDigests, apkFiles, archiveIndex (+115 more)
+Nodes (118): accountMigrationNetworkGate, hadPendingResumeStarted, handleAppResumed, migrationAllowsNetwork, readinessProofRecorder, _resumeGroupRecoveryEnabled, resumeStart, runGroupExitIntentRecoveryPass (+110 more)
 
-### Community 79 - "Conversation Performance Harness"
+### Community 92 - "conversation_wired_performance_harness.dart"
 Cohesion: 0.02
-Nodes (120): AmplitudeTick, DurationTick, action, _amplitudeController, amplitudeStream, audioRecorderService, binding, bridge (+112 more)
+Nodes (122): AmplitudeTick, DurationTick, action, _amplitudeController, amplitudeStream, audioRecorderService, binding, bridge (+114 more)
 
-### Community 80 - "Conversation BG Task Tests"
+### Community 93 - "orbit_sculpt_summon_wired_test.dart"
+Cohesion: 0.02
+Nodes (112): AnimatedBuilder, CustomPaint, DecoratedBox, DaylightLagoonBackground, Opacity, package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart, package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart, package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart (+104 more)
+
+### Community 94 - "create_group_picker_wired_test.dart"
+Cohesion: 0.02
+Nodes (118): announcement_private_reply_request.dart, GroupRepository, AppendGroupEventLogEntry, AnnouncementPrivateReplyPolicy, AnnouncementPrivateReplyResolution, AnnouncementPrivateReplyResolver, _available, contact (+110 more)
+
+### Community 95 - "package:flutter_app/features/conversation/domain/models/conversation_message.dart"
+Cohesion: 0.02
+Nodes (110): fake_message_repository.dart, copyWith, hiddenAt, isOutgoingDeletedTombstone, normalizeOutgoingDeleteTombstoneVisibility, package:flutter_app/core/lifecycle/handle_app_paused.dart, package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart, package:flutter_app/features/conversation/domain/models/conversation_message.dart (+102 more)
+
+### Community 96 - "account_migration_local_transfer_runtime_test.dart"
+Cohesion: 0.02
+Nodes (121): HttpClient, _MemoryAuthorityRepository, aad, acceptedManifest, acceptInvocations, acceptManifest, acceptManifestCalls, acceptOldBlockProof (+113 more)
+
+### Community 97 - "account_migration_local_transfer_timeout_simulator_test.dart"
+Cohesion: 0.02
+Nodes (112): aad, acceptedSegmentIndexes, acceptManifest, acceptSegment, acceptTranscript, advertisedPeerId, bundleId, _bundleSourceFailedEvent (+104 more)
+
+### Community 98 - "conversation_wired_bg_task_test.dart"
 Cohesion: 0.02
 Nodes (120): addContact, archiveContact, bgBeginResponse, blockContact, callLog, chatListener, checkHealth, conditionalTransitionStatus (+112 more)
 
-### Community 81 - "Group Creation & Invite Use Cases"
+### Community 99 - "group_membership_smoke_test.dart"
 Cohesion: 0.02
-Nodes (113): addedMembers, _addMemberFailures, allMembers, buildCreateWarningMessage, byPeerId, CreateGroupMemberAddFailure, createGroupWithMembers, CreateGroupWithMembersResult (+105 more)
+Nodes (120): acceptDevice, acceptFor, addPage, attempts, bobMessageCount, charlieDeviceSet, charlieIncomingWith, charlieMember (+112 more)
 
-### Community 82 - "Group Conversation Screen Widgets"
+### Community 100 - "IdentityRepository"
 Cohesion: 0.02
-Nodes (115): activeQuoteText, alignment, amplitudeValues, backgroundPreference, backlogRetentionNotice, build, _buildBacklogRetentionBanner, _buildComposerSection (+107 more)
+Nodes (113): _FakeIdentityRepo, IdentityRepository, _TrackingIdentityRepository, _MatrixIdentityRepository, _cachedIdentity, _directReactionProjection, _groupReactionProjection, _hasCachedIdentity (+105 more)
 
-### Community 83 - "Group Key Rotation Tests"
+### Community 101 - "post_pin_retry_integration_test.dart"
 Cohesion: 0.02
-Nodes (114): package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart, package:flutter_app/features/groups/application/group_key_update_listener.dart, package:flutter_app/features/groups/application/group_key_update_signature.dart, package:flutter_app/features/groups/application/group_membership_update_listener.dart, PassthroughCryptoBridge, _RoundtripCryptoBridge, _RelayBridge, _InstrumentedBridge (+106 more)
+Nodes (112): ../improvement/support/controlled_post_pin_delivery_harness.dart, deliveryResult, EditPinnedPostResult, _editPinnedPostResultForSettlement, envelope, existingState, media, now (+104 more)
 
-### Community 84 - "Relay Redis Backend (Go)"
-Cohesion: 0.04
-Nodes (65): pruneExpiredInboxMessages(), TestMemoryInbox_StoreAtCapEvictsOldestReturnsStored(), encodeRedisComponent(), encodeRedisGroupInboxRecord(), encodeRedisGroupInboxRecords(), filterInboxEntries(), minInt(), newRedisClientFromURL() (+57 more)
-
-### Community 85 - "Group Membership Smoke Tests"
+### Community 102 - "handle_incoming_group_message_use_case.dart"
 Cohesion: 0.02
-Nodes (116): acceptDevice, acceptFor, addPage, attempts, bobMessageCount, charlieDeviceSet, charlieIncomingWith, charlieMember (+108 more)
+Nodes (119): admittedMedia, allMissingMediaWasRefused, attachments, attachmentsByMessage, candidateIds, candidates, canonicalMessage, _canReconcileOutgoingSelfEchoStatus (+111 more)
 
-### Community 86 - "Group Info Wired Tests"
+### Community 103 - "letter_card.dart"
 Cohesion: 0.02
-Nodes (116): actionButton, attempts, beginRecoveryOnNextLoad, bridge, button, ciphertext, command, confirmDeleteLocalGroupDialog (+108 more)
+Nodes (113): Align, AspectRatio, ClipRRect, ConstrainedBox, ../../fakes/fake_just_audio.dart, _audioMedia, avatarOutsideBubble, _bubbleBorderRadius (+105 more)
 
-### Community 87 - "Group Private Media Proof Tests"
+### Community 104 - "migration_file_manifest_builder.dart"
 Cohesion: 0.02
-Nodes (107): build, delay, _expectReport89RowsVisible, _expectVideoViewerCanOpen, _expectVoiceCanPlay, _fixtureEncryptionKeyBase64, _fixtureEncryptionNonce, group (+99 more)
+Nodes (112): _absoluteForRelativePath, acceptSizeDivergence, _addBestPathFailureIssue, addCandidate, _addChatMedia, _addPathBackedItem, _addPathCandidateIfUsable, _addPendingPostMedia (+104 more)
 
-### Community 88 - "Group Multi-Party Runner Script"
+### Community 105 - "run_intro_accept_notification_android.dart"
 Cohesion: 0.02
-Nodes (115): activeProcessLabelByRole, args, buildHarnessLaunchSpec, configFile, container, contains, continueOnFailure, declared (+107 more)
+Nodes (117): a, _acceptanceBudget, _acceptanceLeg, _acceptBody, _acceptTitle, actedOn, action, _adbShell (+109 more)
 
-### Community 89 - "Media Journey E2E Harness"
+### Community 106 - "handle_incoming_group_message_use_case_test.dart"
 Cohesion: 0.02
-Nodes (114): _activeDevice, addContact, _attachImageFromLibrary, base64Decode, binding, bridge, build, _buildConversation (+106 more)
+Nodes (111): GroupGuardedMediaAttachmentSave, deleteForMe, GroupMediaDeletePrepareFn, _inFlight, prepare, ON, package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart, package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart (+103 more)
 
-### Community 90 - "Go Bridge Tests (Go)"
+### Community 107 - "first_time_experience_screen.dart"
+Cohesion: 0.02
+Nodes (109): backgroundPreference, build, _buildConfirmButton, _buildContactList, _buildEmptyState, _buildHeader, _buildLoadErrorState, _buildLoadingState (+101 more)
+
+### Community 108 - "direct_private_media_device_local_journey_harness.dart"
+Cohesion: 0.02
+Nodes (115): advancePrivateMediaClock, _artifactMarker, _attachment, attachmentRepository, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, _byMessage, claimExactPrivateMediaOpening (+107 more)
+
+### Community 109 - "dart:io"
+Cohesion: 0.02
+Nodes (80): android_voice_message_device_campaign.dart, dart:io, ../../integration_test/group_multi_device_real_harness.dart, localProperties, resolveAndroidAppPackage, resolveAndroidAppPackageFromSources, _artifact, _devices (+72 more)
+
+### Community 110 - "bridge_test.go"
 Cohesion: 0.06
 Nodes (112): InboxRegisterToken(), InboxStore(), TestPeerPing_InvalidJSON(), TestPeerPing_MissingPeerId(), TestPeerPing_NodeNotInitialized(), assertGroupPublishMediaOnlyAcceptsEmptyText(), assertNotOk(), parseJSON() (+104 more)
 
-### Community 91 - "Notification Sound Smoke Runner"
+### Community 111 - "package:flutter_app/features/conversation/domain/repositories/message_repository.dart"
+Cohesion: 0.02
+Nodes (104): byId, deleteContactAndMessages, _deleteIntroductionsForPeer, deleteInventoriedState, _deleteLocalMediaArtifacts, deleteMediaForContact, introductions, introLists (+96 more)
+
+### Community 112 - "handle_incoming_group_invite_use_case.dart"
+Cohesion: 0.02
+Nodes (112): _acceptedMemberJoinedAt, acceptedMembershipWatermarkAt, acceptedRoster, authResult, avatarBlobId, avatarMime, avatarPath, bridge (+104 more)
+
+### Community 113 - "production_migration_registry.dart"
+Cohesion: 0.02
+Nodes (111): name, productionCreateMigrations, ProductionMigrationEntry, productionUpgradeMigrations, runProductionOnCreate, runProductionOnUpgrade, version, migrations/001_identity_table.dart (+103 more)
+
+### Community 114 - "run_notification_sound_smoke.dart"
 Cohesion: 0.02
 Nodes (110): Encoding, _activeAppNotificationRecords, activeSection, _adb, _adbOn, alice, aliceDevice, aliceIsAndroid (+102 more)
 
-### Community 92 - "Android Notification Payload Script"
+### Community 115 - "media_message_journey_e2e_test.dart"
+Cohesion: 0.02
+Nodes (110): _activeDevice, addContact, _attachImageFromLibrary, base64Decode, binding, bridge, build, _buildConversation (+102 more)
+
+### Community 116 - "sims_verification_test.dart"
+Cohesion: 0.02
+Nodes (101): ../../integration_test/scripts/_android_app_package.dart, SimsManifest, SimsVerdict, _androidBuildProfile, main, androidDigest, _androidProfile, file (+93 more)
+
+### Community 117 - "group_media_ios_fixture_driver.dart"
+Cohesion: 0.02
+Nodes (110): accountPeerId, action, _actions, androidArtifact, androidArtifactSha256, androidCommandAudit, attachmentId, _awaitEndpointResult (+102 more)
+
+### Community 118 - "notification_android_payload_campaign.dart"
 Cohesion: 0.02
 Nodes (110): _a6Checks, _actionConfig, _adb, airplaneEnabled, _AndroidNotificationCampaign, AndroidNotificationCampaignOptions, AndroidNotificationCampaignResult, apk (+102 more)
 
-### Community 93 - "Identity Onboarding UI"
+### Community 119 - "run_invite_reliability_multi_device.dart"
 Cohesion: 0.02
-Nodes (100): _activeTab, AppShellChangeKind, _backgroundPreference, _lastChangeKind, notifyIdentityChanged, notifyMediaQualityChanged, setBackgroundPreference, switchTo (+92 more)
+Nodes (110): _adb, adbDeviceIds, addEntry, androidPair, _AndroidSignalBroker, appPackage, appRevision, args (+102 more)
 
-### Community 94 - "Handle Incoming Group Message"
+### Community 120 - "retry_failed_messages_use_case.dart"
 Cohesion: 0.02
-Nodes (109): admittedMedia, attachments, attachmentsByMessage, candidateIds, candidates, _canReconcileOutgoingSelfEchoStatus, contentHash, decodedPrivateMediaPolicy (+101 more)
+Nodes (105): fromPreview, handleDeliveryReceipt, _isOutgoingOneMoreLookPrivate, messageIds, actualTransport, allUploaded, attachments, bridge (+97 more)
 
-### Community 95 - "Group Info Wired Screen"
+### Community 121 - "delete_contact_use_case_test.dart"
 Cohesion: 0.02
-Nodes (109): _applyMetadataEdit, backgroundPreference, bridge, _broadcastSelfRemovalIfNeeded, build, _buildGroupConfig, _captureLeaveRollbackSnapshot, _confirmDeleteGroupLocally (+101 more)
+Nodes (110): addContact, addRequest, applyIncomingAdd, archiveContact, blockContact, conditionalTransitionStatus, contactExists, countPendingIntroductions (+102 more)
 
-### Community 96 - "Push Decrypt Preview"
+### Community 122 - "media_stable_id_smoke_test.dart"
+Cohesion: 0.02
+Nodes (106): core_fake_p2p.FakeP2PService, Incoming, addPage, _addSignedInboxPage, attempts, _CursorInboxBridge, _groupPublishPayloads, _InboxPage (+98 more)
+
+### Community 123 - "group_repository_impl.dart"
+Cohesion: 0.02
+Nodes (109): ../../domain/models/group_key_info.dart, ../../domain/models/group_key_retention_policy.dart, ../../domain/models/group_member.dart, ../../domain/models/group_model.dart, ../../domain/models/pending_sibling_device.dart, ../../domain/repositories/group_repository.dart, ../../domain/repositories/pending_sibling_device_repository.dart, _acceptedStorageRowAddress (+101 more)
+
+### Community 124 - "post_reaction_listener.dart"
+Cohesion: 0.02
+Nodes (104): _RecordingNotificationService, _RecordingNotificationService, FlutterNotificationService, _commentController, contactRepo, dispose, incomingCommentStream, notificationService (+96 more)
+
+### Community 125 - "group_info_wired.dart"
+Cohesion: 0.02
+Nodes (109): _applyMetadataEdit, authority, backgroundPreference, bridge, build, _buildGroupConfig, _closeSheetForExitResult, _confirmDeleteGroupLocally (+101 more)
+
+### Community 126 - "push_decrypt_preview.dart"
 Cohesion: 0.02
 Nodes (109): action, actorName, actorPeerId, actorUsername, allowPayloadMemberName, baseEnvelopeHash, body, candidates (+101 more)
 
-### Community 97 - "Production Migration Registry"
+### Community 127 - "full_screen_typed_media_viewer.dart"
 Cohesion: 0.02
-Nodes (108): name, productionCreateMigrations, ProductionMigrationEntry, productionUpgradeMigrations, runProductionOnCreate, runProductionOnUpgrade, version, migrations/001_identity_table.dart (+100 more)
+Nodes (109): _actionIcon, _actionOrder, _actionTooltip, _adapter, adapterFactory, _adapterGeneration, _authorizationAccepted, _authorizationStarted (+101 more)
 
-### Community 98 - "Delete Contact Use Case Tests"
+### Community 128 - "run_1to1_device_real.dart"
 Cohesion: 0.02
-Nodes (108): addContact, addRequest, applyIncomingAdd, archiveContact, blockContact, conditionalTransitionStatus, contactExists, countPendingIntroductions (+100 more)
+Nodes (107): android_keepalive_drop_campaign.dart, android_wake_token_directionality_campaign.dart, accept, adbVersion, artifact, artifactSha256, audit, blocked (+99 more)
 
-### Community 99 - "Group Message Repository Tests"
+### Community 129 - "drain_group_offline_inbox_use_case_test.dart"
 Cohesion: 0.02
-Nodes (104): _Clock, InMemoryGroupMessageRepository, _InstrumentedBridge, _InstrumentedGroupMessageRepository, _InstrumentedGroupRepository, package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart, contactPeerId, groupId (+96 more)
+Nodes (107): _CursorInboxBridge, _SequentialMirroringGroupPublishBridge, package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart, activeRetrieves, addDelay, addFailOnce, addPage, addRepairResponse (+99 more)
 
-### Community 100 - "Group & Friend Row Widgets"
+### Community 130 - "dart:typed_data"
 Cohesion: 0.02
-Nodes (100): _amberAccent, backgroundPreference, _blueAccent, build, _buildAddMemberButton, _buildDeleteLocallyCard, _buildDissolveButton, _buildDissolvedStatusCard (+92 more)
+Nodes (99): dart:typed_data, base64Encode, base64ToHex, bytes, bytesToHex, hex, hexToBase64, hexToBytes (+91 more)
 
-### Community 101 - "Share Batch Coordinator Tests"
+### Community 131 - "debug_e2e_composition_root.dart"
 Cohesion: 0.02
-Nodes (105): DefaultShareBatchDeliveryCoordinator, ShareBatchDeliveryCoordinator, _PartialForwardCoordinator, buildCoordinator, chatMessageListener, contactRepository, contactSendIntents, contactSends (+97 more)
+Nodes (105): ResolveWakeTokenForIntroE2EFn, acceptGroupMediaProofInvite, activation, appShellController, audioRecorderService, awaitGroupMediaProofEndpointReady, bindGroupMediaDownloadHooks, bridge (+97 more)
 
-### Community 102 - "Direct Private Media Journey Script"
+### Community 132 - "account_migration_full_transfer_test.dart"
+Cohesion: 0.02
+Nodes (101): buildBridgeMigrationCutoverLeaseCleanup, clearCutover, loadCutover, saveCutover, _secureKeyStore, SecureKeyStoreMigrationCutoverRepository, storageKey, storageKeyPrefix (+93 more)
+
+### Community 133 - "run_direct_private_media_device_local_journey.dart"
 Cohesion: 0.02
 Nodes (105): BytesBuilder, direct_private_media_device_local_journey_criteria.dart, acceptByte, _AdbObservation, _AdbSnapshot, _Arguments, artifact, artifactDirectory (+97 more)
 
-### Community 103 - "Relay Media Store (Go)"
+### Community 134 - "media_attachment_repository_impl.dart"
+Cohesion: 0.02
+Nodes (105): ../../domain/models/media_preview_descriptor.dart, ../../domain/models/media_storage.dart, applyOutgoingDirectPrivateNonCompletionMutation, _applyOutgoingDirectPrivateNonCompletionWithinLock, attachmentId, _attachmentsFromRows, authorizationChanges, _authorizationChangesController (+97 more)
+
+### Community 135 - "announcement_private_media_platform_proof_test.dart"
+Cohesion: 0.02
+Nodes (97): ../helpers/group_private_media_lifecycle_test_fixture.dart, advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, _attachmentId, attempts, completeGroupPrivateMediaCleanup, consumeGroupPrivateMedia, deleteGroupPrivateMediaAttachmentWithinLock (+89 more)
+
+### Community 136 - "notification_open_ui_smoke_test.dart"
+Cohesion: 0.02
+Nodes (105): _activeGroupId, _activePeerId, applyIncomingAdd, _backgroundPreOpenFixture, _backgroundUpdatedFixture, build, buildChatMessageListener, _buildConversation (+97 more)
+
+### Community 137 - "setupTestEnv"
 Cohesion: 0.06
 Nodes (73): containsPeer(), handleMediaDelete(), handleMediaDownload(), handleMediaList(), HandleMediaStream(), handleMediaUpload(), NewMediaStore(), downloadMedia() (+65 more)
 
-### Community 104 - "Two-User Exchange Tests"
-Cohesion: 0.02
-Nodes (104): package:flutter_app/features/contacts/application/delete_contact_use_case.dart, addContact, addTestContact, alice, archiveContact, blockContact, bob, bobRowCount (+96 more)
+### Community 138 - "inbox.go"
+Cohesion: 0.04
+Nodes (55): decodeGroupInboxEntries(), chatPushMetadata, controlPlaneStores, GroupInboxBackend, groupInboxHistoryGap, groupInboxMessage, GroupInboxStore, GroupInboxStoreResult (+47 more)
 
-### Community 105 - "Live Direct Notification Tests"
-Cohesion: 0.02
-Nodes (97): AppLifecycleState, ../../core/local_discovery/fake_local_p2p_service.dart, fake_notification_service.dart, in_memory_inbox_staging_repository.dart, _lastToneAt, NotificationToneTracker, shouldPlayTone, window (+89 more)
-
-### Community 106 - "Group Message Listener Tests"
-Cohesion: 0.02
-Nodes (103): DebugPrintCallback, _absentMarker, addDeleteEvent, adminMember, append, attempts, baseAdmin, baseSender (+95 more)
-
-### Community 107 - "Durable Notification Tone Lease"
+### Community 139 - "durable_notification_tone_lease.dart"
 Cohesion: 0.02
 Nodes (102): acquireTone, _api, _attemptMessageClaim, _attemptToneReservation, claim, claimed, claimEvent, claimMessageEvent (+94 more)
 
-### Community 108 - "Group Inbox Drain Tests"
+### Community 140 - "post_engagement_follow_on_support.dart"
 Cohesion: 0.02
-Nodes (101): _CursorInboxBridge, _SequentialMirroringGroupPublishBridge, activeRetrieves, addDelay, addFailOnce, addPage, addRepairResponse, addTimeout (+93 more)
+Nodes (98): _aggregatePostEngagementFollowOnSettlement, commentId, createdAt, defaultPostCommentDeliveryConcurrency, deliveries, _deliverPostEngagementFollowOnRecipients, deliverQueuedPostEngagementFollowOn, envelope (+90 more)
 
-### Community 109 - "Notification Open UI Smoke Tests"
+### Community 141 - "two_user_message_exchange_test.dart"
 Cohesion: 0.02
-Nodes (101): _activeGroupId, _activePeerId, applyIncomingAdd, _backgroundPreOpenFixture, _backgroundUpdatedFixture, build, buildChatMessageListener, _buildConversation (+93 more)
+Nodes (102): addContact, addTestContact, alice, archiveContact, blockContact, bob, bobRowCount, bridge (+94 more)
 
-### Community 110 - "Orbit Arc Layout Geometry"
+### Community 142 - "Node"
+Cohesion: 0.05
+Nodes (47): EventTracer, relayPeerHasCircuitAddress(), DefaultRelayAddresses(), TestStartLocalNodeForMultiRelayTestAdvertisesLoopbackOnly(), classifyStreamTransport(), defaultNewHost(), extractIP(), filterAddresses() (+39 more)
+
+### Community 143 - "send_post_comment_use_case.dart"
+Cohesion: 0.02
+Nodes (96): _cleanDisplayName, groupPeerFallbackLabel, memberName, preferMemberName, resolveGroupSenderDisplayName, sanitized, senderPeerId, shortPeerId (+88 more)
+
+### Community 144 - "orbit_arc_layout.dart"
 Cohesion: 0.02
 Nodes (101): angle, _angleOf, arc, arcI, arcIndex, arcNumber, av, avatarSize (+93 more)
 
-### Community 111 - "Settings Preference Use Cases"
+### Community 145 - "share_batch_delivery_coordinator.dart"
 Cohesion: 0.02
-Nodes (95): fromStorageString, loadImageQualityPreference, loadVideoQualityPreference, saveImageQualityPreference, saveVideoQualityPreference, value, write, accountMigrationRunTransfer (+87 more)
+Nodes (101): _activeBlobId, _activeBudgetBytes, announcementForwardProvenanceForContact, attachment, authority, _authorizeInternalForwardTarget, _authorizeInternalForwardTargets, bridge (+93 more)
 
-### Community 112 - "Share Intent & Startup Routing"
+### Community 146 - "download_media_use_case_test.dart"
 Cohesion: 0.02
-Nodes (96): ShareIntent, ShareIntentService, ContactRequestPresentationGate, release, releaseAll, shouldSuppress, suppress, _suppressAll (+88 more)
+Nodes (101): atomicFailureCalls, _attachmentsByMessage, automaticBeginCalls, automaticCommitCalls, automaticDeletionJournaled, automaticParentGroupId, automaticParentLocallyDeleted, automaticParentPresent (+93 more)
 
-### Community 113 - "Relay Inbox Tests (Go)"
+### Community 147 - "class"
+Cohesion: 0.02
+Nodes (92): class, ../../domain/models/group_exit_diagnostic.dart, ../../domain/repositories/group_exit_diagnostic_repository.dart, clearAuthority, loadAuthority, saveAuthority, _secureKeyStore, SecureKeyStoreAccountMigrationAuthorityRepository (+84 more)
+
+### Community 148 - "inbox_test.go"
 Cohesion: 0.08
-Nodes (87): newMemoryInboxBackend(), failingStoreInboxBackend, TestGroupInboxHandler_ReactionHintBindsAuthenticatedSenderAndExactRecipientSet(), requireInboxStoreResult(), TestInboxStoreDedup(), TestInboxStoreDedup_DifferentMessageIds(), TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(), TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID() (+79 more)
+Nodes (88): newMemoryInboxBackend(), failingStoreInboxBackend, TestGroupInboxHandler_ReactionHintBindsAuthenticatedSenderAndExactRecipientSet(), requireInboxStoreResult(), TestInboxStoreDedup(), TestInboxStoreDedup_DifferentMessageIds(), TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(), TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID() (+80 more)
 
-### Community 114 - "Group Invite Payload Parsing"
+### Community 149 - "messages_db_helpers.dart"
+Cohesion: 0.02
+Nodes (99): AND, allowedCurrentStatuses, attachmentId, contactPeerId, cutoff, db, dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction, dbAdvanceDirectPrivateMediaClock (+91 more)
+
+### Community 150 - "ContactRepository"
+Cohesion: 0.02
+Nodes (96): ContactRepository, package:flutter_app/features/contacts/application/archive_contact_use_case.dart, package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart, _FakeContactRepository, _FakeContactRepo, addContact, archiveContact, blockContact (+88 more)
+
+### Community 151 - "group_invite_payload.dart"
 Cohesion: 0.02
 Nodes (99): group_invite_policy.dart, group_welcome_key_package.dart, buildEncryptedEnvelope, canonicalInviteSignedPayload, currentTimeValidationFailure, _decodeSignedPayload, expiresAt, failure (+91 more)
 
-### Community 115 - "Posts Nearby & Privacy Settings"
+### Community 152 - "group_media_reliability_criteria.dart"
 Cohesion: 0.02
-Nodes (94): _FakeNearbyLocationPlatformAdapter, _FakeNearbyLocationPlatformAdapter, accuracyM, _availabilityForSettings, canOpenSettings, capturedAt, checkPermissionState, GeolocatorNearbyLocationPlatformAdapter (+86 more)
+Nodes (99): actual, allDigests, artifact, artifactDigest, _artifactKeys, barrier, barrierPath, blobIds (+91 more)
 
-### Community 116 - "Migration Database Import"
+### Community 153 - "download_media_use_case.dart"
 Cohesion: 0.02
-Nodes (93): _BenchmarkDatabaseImportStaging, containsKey, create, createdAt, _createMigrationFixtureSchema, db, delete, execute (+85 more)
+Nodes (98): _JourneyMediaAttachmentRepository, ackRelayBlobDeletion, adoptCanonicalFileIfAvailable, adoptCompletePartFileIfAvailable, attachmentId, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, bridge (+90 more)
 
-### Community 117 - "Migration Segmented Transfer"
+### Community 154 - "group_media_reliability_e2e.dart"
 Cohesion: 0.02
-Nodes (87): dart:typed_data, boundedReactionEventIdentity, bytes, deterministicConversationNotificationId, digest, normalized, sublistView, base64Encode (+79 more)
+Nodes (98): arm, attachmentIds, attempt, barrier, _barrierReached, base, _beforeAtomicStateReplace, changed (+90 more)
 
-### Community 118 - "In-Memory Post Repository Fake"
+### Community 155 - "in_memory_post_repository.dart"
 Cohesion: 0.02
 Nodes (97): _changes, clearPinDismissal, commentExists, _commentReactionsByCommentId, _commentReactionsById, _commentsById, _commentsByPostId, _decoratePost (+89 more)
 
-### Community 119 - "1:1 Device Real Runner Script"
+### Community 156 - "dart:ui"
 Cohesion: 0.02
-Nodes (96): android_keepalive_drop_campaign.dart, android_wake_token_directionality_campaign.dart, accept, adbVersion, artifact, artifactSha256, audit, blocked (+88 more)
+Nodes (87): app_colors.dart, background_readable_colors.dart, dart:ui, EdgeInsetsGeometry, feed_tokens.dart, AppTheme, blurSigma, borderRadius (+79 more)
 
-### Community 120 - "LAN Dial & Holepunch (Go)"
-Cohesion: 0.04
-Nodes (78): Event, classifyStreamTransportConn(), firstDirectConn(), firstDirectTCPConn(), reserveLocalRelay(), startNW002RelayNodeWithTracer(), TestFeasibility_DirectUpgrade_TcpLane(), TestHolePunchFeasibility_LoopbackUpgradeObservable() (+70 more)
-
-### Community 121 - "Migration Pairing & QR Tests"
-Cohesion: 0.02
-Nodes (89): _MemoryPairingSessionRepository, _MemoryPairingSessionRepository, consumedSessions, consumeSession, empty, failClosed, isSessionConsumed, loadConsumedSession (+81 more)
-
-### Community 122 - "iOS Notification Adapter (Python)"
+### Community 157 - "ios_notification_provider_adapter.py"
 Cohesion: 0.09
 Nodes (92): AdapterBlocked, AdapterFailure, AdapterInterrupted, apns_host_for_manifest(), _base64_url(), _bounded_fixture_text(), _bounded_string(), _cleanup() (+84 more)
 
-### Community 123 - "Introduction Send Use Cases"
-Cohesion: 0.02
-Nodes (84): contacts, kMlKemReannouncePendingKey, peerIds, raw, readMlKemReannounceMarker, recordMlKemReannouncePending, secureKeyStore, write (+76 more)
+### Community 158 - "group_private_media_stale_library_boundary_test.dart"
+Cohesion: 0.03
+Nodes (82): DeleteGroupMediaForMeUseCase, defaultGroupMediaDeleteForMeCoordinator, deleteForMe, GroupMediaDeleteForMeCoordinator, package:flutter_app/features/conversation/domain/models/media_library.dart, package:flutter_app/features/groups/application/group_media_batch_forward.dart, package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart, package:flutter_app/features/groups/application/group_shared_media_batch_actions.dart (+74 more)
 
-### Community 124 - "Feed Init Performance Harness"
+### Community 159 - "group_info_screen.dart"
+Cohesion: 0.02
+Nodes (91): PendingSiblingDevice, compactEncryptionLabel, compactReviewLabel, encryptionLabel, fromSnapshot, GroupSecurityStatusViewState, hasCurrentKey, hasIdentityWarnings (+83 more)
+
+### Community 160 - "self_removed_group_shell_db_helpers_test.dart"
+Cohesion: 0.02
+Nodes (93): package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart, package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart, package:flutter_app/core/database/migrations/085_pending_sibling_devices.dart, package:flutter_app/features/groups/data/repositories/group_history_gap_repair_repository_impl.dart, package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart, db, main, repairRow (+85 more)
+
+### Community 161 - "voluntary_leave_prework_degradation_test.dart"
+Cohesion: 0.02
+Nodes (95): adminPeerId, advance, _AdvanceWrite, advanceWrites, all, allowlistedCodes, attempt, attemptedNotices (+87 more)
+
+### Community 162 - "group_messages_db_helpers.dart"
+Cohesion: 0.02
+Nodes (94): group_message_local_deletions_db_helpers.dart, after, anchor, anchorRows, args, before, contains, db (+86 more)
+
+### Community 163 - "group_media_batch_forward_delivery_coordinator.dart"
+Cohesion: 0.02
+Nodes (92): GroupMediaBatchForwardDraft, cancelled, cells, _cellStatus, completed, completedCellCount, completion, deliverInitial (+84 more)
+
+### Community 164 - "settings_wired.dart"
+Cohesion: 0.02
+Nodes (89): accountMigrationRunTransfer, accountMigrationSizeGate, appShellController, _backgroundPreferenceError, bridge, build, _buildDebugSection, contactRepo (+81 more)
+
+### Community 165 - "InMemoryContactRepository"
+Cohesion: 0.02
+Nodes (89): InMemoryContactRepository, PostReactionListener, applied, pendingEvents, reconcilePendingPostChildEvents, package:flutter_app/features/posts/application/handle_incoming_post_comment_use_case.dart, package:flutter_app/features/posts/application/handle_incoming_post_pins_use_case.dart, package:flutter_app/features/posts/application/handle_incoming_post_reaction_use_case.dart (+81 more)
+
+### Community 166 - "media_attachment_repository.dart"
+Cohesion: 0.02
+Nodes (93): _LifecycleMediaRepository, applyOutgoingDirectPrivateNonCompletionMutation, attachment, attachmentId, authorizationChanges, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, beginGroupPrivateMediaDownloadWithinLock (+85 more)
+
+### Community 167 - "feed_wired_init_performance_harness.dart"
 Cohesion: 0.02
 Nodes (93): _applyWideSurface, appShellController, backingSecureKeyStore, baseIdentityRepo, binding, bridge, buildApp, _callback (+85 more)
 
-### Community 125 - "Migration Group Manifest"
+### Community 168 - "migration_group_manifest.dart"
 Cohesion: 0.02
 Nodes (93): attempts, blocking, code, committedKeys, consumedAt, createdAt, cursor, deviceId (+85 more)
 
-### Community 126 - "Shared Text & Media Widgets"
-Cohesion: 0.02
-Nodes (84): Align, ClipRRect, ConstrainedBox, build, createState, didUpdateWidget, dispose, _disposeRecognizers (+76 more)
-
-### Community 127 - "Media Attachment Repositories"
+### Community 169 - "group_message_repository_impl_test.dart"
 Cohesion: 0.03
-Nodes (92): DirectPrivateMediaClean, attachmentId, authorizationChanges, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, beginGroupPrivateMediaDownloadWithinLock, beginMediaDownload, claimMediaEvicted (+84 more)
+Nodes (80): DatabaseExecutor, insertFailed, main, row, package:flutter_app/core/database/helpers/group_messages_db_helpers.dart, package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart, package:flutter_app/core/database/migrations/018_group_messages_tables.dart, package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart (+72 more)
 
-### Community 128 - "Posts Wired Screen"
+### Community 170 - "conversation_shared_media_library_test.dart"
+Cohesion: 0.02
+Nodes (87): ../domain/repositories/strict_direct_media_library_repository.dart, MediaEgressOutcome, package:flutter_app/features/conversation/application/build_received_media_forward.dart, package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart, package:flutter_app/features/conversation/application/direct_media_library_batch_delete.dart, package:flutter_app/features/conversation/application/direct_media_library_controller.dart, package:flutter_app/features/conversation/application/private_media_action_eligibility.dart, package:flutter_app/features/conversation/application/received_media_action_controller.dart (+79 more)
+
+### Community 171 - "conversation_wired_subscription_performance_harness.dart"
+Cohesion: 0.02
+Nodes (92): _EventRecorder, _HarnessEnvironment, audioRecorderService, binding, bridge, build, _callback, _canUseVmServiceTimeline (+84 more)
+
+### Community 172 - "pending_post_media_upload_retrier.dart"
+Cohesion: 0.02
+Nodes (89): allowedPeers, attachments, attachPostMedia, AttachPostMediaResult, blobId, _draftFromRecoveryItem, _draftMime, drafts (+81 more)
+
+### Community 173 - "posts_wired.dart"
 Cohesion: 0.02
 Nodes (92): accountMigrationRunTransfer, accountMigrationSizeGate, activeTab, appShellController, audioRecorderService, bridge, build, _canOpenInAppSettings (+84 more)
 
-### Community 129 - "Share Batch Delivery Coordinator"
-Cohesion: 0.02
-Nodes (92): _activeBlobId, _activeBudgetBytes, announcementForwardProvenanceForContact, _authorizeInternalForwardTarget, _authorizeInternalForwardTargets, bridge, canDeliverAnnouncementForwardToGroup, canWrite (+84 more)
-
-### Community 130 - "Chat Message Listener Tests"
+### Community 174 - "chat_message_listener_test.dart"
 Cohesion: 0.02
 Nodes (92): ../../../shared/fakes/recording_media_auto_download_decider.dart, ../../../shared/fakes/spy_recent_remote_notification_gate.dart, addContact, archiveContact, blockContact, _captureDebugPrintedLines, checkHealth, conditionalTransitionStatus (+84 more)
 
-### Community 131 - "Fake P2P Service"
+### Community 175 - "fake_p2p_service.dart"
 Cohesion: 0.02
 Nodes (92): clearResumeStarted, clearResumeStartedCallCount, _currentState, dialPeer, dialPeerCallCount, dialPeerResult, discoverLocalPeer, discoverPeer (+84 more)
 
-### Community 132 - "Full-Screen Media Viewer"
+### Community 176 - "send_group_message_use_case_test.dart"
 Cohesion: 0.02
-Nodes (91): _actionIcon, _actionOrder, _actionTooltip, _adapter, adapterFactory, _adapterGeneration, _authorizationStarted, _authorizeReveal (+83 more)
+Nodes (92): _attempts, bridge, _bridgeCommandIndex, captureFlowEvents, ciphertext, _decodedGroupInboxReplayPayload, delay, deleteAttempt (+84 more)
 
-### Community 133 - "Performance Benchmark Tests"
+### Community 177 - "handle_incoming_passed_post_use_case.dart"
+Cohesion: 0.02
+Nodes (86): avatarBase64, avatarBlob, candidate, contactRepo, current, currentLocalPassCount, currentLocalSharedToCount, currentPassRecipientCount (+78 more)
+
+### Community 178 - "group_member_row.dart"
+Cohesion: 0.02
+Nodes (81): AppLocalizations, compare, currentSafetyNumber, _fingerprints, GroupMemberIdentitySafety, identityChanged, _normalize, _sameFingerprints (+73 more)
+
+### Community 179 - "package:flutter_app/core/local_discovery/local_discovery_service.dart"
 Cohesion: 0.03
-Nodes (75): benchmark_harness.dart, P2PServiceImpl, InboxAttentionSignal, package:flutter_app/core/utils/notification_tap_timing.dart, ../shared/fakes/in_memory_inbox_staging_repository.dart, ../shared/fakes/lifecycle_bridge.dart, bridge, main (+67 more)
+Nodes (81): fake_local_discovery_service.dart, HttpServer, main, peerA, peerB, accepted, committed, isAccepted (+73 more)
 
-### Community 134 - "Avatar Widgets & Painters"
+### Community 180 - "private_media_lifecycle_engine.dart"
 Cohesion: 0.02
-Nodes (83): BorderRadius, RingAvatarData, IoMigrationEntryFileReader, MigrationEntryFileReader, avatarBytes, avatarPath, borderRadius, build (+75 more)
+Nodes (90): _ProofLane, acquire, _activeLeases, adapter, advanceClock, attachmentId, attachments, _cacheSettlement (+82 more)
 
-### Community 135 - "Conversation Subscription Perf Harness"
+### Community 181 - "package:flutter_app/core/bridge/bridge_group_helpers.dart"
 Cohesion: 0.02
-Nodes (90): _EventRecorder, _HarnessEnvironment, audioRecorderService, binding, bridge, build, _callback, _canUseVmServiceTimeline (+82 more)
+Nodes (85): GroupInboxPage, announce, announced, announceRestoredDeviceToGroups, AnnounceRestoredDeviceToGroupsFn, groups, maybeAnnounceRestoredDeviceOnStartup, multiDeviceSyncEnabled (+77 more)
 
-### Community 136 - "Picker & Composer Widgets"
+### Community 182 - "group_media_ios_background_e2e.dart"
 Cohesion: 0.02
-Nodes (85): AttachmentPreviewStrip, attachments, build, current, file, hasTotalSizeOverflow, index, _invalidCaption (+77 more)
+Nodes (89): group_media_ios_background_e2e_contract.dart, allowsGroupMediaIosIntroFileChannel, arm, attachmentId, base, _beforeAtomicStateReplace, changed, _copyState (+81 more)
 
-### Community 137 - "Letter Card & Bubble Widgets"
+### Community 183 - "direct_private_media_viewer_controller.dart"
 Cohesion: 0.02
-Nodes (87): AspectRatio, _audioMedia, avatarOutsideBubble, _bubbleBorderRadius, bubbleLayout, build, _buildBodyChildren, _buildBubble (+79 more)
+Nodes (89): _activeGrants, armDisappearingDeadline, attachment, attachmentId, canEnterPictureInPicture, canRetry, canRetryAfterOpenFailure, canRetryAfterPrepareFailure (+81 more)
 
-### Community 138 - "Group Messages DB Tests"
-Cohesion: 0.03
-Nodes (77): DatabaseExecutor, insertFailed, main, row, package:flutter_app/core/database/helpers/group_messages_db_helpers.dart, package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart, package:flutter_app/core/database/migrations/018_group_messages_tables.dart, package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart (+69 more)
-
-### Community 139 - "Relay Push Notifications (Go)"
-Cohesion: 0.05
-Nodes (76): chatPushMetadata, controlPlaneStores, addChatEncryptedPushData(), addGroupEncryptedPushData(), addJSONScalarData(), addTrimmedData(), apnsCustomDataFromPushData(), buildCiphertextOnlyPushMessage() (+68 more)
-
-### Community 140 - "Group Config Payload"
+### Community 184 - "group_config_payload.dart"
 Cohesion: 0.02
 Nodes (89): activeDevices, actor, actorPublicKey, buildGroupConfigPayload, buildGroupConfigStateHash, buildGroupMetadataActorEventPayload, buildSignedGroupMetadataActorEventEnvelope, candidateJoinedAt (+81 more)
 
-### Community 141 - "Received Media Egress Tests"
-Cohesion: 0.03
-Nodes (82): ../domain/repositories/strict_direct_media_library_repository.dart, MediaEgressOutcome, ReceivedMediaEgressService, package:flutter_app/core/media/received_media_egress.dart, package:flutter_app/core/media/received_media_egress_service.dart, package:flutter_app/features/conversation/application/build_received_media_forward.dart, package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart, package:flutter_app/features/conversation/application/direct_media_library_controller.dart (+74 more)
-
-### Community 142 - "Share Picker & Reaction Wiring"
+### Community 185 - "group_pending_key_repair_service.dart"
 Cohesion: 0.02
-Nodes (85): _TrackingReactionListener, _TrackingReactionListener, ReactionListener, ReactionChange, IntroductionRepositoryImpl, IntroductionRepository, buildShareTargetPickerRoute, appShellController (+77 more)
+Nodes (89): GroupMembershipUpdateListener, bridge, buildSignedGroupKeyRepairRequestEnvelope, call, candidates, canonicalGroupKeyRepairRequestSignedPayload, _confirmedGroupReplayCryptoFailureReasons, contains (+81 more)
 
-### Community 143 - "Feed BG Task Tests"
+### Community 186 - "linkable_text.dart"
+Cohesion: 0.02
+Nodes (80): addAnotherHint, build, _controller, createState, dispose, _focusNode, _hasSentThisSession, _hasText (+72 more)
+
+### Community 187 - "feed_wired_bg_task_test.dart"
 Cohesion: 0.02
 Nodes (88): addContact, addRequest, appShellController, archiveContact, bgBeginResponse, blockContact, buildFeedWiredWithBridge, callLog (+80 more)
 
-### Community 144 - "Feed Wired Tests"
+### Community 188 - "assertOk"
+Cohesion: 0.11
+Nodes (86): testIdentityMaterial, TestGroupGenerateNextKey_DoesNotMutateStoredKeyState(), TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(), TestGroupGenerateNextKey_InvalidJSON(), TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(), TestGroupGenerateNextKey_KE013BlocksWhenGroupKeyStateMissing(), TestGroupGenerateNextKey_KE013UsesRestoredEpochAfterRestartMemoryLoss(), TestGroupGenerateNextKey_MissingGroupId() (+78 more)
+
+### Community 189 - "conversation_received_media_actions_test.dart"
 Cohesion: 0.03
-Nodes (87): ContactUpdate, IncomingMessage, _TrackingChatMessageListener, _TrackingChatMessageListener, ChatMessageListener, FeedWired, _FeedWiredState, QRScannerWired (+79 more)
+Nodes (82): _Gateway, AppDocumentsDirectoryProvider, AppOwnedMediaPathAuthority, approvedRootNames, authorize, _documentsDirectory, IoAppOwnedMediaPathAuthority, _aggregateForItems (+74 more)
 
-### Community 145 - "Incoming Chat Message Tests"
-Cohesion: 0.02
-Nodes (87): FakeDecryptBridge, addContact, addTestContact, archiveContact, blockContact, buildChatJsonWithMedia, buildP2PMessage, buildV2EncryptedEnvelopeJson (+79 more)
-
-### Community 146 - "Handle Incoming Group Invite"
-Cohesion: 0.02
-Nodes (87): _acceptedMemberJoinedAt, acceptedMembershipWatermarkAt, authResult, avatarBlobId, avatarMime, bridge, code, config (+79 more)
-
-### Community 147 - "Migration Transfer Runtime Tests"
-Cohesion: 0.02
-Nodes (86): HttpClient, _MemoryAuthorityRepository, aad, acceptedManifest, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript (+78 more)
-
-### Community 148 - "Media Download Use Case"
-Cohesion: 0.02
-Nodes (86): _JourneyMediaAttachmentRepository, ackRelayBlobDeletion, adoptCanonicalFileIfAvailable, adoptCompletePartFileIfAvailable, attachmentId, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, bridge (+78 more)
-
-### Community 149 - "WiFi Relay Fallback Script"
-Cohesion: 0.02
-Nodes (86): _adb, _adbPath, _androidDeviceId, _appFileExists, _appPackage, _appReadFile, appWriteDir, artifactsDir (+78 more)
-
-### Community 150 - "Performance Benchmark Harnesses"
+### Community 190 - "package:flutter_app/core/services/p2p_service_impl.dart"
 Cohesion: 0.03
-Nodes (75): benchmark_helpers.dart, runOneToOneSendBenchmark, runAckBenchmark, details, events, _findRecoveredOutage, firstEventDetails, firstInbox (+67 more)
+Nodes (72): benchmark_harness.dart, P2PServiceImpl, InboxAttentionSignal, package:flutter_app/core/services/p2p_service_impl.dart, package:flutter_app/core/utils/notification_tap_timing.dart, ../shared/fakes/in_memory_inbox_staging_repository.dart, ../shared/fakes/lifecycle_bridge.dart, bridge (+64 more)
 
-### Community 151 - "Feed Cleared Repository Wiring"
+### Community 191 - "group_reaction_notification_projection.dart"
 Cohesion: 0.02
-Nodes (81): feed_cleared_repository.dart, first_time_experience_screen.dart, ImageSource, clearCleared, FeedClearedRepository, getClearedWatermarks, clearCleared, FeedClearedRepositoryImpl (+73 more)
+Nodes (86): accountPeerId, authoritativeTimestamp, _boundedReactionComparands, _boundedTargets, clearForLogout, clearKeyEpoch, _contextsJson, _copyMembers (+78 more)
 
-### Community 152 - "Group Messages DB Helpers"
-Cohesion: 0.02
-Nodes (85): group_message_local_deletions_db_helpers.dart, after, anchor, anchorRows, args, before, contains, db (+77 more)
-
-### Community 153 - "Private Media Journey Harness"
-Cohesion: 0.02
-Nodes (85): advancePrivateMediaClock, _artifactMarker, _attachment, attachmentRepository, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, _byMessage, claimPrivateMediaOpening (+77 more)
-
-### Community 154 - "Bridge Client & Profile Tests"
+### Community 192 - "package:flutter_app/features/home/presentation/widgets/user_avatar.dart"
 Cohesion: 0.03
-Nodes (76): fake_bridge.dart, actual, checkHealth, configured, _configuredRunId, _configuredSharedDir, deadline, dispose (+68 more)
+Nodes (75): FileImage, Image, build, CompactOriginMarker, connectionDate, contactPeerId, build, buildGroupReactionParticipantEntries (+67 more)
 
-### Community 155 - "Download Media Tests"
-Cohesion: 0.02
-Nodes (83): _FakeMediaAttachmentRepo, _attachmentsByMessage, basePath, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, bridge, captureFlowEvents, checkHealth (+75 more)
-
-### Community 156 - "Sibling Device Admission Tests"
-Cohesion: 0.02
-Nodes (79): deletePendingSiblingDevice, holdPendingSiblingDevice, HoldPendingSiblingDeviceFn, multiDeviceSyncEnabled, outcome, rejectPendingSiblingDevice, _safe, verifyAndAdmitPendingSiblingDevice (+71 more)
-
-### Community 157 - "App Resume Group Recovery"
+### Community 193 - "group_repository_impl_test.dart"
 Cohesion: 0.03
-Nodes (78): accountMigrationNetworkGate, hadPendingResumeStarted, handleAppResumed, migrationAllowsNetwork, readinessProofRecorder, _resumeGroupRecoveryEnabled, resumeStart, bridge (+70 more)
+Nodes (76): groupRow, main, memberRow, package:flutter_app/core/database/helpers/group_members_db_helpers.dart, package:flutter_app/core/database/helpers/groups_db_helpers.dart, package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart, package:flutter_app/core/database/migrations/017_groups_tables.dart, package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart (+68 more)
 
-### Community 158 - "Media Upload Use Cases"
+### Community 194 - "account_migration_bundle_transfer_test.dart"
 Cohesion: 0.02
-Nodes (78): attachments, byMessageId, doneCount, emitRetryTiming, identity, _lateSendAbortReason, _latestAttachmentForMessage, pendingAttachments (+70 more)
+Nodes (85): MigrationSecureStorageStaging, acceptAll, _activeChunks, activeDatabase, buildBundle, buildReceiver, _bundleFileRelativePaths, bytes (+77 more)
 
-### Community 159 - "Group Member Model"
+### Community 195 - "SecureKeyStore"
 Cohesion: 0.02
-Nodes (81): active,, activeDevices, activeDevicesWithLegacyFallback, allows, candidateIdentityKey, copyWith, _defaultForRole, deleteMessages (+73 more)
+Nodes (78): _MemorySecureKeyStore, _TrackingSecureKeyStore, _FakeSecureKeyStore, main, _openConversation, _openGroup, _InMemorySecureKeyStore, _handleNotificationRouteTarget (+70 more)
 
-### Community 160 - "Migration Cutover Coordinator"
+### Community 196 - "run_wifi_relay_fallback_smoke.dart"
+Cohesion: 0.02
+Nodes (84): _adb, _adbPath, _androidDeviceId, _appFileExists, _appPackage, _appReadFile, appWriteDir, artifactsDir (+76 more)
+
+### Community 197 - "handle_incoming_chat_message_use_case_test.dart"
+Cohesion: 0.02
+Nodes (84): addContact, addTestContact, archiveContact, blockContact, buildChatJsonWithMedia, buildP2PMessage, buildV2EncryptedEnvelopeJson, buildValidChatJson (+76 more)
+
+### Community 198 - "newTestRedisClient"
+Cohesion: 0.06
+Nodes (51): encodeRedisComponent(), encodeRedisGroupInboxRecord(), encodeRedisGroupInboxRecords(), filterInboxEntries(), minInt(), newRedisClientFromURL(), newRedisGroupInboxBackend(), newRedisInboxBackend() (+43 more)
+
+### Community 199 - "package:flutter_app/core/notifications/recent_remote_notification_gate.dart"
+Cohesion: 0.02
+Nodes (74): completed, completedTtl, createdAt, _DedupeEntry, dedupeKeyFor, _DedupeState, _entries, finish (+66 more)
+
+### Community 200 - "group_repository.dart"
+Cohesion: 0.02
+Nodes (82): acceptedAt, advanceGroupMembershipWatermark, appendSelfRemovedShellFreshnessFloor, archiveGroup, attemptCount, authority, authorizeAcceptedReentryRetry, clearGroupRejoinState (+74 more)
+
+### Community 201 - "create_group_picker_wired.dart"
+Cohesion: 0.02
+Nodes (78): Amplitude, compressed,, ../../domain/models/group_reaction_replay_outbox_entry.dart, ../../domain/repositories/group_reaction_replay_outbox_repository.dart, _HarnessReactionRepository, AudioRecorderService, RecordAudioRecorderService, ReactionRepository (+70 more)
+
+### Community 202 - "dart:math"
+Cohesion: 0.02
+Nodes (75): dart:math, linear, normalizeAmplitude, pow, build, _buildAvatarWithGlow, _buildDashedDivider, connectionDate (+67 more)
+
+### Community 203 - "migration_database_import_staging.dart"
 Cohesion: 0.03
-Nodes (77): _authorityRepository, _baseRecord, clearLocalStalePushToken, commitNewActive, _cutoverRepository, _isValidNewActiveProof, _isValidOldBlockProof, markExportingNetworkPaused (+69 more)
+Nodes (76): _BenchmarkDatabaseImportStaging, activeDatabase, importedRows, importedTables, importVerifiedStagedDatabase, message, MigrationDatabaseActiveImporter, MigrationDatabaseActiveImportException (+68 more)
 
-### Community 161 - "Media Attachment Repository Impl"
+### Community 204 - "group_member.dart"
 Cohesion: 0.02
-Nodes (81): attachmentId, _attachmentsFromRows, authorizationChanges, _authorizationChangesController, beginDirectPrivateMediaDownload, beginDirectPrivateMediaDownloadWithinLock, beginGroupPrivateMediaDownloadWithinLock, beginMediaDownload (+73 more)
+Nodes (80): active,, activeDevices, activeDevicesWithLegacyFallback, allows, candidateIdentityKey, copyWith, _defaultForRole, deleteMessages (+72 more)
 
-### Community 162 - "Media Read Gating Test Fakes"
+### Community 205 - "group_exit_intent_runner_test.dart"
+Cohesion: 0.03
+Nodes (80): _IntentRepo, _activeBlockedLoads, _activeGroupRepo, actorPeerId, advance, all, appendOutcome, batches (+72 more)
+
+### Community 206 - "delete_message_use_case.dart"
 Cohesion: 0.02
-Nodes (78): Completer, in_memory_media_attachment_repository.dart, accountMigrationPairingQrKind, bridge, _buildMigrationQrData, buildOrbitWired, _buildValidQrData, _centerAvatarKey (+70 more)
+Nodes (80): acknowledged, actualTransport, attachments, _bestEffortCleanup, budgetMs, buildDeletedMessageTombstone, buildDeletionWireEnvelope, buildEncryptedEnvelope (+72 more)
 
-### Community 163 - "Group Key Repair Service"
+### Community 207 - "accept_pending_group_invite_use_case.dart"
 Cohesion: 0.02
-Nodes (80): bridge, buildSignedGroupKeyRepairRequestEnvelope, call, candidates, canonicalGroupKeyRepairRequestSignedPayload, _confirmedGroupReplayCryptoFailureReasons, contains, _defaultGroupRepairNowUtc (+72 more)
+Nodes (80): acceptedGroup, acceptedGroupAdvanced, _acceptedGroupAdvancedBeyondInviteMetadata, acceptedGroupId, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptedInboxPageSize, acceptedMetadataUpdatedAt (+72 more)
 
-### Community 164 - "Android Push Registration Script"
+### Community 208 - "bridge.go"
+Cohesion: 0.07
+Nodes (75): BlobDecrypt(), BlobEncrypt(), BlobKeygen(), bridgeGroupMemberDeviceHasDistributionMaterial(), bridgeGroupMemberDeviceIsActive(), bridgeGroupMemberHasLegacyDistributionMaterial(), bridgeGroupMemberHasUsableActiveDevice(), ConfirmDirectMessage() (+67 more)
+
+### Community 209 - "capture_android_push_relay_registration.dart"
 Cohesion: 0.03
 Nodes (79): _adb, _adbShell, _androidSdk, appPackage, artifactDir, authorization, authorizationArtifactBytes, authorizationArtifactSha256 (+71 more)
 
-### Community 165 - "Send Then Lock Tests"
+### Community 210 - "android_app_file_broker.dart"
 Cohesion: 0.03
-Nodes (79): ConversationScreen, _ConversationScreenState, audioAttachment, bob, BobTestHarness, clearNotifications, conversationTracker, currentState (+71 more)
+Nodes (79): _adb, AndroidAdbCommandRunner, AndroidAppFileReadFrameCodec, AndroidAppSignalBroker, AndroidBrokerDelay, AndroidBrokerLogger, _androidReadFrameSequence, appDataDirectory (+71 more)
 
-### Community 166 - "Picture-in-Picture Controllers"
+### Community 211 - "package:flutter_app/core/secure_storage/secure_key_store.dart"
+Cohesion: 0.03
+Nodes (72): allowedPeers, create, deadline, groupMediaIosBackgroundParentMarker, groupMediaIosProofEndpointReady, GroupMediaIosProofReadiness, identity, isExactGroupMediaIosBackgroundTransportAcl (+64 more)
+
+### Community 212 - "send_group_reaction_use_case.dart"
+Cohesion: 0.03
+Nodes (77): _attemptRemoveReactionInboxStore, canonical, currentReaction, _defaultGroupReactionTransitionId, _deterministicRemoveReactionId, digest, entry, exactRetry (+69 more)
+
+### Community 213 - "media_picture_in_picture_controller.dart"
 Cohesion: 0.03
 Nodes (79): attachment, authorization, _authorizationCheckFuture, _authorizationCheckPending, _authorizationCheckRunning, _authorizationEpoch, _authorizationLossEpoch, _authorizationLost (+71 more)
 
-### Community 167 - "Orbit Edit & Dialog Widgets"
+### Community 214 - "group_sibling_device_admission_test.dart"
 Cohesion: 0.03
-Nodes (73): dart:math, EdgeInsets, GestureDragEndCallback, GestureDragStartCallback, GestureDragUpdateCallback, linear, normalizeAmplitude, pow (+65 more)
+Nodes (73): ../../conversation/domain/repositories/fake_reaction_repository.dart, DecryptionFailureDiagnostic, package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart, package:flutter_app/features/groups/application/send_group_reaction_use_case.dart, PayloadParseFailureDiagnostic, ../../shared/fakes/fake_group_pubsub_network.dart, ../../shared/fakes/group_test_user.dart, ../../../shared/fakes/in_memory_group_pending_key_distribution_repository.dart (+65 more)
 
-### Community 168 - "Intro Accept Notification Script"
+### Community 215 - "share_target_picker_wired.dart"
 Cohesion: 0.03
-Nodes (78): a, _acceptanceLeg, _acceptBody, _acceptTitle, _adbShell, _appPackage, artifactDir, _assertNoNavigationErrors (+70 more)
+Nodes (78): _TrackingReactionListener, _TrackingReactionListener, _ControlledGroupMessageListener, ReactionListener, ReactionChange, GroupMessageListener, appShellController, audioRecorderService (+70 more)
 
-### Community 169 - "P2P LAN Discovery Tests"
+### Community 216 - "Bridge"
 Cohesion: 0.03
-Nodes (75): LocalP2PService, ../local_discovery/fake_local_p2p_service.dart, LocalMessage, _RecordingBridge, FakeLocalP2PService, bridge, calledCommands, checkHealth (+67 more)
+Nodes (75): _InboxStoreFailureBridge, Bridge, MockBridge, bridge, checkHealth, dispose, initialize, isInitialized (+67 more)
 
-### Community 170 - "Push Registration Coordinator"
+### Community 217 - "group_media_ios_background_recovery_test.dart"
 Cohesion: 0.03
-Nodes (69): dart:async, interval, isPlainOnlineBadgeState, isRelayReadyBadgeState, isSendableBadgeState, label, sw, timeout (+61 more)
+Nodes (78): ../../integration_test/scripts/group_media_ios_background_recovery.dart, GroupMediaIosBackgroundRecoveryBlocked, GroupMediaIosBackgroundRecoveryFailure, GroupMediaIosCommandRunner, RecoveringGroupMediaIosCommandRunner, SystemGroupMediaIosCommandRunner, ../../integration_test/scripts/group_media_ios_fixture_driver.dart, actions (+70 more)
 
-### Community 171 - "Go Bridge Command API (Go)"
-Cohesion: 0.07
-Nodes (73): BlobDecrypt(), BlobEncrypt(), BlobKeygen(), bridgeGroupMemberDeviceHasDistributionMaterial(), bridgeGroupMemberDeviceIsActive(), bridgeGroupMemberHasLegacyDistributionMaterial(), bridgeGroupMemberHasUsableActiveDevice(), ConfirmDirectMessage() (+65 more)
-
-### Community 172 - "Delivery Retriers & Presence"
+### Community 218 - "introduction_listener.dart"
 Cohesion: 0.03
-Nodes (73): extension, AccountMigrationNetworkGate, AccountMigrationRuntimeNetworkGate, allowAccountMigrationNetworkSideEffects, allowsAccountNetworkSideEffects, allowsAccountNotificationDisplay, _authorityRepository, accountMigrationNetworkGate (+65 more)
+Nodes (75): IntroReceived, IntroStatusChanged, addContact, avatarPath, contact, dlFn, existingContact, handleMutualAcceptance (+67 more)
 
-### Community 173 - "QR Scanner & Listener Wiring"
+### Community 219 - "send_group_invite_use_case.dart"
 Cohesion: 0.03
-Nodes (73): FailureEvent, _ControlledGroupMessageListener, IntroReceived, IntroStatusChanged, GroupMessageListener, IntroductionListener, accountMigrationRunTransfer, accountMigrationSizeGate (+65 more)
+Nodes (78): activeDevices, attempts, bound, _buildWelcomeKeyPackage, canonicalInvitePayload, connectionState, currentFreshnessState, deliveryPeerId (+70 more)
 
-### Community 174 - "Composer & Text Input Widgets"
+### Community 220 - "dart:convert"
 Cohesion: 0.03
-Nodes (71): FocusNode, addAnotherHint, build, _controller, createState, dispose, FeedComposer, _FeedComposerState (+63 more)
+Nodes (69): dart:convert, base58, iosReceiverBootstrapBuildProfile, isIosReceiverBootstrapBuildProfile, isIosReceiverBootstrapMlKemPublicKey, isIosReceiverBootstrapNotificationAlertSetting, isIosReceiverBootstrapNotificationAuthorization, isIosReceiverBootstrapTransportPeerId (+61 more)
 
-### Community 175 - "Group Reaction Notification Projection"
+### Community 221 - "group_message_repository_impl.dart"
 Cohesion: 0.03
-Nodes (76): accountPeerId, authoritativeTimestamp, _boundedReactionComparands, _boundedTargets, clearForLogout, clearKeyEpoch, _contextsJson, _copyMembers (+68 more)
+Nodes (77): ../../domain/models/group_message_receipt.dart, ../../domain/models/group_multi_device_policy.dart, ../../domain/models/group_thread_preview.dart, ../../domain/models/group_thread_summary.dart, ../../domain/repositories/group_message_repository.dart, ../../domain/repositories/group_thread_preview_repository.dart, ../../domain/repositories/group_thread_summary_repository.dart, ../../domain/utils/group_message_ordering.dart (+69 more)
 
-### Community 176 - "Group Creation Use Case Tests"
+### Community 222 - "send_then_lock_delivery_test.dart"
 Cohesion: 0.03
-Nodes (73): GroupMembershipLimitException, package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart, package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart, adminGroup, b5NewMember, _BlockingUpdateConfigBridge, bridge, charlie (+65 more)
+Nodes (77): audioAttachment, bob, BobTestHarness, clearNotifications, conversationTracker, currentState, dialPeer, discoverLocalPeer (+69 more)
 
-### Community 177 - "Profile Upload Use Case Tests"
+### Community 223 - "message_repository_impl.dart"
+Cohesion: 0.03
+Nodes (76): ../../domain/models/conversation_thread_summary.dart, ../../domain/repositories/conversation_thread_summary_repository.dart, ../../domain/repositories/direct_private_media_lifecycle_repository.dart, advancePrivateMediaClock, claimExactPrivateMediaOpening, claimPrivateMediaOpening, commitOutgoingDirectPrivateWireEnvelope, commitPrivateDeleteForEveryoneTombstone (+68 more)
+
+### Community 224 - "group_exit_intents_db_helpers.dart"
+Cohesion: 0.03
+Nodes (76): group_messages_db_helpers.dart, _activeRoleKind, _alreadyAdvanced, _Authority, _authorityRefusal, _AuthorityShape, boundedCode, boundedError (+68 more)
+
+### Community 225 - "migration_secure_storage_registry.dart"
+Cohesion: 0.03
+Nodes (65): errors, hasError, isAccepted, MigrationDatabaseImportError, MigrationDatabaseImportResidual, MigrationDatabaseImportValidationResult, MigrationDatabaseImportValidator, residuals (+57 more)
+
+### Community 226 - "package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart"
+Cohesion: 0.03
+Nodes (72): _drain, drainAll, drainForGroup, _enqueueGroupDrain, GroupPendingBroadcastRunner, _groupTails, repository, rePushFinalizesSuccess (+64 more)
+
+### Community 227 - "upload_profile_picture_use_case_test.dart"
 Cohesion: 0.03
 Nodes (76): activeContacts, addContact, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo (+68 more)
 
-### Community 178 - "Post Delivery Runner"
+### Community 228 - "post_delivery_runner.dart"
 Cohesion: 0.03
 Nodes (75): AsyncError, aggregate, aggregatePostDeliveryStatusFromDeliveries, allRecipientPeerIds, applyRecipientCompletion, bridge, buildEncryptedEnvelope, _buildPostPassWireEnvelope (+67 more)
 
-### Community 179 - "Bridge Client Tests"
+### Community 229 - "group_media_reliability_runner_contract.dart"
 Cohesion: 0.03
-Nodes (72): _InboxStoreFailureBridge, Bridge, MockBridge, bridge, checkHealth, dispose, initialize, isInitialized (+64 more)
+Nodes (75): group_media_ios_background_recovery_evidence.dart, group_media_prepared_artifact_custody.dart, androidCompanionArtifact, _androidEmulatorPattern, _androidPreparedArtifactSha256, artifact, artifactEnvironment, artifactValue (+67 more)
 
-### Community 180 - "Group List Wired Screen"
+### Community 230 - "local_ws_durable_ack_integration_test.dart"
 Cohesion: 0.03
-Nodes (74): _SimGroupInviteListener, JoinedGroup, AudioRecorderService, RecordAudioRecorderService, GroupInviteListener, _acceptPendingInviteWithRecoveryRetry, _acceptRecoveryRetryCount, _acceptRecoveryRetryDelay (+66 more)
+Nodes (69): inbox_staging_entry.dart, countNeedsAttentionEntries, countQuarantinedEntries, deleteEntry, getEntry, getRecoverableEntries, getRecoverableEntriesByIds, countNeedsAttentionEntries (+61 more)
 
-### Community 181 - "Bridge Group Helpers"
+### Community 231 - "package:flutter_app/core/notifications/notification_route_target.dart"
 Cohesion: 0.03
-Nodes (74): callGroupAcknowledgeRecovery, callGroupCreate, callGroupDecrypt, callGroupEncrypt, callGroupGenerateNextKey, callGroupHistoryRepairRange, callGroupInboxRetrieve, callGroupInboxRetrieveWithCursor (+66 more)
+Nodes (67): NotificationRouteTarget, appShellController, _armTimers, _cancelTimers, dispose, expiryBudget, _expiryTimer, _fallbackTimer (+59 more)
 
-### Community 182 - "Contact Profile & Picker UI"
+### Community 232 - "durable_group_exit_surface_harness.dart"
 Cohesion: 0.03
-Nodes (72): BackgroundReadableColors, FeedTokens, _accent, background, borderColor, build, _buildHero, _buildMessageButton (+64 more)
+Nodes (73): durable_group_exit_driver.dart, ../fakes/in_memory_group_message_repository.dart, ../fakes/in_memory_group_repository.dart, package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart, package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart, package:flutter_app/features/groups/domain/models/group_exit_intent.dart, _committed, _createdAt (+65 more)
 
-### Community 183 - "Ambient Backgrounds & Gates"
-Cohesion: 0.03
-Nodes (65): BackgroundReadableTone, build, ContactRequestDialog, _ContactRequestDialogState, createState, _handleAccept, _handleDecline, _isProcessing (+57 more)
-
-### Community 184 - "Accept Group Invite Use Case"
-Cohesion: 0.03
-Nodes (74): acceptedGroup, acceptedGroupAdvanced, _acceptedGroupAdvancedBeyondInviteMetadata, acceptedGroupId, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptedInboxPageSize, acceptedMetadataUpdatedAt (+66 more)
-
-### Community 185 - "Received Media Action Controller"
-Cohesion: 0.03
-Nodes (72): ../domain/repositories/media_attachment_repository.dart, attachmentId, _defaultEgressRequestId, _defaultFileExists, denial, DirectMediaLibraryBatchActionsCoordinator, DirectMediaLibraryBatchItemOutcome, DirectMediaLibraryBatchResult (+64 more)
-
-### Community 186 - "PubSub Authorization Tests (Go)"
+### Community 233 - "newNodeHolePunchTracer"
 Cohesion: 0.06
-Nodes (56): classifyStreamTransport(), generatePeerIDStr(), assertGA026DiagnosticHash(), assertGA026DiagnosticKeys(), assertGA026DiagnosticsOmitSensitive(), assertGO005ValidationRejectTotals(), assertLP002LogsOmitSensitive(), assertLP002NoAcceptedGroupEvents() (+48 more)
+Nodes (59): classifyStreamTransportConn(), firstDirectConn(), firstDirectTCPConn(), reserveLocalRelay(), startNW002RelayNodeWithTracer(), TestFeasibility_DirectUpgrade_TcpLane(), TestHolePunchFeasibility_LoopbackUpgradeObservable(), startNW002RelayNodeWithTracerNoForce() (+51 more)
 
-### Community 187 - "Soak E2E Runner Script"
+### Community 234 - "android_keepalive_drop_campaign.dart"
+Cohesion: 0.03
+Nodes (72): _adb, AndroidKeepaliveDropCampaignResult, artifact, artifactPresent, _blocked, blocker, _CampaignBlocked, _CampaignFailure (+64 more)
+
+### Community 235 - "transport_e2e_test.dart"
+Cohesion: 0.03
+Nodes (74): addresses, attempts, bridge, chatListener, clear, cliMlKemPublicKey, cliPeer, cliPeerId (+66 more)
+
+### Community 236 - "feed_wired_test.dart"
+Cohesion: 0.03
+Nodes (74): Request, appShellController, bridge, buildFeedWired, contactRepo, contactRequestRepo, _contactUpdateController, contactUpdatedStream (+66 more)
+
+### Community 237 - "in_memory_group_repository.dart"
+Cohesion: 0.03
+Nodes (74): acceptedAt, _acceptedReentries, _AcceptedReentrySnapshot, advanceGroupMembershipWatermark, appendSelfRemovedShellFreshnessFloor, archiveGroup, authorizationId, authorizeAcceptedReentryRetry (+66 more)
+
+### Community 238 - "package:integration_test/integration_test.dart"
+Cohesion: 0.03
+Nodes (64): benchmark_1_1_send_harness.dart, benchmark_ack_harness.dart, benchmark_background_resume_harness.dart, benchmark_bridge_crossing_harness.dart, benchmark_connection_reuse_harness.dart, benchmark_encryption_harness.dart, benchmark_event_queue_harness.dart, benchmark_group_publish_harness.dart (+56 more)
+
+### Community 239 - "run_soak_e2e.dart"
 Cohesion: 0.03
 Nodes (73): addRelayBase, addresses, buildResult, cliReceived, cliSentCount, command, commandOk, commandWithRetry (+65 more)
 
-### Community 188 - "Chat & Reaction Listeners"
+### Community 240 - "group_message_repository.dart"
 Cohesion: 0.03
-Nodes (70): accountMigrationNetworkGate, _allowsInboundAccountSideEffects, autoDownloadDecider, _autoDownloadMedia, backgroundNotificationDuplicateGuardDelay, bridge, ChatMessageProcessOutcome, ChatMessageProcessState (+62 more)
+Nodes (72): advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, authorizationChanges, buildGroupRemovalCutoffMessageId, clearRetryBackoff, completeGroupPrivateMediaCleanup, completeInboxStoreRetry, consumeGroupPrivateMedia (+64 more)
 
-### Community 189 - "Delete Message Use Case"
+### Community 241 - "benchmark_background_resume_harness.dart"
 Cohesion: 0.03
-Nodes (72): acknowledged, actualTransport, attachments, _bestEffortCleanup, budgetMs, buildDeletedMessageTombstone, buildDeletionWireEnvelope, buildEncryptedEnvelope (+64 more)
+Nodes (63): benchmark_helpers.dart, runAckBenchmark, details, events, _findRecoveredOutage, firstEventDetails, firstInbox, firstSend (+55 more)
 
-### Community 190 - "Theme Backgrounds & FAB Widgets"
+### Community 242 - "account_migration_scale_benchmark_test.dart"
 Cohesion: 0.03
-Nodes (65): app_colors.dart, background_readable_colors.dart, EdgeInsetsGeometry, feed_tokens.dart, AppTheme, blurSigma, borderRadius, build (+57 more)
+Nodes (72): _SharedFakeDiscovery, add, advertisedPeerId, _BenchmarkBundleArtifacts, _benchmarkFileRelativePath, _benchMb, block, _buildDiskBackedBenchmarkBundle (+64 more)
 
-### Community 191 - "Media Attachments DB Helpers"
+### Community 243 - "run_connectivity_restore_media_outbox_sims.dart"
 Cohesion: 0.03
-Nodes (71): ../../constants/retry_constants.dart, group_messages_db_helpers.dart, affected, allowedStatuses, _applyMediaAttachmentPreservingSave, changed, clearLocalPath, dbBeginDirectPrivateMediaDownloadIfEligible (+63 more)
+Nodes (72): _adb, airplaneEnabled, artifact, _artifactEnvironment, attachmentSha256, _Blocked, _buildPhaseArtifact, _Campaign (+64 more)
 
-### Community 192 - "Group Media Forward Picker"
+### Community 244 - "group_exit_intent_runner.dart"
+Cohesion: 0.03
+Nodes (72): add, addFallback, afterRestart, AttemptGroupExitNotice, _attemptNativeLeave, attemptNotice, _attemptPendingNotice, _authorityAndOwnershipStepLocked (+64 more)
+
+### Community 245 - "pass_post_along_use_case.dart"
+Cohesion: 0.03
+Nodes (71): allRecipientPeerIds, attachments, avatarBase64, avatarByteLength, created, CreatedLocalPostPass, createResult, currentLocalPassCount (+63 more)
+
+### Community 246 - "android_notification_payload_e2e_test.dart"
+Cohesion: 0.03
+Nodes (68): FilePushEnvelopeStagingStore, PushEnvelopeStagingStore, package:flutter_app/core/debug/android_notification_payload_e2e.dart, package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart, package:flutter_app/features/push/application/push_envelope_staging.dart, currentState, drainCalls, drainOfflineInbox (+60 more)
+
+### Community 247 - "group_media_batch_forward_picker_wired.dart"
 Cohesion: 0.03
 Nodes (70): group_media_batch_forward_picker_screen.dart, GroupMediaBatchForwardDenial, GroupMediaBatchForwardMatrix, GroupMediaBatchForwardProgress, build, _buildActions, _buildHeader, _buildLiveRegion (+62 more)
 
-### Community 193 - "Migration Secure Storage Registry"
+### Community 248 - "group_media_info_sheet.dart"
 Cohesion: 0.03
-Nodes (61): errors, hasError, isAccepted, MigrationDatabaseImportError, MigrationDatabaseImportResidual, MigrationDatabaseImportValidationResult, MigrationDatabaseImportValidator, residuals (+53 more)
+Nodes (66): chatGroup, conversationApp, fortyMessages, localAfternoon, main, messageAt, pumpFrames, rectWithin (+58 more)
 
-### Community 194 - "Contact Repository & Pin Listeners"
+### Community 249 - "bridge_group_helpers.dart"
 Cohesion: 0.03
-Nodes (68): ContactRepository, contactRepo, dispose, _onRemoveMessage, _onUpdateMessage, PostPinListener, postPinRemoveStream, postPinUpdateStream (+60 more)
+Nodes (71): callGroupAcknowledgeRecovery, callGroupCreate, callGroupDecrypt, callGroupEncrypt, callGroupGenerateNextKey, callGroupHistoryRepairRange, callGroupInboxRetrieve, callGroupInboxRetrieveWithCursor (+63 more)
 
-### Community 195 - "Group Recovery E2E Script"
+### Community 250 - "media_test.go"
+Cohesion: 0.06
+Nodes (43): copyMediaDownloadToFile(), mediaDownloadResultFromStream(), mediaEventDetails(), newIdleTimeoutReader(), relayMediaTelemetryFields(), sendMediaRequest(), TestDownloadProgressEventsEmitted(), TestIdleTimeoutReader_IdleTimerResetsOnEachChunk() (+35 more)
+
+### Community 251 - "run_group_recovery_e2e.dart"
 Cohesion: 0.03
 Nodes (70): _adb, _adbPath, _androidDeviceId, _appPackage, bundleId, _cleanupAndroidAppWriteDir, _cleanupAndroidTempDir, cliFixturePath (+62 more)
 
-### Community 196 - "Migration Authority & Startup"
+### Community 252 - "group_exit_intent_coordinator_test.dart"
 Cohesion: 0.03
-Nodes (65): clearAuthority, loadAuthority, saveAuthority, _secureKeyStore, SecureKeyStoreAccountMigrationAuthorityRepository, storageKey, storageKeyPrefix, AccountMigrationAuthorityRecord (+57 more)
+Nodes (70): GroupExitIntentProcessResult, GroupExitIntentProcessStatus, GroupExitIntentRepositoryImpl, GroupExitIntentRepository, _PendingRepo, _DissolveExitIntentRepository, advance, all (+62 more)
 
-### Community 197 - "Migration Bundle Transfer Tests"
+### Community 253 - "group_invite_listener.dart"
 Cohesion: 0.03
-Nodes (70): MigrationCutoverCoordinator, MigrationDatabaseActiveImporter, acceptAll, _activeChunks, activeDatabase, buildBundle, buildReceiver, _bundleFileRelativePaths (+62 more)
+Nodes (66): appendGroupEventLogEntry, bridge, contactRepo, _defaultNow, deliveryRepo, dispose, downloadGroupAvatarFn, _enqueueMessage (+58 more)
 
-### Community 198 - "Shared Media Go-To-Message Tests"
+### Community 254 - "group_shared_media_go_to_message_test.dart"
 Cohesion: 0.03
 Nodes (67): GroupMessageAroundRepository, package:flutter_app/features/groups/application/group_shared_media_navigation.dart, package:flutter_app/features/groups/presentation/screens/group_info_screen.dart, completers, _DeferredAroundRepository, getMessagesAround, main, _message (+59 more)
 
-### Community 199 - "Post Repository Impl"
+### Community 255 - "post_repository_impl.dart"
 Cohesion: 0.03
 Nodes (70): clearPinDismissal, commentExists, deletePendingChildEvent, deletePostCascade, dispose, getCommentReaction, getFollowOnOutboxEvent, getPost (+62 more)
 
-### Community 200 - "Reaction & Avatar Use Cases"
+### Community 256 - "settings_wired_test.dart"
 Cohesion: 0.03
-Nodes (64): loadReactionsForConversation, result, concurrentInbox, delivered, jsonString, payload, reactionId, removeReaction (+56 more)
+Nodes (70): package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart, SegmentedButton, addContact, archiveContact, blockContact, checkHealth, contactExists, _CountingP2PService (+62 more)
 
-### Community 201 - "Post Repository Interface"
+### Community 257 - "direct_private_media_viewer.dart"
+Cohesion: 0.03
+Nodes (69): DirectPrivateMediaSettleResult, DirectPrivateMediaViewerGrant, action, _activePointer, _allowPop, body, build, canRetry (+61 more)
+
+### Community 258 - "post_repository.dart"
 Cohesion: 0.03
 Nodes (69): clearPinDismissal, commentExists, deletePendingChildEvent, deletePostCascade, dispose, getCommentReaction, getFollowOnOutboxEvent, getPost (+61 more)
 
-### Community 202 - "Settings Wired Tests"
+### Community 259 - "handle_incoming_message_use_case.dart"
 Cohesion: 0.03
-Nodes (69): package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart, SegmentedButton, addContact, archiveContact, blockContact, checkHealth, contactExists, currentState (+61 more)
+Nodes (64): dart:collection, blockedGuard, dataToVerify, existingRequest, handleIncomingMessage, HandleMessageResult, isContact, isValid (+56 more)
 
-### Community 203 - "Create Group Picker Wired"
+### Community 260 - "group_media_ios_background_recovery_evidence.dart"
 Cohesion: 0.03
-Nodes (66): compressed,, _TempMediaFileManager, _HarnessReactionRepository, MediaFileManager, ActiveConversationTracker, _activePeerId, clear, clearIfActive (+58 more)
+Nodes (68): actual, allDigests, _androidResetActions, artifact, _canonical, cipherVersion, cleanup, database (+60 more)
 
-### Community 204 - "Picture-in-Picture Gateway"
-Cohesion: 0.03
-Nodes (68): FailureOnActivate, _ProofPictureInPictureGateway, accepted, activate, _active, androidSupported, androidUnsupported, attachment (+60 more)
-
-### Community 205 - "Node Media Streams (Go)"
-Cohesion: 0.06
-Nodes (42): copyMediaDownloadToFile(), mediaDownloadResultFromStream(), mediaEventDetails(), newIdleTimeoutReader(), relayMediaTelemetryFields(), sendMediaRequest(), TestDownloadProgressEventsEmitted(), TestIdleTimeoutReader_IdleTimerResetsOnEachChunk() (+34 more)
-
-### Community 206 - "Android Transport Campaign Support"
+### Community 261 - "android_transport_campaign.dart"
 Cohesion: 0.03
 Nodes (68): _activeFlowCapture, allowedRoles, AndroidTransportFlowCapture, artifact, _attachedTokenSha256, beginDroppedPeerSendWindow, beginForegroundRestoreWindow, _campaignStart (+60 more)
 
-### Community 207 - "Notification Open Routing"
+### Community 262 - "wifi_relay_fallback_smoke_test.dart"
+Cohesion: 0.03
+Nodes (66): bridge, chatListener, cliMlKemPublicKey, cliPeer, cliPeerId, cliPublicKey, _configuredTempDir, _configuredWriteDir (+58 more)
+
+### Community 263 - "app_root_notification_open.dart"
 Cohesion: 0.03
 Nodes (68): _active, activeTappedAt, attempt, attempts, cancelAll, cancelDeferred, cancelIfOwnedBy, complete (+60 more)
 
-### Community 208 - "Group Key Update Listeners"
+### Community 264 - "broadcast_voluntary_leave_use_case.dart"
 Cohesion: 0.03
-Nodes (66): _acceptedSignedTransitionAuditHashesBySourceId, _appendGroupEventLogEntry, _bridge, dispose, _enqueueMessage, GroupKeyUpdateListener, _groupRepo, _handleMessage (+58 more)
+Nodes (68): adminCount, aggregateEnvelope, attempt, attemptPreparedVoluntaryLeaveNotice, binding, broadcastVoluntaryLeaveAndRotateKey, canAdvance, classification (+60 more)
 
-### Community 209 - "Group Media Forward Tests"
+### Community 265 - "group_media_batch_forward.dart"
 Cohesion: 0.03
 Nodes (64): build, _buildRequest, _canonicalSources, caption, _compareSourcesNewestFirst, copyWith, _defaultFileLength, denial (+56 more)
 
-### Community 210 - "P2P Transport State Tests"
+### Community 266 - "send_post_reaction_use_case.dart"
 Cohesion: 0.03
-Nodes (63): package:flutter_app/features/p2p/domain/models/connection_state.dart, package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart, checkHealth, _circuitMultiaddr, dispose, _FakeBridge, _flatten, initialize (+55 more)
+Nodes (66): accountMigrationNetworkGate, allowed, _allowsPostFollowOnNetworkSideEffects, _debounceTimer, dispose, _isOnline, _isRetrying, jobs (+58 more)
 
-### Community 211 - "Pass Post Along Tests"
+### Community 267 - "pass_post_along_use_case_test.dart"
 Cohesion: 0.03
 Nodes (68): aliceService, _AvatarProcessingProbe, _avatarSnapshotBytes, bobService, bridge, builder, _captureFlowEvents, caraService (+60 more)
 
-### Community 212 - "Direct Shared Media Library"
+### Community 268 - "direct_shared_media_library_screen.dart"
 Cohesion: 0.03
 Nodes (67): ../../application/direct_media_library_batch_actions.dart, ../../application/direct_media_library_batch_delete.dart, ../../application/direct_media_library_controller.dart, ../../application/private_media_action_eligibility.dart, ../../application/received_media_action_controller.dart, ../../domain/models/media_attachment.dart, _applyDeleteOutcome, attachment (+59 more)
 
-### Community 213 - "Bridge Node Lifecycle Tests (Go)"
-Cohesion: 0.13
-Nodes (67): TestGroupGenerateNextKey_DoesNotMutateStoredKeyState(), TestGroupGenerateNextKey_KE013BlocksWhenGroupKeyStateMissing(), GroupCreate(), isSupportedBridgeGroupType(), NodeStatus(), RelayReconnect(), StartNode(), StopNode() (+59 more)
+### Community 269 - "durable_conversation_notification_id_registry.dart"
+Cohesion: 0.03
+Nodes (64): _CloseDart, dart:ffi, _FlockDart, main, ActiveNotificationIdsResolver, _api, _candidateGenerator, close (+56 more)
 
-### Community 214 - "Android Voice Message Campaign"
+### Community 270 - "group_test_user.dart"
+Cohesion: 0.03
+Nodes (65): fake_group_dissolve_preflight.dart, fake_group_pubsub_network.dart, fake_group_reaction_replay_outbox_repository.dart, ../helpers/durable_group_exit_driver.dart, ../helpers/durable_group_exit_surface_harness.dart, in_memory_group_message_repository.dart, in_memory_group_repository.dart, package:flutter_app/features/groups/application/update_group_metadata_use_case.dart (+57 more)
+
+### Community 271 - "newControlPlaneStores"
+Cohesion: 0.06
+Nodes (56): FileMode, backendConfig, NewInboxStoreWithBackend(), NewInboxStoreWithBackendAndCapacity(), InboxBackend, DefaultServerLimits(), envIntOrDefault(), loadServerLimitsFromEnv() (+48 more)
+
+### Community 272 - "android_voice_message_device_campaign.dart"
 Cohesion: 0.03
 Nodes (67): _adbShell, aggregateAndroidVoiceMessageEvidence, _AndroidVoiceHost, androidVoiceMessageAssertionCount, AndroidVoiceMessageCampaignResult, artifact, artifactSha256, blocked (+59 more)
 
-### Community 215 - "P2P Bridge Client"
+### Community 273 - "p2p_bridge_client.dart"
 Cohesion: 0.03
 Nodes (67): ageMs, armStallTimer, autoRegister, callP2PConfirmDirectMessage, callP2PInboxAck, callP2PInboxRegisterToken, callP2PInboxRetrieve, callP2PInboxRetrievePending (+59 more)
 
-### Community 216 - "Media Storage Manager"
+### Community 274 - "private_media_committed_pending_cleanup_recovery_test.dart"
 Cohesion: 0.03
-Nodes (66): cleared, clearLocalCopiesForType, clearLocalCopy, delete, exists, _expectedRelativePath, failed, _fileGateway (+58 more)
+Nodes (64): MediaUploadConnectivityProbe, attachment, attachmentId, envelopeRepository, mutationRepository, settleOutgoingDirectPrivateTransportUnderLifecycleLock, boundedLimit, candidates (+56 more)
 
-### Community 217 - "Contact & Introduction Wiring"
-Cohesion: 0.03
-Nodes (62): acceptAndReciprocateContactRequest, downloadProfilePictureFn, result, acceptRequest, bridge, contactRepository, ContactRequestNotificationMaterializer, declineRequest (+54 more)
-
-### Community 218 - "Handle Incoming Chat Message"
+### Community 275 - "handle_incoming_chat_message_use_case.dart"
 Cohesion: 0.03
 Nodes (67): absolutePath, _buildHiddenIncomingEditPlaceholder, candidateMessage, compareTo, confirmatoryDirectLanEnabled, contact, conversationMessage, copyWith (+59 more)
 
-### Community 219 - "Feed Projection Tests"
-Cohesion: 0.03
-Nodes (65): package:flutter_app/features/feed/application/feed_projection.dart, package:flutter_app/features/feed/application/feed_store.dart, package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart, package:flutter_app/features/feed/application/load_feed_use_case.dart, avatarPath, _contact, contactPeerId, contactRepo (+57 more)
-
-### Community 220 - "Migration End-to-End Tests"
+### Community 276 - "account_migration_end_to_end_test.dart"
 Cohesion: 0.03
 Nodes (67): advertisedPeerId, captureCipherMetadata, clearAuthority, clearCutover, consumed, consumeSession, _controller, createdAt (+59 more)
 
-### Community 221 - "Group Message Repository Impl"
+### Community 277 - "android_group_media_reliability_controller_test.dart"
 Cohesion: 0.03
-Nodes (66): group_message_repository.dart, group_thread_preview_repository.dart, group_thread_summary_repository.dart, advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, authorizationChanges, _authorizationChangesController, clearRetryBackoff (+58 more)
+Nodes (66): _AndroidGroupMediaSafetyAuditingRunner, ../../integration_test/scripts/android_group_media_reliability_controller.dart, _GroupMediaIosAndroidProcessRunner, GroupMediaIosFixtureProcessRunner, GroupMediaReliabilityBlocked, GroupMediaReliabilityRunContext, AndroidHostProcessRunner, SystemAndroidHostProcessRunner (+58 more)
 
-### Community 222 - "Compose Area & Recording Overlay"
+### Community 278 - "send_contact_request_use_case_test.dart"
 Cohesion: 0.03
-Nodes (64): amplitudeValues, build, _buildPrivateMediaSelector, _buildReviewActions, _buildReviewPreview, _canRecordVoice, _controller, createState (+56 more)
+Nodes (65): addresses, DiscoveredPeer, fromJson, hashCode, id, operator, toJson, toString (+57 more)
 
-### Community 223 - "Intro Wiring Smoke Tests"
+### Community 279 - "group_message_listener_decomposition_contract_test.dart"
+Cohesion: 0.03
+Nodes (66): actualParameters, _architectureExceptionsPath, _arrayBody, _class, className, classNames, collector, _compact (+58 more)
+
+### Community 280 - "intro_wiring_smoke_test.dart"
 Cohesion: 0.03
 Nodes (66): checkHealth, conditionalTransitionStatus, _contactB, _contactC, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+58 more)
 
-### Community 224 - "Android Wake Token Campaign"
+### Community 281 - "reaction_notification_pipeline_test.dart"
+Cohesion: 0.03
+Nodes (63): GlobalKey, NavigatorState, package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart, package:flutter_app/features/push/application/group_missing_notification_feedback.dart, ScaffoldMessengerState, bridge, buildHost, buildMaterializer (+55 more)
+
+### Community 282 - "background_message_handler_test.dart"
+Cohesion: 0.03
+Nodes (57): apnsToken, build, deadline, encoded, fcmToken, initial, main, _ProbeApp (+49 more)
+
+### Community 283 - "android_wake_token_directionality_campaign.dart"
 Cohesion: 0.03
 Nodes (65): _adbShell, aggregateAndroidWakeTokenDirectionalityEvidence, androidWakeTokenArtifactValidatorId, androidWakeTokenDirectionalityAssertionCount, AndroidWakeTokenDirectionalityCampaignResult, _AndroidWakeTokenHost, artifact, artifactSha256 (+57 more)
 
-### Community 225 - "Feed Screen"
+### Community 284 - "group_reaction_notification_device_criteria_test.dart"
 Cohesion: 0.03
-Nodes (65): activeTab, backgroundPreference, bottomInset, build, _buildComposer, _buildFeedContent, _buildFeedEntries, _buildFeedEntry (+57 more)
+Nodes (64): ../../integration_test/scripts/capture_group_reaction_notification_device.dart, ../../integration_test/scripts/group_reaction_notification_device_criteria.dart, main, _node, actorName, add, androidBuildStage, appPackage (+56 more)
 
-### Community 226 - "Group Shared Media Library"
+### Community 285 - "direct_private_media_device_local_journey_criteria.dart"
 Cohesion: 0.03
-Nodes (65): _batchForwardActive, build, _buildActionBar, _buildBody, _buildFilters, _buildTile, _capabilitiesFor, capabilitiesForEntry (+57 more)
+Nodes (65): any, _asStringMap, _claimKeys, claims, contains, _containsSensitiveValueToken, _containsTokenFrom, detail (+57 more)
 
-### Community 227 - "Contact Request & Peer Model"
+### Community 286 - "post_pass_envelope.dart"
 Cohesion: 0.03
-Nodes (64): addresses, DiscoveredPeer, fromJson, hashCode, id, operator, toJson, toString (+56 more)
+Nodes (64): allFriends, fromMap, kind, peopleNearby, pickPeople, PostAudience, PostAudienceKind, PostAudienceKindWireValue (+56 more)
 
-### Community 228 - "Lifecycle Bridge Fake"
+### Community 287 - "lifecycle_bridge.dart"
 Cohesion: 0.03
 Nodes (65): addressesPushFired, bridgeUnhealthy, checkHealth, _consecutiveRefreshFailures, dispose, eventChannelDead, _fireAddressesUpdated, _fireRecoveryOnlinePushes (+57 more)
 
-### Community 229 - "Settings Cards & Headers"
+### Community 288 - "retry_incomplete_group_downloads_use_case.dart"
 Cohesion: 0.03
-Nodes (57): dart:ui, detectTextDirection, _isLtrChar, _isRtlChar, accessibilityIdentifierFor, build, connectionDate, contactPeerId (+49 more)
+Nodes (64): Comparable, _activeDrainIncludesSweep, affectedMessageIds, _allowGroupMediaDownloadNetworkSideEffects, AllowsGroupMediaDownloadNetworkSideEffects, allowsNetworkSideEffects, attachment, attachmentId (+56 more)
 
-### Community 230 - "Group Onboarding Smoke Tests"
-Cohesion: 0.04
-Nodes (59): DecryptionFailureDiagnostic, GroupModel, package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart, package:flutter_app/features/groups/application/dissolve_group_use_case.dart, package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart, package:flutter_app/features/groups/application/send_group_reaction_use_case.dart, package:flutter_app/features/groups/application/update_group_metadata_use_case.dart, PayloadParseFailureDiagnostic (+51 more)
-
-### Community 231 - "Relay Config & Limits (Go)"
-Cohesion: 0.06
-Nodes (53): FileMode, backendConfig, DefaultServerLimits(), envIntOrDefault(), loadServerLimitsFromEnv(), newMemoryInboxBackendWithLimits(), relayResourcesFromServerLimits(), TestAdmissionControl_PreservesLatencyForAdmittedPeersUnderPressure() (+45 more)
-
-### Community 232 - "Migration Scale Benchmark"
+### Community 289 - "p2p_service_impl_composition_contract_test.dart"
 Cohesion: 0.03
-Nodes (64): add, advertisedPeerId, _BenchmarkBundleArtifacts, _benchmarkFileRelativePath, _benchMb, block, _buildDiskBackedBenchmarkBundle, bundle (+56 more)
+Nodes (64): ConstructorDeclaration, PartDirective, actualDeclarations, _applicationRootPath, _arrayBody, _bootstrapPath, _callbackSlots, _class (+56 more)
 
-### Community 233 - "Migration Segment Crypto"
+### Community 290 - "migration_segment_crypto.dart"
 Cohesion: 0.03
 Nodes (64): _BenchmarkStreamCrypto, _assertSessionMatches, associatedDataSha256, base64Encode, bridge, BridgeMigrationSegmentCrypto, BridgeMigrationStreamCrypto, bundleId (+56 more)
 
-### Community 234 - "Nav Bar & Identity Progress UI"
+### Community 291 - "p2p_service_impl_lan_media_test.dart"
 Cohesion: 0.03
-Nodes (61): activeTab, build, feedBadgeCount, FeedNavigationBar, orbitBadgeCount, badgeCount, build, count (+53 more)
+Nodes (62): LocalP2PService, ../local_discovery/fake_local_p2p_service.dart, LocalMessage, _RecordingBridge, FakeLocalP2PService, bridge, calledCommands, checkHealth (+54 more)
 
-### Community 235 - "Wake Token Use Cases"
+### Community 292 - "create_group_with_members_use_case.dart"
 Cohesion: 0.03
-Nodes (57): _defaultMintToken, issueForContacts, IssueWakeTokensUseCase, wakeTokenStore, registerWakeTokensViaBridge, shouldEmitWakeToken, clear, readTokens (+49 more)
+Nodes (63): addedMembers, _addMemberFailures, allMembers, buildCreateWarningMessage, byPeerId, contactByPeerId, CreateGroupMemberAddFailure, createGroupWithMembers (+55 more)
 
-### Community 236 - "Transport Census Tests"
+### Community 293 - "feed_projection_test.dart"
+Cohesion: 0.03
+Nodes (63): package:flutter_app/features/feed/application/feed_store.dart, package:flutter_app/features/feed/application/load_feed_use_case.dart, avatarPath, _contact, contactPeerId, contactRepo, _group, groupId (+55 more)
+
+### Community 294 - "p2p_service_transport_census_test.dart"
 Cohesion: 0.03
 Nodes (64): calls, clearResumeStarted, conditionalTransitionStatus, connected, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+56 more)
 
-### Community 237 - "Private Media Lifecycle Engine"
+### Community 295 - "group_invite_status_matrix_harness.dart"
 Cohesion: 0.03
-Nodes (63): acquire, _activeLeases, adapter, advanceClock, attachmentId, attachments, claimOpening, cleanupCompleted (+55 more)
+Nodes (63): _SpyDeliveryRepo, _attempts, bridge, _buildFixture, configuredRole, configuredRunId, configuredSharedDir, contactRepo (+55 more)
 
-### Community 238 - "Orbit & Conversation Loaders"
+### Community 296 - "group_received_media_actions_test.dart"
 Cohesion: 0.03
-Nodes (59): byId, deleteContactAndMessages, _deleteIntroductionsForPeer, _deleteLocalMediaArtifacts, deleteMediaForContact, introductions, introLists, _loadCandidateMessagesForCleanup (+51 more)
+Nodes (61): MediaEgressDestination, ReceivedMediaEgressService, package:flutter_app/core/media/received_media_egress_service.dart, _RecordingEgressService, _RecordingEgressService, buildController, calls, expectDenied (+53 more)
 
-### Community 239 - "Feed Item Models"
+### Community 297 - "send_introduction_use_case.dart"
+Cohesion: 0.03
+Nodes (60): concurrentInbox, delivered, jsonString, payload, reaction, reactionId, saveReaction, sendReaction (+52 more)
+
+### Community 298 - "ValueChanged"
+Cohesion: 0.03
+Nodes (59): AttachmentPreviewStrip, attachments, build, current, file, hasTotalSizeOverflow, index, _invalidCaption (+51 more)
+
+### Community 299 - "share_target_picker_screen.dart"
+Cohesion: 0.03
+Nodes (62): attachmentId, build, hasKnownTotal, messageId, MessageUploadProgressViewState, onCancel, percent, progressLabel (+54 more)
+
+### Community 300 - "feed_item.dart"
 Cohesion: 0.03
 Nodes (63): additionalCount, avatarCacheBustKey, avatarPath, canReact, canWrite, CardThreadFeedItem, collapsedPreviewMessage, connectedVia (+55 more)
 
-### Community 240 - "Group Media Boundary Tests"
-Cohesion: 0.04
-Nodes (53): GroupMediaBatchForwardCompletion, buildGroupMediaBatchForwardPickerRoute, package:flutter_app/features/groups/application/group_media_batch_forward.dart, package:flutter_app/features/groups/application/group_shared_media_batch_actions.dart, package:flutter_app/features/groups/application/group_shared_media_library_controller.dart, package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart, package:flutter_app/features/share/application/group_media_batch_forward_delivery_coordinator.dart, package:flutter_app/features/share/presentation/screens/group_media_batch_forward_picker_wired.dart (+45 more)
-
-### Community 241 - "Messages DB Helpers"
+### Community 301 - "group_shared_media_library_screen.dart"
 Cohesion: 0.03
-Nodes (62): AND, cutoff, db, dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction, dbAdvanceDirectPrivateMediaClock, dbAdvanceDirectPrivateMediaClockWithinTransaction, dbClaimDirectPrivateMediaOpening, dbCommitDirectPrivateMediaDownloadIfEligible (+54 more)
+Nodes (63): _batchForwardActive, build, _buildActionBar, _buildBody, _buildFilters, _buildTile, _capabilitiesFor, capabilitiesForEntry (+55 more)
 
-### Community 242 - "Notification Open Chat Harness"
+### Community 302 - "orbit_performance_harness.dart"
 Cohesion: 0.03
-Nodes (62): _AliceConversationDeps, _AliceHarnessApp, at, bridge, build, chatListener, clearDeliveredNotifications, consumeInitialPayload (+54 more)
+Nodes (62): _badgeFrames, binding, build, _callback, _canUseVmServiceTimeline, _captureScenario, _closeFrames, closeOrbit (+54 more)
 
-### Community 243 - "Message Repository Impl"
+### Community 303 - "group_private_media_viewer_test.dart"
 Cohesion: 0.03
-Nodes (61): conversation_thread_summary_repository.dart, direct_private_media_lifecycle_repository.dart, advancePrivateMediaClock, claimPrivateMediaOpening, conditionalTransitionStatus, consumePrivateMedia, _conversationReadController, conversationReadStream (+53 more)
+Nodes (60): PrivateMediaProtectionCoordinator, GroupPrivateMediaViewerController, GroupPrivateMediaViewerGrant, _allowPop, build, capturePlatformOverride, _close, _closing (+52 more)
 
-### Community 244 - "Direct Media Forward Picker"
+### Community 304 - "package:flutter_app/features/posts/domain/repositories/post_repository.dart"
 Cohesion: 0.03
-Nodes (60): direct_media_batch_forward_picker_screen.dart, DirectMediaLibraryBatchForwardDraft, DirectMediaBatchForwardMatrix, DirectMediaBatchForwardProgress, build, _buildActions, _buildContactList, _buildContactsHeader (+52 more)
+Nodes (57): dismissedAt, dismissPin, savePinDismissal, absolutePath, downloadPath, downloadPostMedia, hasKeyMaterial, updatePostMediaDownloadStatus (+49 more)
 
-### Community 245 - "Android Keepalive Drop Campaign"
+### Community 305 - "send_post_use_case.dart"
 Cohesion: 0.03
-Nodes (61): _adb, AndroidKeepaliveDropCampaignResult, artifact, artifactPresent, _blocked, blocker, _CampaignBlocked, _CampaignFailure (+53 more)
+Nodes (59): avatarSnapshots, hydratePostSurfaceItems, mediaMap, postList, repostHeartBaselines, viewerSharedToCounts, wait, created (+51 more)
 
-### Community 246 - "Group Message Repository Interface"
+### Community 306 - "received_video_picture_in_picture_proof_test.dart"
 Cohesion: 0.03
-Nodes (61): advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, authorizationChanges, buildGroupRemovalCutoffMessageId, clearRetryBackoff, completeGroupPrivateMediaCleanup, consumeGroupPrivateMedia, deleteMessage (+53 more)
+Nodes (60): IconButton, action, activate, activateCalls, _allowedScenarios, capability, capabilityCalls, completer (+52 more)
 
-### Community 247 - "Send Chat No-BG-Task Tests"
+### Community 307 - "StateError"
+Cohesion: 0.03
+Nodes (57): ../../integration_test/scripts/group_multi_party_runtime_config.dart, ../../integration_test/_support/invite_reliability_runner_contract.dart, SignalTimeoutException, deleteGroupAndMessages, DissolvedGroupDeleteStateChangedException, strictDissolvedLocalDeleteRequiredMessage, GroupModel, package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart (+49 more)
+
+### Community 308 - "p2p_service_impl_test.dart"
+Cohesion: 0.03
+Nodes (61): RecoveredInboxReplayOutcome, _DeleteSpyStagingRepo, _ThrowingInboxStagingRepository, action, bridge, build, buildSweepService, calledCommands (+53 more)
+
+### Community 309 - "in_memory_group_message_repository.dart"
+Cohesion: 0.03
+Nodes (61): package:flutter_app/features/groups/domain/models/group_thread_preview.dart, clearRetryBackoff, completeInboxStoreRetry, count, deleteMessage, deleteMessageForMembershipRepair, deleteMessagesForGroup, deleteMessagesForGroupSynchronouslyForTest (+53 more)
+
+### Community 310 - "send_chat_message_no_bg_task_test.dart"
 Cohesion: 0.03
 Nodes (61): _AuditBridge, callLog, _changes, checkHealth, conditionalTransitionStatus, currentState, deleteMessage, deleteMessagesForContact (+53 more)
 
-### Community 248 - "Send Voice No-BG-Task Tests"
+### Community 311 - "send_voice_message_no_bg_task_test.dart"
 Cohesion: 0.03
 Nodes (61): _AuditBridge, callLog, checkHealth, conditionalTransitionStatus, _ctrl, currentState, deleteMessage, deleteMessagesForContact (+53 more)
 
-### Community 249 - "Migration & Intent Coordinators"
-Cohesion: 0.03
-Nodes (54): ../../../core/notifications/notification_route_target.dart, ../../../core/utils/cold_start_notif_anchor.dart, FROM, dbLoadGroupForwardAuthorizationSnapshot, first, GroupForwardAuthorizationSnapshotRows, groupRow, groups (+46 more)
-
-### Community 250 - "Profile Update Listener Tests"
-Cohesion: 0.03
-Nodes (58): _FakeContactRepo, byId, expireOldIntroductions, introducedRows, _loadMutualAcceptedIntroductions, pending, recipientRows, repairedCount (+50 more)
-
-### Community 251 - "Group Crypto Tests (Go)"
+### Community 312 - "main"
 Cohesion: 0.07
-Nodes (55): DecryptGroupMessage(), EncryptGroupMessage(), GenerateGroupKey(), TestBuildGroupSignatureData_Deterministic(), TestBuildGroupSignatureData_Format(), TestDecryptGroupMessage_InvalidBase64(), TestEncryptGroupMessage_InvalidKey(), TestEncryptGroupMessage_WrongKeyLength() (+47 more)
+Nodes (39): Discover, DiscoverResponse, logPeerConnected(), logStatsPeriodically(), main(), shortPeerId(), memoryRendezvousBackend, MessageType (+31 more)
 
-### Community 252 - "Private Media Journey Criteria"
-Cohesion: 0.03
-Nodes (60): any, _asStringMap, _claimKeys, claims, contains, _containsSensitiveValueToken, _containsTokenFrom, detail (+52 more)
-
-### Community 253 - "Group Reaction Criteria Tests"
-Cohesion: 0.03
-Nodes (60): ../../integration_test/scripts/group_reaction_notification_device_criteria.dart, actorName, add, androidBuildStage, appPackage, artifact, bodies, buffer (+52 more)
-
-### Community 254 - "Posts & Feed DB Helpers"
-Cohesion: 0.03
-Nodes (50): dbClearFeedClearedThread, dbLoadFeedClearedThreads, dbMarkFeedClearedThread, delete, insert, query, dbLoadPostCommentReaction, dbLoadPostCommentReactions (+42 more)
-
-### Community 255 - "Durable LAN P2P Fake"
-Cohesion: 0.03
-Nodes (60): DurableLanSender, DurableLanFakeP2PService, connectedPeers, currentState, dialAlwaysFails, dialDelay, dialPeer, discoverAlwaysFails (+52 more)
-
-### Community 256 - "P2P Service Impl Tests"
-Cohesion: 0.03
-Nodes (60): RecoveredInboxReplayOutcome, _ThrowingInboxStagingRepository, action, bridge, build, buildSweepService, calledCommands, _captureFlowEvents (+52 more)
-
-### Community 257 - "Background Readable Colors"
+### Community 313 - "background_readable_colors.dart"
 Cohesion: 0.03
 Nodes (60): accent, accentIcon, avatarFrameBorder, avatarFrameFill, border, composerBarColor, composerHint, composerInputFill (+52 more)
 
-### Community 258 - "Share Target Picker Screen"
-Cohesion: 0.03
-Nodes (59): build, onCancel, progressLabel, sentBytes, state, title, totalBytes, UploadProgressBanner (+51 more)
+### Community 314 - "package:flutter_app/features/groups/application/group_config_payload.dart"
+Cohesion: 0.04
+Nodes (54): groupMembershipMutationDissolvedMessage, lastAdminRemovalBlockedMessage, _memberAllows, removeAdminRoleBoundaryBlockedMessage, staleGroupMembershipEventMessage, cause, GroupMemberRoleCommitAmbiguous, lastAdminRoleChangeBlockedMessage (+46 more)
 
-### Community 259 - "Group Key Rotation Use Case"
+### Community 315 - "rotate_and_distribute_group_key_use_case.dart"
 Cohesion: 0.03
 Nodes (60): attemptCount, _awaitLateDeliveryResult, candidates, _deferredGroupKeyDistributionReopenSink, _deferredGroupKeyDistributionSink, deferredPeerIds, _deliverableDevicesForRotation, deliverableGroupKeyDevices (+52 more)
 
-### Community 260 - "Direct Media Forward Coordinator"
+### Community 316 - "signed_group_transition_audit.dart"
 Cohesion: 0.03
-Nodes (60): cancelled, cells, completed, completedCellCount, _completion, contactPeerId, _contactRepository, deliverInitial (+52 more)
+Nodes (60): actor, audit, auditHash, buildGroupKeyUpdateTransitionSubject, buildGroupSystemTransitionSubject, buildGroupTransitionOutputHash, buildGroupTransitionStateHash, buildGroupTransitionStateHashFromSnapshot (+52 more)
 
-### Community 261 - "Contact Request Listener Tests"
-Cohesion: 0.03
-Nodes (60): addContact, addRequest, addTestContact, archiveContact, blockContact, bridge, checkHealth, confirmRequests (+52 more)
-
-### Community 262 - "Load Feed Use Case Tests"
+### Community 317 - "load_feed_use_case_test.dart"
 Cohesion: 0.03
 Nodes (60): addContact, archiveContact, blockContact, conditionalTransitionStatus, contactExists, contactPeerId, contacts, deleteContact (+52 more)
 
-### Community 263 - "Crypto Interop & Migration (Go)"
+### Community 318 - "SignPayload"
 Cohesion: 0.08
 Nodes (49): AEAD, EncryptedMessage, encryptionVectors, identityVectors, interopVectors, MigrationSession, migrationVectors, MlKemKeyPair (+41 more)
 
-### Community 264 - "Android Voice E2E Debug"
+### Community 319 - "android_voice_message_e2e.dart"
 Cohesion: 0.03
 Nodes (59): android_voice_message_e2e_protocol.dart, absolutePath, androidVoiceMessageE2EBuildProfile, androidVoiceMessageE2EEndpointResultSchema, androidVoiceMessageE2EFailureReceipt, AndroidVoiceMessageE2ERequest, androidVoiceMessageE2EScenario, AndroidVoiceMessageProgressWriter (+51 more)
 
-### Community 265 - "Relay Main & Rendezvous (Go)"
-Cohesion: 0.07
-Nodes (38): Discover, DiscoverResponse, logPeerConnected(), logStatsPeriodically(), main(), shortPeerId(), memoryRendezvousBackend, MessageType (+30 more)
-
-### Community 266 - "Post Delivery Retry Listeners"
+### Community 320 - "conversation_controller_composition_contract_test.dart"
 Cohesion: 0.03
-Nodes (55): connectivityRestoredSignal, controller, restoredEdges, sub, wasConnected, DeliveryReceiptListener, dispose, messageRepo (+47 more)
+Nodes (59): FieldDeclaration, NamedExpression, package:analyzer/dart/ast/visitor.dart, _arrayBody, body, calls, _class, collector (+51 more)
 
-### Community 267 - "Introduction Outbound Delivery"
+### Community 321 - "run_intro_accept_notification_sims.dart"
+Cohesion: 0.03
+Nodes (59): activeChild, _AdapterResult, artifact, _artifactEnvironmentKey, artifactPath, _awaitChildOutputDrain, _blocked, _capabilityId (+51 more)
+
+### Community 322 - "identity_progress_screen.dart"
+Cohesion: 0.03
+Nodes (53): build, createState, _handleAccept, _handleDecline, _isProcessing, onAccept, onDecline, request (+45 more)
+
+### Community 323 - "compose_area.dart"
+Cohesion: 0.03
+Nodes (59): amplitudeValues, build, _buildPrivateMediaSelector, _buildReviewActions, _buildReviewPreview, _canRecordVoice, _controller, createState (+51 more)
+
+### Community 324 - "contact_picker_wired_test.dart"
+Cohesion: 0.03
+Nodes (58): ContactPickerInviteResult, package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart, contactAlice, contactBob, contactCharlie, FakeIdentityRepository, identity, loadIdentity (+50 more)
+
+### Community 325 - "introduction_outbound_delivery.dart"
 Cohesion: 0.03
 Nodes (59): acknowledged, actualTransport, allowInboxFallback, alreadyConnected, _buildRawEnvelope, completer, createIntroductionOutboxDelivery, deliveredCount (+51 more)
 
-### Community 268 - "Background Push Fallback"
+### Community 326 - "background_push_notification_fallback.dart"
 Cohesion: 0.03
 Nodes (59): allow, backgroundPushDefaultBody, backgroundPushDefaultTitle, backgroundPushFallbackDedupeKey, backgroundPushGroupReactionFallbackBody, backgroundPushGroupReactionFallbackTitle, backgroundPushIntrosFallbackBody, backgroundPushIntrosFallbackTitle (+51 more)
 
-### Community 269 - "Shared Test User Fakes"
-Cohesion: 0.03
-Nodes (57): fake_p2p_network.dart, ../../features/conversation/domain/repositories/fake_reaction_repository.dart, ../helpers/lifecycle_helpers.dart, in_memory_contact_repository.dart, in_memory_post_repository.dart, package:flutter_app/features/conversation/application/delivery_receipt_listener.dart, addContact, bridge (+49 more)
-
-### Community 270 - "Group Pending Reaction Repository"
-Cohesion: 0.04
-Nodes (55): group_pending_reaction_repository.dart, _bufferPendingReaction, currentReaction, currentTime, deleteExpired, device, dissolvedAt, group (+47 more)
-
-### Community 271 - "Group Repository Impl"
-Cohesion: 0.03
-Nodes (58): group_repository.dart, archiveGroup, clearGroupRejoinState, clearPendingKeyRotation, clearPendingKeyRotations, deleteGroup, _deleteGroupKeyMaterial, _deleteGroupKeyMirror (+50 more)
-
-### Community 272 - "Migration Local Discovery Tests"
-Cohesion: 0.03
-Nodes (58): aad, acceptedSegmentIndexes, acceptManifest, acceptSegment, acceptTranscript, advertisedPeerId, bundleId, _bundleSourceFailedEvent (+50 more)
-
-### Community 273 - "Orbit Performance Harness"
-Cohesion: 0.03
-Nodes (58): _badgeFrames, binding, build, _callback, _canUseVmServiceTimeline, _captureScenario, _closeFrames, closeOrbit (+50 more)
-
-### Community 274 - "iOS Notification Payload Campaign"
+### Community 327 - "ios_notification_payload_campaign.dart"
 Cohesion: 0.03
 Nodes (58): allChecks, artifact, buildIosNotificationArtifact, checks, checksValue, convert, detail, deviceTimestamps (+50 more)
 
-### Community 275 - "Group Reaction E2E Probe"
+### Community 328 - "group_reaction_e2e_probe.dart"
 Cohesion: 0.03
 Nodes (58): action, crypto, decryptResult, envelope, extension, firstMarker, group, groupId (+50 more)
 
-### Community 276 - "Message Context Overlay"
+### Community 329 - "private_media_outbox_e2e_conversation.dart"
 Cohesion: 0.03
-Nodes (57): anchorRect, backdropKey, build, _clampToViewport, color, _ContextMenuAction, _ContextMenuCard, copyActionKey (+49 more)
+Nodes (56): _capturedError, _capturedStackTrace, contactPeerId, create, createPrivateMediaOutboxE2ESource, deadline, _deliveryObserved, deliveryQuietPeriod (+48 more)
 
-### Community 277 - "Send Group Invite Use Case"
+### Community 330 - "group_exit_diagnosing_processor.dart"
+Cohesion: 0.04
+Nodes (57): call, CurrentGroupExitSnapshotResolver, DiagnosingGroupExitActionAdapter, DiagnosingGroupExitIntentProcessor, executeAll, executeGroup, groupRepository, identityRepository (+49 more)
+
+### Community 331 - "direct_media_batch_forward_delivery_coordinator.dart"
 Cohesion: 0.03
-Nodes (58): attempts, _buildWelcomeKeyPackage, canonicalInvitePayload, currentFreshnessState, _deriveCanInviteOthers, _deriveInvitePolicy, describeFailures, devices (+50 more)
+Nodes (58): cancelled, cells, completed, completedCellCount, _completion, contactPeerId, _contactRepository, deliverInitial (+50 more)
 
-### Community 278 - "Group Media Forward Coordinator"
+### Community 332 - "p2p_service.dart"
+Cohesion: 0.04
+Nodes (56): ../../features/p2p/domain/models/discovered_peer.dart, ../../features/p2p/domain/models/node_state.dart, ../../features/p2p/domain/models/send_message_result.dart, clearResumeStarted, countNeedsAttentionInboxEntries, currentState, dialPeer, discoverLocalPeer (+48 more)
+
+### Community 333 - "foreground_group_push_drain_test.dart"
+Cohesion: 0.04
+Nodes (55): addPage, addSignedInboxPage, admin, create, _CursorInboxBridge, dispose, _downloadedBytesHash, _ForegroundGroupPushHarness (+47 more)
+
+### Community 334 - "notification_open_during_other_chat_harness.dart"
 Cohesion: 0.03
-Nodes (58): cancelled, cells, _cellStatus, completed, completedCellCount, completion, deliverInitial, _deliverPendingCells (+50 more)
+Nodes (57): _AliceConversationDeps, _AliceHarnessApp, at, bridge, build, chatListener, clearDeliveredNotifications, consumeInitialPayload (+49 more)
 
-### Community 279 - "In-Memory Group Message Repository"
-Cohesion: 0.03
-Nodes (58): package:flutter_app/features/groups/domain/models/group_thread_preview.dart, clearRetryBackoff, count, deleteMessage, deleteMessageForMembershipRepair, deleteMessagesForGroup, _emitOutgoingRowsChangedIfNeeded, _emitOutgoingStatusChangeIfNeeded (+50 more)
-
-### Community 280 - "PiP Resume Store Tests"
+### Community 335 - "media_picture_in_picture_handoff_test.dart"
 Cohesion: 0.04
 Nodes (57): _ProofResumeStore, MediaViewerResumeStore, _IosNegativeResumeStore, _DirectRouteResumeStore, _GroupRouteResumeStore, RecordingResumeStore, activate, activateCalls (+49 more)
 
-### Community 281 - "Notification Tap Routing Tests"
-Cohesion: 0.04
-Nodes (49): initialLocalNotificationRouteParsedDetails, initialLocalNotificationRouteParsedEvent, normalizedPayload, normalizedPeer, payloadBytes, peerBytes, DrainGroupOfflineInboxForGroupFn, DrainOfflineInboxFn (+41 more)
-
-### Community 282 - "Signed Group Transition Audit"
+### Community 336 - "run_connectivity_restore_sims.dart"
 Cohesion: 0.03
-Nodes (57): actor, audit, auditHash, buildGroupKeyUpdateTransitionSubject, buildGroupSystemTransitionSubject, buildGroupTransitionOutputHash, buildGroupTransitionStateHash, _canonicalEquals (+49 more)
+Nodes (57): _adb, airplaneEnabled, artifact, _artifactEnvironment, _Blocked, _Campaign, _capabilityId, capture (+49 more)
 
-### Community 283 - "Media Playback Adapters"
+### Community 337 - "android_app_state_guard_test.dart"
+Cohesion: 0.03
+Nodes (57): AndroidAppStateFailure, ../../integration_test/support/android_app_state_guard.dart, additionalInstalledPackages, ancestor, apkBytes, binary, bytes, cacheMetadataExact (+49 more)
+
+### Community 338 - "group_received_media_actions.dart"
+Cohesion: 0.03
+Nodes (56): attachmentId, destination, displayName, extension, isSupportedMediaEgressMime, isValidMediaEgressRequestId, items, kMaxMediaEgressItems (+48 more)
+
+### Community 339 - "migration_pending_work_manifest_builder.dart"
+Cohesion: 0.04
+Nodes (54): _addChatMediaUpload, _addGroupInboxStoreRetry, _addGroupMessageRetry, _addGroupPendingKeyRepair, _addGroupPendingMembership, _addGroupReactionReplay, _addIntroductionOutbox, _addIssue (+46 more)
+
+### Community 340 - "compose_post_sheet.dart"
+Cohesion: 0.03
+Nodes (55): activePinCount, _amplitudeBuffer, _amplitudeSubscription, _attachMedia, _attachVoice, audience, _audienceKind, audioRecorderService (+47 more)
+
+### Community 341 - "media_playback_adapter.dart"
 Cohesion: 0.04
 Nodes (56): addListener, aspectRatio, buildSurface, _controller, defaultMediaPlaybackAdapterFactory, dispose, duration, _filePath (+48 more)
 
-### Community 284 - "Incoming Router Posts Tests"
+### Community 342 - "fake_p2p_service_integration.dart"
 Cohesion: 0.03
-Nodes (55): package:flutter_app/features/p2p/domain/models/discovered_peer.dart, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+47 more)
+Nodes (57): connectedPeers, currentState, dialAlwaysFails, dialDelay, dialPeer, discoverAlwaysFails, discoverDelay, discoverLocalPeer (+49 more)
 
-### Community 285 - "Migration Snapshot Exporter"
+### Community 343 - "group_media_android_disposable_app.dart"
+Cohesion: 0.04
+Nodes (56): android_app_state_guard.dart, _adb, adbCommandCount, _apkAnalyzerCandidates, artifact, audit, broadDeleteCommands, _containsSequence (+48 more)
+
+### Community 344 - "bonsoir_discovery_native_resolver_test.dart"
+Cohesion: 0.04
+Nodes (54): BonsoirBroadcast, BonsoirService, fake_native_mdns_resolver.dart, package:bonsoir/bonsoir.dart, package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart, ServiceResolver, main, peerDiscoveredAt (+46 more)
+
+### Community 345 - "show_notification_use_case_test.dart"
+Cohesion: 0.04
+Nodes (52): dart:isolate, fake_media_file_manager.dart, DurableNotificationStorageException, package:flutter_app/core/debug/group_media_ios_disposable_profile.dart, package:flutter_app/core/notifications/deterministic_notification_id.dart, main, build, deadline (+44 more)
+
+### Community 346 - "generatePeerIDStr"
+Cohesion: 0.07
+Nodes (40): startDeadDialListener(), TestConcurrentSendDialNoSerialize(), TestStartEmitsColdStartLockWindow(), waitForStartupPhase(), generatePeerIDStr(), TestSplitHostAddressesFiltersLoopbackDirectly(), ackPayloadFromStream(), chatEnvelopeForTest() (+32 more)
+
+### Community 347 - "RelaySessionManager"
+Cohesion: 0.06
+Nodes (14): waitForSharedRecoveryOutcome(), waitForSharedRecoveryResult(), AggregateRelayState, recoveryPromise, RecoveryResult, RelayConnectionState, RelaySessionManager, RelaySessionState (+6 more)
+
+### Community 348 - "migration_database_snapshot_exporter.dart"
 Cohesion: 0.04
 Nodes (55): _RecordingSnapshotExportAdapter, adapter, _applyCipherPragmas, captureCipherMetadata, cipherVersion, closeExportedDatabaseAfterValidation, computeFileChecksum, DefaultMigrationSqlCipherExportAdapter (+47 more)
 
-### Community 286 - "Connectivity Restore Sims Script"
+### Community 349 - "picture_in_picture_gateway.dart"
 Cohesion: 0.04
-Nodes (56): _adb, airplaneEnabled, artifact, _artifactEnvironment, _Blocked, _Campaign, _capabilityId, capture (+48 more)
+Nodes (56): accepted, activate, _active, androidSupported, androidUnsupported, attachment, _bestEffortStop, capability (+48 more)
 
-### Community 287 - "Migration Transfer Manifest"
+### Community 350 - "migration_transfer_manifest.dart"
 Cohesion: 0.04
 Nodes (56): algorithm, bundleId, _canonicalize, chunkCount, chunkSize, ciphertextSha256, compatibility, convert (+48 more)
 
-### Community 288 - "Post Pass Media Tests"
+### Community 351 - "group_exit_actions_test.dart"
+Cohesion: 0.04
+Nodes (56): GroupOfflineReplayPreparationException, package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart, advanceGroupMembershipWatermark, _AfterFirstSignBridge, all, armFinalPublishRead, _blockNextGroupRead, build (+48 more)
+
+### Community 352 - "StreamController"
+Cohesion: 0.04
+Nodes (54): dispose, load, save, setSharingEnabled, settingsChanges, _settingsChangesController, package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart, StreamController (+46 more)
+
+### Community 353 - "post_pass_media_avatar_smoke_test.dart"
 Cohesion: 0.04
 Nodes (55): package:flutter_app/features/posts/application/handle_incoming_passed_post_use_case.dart, addContact, _AvatarProcessingProbe, avatarsDir, _avatarSnapshotBytes, bridge, builder, contactRepo (+47 more)
 
-### Community 289 - "iOS Notification Campaign Script"
+### Community 354 - "in_memory_pending_group_invite_repository.dart"
+Cohesion: 0.04
+Nodes (53): ../../domain/repositories/pending_group_invite_repository.dart, deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones, deletePendingInvite, getConsumedInvite, getPendingInvite (+45 more)
+
+### Community 355 - "media_picture_in_picture_policy_test.dart"
+Cohesion: 0.04
+Nodes (55): FailureOnActivate, _ProofPictureInPictureGateway, PictureInPictureChannelGateway, PictureInPictureEvent, PictureInPictureGateway, _DirectRoutePictureInPictureGateway, _GroupRoutePictureInPictureGateway, _ViewerPictureInPictureGateway (+47 more)
+
+### Community 356 - "notification_ios_payload_campaign.dart"
 Cohesion: 0.04
 Nodes (55): application, applicationSha256, attempts, automationDriver, automationDriverPath, _Blocked, blocker, _bounded (+47 more)
 
-### Community 290 - "Direct Private Media Viewer Controller"
+### Community 357 - "chat_message_listener.dart"
 Cohesion: 0.04
-Nodes (55): PrivateMediaLifecycleEngine, _activeGrants, armDisappearingDeadline, attachment, attachmentId, canEnterPictureInPicture, _cleanupTerminalSafely, _closeExpired (+47 more)
+Nodes (53): ActiveConversationTracker, _activePeerId, clear, clearIfActive, isViewing, normalizeActiveKey, setActive, _lastToneAt (+45 more)
 
-### Community 291 - "Android Payload E2E Tests"
+### Community 358 - "register_push_token_use_case.dart"
 Cohesion: 0.04
-Nodes (52): count, markConversationRead, bridge, contactRepo, dispose, incomingReactionChangeStream, incomingReactionStream, messageRepo (+44 more)
+Nodes (53): AccountMigrationNetworkGate, AccountMigrationRuntimeNetworkGate, AccountMigrationRuntimeNetworkPolicy, AccountMigrationRuntimeStartupLatch, AccountMigrationRuntimeStartupSteps, allowAccountMigrationNetworkSideEffects, allowsAccountNetworkSideEffects, allowsAccountNotificationDisplay (+45 more)
 
-### Community 292 - "Pass Post Along Use Case"
+### Community 359 - "runtime_root_inventory_test.dart"
 Cohesion: 0.04
-Nodes (55): allRecipientPeerIds, attachments, avatarBase64, avatarByteLength, created, CreatedLocalPostPass, createResult, currentLocalPassCount (+47 more)
+Nodes (54): background.dart, entry.dart, manual_only.dart, package:fixture_app/src/package_target.dart, package:roots_fixture/island_a.dart, package:roots_fixture/non_root_script_dependency.dart, package:roots_fixture/shared.dart, package:roots_fixture/test_only.dart (+46 more)
 
-### Community 293 - "Group BG Task Wired Tests"
+### Community 360 - "conversation_upload_activity_controller.dart"
 Cohesion: 0.04
-Nodes (55): bgBeginResponse, ciphertext, commandDelays, commandGates, controller, _decodeReplayPayload, effectiveGroup, effectiveGroupRepo (+47 more)
+Nodes (54): ConversationUploadCancellationFinalizer, _acquireWake, _activeOperation, applyProgress, beginOperation, bindProgressStream, cancelFinalizer, cancellationFuture (+46 more)
 
-### Community 294 - "Media Viewer Item Models"
+### Community 361 - "group_reaction_replay_outbox_db_helpers.dart"
 Cohesion: 0.04
-Nodes (54): @immutable, PictureInPictureCapability, PictureInPictureCommandResult, PictureInPictureRequest, ConversationComposerViewState, _FeedEntry, OrbitIntrosViewData, MediaPictureInPictureAuthorization (+46 more)
+Nodes (51): group_parent_write_guard.dart, dbCountGroupMembers, dbDeleteAllGroupMembers, dbDeleteGroupMember, dbInsertGroupMember, dbInsertRemovedGroupMemberSnapshot, dbLoadAllGroupMembers, dbLoadGroupMember (+43 more)
 
-### Community 295 - "Group PubSub Network Fake"
+### Community 362 - "ContactModel"
 Cohesion: 0.04
-Nodes (53): fake_group_pubsub_network.dart, fake_group_reaction_replay_outbox_repository.dart, in_memory_group_message_repository.dart, in_memory_group_repository.dart, deliveries, _Go012Run, main, publishBatch (+45 more)
+Nodes (52): archivedAt, avatarPath, avatarVersion, blockedAt, ContactModel, copyWith, fromMap, fromQRPayload (+44 more)
 
-### Community 296 - "Reaction Repository DB Tests"
+### Community 363 - "group_exit_release_diagnostics.dart"
 Cohesion: 0.04
-Nodes (49): bufRow, main, reactionRow, AtomicIncomingReactionMutationRepository, ReactionRepositoryImpl, package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart, package:flutter_app/core/database/helpers/reactions_db_helpers.dart, package:flutter_app/core/database/migrations/081_group_pending_reactions.dart (+41 more)
+Nodes (52): authorityUnavailable, cause, classifyGroupExitNativeFailure, cleanupIncomplete, deliveryDegraded, diagnosticForVoluntaryGroupExitFact, fact, groupExitFactForNativeFailure (+44 more)
 
-### Community 297 - "Direct Media Forward Picker Tests"
+### Community 364 - "contact_picker_wired.dart"
 Cohesion: 0.04
-Nodes (53): DirectMediaBatchForwardAttemptResult, DirectMediaBatchForwardCompletion, buildDirectMediaBatchForwardPickerRoute, package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart, package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart, package:flutter_app/features/share/presentation/screens/direct_media_batch_forward_picker_wired.dart, _AttemptScript, _builtKeyCount (+45 more)
+Nodes (53): _buildFingerprint, _fingerprint, group, GroupMembershipEffectAuthority, isActive, jsonEncode, latestKeyGeneration, matches (+45 more)
 
-### Community 298 - "Accept & Reciprocate Tests"
+### Community 365 - "accept_and_reciprocate_use_case_test.dart"
 Cohesion: 0.04
 Nodes (54): _bobPeerId, bridge, checkHealth, commandLog, contactRepo, currentState, dialPeer, discoverLocalPeer (+46 more)
 
-### Community 299 - "Relay Integration Tests (Go)"
+### Community 366 - "qr_display_wired.dart"
+Cohesion: 0.04
+Nodes (51): ../../account_migration/application/account_migration_runtime_network_gate.dart, ../../application/build_qr_payload_use_case.dart, ../../../../core/bridge/bridge.dart, ../../../core/services/p2p_service.dart, ../../../core/utils/flow_event_emitter.dart, ../../domain/models/node_state.dart, ../../identity/domain/repositories/identity_repository.dart, accountMigrationNetworkGate (+43 more)
+
+### Community 367 - "pending_group_broadcasts_db_helpers.dart"
+Cohesion: 0.04
+Nodes (50): ../db_write_transaction.dart, group_exit_intents_db_helpers.dart, db, dbAppendGroupExitDiagnosticOutcome, dbClearGroupExitDiagnostics, dbLoadGroupExitDiagnosticsForAction, dbLoadNewestGroupExitDiagnostics, _historyLimit (+42 more)
+
+### Community 368 - "requireRelay"
 Cohesion: 0.12
 Nodes (47): TestRelayGroupMediaUploadDownload(), TestRelayGroupMediaVoiceNote(), TestRelayMediaUploadDownload(), startNodeWithFakeFirstRelay(), TestInboxRetrieveFallsBackToSecondRelay(), TestMediaDownloadFallsBackToSecondRelay(), TestPeerDialFallsBackToSecondRelay(), TestRendezvousDiscoveryFallsBackToSecondRelay() (+39 more)
 
-### Community 300 - "Relay Reaction Push (Go)"
+### Community 369 - "reaction_push.go"
 Cohesion: 0.08
 Nodes (46): directReactionPushMetadata, scanPushMessage(), TestForbiddenFieldClassifier_CommittedReactionFixtureMatchesRelayPush(), TestForbiddenFieldClassifier_MessagePushesDoNotExposePreviewCanaries(), assertNoAdditionalGroupReactionPush(), newSignedGroupReactionFixture(), TestGroupInboxStore_ReactionAddPushesAllAuthorDevicesOnly(), TestGroupReactionCanonicalRecipientSetIsStable() (+38 more)
 
-### Community 301 - "Transport Census CLI Script"
+### Community 370 - "reaction_repository_impl_test.dart"
+Cohesion: 0.04
+Nodes (48): bufRow, main, reactionRow, package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart, package:flutter_app/core/database/helpers/reactions_db_helpers.dart, package:flutter_app/core/database/migrations/016_message_reactions.dart, package:flutter_app/core/database/migrations/081_group_pending_reactions.dart, package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart (+40 more)
+
+### Community 371 - "run_transport_census_cli.dart"
 Cohesion: 0.04
 Nodes (53): _Args, bin, _buildTestPeerIfNeeded, cold, command, commandOk, commandWithRetry, condition (+45 more)
 
-### Community 302 - "Encrypted DB Opener"
+### Community 372 - "encrypted_db_opener.dart"
 Cohesion: 0.04
 Nodes (53): action, bakPath, bytes, CipherKeyMode, CipherKeyRecord, CipherOpenAction, _configureDbBusyTimeout, db (+45 more)
 
-### Community 303 - "Media Owner Lane & Library"
-Cohesion: 0.04
-Nodes (51): dbValue, kMediaOwnerLaneUnresolved, MediaAttachmentOwnerViolation, MediaOwnerLane, MediaOwnerLaneDbValue, mediaOwnerLaneFromDbValue, message, toString (+43 more)
-
-### Community 304 - "Direct Reaction Notification Projection"
+### Community 373 - "direct_reaction_notification_projection.dart"
 Cohesion: 0.04
 Nodes (53): accountPeerId, _boundedTargets, clearForLogout, contacts, _deleteAllDocuments, digest, _DirectContactsDocument, _DirectTargetsDocument (+45 more)
 
-### Community 305 - "Intro Contact Request Recovery"
+### Community 374 - "message_context_overlay.dart"
 Cohesion: 0.04
-Nodes (53): _acceptRemoteSide, action, contact, contactKeyUpdated, contactKeyWasMissing, _contactNeedsRecoveryMerge, continueAsContactRequest, convergedIntro (+45 more)
+Nodes (53): anchorRect, backdropKey, build, _clampToViewport, color, _ContextMenuAction, _ContextMenuCard, copyActionKey (+45 more)
 
-### Community 306 - "Compose Post Sheet"
+### Community 375 - "direct_media_batch_forward_picker_wired_test.dart"
 Cohesion: 0.04
-Nodes (52): activePinCount, _amplitudeBuffer, _amplitudeSubscription, _attachMedia, _attachVoice, audience, _audienceKind, audioRecorderService (+44 more)
+Nodes (52): DirectMediaBatchForwardAttemptResult, DirectMediaBatchForwardCompletion, buildDirectMediaBatchForwardPickerRoute, package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart, package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart, package:flutter_app/features/share/presentation/screens/direct_media_batch_forward_picker_wired.dart, _AttemptScript, _builtKeyCount (+44 more)
 
-### Community 307 - "Group Invite Listener & Decline"
+### Community 376 - "conversation_voice_capture_controller.dart"
 Cohesion: 0.04
-Nodes (51): appendGroupEventLogEntry, bridge, contactRepo, _defaultNow, deliveryRepo, dispose, downloadGroupAvatarFn, _enqueueMessage (+43 more)
+Nodes (53): abortRequested, _activeSession, amplitudeBuffer, amplitudeSubscription, amplitudeValues, amplitudeWindowSize, cancel, _cancelRecorderAfterCompletedStart (+45 more)
 
-### Community 308 - "Group List Screen"
+### Community 377 - "Directory"
 Cohesion: 0.04
-Nodes (52): backgroundPreference, build, _buildContent, _buildEmptyState, _buildGroupCard, _buildHeader, _buildInviteOutcomeRow, _buildLoadErrorState (+44 more)
+Nodes (51): Directory, artifactDirectory, artifactPath, campaign, _CaptureFailure, captureManifest, capturePath, _ClosureCapture (+43 more)
 
-### Community 309 - "Private Media Cleanup Race Tests"
+### Community 378 - "package:flutter_app/core/bridge/p2p_bridge_client.dart"
 Cohesion: 0.04
-Nodes (52): RecordingSecureKeyStore, attachment, delete, deleteCalls, deleteFile, failNext, _FailOnceMediaFileManager, fixture (+44 more)
+Nodes (48): fake_bridge.dart, details, firstInbox, firstSend, honestyGap, _printPhase6Metrics, relayGap, relayPeerId (+40 more)
 
-### Community 310 - "Compose & Member Row Tests"
+### Community 379 - "flutter_notification_service.dart"
 Cohesion: 0.04
-Nodes (49): AppLocalizations, build, _color, _colorForRole, _GroupMemberAction, GroupMemberRow, _IdentityChangedWarning, identitySafety (+41 more)
+Nodes (49): FlutterLocalNotificationsPlugin, DurableConversationNotificationIdRegistry, NotificationIdAllocationException, clearDeliveredNotifications, consumeInitialPayload, ConversationNotificationIdRegistryResolver, ConversationNotificationIdResolver, _dismissNotificationById (+41 more)
 
-### Community 311 - "Settings Screen & Nav"
-Cohesion: 0.04
-Nodes (49): BackdropFilter, activeTab, avatarBytes, _backgroundValueLabel, build, currentBackgroundPreference, currentQuality, currentVideoQuality (+41 more)
+### Community 380 - "local_relay_harness_test.go"
+Cohesion: 0.08
+Nodes (40): TestDialPeerViaRelayMultiAddrFailover(), TestDualStackNodeWithIPv4Relay(), marshalDiscoverResponseMessage(), marshalRegisterResponseMessage(), marshalRegistration(), newLocalRelayServer(), newLocalRelaySharedState(), readLocalRelayFrame() (+32 more)
 
-### Community 312 - "Received Video PiP Proof Tests"
-Cohesion: 0.04
-Nodes (52): action, activate, activateCalls, _allowedScenarios, capability, capabilityCalls, completer, controls (+44 more)
-
-### Community 313 - "Sims Runtime Protocol"
+### Community 381 - "sims_runtime_protocol.dart"
 Cohesion: 0.04
 Nodes (52): accept, accepted, ack, additionalSupportedRoles, copyWith, decode, detail, dispatchSimsRuntimeEncodedConfig (+44 more)
 
-### Community 314 - "Local WebSocket Server"
+### Community 382 - "local_ws_server.dart"
 Cohesion: 0.04
 Nodes (52): ackStream, _ackTimeout, _boundPort, broadcast, _classifyAckFrame, commitBudget, _committedAckFrame, configureInboundChatCommitHandler (+44 more)
 
-### Community 315 - "Group Shared Media Batch Actions"
+### Community 383 - "outgoing_direct_private_mutation_coordinator.dart"
+Cohesion: 0.04
+Nodes (52): accepted, appliesToPrivateParent, attachment, attachmentId, authorizesTransport, authorizesTransportHandoff, canonicalLocalPath, _classifyCompletion (+44 more)
+
+### Community 384 - "migration_group_manifest_builder.dart"
+Cohesion: 0.04
+Nodes (49): build, _buildCommittedKeyItem, _buildGroup, _buildInboxCursors, _buildMembers, _buildPendingKeyItem, _buildPendingKeyRepairs, _buildPendingMembershipMessages (+41 more)
+
+### Community 385 - "group_shared_media_batch_actions.dart"
 Cohesion: 0.04
 Nodes (52): attachmentId, byParent, clearLocalCopy, conflict, coordinator, deletedAttachmentIds, deletedAttachments, deletedMessageIds (+44 more)
 
-### Community 316 - "Contact Picker Wired Tests"
-Cohesion: 0.04
-Nodes (51): ContactPickerInviteResult, package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart, contactAlice, contactBob, contactCharlie, FakeIdentityRepository, identity, loadIdentity (+43 more)
-
-### Community 317 - "Push Relay Registration Proof"
+### Community 386 - "push_relay_registration_proof.dart"
 Cohesion: 0.04
 Nodes (52): _accountIdentitySha256, age, authorizationArtifactSha256, authorizationKind, bindAccountIdentity, _bindIdentity, bindTransportIdentity, claimRelayAttempt (+44 more)
 
-### Community 318 - "Load Orbit Data Tests"
+### Community 387 - "load_orbit_data_use_case_test.dart"
 Cohesion: 0.04
 Nodes (52): package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart, addContact, archiveContact, attachment, blockContact, conditionalTransitionStatus, contactExists, contacts (+44 more)
 
-### Community 319 - "Slow Media Transfer Tests"
+### Community 388 - "direct_private_media_sender_pending_open_test.dart"
 Cohesion: 0.04
-Nodes (51): attachment, basePath, bytes, checkHealth, delay, deleteAttachmentsForContact, deleteAttachmentsForMessage, dispose (+43 more)
+Nodes (52): adapter, attachment, attachmentId, base, baseRoot, before, _buildHarness, canonicalAbsolute (+44 more)
 
-### Community 320 - "Post Delivery Parallel Tests"
+### Community 389 - "post_delivery_runner_parallel_test.dart"
 Cohesion: 0.04
 Nodes (52): clearWriteLog, close, _contact, contacts, _ControlledEncryptBridge, _ControlledP2PService, created, _createLocalPost (+44 more)
 
-### Community 321 - "Local Relay Harness Tests (Go)"
-Cohesion: 0.08
-Nodes (39): TestDialPeerViaRelayMultiAddrFailover(), TestDualStackNodeWithIPv4Relay(), marshalDiscoverResponseMessage(), marshalRegisterResponseMessage(), marshalRegistration(), newLocalRelayServer(), newLocalRelaySharedState(), readLocalRelayFrame() (+31 more)
-
-### Community 322 - "Feed Performance Tests"
+### Community 390 - "private_media_outbox_e2e.dart"
 Cohesion: 0.04
-Nodes (51): _assertBackgroundScrollDoesNotRegress, _assertThresholds, average, averageBuildMs, backgroundP99, backgroundPreference, baselineP99, build (+43 more)
+Nodes (51): allowedEvents, attachmentId, attachmentIdHash, _baseReceipt, contactPeerId, deadline, enabled, _endpoint (+43 more)
 
-### Community 323 - "Inbox Staging Repository Tests"
-Cohesion: 0.05
-Nodes (47): InboxStagingRepositoryImpl, InboxStagingRepository, package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart, package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart, package:flutter_app/core/inbox/inbox_staging_entry.dart, package:flutter_app/core/inbox/inbox_staging_repository_impl.dart, db, main (+39 more)
-
-### Community 324 - "Info Sheets & Date Formatting"
+### Community 391 - "upload_media_use_case.dart"
 Cohesion: 0.04
-Nodes (48): formatDaySeparatorLabel, local, messageDay, nowLocal, pattern, today, yesterday, formatMessageTime (+40 more)
+Nodes (51): bytes, _classifyThrownUploadFailure, classifyUploadMediaTransportFailure, committedFile, _consumerBoundaryUploadFailure, contains, contentHash, _copyToOwnedMediaPath (+43 more)
 
-### Community 325 - "On-Join Config Resync"
+### Community 392 - "on_join_group_config_resync_use_case.dart"
 Cohesion: 0.04
 Nodes (50): actor, actorEnvelope, actorPeerId, actorUsername, ApplyGroupConfigResponseResult, applyOnJoinGroupConfigResponse, config, decodedSigned (+42 more)
 
-### Community 326 - "Post Pins Use Cases"
+### Community 393 - "change_group_member_role_and_broadcast_use_case.dart"
 Cohesion: 0.04
-Nodes (47): dismissedAt, dismissPin, savePinDismissal, allowStaging, clearPinDismissal, compareTo, envelope, existingByMediaId (+39 more)
+Nodes (50): attempt, candidate, changeGroupMemberRoleAndBroadcast, ChangeGroupMemberRoleAndBroadcastOutcome, ChangeGroupMemberRoleAndBroadcastResult, _containsExactRoleRow, createdAt, current (+42 more)
 
-### Community 327 - "Post Pass Envelope"
+### Community 394 - "retry_incomplete_group_uploads_use_case.dart"
 Cohesion: 0.04
-Nodes (51): activeHeartPeerIds, audience, authorPeerId, authorUsername, blobId, buildEncryptedEnvelope, buildJson, _buildPayloadJson (+43 more)
+Nodes (49): completedAttachment, DeleteReplacedForegroundGroupMediaFile, failureProjection, ForegroundGroupUploadLeafResult, guarded, outcome, privateMediaAvailability, projection (+41 more)
 
-### Community 328 - "Offline Send UX Tests"
+### Community 395 - "group_exit_intent_sink.dart"
 Cohesion: 0.04
-Nodes (51): SnackBar, _buildTestWidget, callCount, chatListener, completeLast, completeLastWithMessage, conditionalTransitionStatus, _contact (+43 more)
+Nodes (51): action, authorize, authorizeGroupRejoinForExitIntent, available, _cancelQueued, CancelQueuedGroupExitIntent, _canRejoin, CanRejoinForExitIntent (+43 more)
 
-### Community 329 - "Incoming Contact Message Tests"
+### Community 396 - "sims_device_binding_test.dart"
+Cohesion: 0.04
+Nodes (49): SimsDevicePreparationCommandRunner, SimsDiscoveryCommandRunner, _androidControlConsumer, _androidTarget, _androidThreePeerConsumer, _buildRow, _consumer, create (+41 more)
+
+### Community 397 - "handle_incoming_message_use_case_test.dart"
 Cohesion: 0.04
 Nodes (51): addContact, addRequest, archiveContact, blockContact, bridge, checkHealth, clear, contactExists (+43 more)
 
-### Community 330 - "Chat Media Hydration Tests"
+### Community 398 - "handle_incoming_chat_message_media_hydration_test.dart"
 Cohesion: 0.04
 Nodes (51): addContact, archiveContact, blockContact, conditionalTransitionStatus, contactExists, _contacts, deleteAttachmentsForContact, deleteAttachmentsForMessage (+43 more)
 
-### Community 331 - "Startup Router Tests"
+### Community 399 - "orbit_qr_entry_migration_test.dart"
 Cohesion: 0.04
-Nodes (51): addContact, archiveContact, blockContact, contactExists, count, currentState, deleteContact, deleteIdentity (+43 more)
+Nodes (51): accountMigrationPairingQrKind, bridge, _buildMigrationQrData, buildOrbitWired, _buildValidQrData, _centerAvatarKey, contactRepo, contactRequestRepo (+43 more)
 
-### Community 332 - "Settings Nearby Posts Tests"
+### Community 400 - "settings_wired_posts_nearby_test.dart"
 Cohesion: 0.04
 Nodes (51): checkHealth, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeBridge (+43 more)
 
-### Community 333 - "Group Invite Matrix Harness"
+### Community 401 - "run_group_reaction_notification_sims.dart"
 Cohesion: 0.04
-Nodes (50): _attempts, bridge, _buildFixture, configuredRole, configuredRunId, configuredSharedDir, contactRepo, deleteAttempt (+42 more)
+Nodes (50): _android_app_package.dart, _AdapterResult, _androidScenarios, artifact, _artifactEnvironmentKey, artifactPath, artifactSha, _artifactValidator (+42 more)
 
-### Community 334 - "P2P Service Contract & Fakes"
+### Community 402 - "external_share_media_ux_test.dart"
 Cohesion: 0.04
-Nodes (50): P2PFullInboxDrain, P2PService, PeerDropSignal, ReadinessProofRecorder, RelayLiveSendObserver, FakeP2PService, _DiscoverMissProbeConnectedP2PService, _CensusFakeP2PService (+42 more)
+Nodes (48): ElevatedButton, ShareBatchDeliveryResult, ../shared/fakes/fake_audio_recorder_service.dart, main, _contact, isArchived, isBlocked, main (+40 more)
 
-### Community 335 - "Pending Message Retrier"
+### Community 403 - "announcement_private_reply_policy_test.dart"
 Cohesion: 0.04
-Nodes (50): _acknowledgeGroupRecoveryIfEligible, bridge, contactRepo, _debounceTimer, defaultGroupContinuitySweepInterval, defaultNetworkRestoredDebounce, defaultPeriodicRetryInterval, defaultRetryDebounce (+42 more)
+Nodes (49): _Fixture, GroupMessageLocalDeletionState, package:flutter_app/features/groups/application/announcement_private_reply_policy.dart, package:flutter_app/features/groups/application/announcement_private_reply_request.dart, addContact, _attachment, attachments, _CapableMessageRepository (+41 more)
 
-### Community 336 - "Migration File Manifest Builder"
+### Community 404 - "package:path/path.dart"
 Cohesion: 0.04
-Nodes (50): _absoluteForRelativePath, acceptSizeDivergence, _addBestPathFailureIssue, addCandidate, _addChatMedia, _addPathBackedItem, _addPathCandidateIfUsable, _addPendingPostMedia (+42 more)
+Nodes (47): containsKey, create, createdAt, _createMigrationFixtureSchema, db, delete, execute, exportDir (+39 more)
 
-### Community 337 - "Swipeable Row Widgets"
+### Community 405 - "package:flutter_app/features/groups/domain/repositories/group_repository.dart"
 Cohesion: 0.04
-Nodes (48): _actionCount, _actionWidth, addButton, build, _buildActionButtons, child, createState, _directionLocked (+40 more)
+Nodes (46): allowedPeers, cipherRows, cipherVersion, create, deadline, identity, members, probeGroupMediaReliabilityRoleDatabase (+38 more)
 
-### Community 338 - "Post Pin Use Cases"
+### Community 406 - "wake_token_directionality_e2e.dart"
 Cohesion: 0.04
-Nodes (47): deliveryResult, EditPinnedPostResult, _editPinnedPostResultForSettlement, envelope, existingState, media, now, pinState (+39 more)
+Nodes (49): accepted, action, _active, attachment, capture, completer, contactPeerId, deadline (+41 more)
 
-### Community 339 - "Timer & Backoff Tests"
+### Community 407 - "main_presence_lifecycle_wiring_test.dart"
 Cohesion: 0.04
-Nodes (47): package:fake_async/fake_async.dart, package:flutter_app/core/services/active_peer_keepalive_use_case.dart, package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart, package:flutter_app/features/groups/application/group_pending_key_repair_backoff_timer.dart, activePeer, build, drains, events (+39 more)
+Nodes (43): package:flutter_app/main.dart, main, depth, invocationStart, main, openingParenthesis, _startupStepInvocation, stepIndex (+35 more)
 
-### Community 340 - "Group Reaction Sims Runner"
+### Community 408 - "conversation_wired_offline_send_ux_test.dart"
 Cohesion: 0.04
-Nodes (49): _android_app_package.dart, _AdapterResult, _androidScenarios, artifact, _artifactEnvironmentKey, artifactPath, artifactSha, _artifactValidator (+41 more)
+Nodes (50): _buildTestWidget, callCount, chatListener, completeLast, completeLastWithMessage, conditionalTransitionStatus, _contact, _contactPeerId (+42 more)
 
-### Community 341 - "Relay Group Inbox (Go)"
-Cohesion: 0.08
-Nodes (18): decodeGroupInboxEntries(), groupInboxHistoryGap, groupInboxMessage, GroupInboxStore, buildGroupInboxHistoryGaps(), filterGroupInboxMessagesForPeer(), fitRetrievePendingResponse(), groupInboxCandidateSourcePeerIds() (+10 more)
+### Community 409 - "direct_private_media_tile_tap_test.dart"
+Cohesion: 0.04
+Nodes (46): AnimatedScale, FilledButton, package:flutter_app/features/account_migration/presentation/screens/account_migration_blocked_screen.dart, package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart, package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart, main, unfinishedMoveMessage, unfinishedMoveTitle (+38 more)
 
-### Community 342 - "Benchmark Node Helpers"
+### Community 410 - "benchmark_helpers.dart"
 Cohesion: 0.04
 Nodes (49): action, badgeHonestyGapMs, BenchmarkNode, bridge, captureFlowEvents, captureFlowEventsUntil, createBenchmarkNode, dispose (+41 more)
 
-### Community 343 - "Media Egress Path Tests"
+### Community 411 - "wake_token_directionality_e2e_test.dart"
 Cohesion: 0.04
-Nodes (48): AppOwnedMediaPathAuthority, IoAppOwnedMediaPathAuthority, _aggregate, DocumentsDirectoryProvider, _gateway, _pathAuthority, perform, _resolveStoredPath (+40 more)
+Nodes (46): ../../integration_test/scripts/android_wake_token_directionality_campaign.dart, WakeTokenAcceptedAttachmentObserver, clear, readTokenFor, ReceivedWakeTokenStore, removeTokenFor, writeTokenFor, _cache (+38 more)
 
-### Community 344 - "Retry Failed Group Messages"
+### Community 412 - "retry_failed_group_messages_use_case.dart"
 Cohesion: 0.04
 Nodes (49): attachments, baseMs, bridge, canRetryWithPersistedAttachments, capMs, emitRetryTiming, failedMessages, _groupMaxRetryAttempts (+41 more)
 
-### Community 345 - "Handle Incoming Introduction"
+### Community 413 - "handle_incoming_introduction_use_case.dart"
 Cohesion: 0.04
 Nodes (49): _applyResponseToExistingIntroduction, bridge, byIntroduced, byIntroducedCounterpart, byRecipient, byRecipientCounterpart, contactRepo, derived (+41 more)
 
-### Community 346 - "Introduction Listener & Acceptance"
+### Community 414 - "bonsoir_discovery_service.dart"
 Cohesion: 0.04
-Nodes (47): addContact, avatarPath, contact, dlFn, existingContact, handleMutualAcceptance, isIntroduced, isRecipient (+39 more)
+Nodes (48): BonsoirDiscovery, BonsoirDiscoveryEvent, _armSuspectedDenialProbe, BonsoirBroadcastFactory, BonsoirDiscoveryFactory, _broadcast, _buildLibp2pAddresses, _commitResolvedPeer (+40 more)
 
-### Community 347 - "Address Visibility Tests (Go)"
-Cohesion: 0.10
-Nodes (47): Addr, avAddrsContain(), avBoundIP4QuicPorts(), avCaptureLogs(), avDenyNetroute(), avInstallAnetShaped(), avInstallDenial(), avIP4QuicPort() (+39 more)
-
-### Community 348 - "Group Repository Interfaces"
+### Community 415 - "build_received_media_forward_test.dart"
 Cohesion: 0.04
-Nodes (48): announcement_private_reply_request.dart, GroupRepository, MediaAttachmentRepository, AnnouncementPrivateReplyPolicy, AnnouncementPrivateReplyResolution, AnnouncementPrivateReplyResolver, _available, contact (+40 more)
+Nodes (47): FakeMediaAttachmentRepository, OutgoingDirectPrivateMutationRepository, builder, expectInvalid, getAttachmentsForMessage, identity, main, parent (+39 more)
 
-### Community 349 - "Feed Load Use Cases"
+### Community 416 - "received_media_action_controller.dart"
 Cohesion: 0.04
-Nodes (46): allGroupMessages, allMessages, base, connectionItems, contactBlocked, contacts, contactUsernames, floor (+38 more)
+Nodes (48): attachmentId, candidate, centralDecision, current, decision, defaultDirectMediaLaneQualifier, _defaultEgressRequestId, _defaultFileExists (+40 more)
 
-### Community 350 - "Group Leave & Key Repair"
-Cohesion: 0.04
-Nodes (46): adminCount, bridge, broadcastVoluntaryLeaveAndRotateKey, callGroupPublish, didBroadcast, identity, leaveTimelineMessage, leftAt (+38 more)
-
-### Community 351 - "Group Repository Interface"
-Cohesion: 0.04
-Nodes (48): archiveGroup, attemptCount, clearGroupRejoinState, clearPendingKeyRotation, clearPendingKeyRotations, deleteGroup, forceGroupRejoinEligible, getActiveGroups (+40 more)
-
-### Community 352 - "Introduction Model"
+### Community 417 - "introduction_model.dart"
 Cohesion: 0.04
 Nodes (47): copyWith, createdAt, deriveStatus, fromMap, hashCode, id, introducedId, introducedMlKemPublicKey (+39 more)
 
-### Community 353 - "Post Comment Use Cases"
-Cohesion: 0.04
-Nodes (47): allowStaging, authorUsername, comment, envelope, handleIncomingPostComment, HandleIncomingPostCommentResult, parent, persistRepostEngagementParticipantIfNeeded (+39 more)
+### Community 418 - "issue_wake_tokens_use_case_test.dart"
+Cohesion: 0.05
+Nodes (43): _defaultMintToken, issueForContacts, IssueWakeTokensUseCase, wakeTokenStore, clear, readTokens, WakeTokenStore, writeTokens (+35 more)
 
-### Community 354 - "Push Envelope Staging"
-Cohesion: 0.04
-Nodes (48): action, appGroupPath, buffer, bytes, ciphertext, clear, _clearMalformedIfAged, _compareEntry (+40 more)
-
-### Community 355 - "Fake Group PubSub Network"
+### Community 419 - "fake_group_pubsub_network.dart"
 Cohesion: 0.04
 Nodes (48): _delay, deliveryDelay, deliveryFails, _deliveryRecords, _deliveryRouteKind, _deviceControllers, _deviceDiagnosticControllers, _devicePeerIds (+40 more)
 
-### Community 356 - "Media Repository DB Tests"
-Cohesion: 0.05
-Nodes (42): ArgumentError, package:flutter_app/features/conversation/domain/models/media_library.dart, ../../shared/fixtures/media_repository_real_db_fixture.dart, fixture, main, saveVisual, fixture, main (+34 more)
-
-### Community 357 - "Durable Notification ID Registry"
-Cohesion: 0.04
-Nodes (47): _CloseDart, dart:ffi, _FlockDart, ActiveNotificationIdsResolver, _api, _candidateGenerator, close, _CloseDart (+39 more)
-
-### Community 358 - "GIF & Route Target Tests"
-Cohesion: 0.04
-Nodes (46): ../../conversation/domain/repositories/fake_media_attachment_repository.dart, package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart, ../../../shared/fakes/fake_media_picker.dart, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+38 more)
-
-### Community 359 - "Posts Media DB Helpers"
-Cohesion: 0.04
-Nodes (45): ../db_write_transaction.dart, dbLoadPostMediaAttachments, dbLoadPostMediaAttachmentsForPosts, dbReplacePostMediaAttachments, dbUpdatePostMediaDownloadStatus, dbUpdatePostMediaLocalPath, dbUpsertPostMediaAttachment, dbWriteTransaction (+37 more)
-
-### Community 360 - "Direct Media Batch Builders"
-Cohesion: 0.04
-Nodes (46): direct_media_library_controller.dart, ../domain/models/conversation_message.dart, ../domain/repositories/message_repository.dart, build, BuildDirectMediaLibraryBatchForward, caption, _compareSourcesNewestFirst, copyWith (+38 more)
-
-### Community 361 - "Shared Media Viewer Tests"
-Cohesion: 0.05
-Nodes (42): GestureDetector, _attachmentRepository, MediaViewerRepositoryResumeStore, readResumePosition, _reloadVideo, _stateRepository, writeResumePosition, FullScreenTypedMediaViewer (+34 more)
-
-### Community 362 - "Group Message Model"
+### Community 420 - "group_message.dart"
 Cohesion: 0.04
 Nodes (47): group_private_media_policy.dart, copyWith, createdAt, fromMap, groupId, hashCode, hasLocalClaim, id (+39 more)
 
-### Community 363 - "Group Private Media Platform Proof"
-Cohesion: 0.04
-Nodes (45): advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, _app, _attachmentId, attachments, completeGroupPrivateMediaCleanup, consumeGroupPrivateMedia, deleteGroupPrivateMediaAttachmentWithinLock (+37 more)
-
-### Community 364 - "1:1 Reaction Closure Script"
-Cohesion: 0.04
-Nodes (47): artifactDirectory, artifactPath, campaign, _CaptureFailure, captureManifest, capturePath, _ClosureCapture, _closureScenarios (+39 more)
-
-### Community 365 - "Group Multi-Device Runner Script"
+### Community 421 - "run_group_multi_device_real.dart"
 Cohesion: 0.04
 Nodes (47): args, cliFixturePath, command, commandOk, _defaultPrimaryDevice, _defaultSiblingDevice, devices, generateIdentity (+39 more)
 
-### Community 366 - "Wake Token Directionality E2E"
-Cohesion: 0.04
-Nodes (47): accepted, action, _active, attachment, capture, completer, contactPeerId, deadline (+39 more)
-
-### Community 367 - "Local Presence & Chat Model"
-Cohesion: 0.04
-Nodes (45): ChatMessage, content, from, fromEventData, fromLocal, isIncoming, timestamp, to (+37 more)
-
-### Community 368 - "Migration Checkpoint Store"
+### Community 422 - "migration_transfer_checkpoint_store.dart"
 Cohesion: 0.05
 Nodes (47): ciphertextSha256, clear, _entriesByBundle, entryOffsets, entryState, FileMigrationTransferCheckpointStore, FileMigrationTransferLedgerStore, filePath (+39 more)
 
-### Community 369 - "P2P Service Interface"
+### Community 423 - "create_group_with_members_use_case_test.dart"
 Cohesion: 0.04
-Nodes (46): ../../features/p2p/domain/models/discovered_peer.dart, ../../features/p2p/domain/models/node_state.dart, ../../features/p2p/domain/models/send_message_result.dart, clearResumeStarted, countNeedsAttentionInboxEntries, currentState, dialPeer, discoverLocalPeer (+38 more)
+Nodes (45): currentMemberCount, ensureWithinGroupMembershipLimit, exceedsGroupMembershipLimit, groupMembershipLimit, GroupMembershipLimitException, groupMembershipOverflowCount, groupMembershipRemainingSlots, maxMembers (+37 more)
 
-### Community 370 - "Android PiP System UI Control"
+### Community 424 - "PassthroughCryptoBridge"
+Cohesion: 0.05
+Nodes (46): PassthroughCryptoBridge, _RoundtripCryptoBridge, _InstrumentedBridge, _DelayRevocationDecryptBridge, _DelayedUpdateKeyBridge, _UpdateKeyFailBridge, _UpdateKeyTimeoutBridge, _InboxStoreFailPassthroughBridge (+38 more)
+
+### Community 425 - "in_memory_media_attachment_repository.dart"
+Cohesion: 0.06
+Nodes (46): _FakeMediaAttachmentRepo, MediaAttachmentRepositoryImpl, DirectMediaLibraryStateRepository, GroupMediaLibraryStateRepository, MediaAttachmentAuthorizationChangeSource, MediaAttachmentByIdLookup, MediaDownloadStateRepository, MediaLibraryRepository (+38 more)
+
+### Community 426 - "android_picture_in_picture_system_ui_control.dart"
 Cohesion: 0.04
 Nodes (46): action, allowedDescriptions, AndroidPictureInPictureBounds, AndroidPictureInPictureGeometryEnvironment, AndroidPictureInPictureGeometrySelection, AndroidPictureInPictureSystemUiAction, AndroidPictureInPictureSystemUiControl, _attribute (+38 more)
 
-### Community 371 - "Incoming Message Router"
+### Community 427 - "group_media_ios_disposable_reset.dart"
+Cohesion: 0.04
+Nodes (46): activeRequest, _allowlistedApplicationSupportDirectories, _allowlistedDocumentDirectories, _allowlistedDocumentFiles, allowlistedPaths, database, decoded, _decodeObject (+38 more)
+
+### Community 428 - "record_audio_recorder_service_test.dart"
+Cohesion: 0.05
+Nodes (43): acquire, _activeHolds, debugActiveHolds, debugReset, debugSetDriver, disable, _driver, enable (+35 more)
+
+### Community 429 - "upload_media_use_case_test.dart"
+Cohesion: 0.05
+Nodes (45): attachment, attachmentOrNull, disposition, errorCode, kEmptyGroupMediaAclErrorCode, stage, UploadMediaDisposition, UploadMediaFailed (+37 more)
+
+### Community 430 - "incoming_message_router.dart"
 Cohesion: 0.04
 Nodes (46): _chatMessageController, chatMessageStream, _contactRequestController, contactRequestStream, _deliveryReceiptController, deliveryReceiptStream, dispose, _groupInviteController (+38 more)
 
-### Community 372 - "Migration Transfer Flow"
+### Community 431 - "package:flutter/foundation.dart"
 Cohesion: 0.04
-Nodes (46): accountMigrationBundleSourceFailedSafeMessage, accountMigrationBundleSourceFailureReason, accountMigrationFinalHandoffStalledSafeMessage, accountMigrationLocalTransferStalledSafeMessage, AccountMigrationReceiverEvent, AccountMigrationReceiverEvents, AccountMigrationReceiverEventType, AccountMigrationReceiverStartFailureCode (+38 more)
+Nodes (42): attemptPart, buildTextPreview, idPart, logChatIncoming, logChatOutgoing, logChatTransportIncoming, logChatWireEnvelope, normalized (+34 more)
 
-### Community 373 - "Group Multi-Device Policy"
+### Community 432 - "migration_qr_payload_use_case.dart"
 Cohesion: 0.04
-Nodes (41): asGroupMemberDeviceSnapshotRepository, compare, multiDeviceSyncEnabled, resolveGroupMemberDeviceSafety, savedDevices, GroupMultiDeviceFacet, groupMultiDeviceImplemented, GroupMultiDeviceScope (+33 more)
+Nodes (45): buildMigrationQrPayload, BuildMigrationQrPayloadResult, bytes, createdAt, currentTime, decoded, deriveMigrationPairingConfirmationCode, expiresAt (+37 more)
 
-### Community 374 - "Sibling Key Distribution Tests"
+### Community 433 - "group_exit_terminal_diagnostics.dart"
 Cohesion: 0.04
-Nodes (45): attemptCap, bridge, drainAllPending, _drainOne, drainPendingForGroup, drainPendingForPeer, existingDevices, groupMemberRegainedDeliverableKey (+37 more)
+Nodes (45): call, defaultDeleteSelfRemovedGroupShell, deleteAvatar, DeleteSelfRemovedGroupShellCallback, DeleteSelfRemovedGroupShellResult, DeleteSelfRemovedGroupShellUseCase, kSelfRemovedShellMediaPrepareLimit, mediaPrepareLimit (+37 more)
 
-### Community 375 - "Group Shared Media Controller"
+### Community 434 - "group_shared_media_library_controller.dart"
 Cohesion: 0.04
 Nodes (46): _appendSafe, attachmentId, clearSelection, _entries, entryFor, _entryIds, _filter, _generation (+38 more)
 
-### Community 376 - "Group Invite Revocation Payload"
+### Community 435 - "group_invite_revocation_payload.dart"
 Cohesion: 0.04
 Nodes (46): buildEncryptedEnvelope, canonicalRevocationSignedPayload, _decodeSignedPayload, expiresAt, expiresAtDateTime, failure, fromInnerJson, fromJson (+38 more)
 
-### Community 377 - "Post Reaction Use Cases"
+### Community 436 - "conversation_wired_sending_to_failed_test.dart"
 Cohesion: 0.04
-Nodes (44): allowStaging, commentExists, comments, compareTo, envelope, existing, handleIncomingPostCommentReaction, HandleIncomingPostCommentReactionResult (+36 more)
+Nodes (43): package:flutter_app/core/debug/transport_metrics.dart, main, main, main, _buildTestWidget, chatListener, conditionalTransitionStatus, _contact (+35 more)
 
-### Community 378 - "Fake Message Repository"
+### Community 437 - "fake_message_repository.dart"
 Cohesion: 0.04
 Nodes (46): conditionalTransitionCallCount, conditionalTransitionStatus, deleteMessage, deleteMessagesCallCount, deleteMessagesForContact, existsByContent, existsByDedupKey, failedOutgoingOverride (+38 more)
 
-### Community 379 - "Fake Media Playback Adapter"
+### Community 438 - "fake_media_playback_adapter.dart"
 Cohesion: 0.04
 Nodes (46): addListener, _aspectRatio, attachmentId, buildSurface, buildSurfaceCount, defaultStored, dispose, disposeCount (+38 more)
 
-### Community 380 - "Go Bridge Platform Client"
+### Community 439 - "go_bridge_client.dart"
 Cohesion: 0.04
 Nodes (45): bridge.dart, ../database/db_write_transaction.dart, allowRawStringResponse, checkHealth, _cmdMap, _CmdSpec, debugHandleEventForTest, debugMalformedPushEventCountForTest (+37 more)
 
-### Community 381 - "Voice Recording & Audio Tests"
-Cohesion: 0.04
-Nodes (41): ../features/conversation/application/send_chat_message_use_case_test.dart, amplitudeStream, cancel, dispose, durationStream, hasPermission, isRecording, requestPermission (+33 more)
-
-### Community 382 - "Bridge Event Streams"
+### Community 440 - "bridge.dart"
 Cohesion: 0.04
 Nodes (45): ../../features/p2p/domain/models/chat_message.dart, ../../features/p2p/domain/models/connection_state.dart, allowedKeys, callBgBegin, callBgEnd, callBgGrantProbe, callBgTimeRemaining, callBlobDecrypt (+37 more)
 
-### Community 383 - "Announcement Reply Policy Tests"
+### Community 441 - "File"
 Cohesion: 0.04
-Nodes (45): _Fixture, GroupMessageLocalDeletionState, package:flutter_app/features/groups/application/announcement_private_reply_policy.dart, addContact, _attachment, attachments, _CapableMessageRepository, contact (+37 more)
+Nodes (40): File, budgetBytes, durationMs, file, formatPendingComposerBudgetBytes, gb, height, kb (+32 more)
 
-### Community 384 - "QR Section & Polish Tests"
+### Community 442 - "group_event_log_db_helpers.dart"
+Cohesion: 0.04
+Nodes (45): canonicalizeGroupEventLogPayload, _canonicalizeValue, canonicalPayload, _computeEntryHash, convert, createdAt, createdAtIso, currentGroupId (+37 more)
+
+### Community 443 - "incoming_message_router_posts_pins_test.dart"
+Cohesion: 0.04
+Nodes (44): DisabledLocalDiscoveryService, discoveredPeers, discoveredPeersStream, dispose, getLocalPeer, isAdvertiseBroadcastGated, isLocalPeer, _peersController (+36 more)
+
+### Community 444 - "share_intent_service.dart"
 Cohesion: 0.05
-Nodes (40): chatGroup, conversationApp, fortyMessages, localAfternoon, main, messageAt, pumpFrames, rectWithin (+32 more)
+Nodes (40): ShareIntent, bufferIntent, captureInitialIntent, consumePendingIntent, _convertMediaList, dispose, _getCacheDirectory, GetCacheDirectoryFn (+32 more)
 
-### Community 385 - "Intro Accept Sims Runner"
-Cohesion: 0.04
-Nodes (45): _AdapterResult, artifact, _artifactEnvironmentKey, artifactPath, _blocked, _capabilityId, capturedArtifacts, captureRoot (+37 more)
-
-### Community 386 - "Peer Keepalive Use Case"
-Cohesion: 0.04
-Nodes (44): ActivePeerKeepAliveUseCase, _clearDropSignalIfAny, _consecutiveMisses, dispose, _dropHandled, _interval, isProbeActive, kKeepAliveInterval (+36 more)
-
-### Community 387 - "Received Media Forward Builders"
+### Community 445 - "build_received_media_forward.dart"
 Cohesion: 0.04
 Nodes (45): acquire, attachments, build, BuildReceivedMediaForward, captureForDispatch, _copySnapshot, _defaultDirectForwardSnapshotCopy, _defaultForwardOperationToken (+37 more)
 
-### Community 388 - "Post Reaction Send Use Cases"
+### Community 446 - "direct_private_media_viewer_test.dart"
 Cohesion: 0.04
-Nodes (44): commentExists, createdAt, deliveryResult, envelope, maxConcurrentRecipients, persistRepostEngagementParticipantIfNeeded, post, postId (+36 more)
+Nodes (45): DirectPrivateMediaContinuityState, advanceClock, app, _attachment, claimCount, claimOpening, cleanupCount, cleanupTerminalWithinLock (+37 more)
 
-### Community 389 - "Contact Request Notification Tests"
+### Community 447 - "swipeable_friend_row.dart"
+Cohesion: 0.04
+Nodes (45): _actionCount, _actionWidth, addButton, build, _buildActionButtons, child, createState, _directionLocked (+37 more)
+
+### Community 448 - "architecture_boundary_checker_test.dart"
 Cohesion: 0.05
-Nodes (41): ../domain/repositories/fake_contact_request_repository.dart, ../features/contact_request/domain/repositories/fake_contact_request_repository.dart, GlobalKey, acceptContactRequest, AcceptContactRequestResult, contact, peerIdPrefix, request (+33 more)
+Nodes (44): ChatRepository, fallback.dart, ../../features/chat/application/export_target.dart, ../features/chat/domain/a.dart, ../../features/chat/domain/package_target.dart, local_export.dart, package:external_package/external.dart, package:fixture_app/features/chat/domain/package_target.dart (+36 more)
 
-### Community 390 - "Group Key Repair DB Helpers"
-Cohesion: 0.04
-Nodes (43): ../../../features/groups/domain/models/group_pending_key_distribution.dart, ../../../features/groups/domain/models/group_pending_key_repair.dart, args, attempts, current, dbFinalizeGroupPendingKeyDistribution, dbLoadGroupPendingKeyDistribution, dbLoadPendingGroupKeyDistributionsForGroup (+35 more)
+### Community 449 - "group_avatar_storage_test.dart"
+Cohesion: 0.06
+Nodes (43): Fake, MockPlatformInterfaceMixin, package:path_provider_platform_interface/path_provider_platform_interface.dart, package:plugin_platform_interface/plugin_platform_interface.dart, PathProviderPlatform, deleteGroupForwardSnapshotDirectoryOnce, docsPath, Fake (+35 more)
 
-### Community 391 - "Bonsoir Discovery Service"
-Cohesion: 0.04
-Nodes (44): _armSuspectedDenialProbe, BonsoirBroadcastFactory, BonsoirDiscoveryFactory, _broadcast, _buildLibp2pAddresses, _commitResolvedPeer, _createBroadcast, _createDiscovery (+36 more)
-
-### Community 392 - "Contact Request Listener"
-Cohesion: 0.04
-Nodes (43): ContactAutoAddRateLimiter, maxPerWindow, _recent, tryAcquire, window, add, attemptSilentIntroRecovery, _autoAddedController (+35 more)
-
-### Community 393 - "Retry Failed Messages Use Case"
-Cohesion: 0.04
-Nodes (44): actualTransport, allUploaded, bridge, contact, contactRepo, deriveRetryAction, effectiveUploadFn, _emitDeleteTombstoneStillFailed (+36 more)
-
-### Community 394 - "Media Auto-Download Policy"
+### Community 450 - "post_engagement_fanout_test.dart"
 Cohesion: 0.05
-Nodes (39): fromSecureKeyStore, PreferenceBackedMediaAutoDownloadDecider, resolveMediaDownloadNetwork, shouldAutoDownload, defaultMediaAutoDownloadDecider, MediaAutoDownloadDecider, MediaDownloadPolicy, shouldAutoDownload (+31 more)
+Nodes (43): Iterable, package:flutter_app/features/posts/application/send_post_comment_reaction_use_case.dart, package:flutter_app/features/posts/application/send_post_reaction_use_case.dart, _assertAllRecipientsStarted, _assertBoundedStart, _contact, contacts, _ControlledP2PService (+35 more)
 
-### Community 395 - "Notification Preview Resolver (iOS)"
-Cohesion: 0.10
-Nodes (35): CryptoKit, Darwin, Date, GoMknoon, Hashable, BridgePushDecryptor, DirectContactsProjectionSnapshot, DirectReactionProjectedContact (+27 more)
+### Community 451 - "handle_app_paused.dart"
+Cohesion: 0.04
+Nodes (44): AppPausedResult, batchSize, bridge, callBgEnd, candidates, capped, ceilingMs, delayedSec (+36 more)
 
-### Community 396 - "Profile Picture Download Tests"
+### Community 452 - "media_storage_manager.dart"
+Cohesion: 0.05
+Nodes (43): cleared, clearLocalCopiesForType, clearLocalCopy, delete, exists, _expectedRelativePath, failed, _fileGateway (+35 more)
+
+### Community 453 - "package:flutter_app/features/groups/application/group_membership_event_watermark.dart"
+Cohesion: 0.04
+Nodes (41): addGroupMember, addGroupMemberElevatedTargetBlockedMessage, addGroupMemberGroupMismatchMessage, _addMemberOperationId, _bridgeErrorCode, _diagnosticPrefix, groupMembershipMutationDissolvedMessage, _isIdenticalDuplicateMemberAdd (+33 more)
+
+### Community 454 - "download_profile_picture_use_case_test.dart"
 Cohesion: 0.05
 Nodes (43): _RegressionExactAvatarNormalizer, AvatarNormalizationHelper, addContact, archiveContact, avatarNormalizer, blockContact, bridge, checkHealth (+35 more)
 
-### Community 397 - "Keepalive Drop E2E Debug"
+### Community 455 - "keepalive_drop_e2e.dart"
 Cohesion: 0.05
 Nodes (43): action, attempted, begin, _CapturedKeepaliveEvent, connectedBefore, custody, custodyLatencyMs, deadline (+35 more)
 
-### Community 398 - "Inbox Staging Repository"
-Cohesion: 0.05
-Nodes (41): attemptCount, copyWith, entryId, envelope, fromMap, InboxStagingEntry, lastAttemptedAt, messageType (+33 more)
-
-### Community 399 - "Private Media Protection Coordinator"
+### Community 456 - "private_media_protection_coordinator.dart"
 Cohesion: 0.05
 Nodes (43): _balanceUnpublishedOwner, _beginOperation, _channelFailed, _clearRecoverableLatchWhenUnowned, coverActive, debugGetState, debugInjectEvent, dispose (+35 more)
 
-### Community 400 - "Migration Pending Work Builder"
-Cohesion: 0.05
-Nodes (43): _addChatMediaUpload, _addGroupInboxStoreRetry, _addGroupMessageRetry, _addGroupPendingKeyRepair, _addGroupPendingMembership, _addGroupReactionReplay, _addIntroductionOutbox, _addIssue (+35 more)
-
-### Community 401 - "Group Media Forward Policy"
+### Community 457 - "group_media_forward_policy.dart"
 Cohesion: 0.05
 Nodes (43): attachment, build, canOfferForward, canTargetContact, canTargetGroup, _defaultForwardOperationToken, denialReason, denied (+35 more)
 
-### Community 402 - "Group Missed Message Telemetry"
+### Community 458 - "group_missed_message_telemetry.dart"
 Cohesion: 0.05
 Nodes (43): _bestDiagnosticFor, buildGroupMissedMessageTelemetryReport, causeCounts, coveredCauseClasses, _deliveryKey, details, diagnosticList, direct (+35 more)
 
-### Community 403 - "Group Invite Decline Ack"
+### Community 459 - "group_invite_decline_ack_payload.dart"
 Cohesion: 0.05
 Nodes (43): buildEncryptedEnvelope, canonicalDeclineAckSignedPayload, declinedAt, declinedAtDateTime, declinedByPeerId, declineSignature, _decodeSignedPayload, expiresAt (+35 more)
 
-### Community 404 - "PiP Policy Tests"
+### Community 460 - "resolve_introduction_notification_target_use_case.dart"
 Cohesion: 0.05
-Nodes (43): activate, addListener, aspectRatio, _authorization, authorize, buildSurface, calls, canEnterPictureInPicture (+35 more)
+Nodes (42): cancel, _cancelFuture, _cancelSubscription, _completeFallback, contact, converged, convergenceWaiter, fallbackReason (+34 more)
 
-### Community 405 - "Media Viewer Widget Tests"
+### Community 461 - "conversation_wired_gif_test.dart"
 Cohesion: 0.05
-Nodes (40): fake_media_playback_adapter.dart, IconButton, InkWell, PictureInPictureStartOutcome, MediaPictureInPictureController, package:flutter_app/shared/widgets/media/media_playback_adapter.dart, package:flutter_app/shared/widgets/media/media_video_controls.dart, _groupWiredSource (+32 more)
+Nodes (43): ../../../shared/fakes/fake_media_picker.dart, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream (+35 more)
 
-### Community 406 - "Transport Metrics Debug"
+### Community 462 - "register_push_token_use_case_test.dart"
+Cohesion: 0.05
+Nodes (43): ../shared/fakes/fake_push_token_store.dart, currentState, currentTokenV2, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox (+35 more)
+
+### Community 463 - "durable_group_exit_driver.dart"
+Cohesion: 0.05
+Nodes (43): actionId, AfterDurableGroupExitNoticeAttempt, _completeAction, compose, coordinator, coordinatorStatus, DurableGroupExitActionResult, DurableGroupExitDriver (+35 more)
+
+### Community 464 - "build_direct_media_library_batch_forward.dart"
+Cohesion: 0.05
+Nodes (41): conversation_message.dart, build, BuildDirectMediaLibraryBatchForward, caption, _compareSourcesNewestFirst, copyWith, _defaultFileExists, _defaultOperationToken (+33 more)
+
+### Community 465 - "orbit_edit_handle.dart"
+Cohesion: 0.05
+Nodes (42): GestureDragEndCallback, GestureDragStartCallback, GestureDragUpdateCallback, armed, build, color, createState, didChangeDependencies (+34 more)
+
+### Community 466 - "transport_metrics.dart"
 Cohesion: 0.05
 Nodes (42): _attemptCounts, _attemptFailureCounts, baselineReport, _canonicalRung, _canonicalTransport, discoveredPeerCount, discoveryActive, empty (+34 more)
 
-### Community 407 - "Conversation Message Model"
+### Community 467 - "image_processor.dart"
+Cohesion: 0.05
+Nodes (39): compressAndGetFile, _compressFile, CompressFileFn, _compressVideo, CompressVideoFn, _defaultCompress, _defaultVideoCompress, isProcessableImage (+31 more)
+
+### Community 468 - "media_file_manager.dart"
+Cohesion: 0.05
+Nodes (42): _activeGroupForwardSnapshotDirectories, _cachedDocumentsDir, cacheDocumentsDir, copyToDurableStorage, createGroupForwardSnapshotDirectory, createMediaForwardSnapshotLease, debugResetDocumentsDirCache, deleteFile (+34 more)
+
+### Community 469 - "package:flutter_app/core/media/media_file_manager.dart"
+Cohesion: 0.05
+Nodes (39): EncryptedMediaArtifact, block, contentHashValidation, copyWith, _emitGroupFeedMediaVerifyEvent, file, fileBytes, fileExists (+31 more)
+
+### Community 470 - "conversation_message.dart"
 Cohesion: 0.05
 Nodes (42): contactPeerId, copyWith, createdAt, custodyCheckedAt, dedupKey, deletedAt, deletedByPeerId, editedAt (+34 more)
 
-### Community 408 - "Conversation Shared Media Tests"
+### Community 471 - "handle_incoming_group_reaction_use_case.dart"
 Cohesion: 0.05
-Nodes (42): app, buildLibraryApp, builtTileIds, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+34 more)
+Nodes (40): _bufferPendingReaction, currentReaction, currentTime, deleteExpired, device, dissolvedAt, group, HandleGroupReactionResult (+32 more)
 
-### Community 409 - "Notification Tap Benchmark Harness"
+### Community 472 - "group_exit_intent.dart"
+Cohesion: 0.05
+Nodes (41): copyWith, createdAt, databaseValue, eventAt, fromDatabase, fromMap, GroupExitIntent, GroupExitIntentState (+33 more)
+
+### Community 473 - "push_envelope_staging.dart"
+Cohesion: 0.05
+Nodes (42): action, appGroupPath, buffer, bytes, ciphertext, clear, _clearMalformedIfAged, _compareEntry (+34 more)
+
+### Community 474 - "media_storage_manager_test.dart"
+Cohesion: 0.05
+Nodes (42): beginMediaDownload, canonicalRelative, claimCalls, claimMediaEvicted, commitMediaDownloadLocalPath, createBytes, delete, deleteAttachmentsForContact (+34 more)
+
+### Community 475 - "local_media_sender.dart"
+Cohesion: 0.05
+Nodes (40): Digest, _DigestSink, _SingleDigestSink, add, _CallbackSink, close, complete, _computeSha256 (+32 more)
+
+### Community 476 - "verify_inbox_custody_use_case_test.dart"
+Cohesion: 0.05
+Nodes (40): fake_p2p_service_integration.dart, package:flutter_app/core/services/inbox_store_outcome.dart, call, callIndex, calls, captureFlowEvents, contactPeerId, fixedNow (+32 more)
+
+### Community 477 - "benchmark_notification_tap_harness.dart"
 Cohesion: 0.05
 Nodes (41): _HarnessScreen, build, buildChatMessageListener, _buildMessage, _captureFlowEvents, contact, contactRepo, createState (+33 more)
 
-### Community 410 - "Post Pass DB Helpers"
+### Community 478 - "notification_sound_smoke_harness.dart"
+Cohesion: 0.05
+Nodes (41): at, buildVerdict, clearDeliveredNotifications, consumeInitialPayload, contactPeerId, _createNotificationGroupMediaRepository, db, _dbName (+33 more)
+
+### Community 479 - "group_multi_party_runtime_config.dart"
+Cohesion: 0.05
+Nodes (41): _boolValue, dbName, decoded, _decodeRuntimeConfigValues, elapsedNow, exists, groupMultiPartyDbNameKey, groupMultiPartyModeKey (+33 more)
+
+### Community 480 - "post_passes_db_helpers.dart"
 Cohesion: 0.05
 Nodes (39): capabilities, dbCountPostPasses, dbLoadPassAvatarSnapshot, dbLoadPassAvatarSnapshotsForPosts, dbLoadPostPass, dbLoadPostPassCounts, dbLoadPostPasses, dbLoadRetryableOutgoingPostPasses (+31 more)
 
-### Community 411 - "Media File Manager"
+### Community 481 - "flow_event_emitter.dart"
 Cohesion: 0.05
-Nodes (41): _activeGroupForwardSnapshotDirectories, _cachedDocumentsDir, cacheDocumentsDir, copyToDurableStorage, createGroupForwardSnapshotDirectory, createMediaForwardSnapshotLease, debugResetDocumentsDirCache, deleteFile (+33 more)
+Nodes (41): any, contains, debugSetFlowEventSink, E2EFlowEventSinkLease, emitFlowEvent, flowEventLoggingEnabled, FlowEventSink, _flowEventTestSink (+33 more)
 
-### Community 412 - "Migration Cutover Record"
+### Community 482 - "migration_secure_storage_staging.dart"
+Cohesion: 0.05
+Nodes (40): activeKey, clearPromotionJournal, deleteStagingValues, fromJson, _loadPromotedEntries, MigrationSecureStoragePromotionResult, primaryStore, promote (+32 more)
+
+### Community 483 - "migration_cutover_record.dart"
 Cohesion: 0.05
 Nodes (41): accountPeerId, copyWith, createdAt, currentVersion, devicePeerId, deviceRole, failClosed, failureCode (+33 more)
 
-### Community 413 - "Group Invite Auth"
+### Community 484 - "group_invite_auth.dart"
 Cohesion: 0.05
 Nodes (41): allowMemberSnapshotBootstrap, _bootstrapInviterPublicKey, buildGroupInviteRevokerAuthorizationSnapshot, buildProof, computedStateHash, contact, _findMember, _findSenderMember (+33 more)
 
-### Community 414 - "Load Conversation Tests"
+### Community 485 - "group_invite_send_latency_trace.dart"
+Cohesion: 0.05
+Nodes (41): at, begin, beginNavigationSettlement, boundary, details, _emit, _emitAt, end (+33 more)
+
+### Community 486 - "load_conversation_use_case_test.dart"
 Cohesion: 0.05
 Nodes (41): attachment, basePath, conditionalTransitionStatus, deleteAttachmentsForContact, deleteAttachmentsForMessage, deleteMessage, deleteMessagesForContact, existsByContent (+33 more)
 
-### Community 415 - "Push Token Registration Tests"
-Cohesion: 0.05
-Nodes (41): currentState, currentTokenV2, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream (+33 more)
-
-### Community 416 - "X25519 Crypto (Go)"
+### Community 487 - "x25519_test.go"
 Cohesion: 0.14
 Nodes (39): EncryptedContactRequest, buildAAD(), DecryptContactRequest(), deriveAESKey(), EdPrivateKeyToX25519(), EdPublicKeyToX25519(), EncryptContactRequest(), bytesEqual() (+31 more)
 
-### Community 417 - "Relay Presence Store (Go)"
+### Community 488 - "newPresenceTestEnv"
 Cohesion: 0.12
 Nodes (35): EvtPeerConnectednessChanged, genDisconnectedPeerID(), newPresenceTestEnv(), rawKeys(), sendPresenceGet(), sendPresenceSet(), TestConnectednessHandlerSeedsLastSeen(), TestPresenceGet_ConnectedPeerReportsFreshAgeDespiteStaleLastSeen() (+27 more)
 
-### Community 418 - "Testpeer CLI Commands (Go)"
+### Community 489 - "commands.go"
 Cohesion: 0.14
 Nodes (40): boolFromMap(), cmdBlobDecrypt(), cmdBlobEncrypt(), cmdBlobKeygen(), cmdClearMessages(), cmdDial(), cmdDisconnect(), cmdDiscover() (+32 more)
 
-### Community 419 - "Private Media Eligibility Tests"
-Cohesion: 0.05
-Nodes (37): advanceClock, _app, claimOpening, cleanupTerminalWithinLock, consume, consumes, controller, engine (+29 more)
+### Community 490 - "buildPushMessage"
+Cohesion: 0.10
+Nodes (40): apnsCustomDataFromPushData(), buildCiphertextOnlyPushMessage(), buildGroupPushMessage(), buildOversizedFallbackPushMessage(), buildPushMessage(), buildStrictMinimalFallbackPushMessage(), cloneStringMap(), hasRequiredFallbackRouting() (+32 more)
 
-### Community 420 - "App Paused Lifecycle"
+### Community 491 - "../../tool/sims/artifact_evidence.dart"
 Cohesion: 0.05
-Nodes (40): AppPausedResult, bridge, callBgEnd, candidates, capped, ceilingMs, delayedSec, deposited (+32 more)
+Nodes (33): ../../integration_test/support/android_connectivity_restore_campaign.dart, ../../integration_test/support/android_critical_performance_evidence.dart, ../../integration_test/support/android_keepalive_drop_campaign.dart, ../../integration_test/support/android_transport_campaign.dart, ../../integration_test/support/android_voice_message_evidence.dart, ../../integration_test/support/sims_runtime_protocol.dart, _invocation, main (+25 more)
 
-### Community 421 - "Migration Secure Storage Staging"
+### Community 492 - "android_keepalive_drop_campaign.dart"
 Cohesion: 0.05
-Nodes (39): activeKey, clearPromotionJournal, deleteStagingValues, fromJson, _loadPromotedEntries, MigrationSecureStoragePromotionResult, primaryStore, promote (+31 more)
+Nodes (39): artifact, assembleKeepaliveDropArtifact, begin, custody, digest, event, eventIndex, _EventRecord (+31 more)
 
-### Community 422 - "Media Storage Models"
+### Community 493 - "direct_private_media_lifecycle.dart"
 Cohesion: 0.05
-Nodes (39): MediaAttachment, add, attachment, bytes, byType, count, entries, MediaStorageEntry (+31 more)
+Nodes (40): advanceClock, _buildTarget, claimOpening, cleanupCommittedPendingSource, cleanupTerminalWithinLock, consume, consumeOpening, _deleteExactAppOwnedArtifacts (+32 more)
 
-### Community 423 - "Group Pending Broadcast Runner"
+### Community 494 - "admit_sibling_device_use_case.dart"
 Cohesion: 0.05
-Nodes (37): _drain, drainAll, drainForGroup, GroupPendingBroadcastRunner, repository, _safeId, broadcast, enqueueGroupPendingBroadcast (+29 more)
+Nodes (37): AdmitSiblingDeviceFn, admitSiblingDeviceIfTrusted, alreadyPresent, deviceId, EnqueueDeferredGroupKeyDistributionFn, existingById, existingByTransport, latestKey (+29 more)
 
-### Community 424 - "Load Introductions Use Case"
+### Community 495 - "group_exit_policy.dart"
+Cohesion: 0.05
+Nodes (38): _authority, requireGroupDissolvePreflightAuthority, setGroupDissolvePreflightAuthority, attempts, attemptsByPeerId, disposition, eligibleSuccessors, evaluate (+30 more)
+
+### Community 496 - "load_introductions_use_case.dart"
 Cohesion: 0.05
 Nodes (40): acceptedCurrentViewerDecisionIntroIds, aCreatedAt, bCreatedAt, byIntroducer, _cleanDisplayName, cleanedPeerId, cleanedValue, _compareIntroductionsNewestFirst (+32 more)
 
-### Community 425 - "External Share Media Tests"
+### Community 497 - "post_pass_encrypted_delivery_integration_test.dart"
 Cohesion: 0.05
-Nodes (40): ShareBatchDeliveryResult, StackTrace, allowSave, around, attachmentId, _AttachmentSaveGate, attachmentSaveStarted, bridge (+32 more)
+Nodes (39): bridge, contactRepo, dispose, incomingPostPassStream, _onMessage, _postController, PostPassListener, postPassStream (+31 more)
 
-### Community 426 - "iOS Push Route Decoding (iOS)"
-Cohesion: 0.14
-Nodes (20): AnyHashable, bridgePlaintext(), canonicalJSONString(), capPreview(), containsGroupPrivateMediaPolicyMarker(), decodeJSONObject(), exactCanonicalStringArray(), groupPrivateMediaNotificationBody() (+12 more)
+### Community 498 - "media_viewer_item.dart"
+Cohesion: 0.05
+Nodes (40): allowed, allows, attachmentId, cancelled, canDispatch, canEnterPictureInPicture, capabilities, caption (+32 more)
 
-### Community 427 - "LAN Media Transfer (Go)"
+### Community 499 - "one_to_one_test_user.dart"
+Cohesion: 0.05
+Nodes (38): ../../core/local_discovery/fake_local_p2p_service.dart, fake_notification_service.dart, in_memory_inbox_staging_repository.dart, recording_fake_bridge.dart, bridge, contactRepo, conversationTracker, create (+30 more)
+
+### Community 500 - "media_lan_test.go"
 Cohesion: 0.12
 Nodes (32): fileSha256AndSize(), firstNonCircuitConn(), dialDirect(), hostHasProtocol(), lanLoopbackQUICAddr(), lanMediaNodeConfig(), sha256Hex(), startLANMediaNode() (+24 more)
 
-### Community 428 - "Group Publish Benchmark Script"
+### Community 501 - "run_group_publish_benchmark.dart"
 Cohesion: 0.05
 Nodes (39): _benchmarkKey, cliFixturePath, command, commandOk, _defaultDevice, deviceId, generateIdentity, _handleStdout (+31 more)
 
-### Community 429 - "App State Guard Tests"
+### Community 502 - "p2p_service_peer_liveness_test.dart"
 Cohesion: 0.05
-Nodes (39): AndroidAppStateFailure, ../../integration_test/support/android_app_state_guard.dart, apkBytes, bytes, cacheMetadataExact, _capturedCodeCacheNonEmpty, _capturedPrivateEntries, checksum (+31 more)
+Nodes (38): PeerLivenessProbe, package:flutter_app/core/services/active_peer_keepalive_use_case.dart, activePeer, build, drains, events, eventsNamed, _FakeProbe (+30 more)
 
-### Community 430 - "Android Notification Campaign Support"
-Cohesion: 0.05
-Nodes (38): AndroidNotificationActionResultDisposition, androidNotificationBuildProfileId, androidNotificationCapabilityId, androidNotificationChannelStateSha256, androidNotificationScenarioArtifact, AndroidStagedEnvelopeObservation, bindingMatches, ciphertext (+30 more)
-
-### Community 431 - "Group Private Media Viewer Controller"
-Cohesion: 0.05
-Nodes (39): PrivateMediaProtectionOwner, GroupPrivateMediaLifecycleEngine, GroupPrivateMediaOpenGrantData, _activeGrants, armDisappearingDeadline, attachmentId, data, dispose (+31 more)
-
-### Community 432 - "Orbit Friend & Preview Models"
-Cohesion: 0.05
-Nodes (36): count, fromAttachments, isGif, isMixed, MediaPreviewDescriptor, type, avatarPath, contact (+28 more)
-
-### Community 433 - "Media Size Policy Tests"
+### Community 503 - "media_grid_cell_test.dart"
 Cohesion: 0.05
 Nodes (37): collectPendingMediaSizeRejections, hashCode, index, MediaRejection, normalizeMediaRejectionReason, operator, pendingMediaTotalSizeOverflow, reason (+29 more)
 
-### Community 434 - "FCM Provider Probe Scripts"
+### Community 504 - "fake_reaction_repository.dart"
+Cohesion: 0.05
+Nodes (37): copyWith, createdAt, emoji, fromJson, fromMap, hashCode, id, isRemoved (+29 more)
+
+### Community 505 - "analyzer_suppression_ratchet_test.dart"
+Cohesion: 0.05
+Nodes (39): package:yaml/yaml.dart, Alpha, _alphaSuppressedSource, _arbitrarySuppressed, Beta, _betaSuppressedSource, check, _codes (+31 more)
+
+### Community 506 - "send_fcm_provider_probe.js"
 Cohesion: 0.09
 Nodes (36): arg(), base64url(), buildData(), buildMessage(), crypto, fcmReason(), fs, googleError() (+28 more)
 
-### Community 435 - "Fake Local P2P Service"
+### Community 507 - "fake_local_p2p_service.dart"
 Cohesion: 0.05
 Nodes (39): addLocalPeer, configureInboundChatCommitHandler, content, discoveredPeers, discoveredPeersStream, discoverLocalPeer, discoverLocalPeerCallCount, dispose (+31 more)
 
-### Community 436 - "Sending-to-Failed UX Tests"
+### Community 508 - "group_notification_projection_lifecycle_test.dart"
 Cohesion: 0.05
-Nodes (39): _buildTestWidget, chatListener, conditionalTransitionStatus, _contact, _contactPeerId, _delayedSuccessSend, deleteMessage, deleteMessagesForContact (+31 more)
+Nodes (39): armAuthoredLoadBarrier, armGroupLoadBarrier, armNextReadBarrier, authoredLoadCaptured, containsKey, delete, failNextGroupWrite, failNextTransaction (+31 more)
 
-### Community 437 - "In-Memory Message Repository"
+### Community 509 - "in_memory_message_repository.dart"
 Cohesion: 0.05
 Nodes (39): conditionalTransitionStatus, _conversationReadController, conversationReadStream, count, debugEmitMessageChange, deleteMessage, deleteMessagesForContact, existsByContent (+31 more)
 
-### Community 438 - "Send Introduction Tests"
+### Community 510 - "migrate_secrets_to_secure_storage.dart"
 Cohesion: 0.05
-Nodes (38): _ControlledP2PService, activeBlockedSends, _blockedSendCompleters, blockedSendCount, bridge, completedBlockedTargets, contactB, contactC (+30 more)
+Nodes (36): FlutterSecureStorage, appleAccessGroup, containsKey, delete, deleteAll, FlutterSecureKeyStore, mknoonSharedAppleAccessGroup, read (+28 more)
 
-### Community 439 - "Recent Remote Notification Gate"
+### Community 511 - "String"
+Cohesion: 0.18
+Nodes (14): boundedReactionNotificationIdentity(), bridgePlaintext(), BridgePushDecryptor, decodeJSONObject(), groupPrivateMediaNotificationBody(), groupSystemPreviewBody(), jsonString(), KeychainPushKeyReader (+6 more)
+
+### Community 512 - "package:flutter_app/core/media/group_media_integrity_policy.dart"
+Cohesion: 0.05
+Nodes (32): MediaAttachmentOwnerViolation, fromSecureKeyStore, resolveMediaDownloadNetwork, shouldAutoDownload, defaultMediaAutoDownloadDecider, MediaDownloadPolicy, shouldAutoDownload, fromStorageString (+24 more)
+
+### Community 513 - "recent_remote_notification_gate.dart"
 Cohesion: 0.05
 Nodes (38): clear, _coerceTimestamp, consumeIfRecentAnnouncement, consumeIfRecentPayload, _consumeSidecarMarker, debugResetRecentRemoteNotificationGate, debugSetRecentRemoteNotificationGate, _defaultRecentRemoteGateLoadError (+30 more)
 
-### Community 440 - "Share & Forward Intent Models"
-Cohesion: 0.05
-Nodes (36): attachmentIds, contactPeerId, copyWith, DirectForwardSourceAuthority, filePaths, ForwardProvenance, hasFiles, hasText (+28 more)
-
-### Community 441 - "Migration Database Manifest"
+### Community 514 - "migration_database_manifest.dart"
 Cohesion: 0.05
 Nodes (37): _canonicalize, fromDatabase, fromTables, hasColumn, MigrationDatabaseSchemaInventory, _quoteIdentifier, tableNames, tables (+29 more)
 
-### Community 442 - "Direct Private Media Viewer"
+### Community 515 - "direct_received_media_action_sheet.dart"
 Cohesion: 0.05
-Nodes (38): DirectPrivateMediaViewerController, DirectPrivateMediaViewerGrant, action, _allowPop, build, capturePlatformOverride, _close, _closing (+30 more)
+Nodes (38): DirectReceivedMediaInfo, build, dateValueKey, dimensionsValueKey, directionValueKey, DirectMediaSaveDestinationSheet, DirectReceivedMediaInfoSheet, durationValueKey (+30 more)
 
-### Community 443 - "Post Follow-On Outbox"
+### Community 516 - "group_exit_recovery_sheet.dart"
 Cohesion: 0.05
-Nodes (36): _aggregatePostPassFollowOnSettlement, deliveries, _deliverPostPassFollowOnRecipients, envelope, eventId, eventType, isPostPassFollowOnEventType, _loadPersistedPostPassFollowOnResult (+28 more)
+Nodes (38): build, _buildDiagnostic, _buildStage, _busy, _cancelFailed, _cancelQueuedLeave, _cancelTooLate, candidates (+30 more)
 
-### Community 444 - "ACK Drop Resilience Tests"
+### Community 517 - "run_test_gates.sh"
+Cohesion: 0.08
+Nodes (36): APP_DEFAULT_RELAY_ADDRESSES, array_contains(), BASELINE_TESTS, classify_path(), FEED_TESTS, GROUP_LIFECYCLE_SIM_HARNESS, GROUP_LIFECYCLE_SIM_SCENARIOS, GROUP_TESTS (+28 more)
+
+### Community 518 - "c2_ack_drop_test.dart"
 Cohesion: 0.05
 Nodes (38): _AckDropP2PService, _ConnectedAckDropP2PService, connectedPeerId, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+30 more)
 
-### Community 445 - "Partial Drain Resilience Tests"
+### Community 519 - "c4_partial_drain_test.dart"
 Cohesion: 0.05
 Nodes (38): _alicePeerId, _bobPeerId, _bobUsername, _buildMessageJson, conditionalTransitionStatus, count, deleteMessage, deleteMessagesForContact (+30 more)
 
-### Community 446 - "Stale Key Recovery Tests"
+### Community 520 - "p2p_service_fault_injection_test.dart"
+Cohesion: 0.05
+Nodes (38): _captureFlowEvents, currentState, dialPeer, discoverLocalPeer, _DiscoverMissProbeConnectedP2PService, discoverPeer, dispose, drainOfflineInbox (+30 more)
+
+### Community 521 - "post_restore_stale_key_recovery_test.dart"
 Cohesion: 0.05
 Nodes (38): addContact, _aliceContact, archiveContact, attemptedSecrets, blockContact, _chatPlaintext, checkHealth, contactExists (+30 more)
 
-### Community 447 - "Private Media Viewer Tests"
+### Community 522 - "group_model.dart"
 Cohesion: 0.05
-Nodes (38): advanceClock, app, _attachment, claimCount, claimOpening, cleanupCount, cleanupTerminalWithinLock, consume (+30 more)
+Nodes (37): admin,, archivedAt, avatarBlobId, avatarMime, avatarPath, copyWith, createdAt, createdBy (+29 more)
 
-### Community 448 - "Testpeer Command Tests (Go)"
+### Community 523 - "handleCommand"
 Cohesion: 0.11
 Nodes (37): handleCommand(), TestCommandResponseFormat(), TestHandleCommandBlobRoundTrip(), TestHandleCommandClearMessages(), TestHandleCommandDisconnectMissingPeerId(), TestHandleCommandDisconnectNotStarted(), TestHandleCommandGenerateIdentity(), TestHandleCommandGetMessagesEmpty() (+29 more)
 
-### Community 449 - "Relay Session Tests (Go)"
+### Community 524 - "EncryptGroupMessage"
+Cohesion: 0.11
+Nodes (33): DecryptGroupMessage(), EncryptGroupMessage(), GenerateGroupKey(), TestBuildGroupSignatureData_Deterministic(), TestBuildGroupSignatureData_Format(), TestDecryptGroupMessage_InvalidBase64(), TestEncryptGroupMessage_InvalidKey(), TestEncryptGroupMessage_WrongKeyLength() (+25 more)
+
+### Community 525 - "NewRelaySessionManager"
 Cohesion: 0.12
 Nodes (34): testRelayCircuitAddr(), TestRelaySessionRuntimeSync_EndsReservationWhenCircuitAddressDisappears(), TestRelaySessionRuntimeSync_IgnoresStaleCircuitAddressWithoutConnectedRelay(), TestRelaySessionRuntimeSync_OpensReservationAndEmitsRelayState(), NewRelaySessionManager(), fakePeerID(), TestGR003RelaySessionStalledRecoveryClearsGateAfterTimeout(), TestGR008RecordWatchdogRestartPreservesRecoverySignalAcrossReset() (+26 more)
 
-### Community 450 - "Libp2p Contract Tests (Go)"
-Cohesion: 0.12
-Nodes (29): addGroupDialTargets(), countedFunctionLines(), decodePeerID(), errorCallReturnsWithin(), groupMemberAddrInfos(), medianDuration(), newGroupDialStats(), startNodeWithBlockedHostCreation() (+21 more)
+### Community 526 - "nearby_location_service.dart"
+Cohesion: 0.05
+Nodes (37): _FakeNearbyLocationPlatformAdapter, accuracyM, _availabilityForSettings, canOpenSettings, capturedAt, checkPermissionState, GeolocatorNearbyLocationPlatformAdapter, getCurrentPosition (+29 more)
 
-### Community 451 - "Relay Group Inbox Tests (Go)"
-Cohesion: 0.11
-Nodes (31): newMemoryGroupInboxBackend(), assertGroupInboxCapEvictionSurfacesRepairableGap(), opaqueGroupReplayEnvelope(), TestComputeGroupHistoryRangeHashGoldenVector(), TestComputeGroupHistoryRangeHashIgnoresID(), TestComputeGroupHistoryRangeHashRealisticEnvelopeGoldenVector(), TestGI017GroupInboxStoreAuthorizedCursorPaginationReturns120MessagesExactlyOnce(), TestGI035GroupInboxStorePersistsEncryptedEnvelopeWithoutPlaintext() (+23 more)
-
-### Community 452 - "Swipe Back Navigation Tests"
-Cohesion: 0.06
-Nodes (35): appWith, chatScreen, edgeDrag, logicalSize, main, seedMessages, settleFrames, main (+27 more)
-
-### Community 453 - "iOS Relay Remote Helper (Python)"
+### Community 527 - "ios_notification_relay_remote_helper.py"
 Cohesion: 0.15
 Nodes (32): _canonical(), _capacity(), _classify_entries(), clear_exact_entry(), _entry_shape(), load_relay_environment(), _parse_env_value(), Dependency-free remote half of the iOS notification relay fixture.  The local dr (+24 more)
 
-### Community 454 - "Keepalive Evidence Support"
+### Community 528 - "go_bridge_client_test.dart"
 Cohesion: 0.05
-Nodes (37): artifact, assembleKeepaliveDropArtifact, begin, custody, digest, event, eventIndex, _EventRecord (+29 more)
+Nodes (35): BridgeCommandException, MethodCall, MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOb012Bridge, bridge, _bridgeCommandError, checkHealth, dispose, eventNamed (+27 more)
 
-### Community 455 - "Local Discovery Models"
+### Community 529 - "ios_sender_projection_fixture_contract.dart"
+Cohesion: 0.05
+Nodes (36): action, actualMap, apnsPayloadSha256, captureNonce, _cleanup, createdAt, execute, expectedMap (+28 more)
+
+### Community 530 - "local_discovery_service.dart"
 Cohesion: 0.05
 Nodes (37): content, discoveredAt, discoveredPeers, discoveredPeersStream, dispose, durationMs, enc, encScheme (+29 more)
 
-### Community 456 - "Local Media Server"
+### Community 531 - "local_media_server.dart"
 Cohesion: 0.05
 Nodes (37): LocalMediaReady, MediaOffer, acceptOffer, add, allowedMimePrefixes, _artifactExtension, _cleanupExpired, cleanupMedia (+29 more)
 
-### Community 457 - "Group Private Media Viewer Tests"
-Cohesion: 0.05
-Nodes (37): PrivateMediaProtectionCoordinator, cleanupRepository, cleanupTerminalMessage, close, consumeAtFirstFrame, consumeCalls, consumeSucceeds, controller (+29 more)
-
-### Community 458 - "Media Attachment Model"
+### Community 532 - "media_attachment.dart"
 Cohesion: 0.05
 Nodes (37): contentHash, copyWith, createdAt, downloadRetryCount, downloadStatus, durationMs, encryptionKeyBase64, encryptionNonce (+29 more)
 
-### Community 459 - "Nearby Posts Refresh Tests"
-Cohesion: 0.05
-Nodes (35): refreshNearbyOnStartup, package:flutter_app/features/posts/application/nearby_location_service.dart, package:flutter_app/features/posts/application/refresh_nearby_on_startup_use_case.dart, handleSharingDisabled, handleSharingDisabledCallCount, loadComposeAvailability, loadComposeAvailabilityCallCount, main (+27 more)
-
-### Community 460 - "Post Model"
+### Community 533 - "post_model.dart"
 Cohesion: 0.05
 Nodes (37): audience, authorPeerId, authorUsername, commentCount, copyWith, createdAt, deliveryStatus, eventId (+29 more)
 
-### Community 461 - "PiP Resume & Avatar Tests"
-Cohesion: 0.05
-Nodes (36): avatarResizedProvider, cacheSize, inner, package:flutter/widgets.dart, activate, addListener, aspectRatio, _authorization (+28 more)
+### Community 534 - "post_pin_media_crypto_preservation_test.dart"
+Cohesion: 0.06
+Nodes (34): package:flutter_app/features/posts/application/dismiss_pin_use_case.dart, package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart, package:flutter_app/features/posts/application/load_pinned_posts_use_case.dart, package:flutter_app/features/posts/presentation/widgets/pinned_posts_section.dart, support/post_pin_fixtures.dart, buildJson, contacts, content (+26 more)
 
-### Community 462 - "P2P Fault Injection Tests"
+### Community 535 - "profile_picture_flow_test.dart"
 Cohesion: 0.05
-Nodes (37): _captureFlowEvents, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream (+29 more)
+Nodes (37): package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart, bobPeerId, buildProfileUpdateMessage, checkHealth, _compressToBytes, contact, deadline, dispose (+29 more)
 
-### Community 463 - "Fake Just Audio"
+### Community 536 - "fake_just_audio.dart"
 Cohesion: 0.05
 Nodes (37): complete, _completion, dispose, disposeAllPlayers, _disposed, disposePlayer, _emitPlayback, enqueueLoad (+29 more)
 
-### Community 464 - "Group Model"
-Cohesion: 0.05
-Nodes (36): admin,, archivedAt, avatarBlobId, avatarMime, avatarPath, copyWith, createdAt, createdBy (+28 more)
+### Community 537 - "audio_player_widget.dart"
+Cohesion: 0.06
+Nodes (36): AudioPlayer, attachment, AudioPlayerWidget, _AudioPlayerWidgetState, build, _buildEvictedAudio, _buildUnavailableAudio, _canRetryUnavailableMedia (+28 more)
 
-### Community 465 - "Debug Test Hooks Hub"
-Cohesion: 0.05
-Nodes (37): @visibleForTesting, recordSanitizedFlowEvent, debugSetGroupLeaveDelayForTest, awaitIntroducerAcceptanceCustodyForIntroE2E, debugLibp2pListenPort, onNetworkChanged, debugResetBackgroundAccountMigrationNetworkGate, debugResetBackgroundConversationNotificationIdRegistryResolver (+29 more)
+### Community 538 - "node_state.dart"
+Cohesion: 0.06
+Nodes (35): connection_state.dart, _badgeState, _bind, build, createState, didUpdateWidget, dispose, initState (+27 more)
 
-### Community 466 - "Transport Stream Stubs (Go)"
+### Community 539 - "stubStreamConn"
 Cohesion: 0.06
 Nodes (21): ConnScope, ConnStats, connectedAt, ConnectionState, copyWith, direction, fromJson, hashCode (+13 more)
 
-### Community 467 - "Secure Key Storage"
+### Community 540 - "libp2p_refactor_contract_test.go"
+Cohesion: 0.13
+Nodes (28): addGroupDialTargets(), countedFunctionLines(), decodePeerID(), errorCallReturnsWithin(), groupMemberAddrInfos(), medianDuration(), newGroupDialStats(), startNodeWithBlockedHostCreation() (+20 more)
+
+### Community 541 - "group_media_integrity_policy.dart"
 Cohesion: 0.05
-Nodes (34): FlutterSecureStorage, appleAccessGroup, containsKey, delete, FlutterSecureKeyStore, mknoonSharedAppleAccessGroup, read, _storage (+26 more)
+Nodes (35): canDisplayVerifiedGroupMedia, CanonicalGroupMediaPlaintextValidationResult, computeFileSha256Hex, GroupMediaIntegrityPolicy, hasRequiredVerificationMetadata, hasValidContentHash, invalid, isQuarantinedGroupMedia (+27 more)
 
-### Community 468 - "Group Private Media Lifecycle"
+### Community 542 - "group_private_media_viewer_controller.dart"
 Cohesion: 0.05
-Nodes (36): _ProofCleanupRepository, GroupPrivateMediaCleanupRepository, acquire, attachmentId, cleanupCompleted, cleanupRepository, cleanupTerminalMessage, consumeAtFirstFrame (+28 more)
+Nodes (36): PrivateMediaProtectionOwner, _activeGrants, armDisappearingDeadline, attachmentId, data, dispose, _disposeOperation, disposeProtectionCoordinator (+28 more)
 
-### Community 469 - "Group Event Log DB Helpers"
+### Community 543 - "package:crypto/crypto.dart"
 Cohesion: 0.05
-Nodes (36): AppendGroupEventLogEntry, canonicalizeGroupEventLogPayload, _canonicalizeValue, canonicalPayload, _computeEntryHash, convert, createdAtIso, currentGroupId (+28 more)
+Nodes (31): boundedReactionEventIdentity, bytes, deterministicConversationNotificationId, digest, normalized, sublistView, initialLocalNotificationRouteParsedDetails, initialLocalNotificationRouteParsedEvent (+23 more)
 
-### Community 470 - "Migration Storage Preflight"
-Cohesion: 0.06
-Nodes (33): MigrationFileManifestBuilder, _builder, MigrationFileManifestValidator, validateRows, availableBytes, availableBytesProvider, evaluate, _evaluateRequiredBytes (+25 more)
-
-### Community 471 - "Group Private Media Policy"
+### Community 544 - "group_private_media_policy.dart"
 Cohesion: 0.05
 Nodes (36): allowedDurationsSeconds, attachmentCount, attachmentKind, databaseValue, disappearing, durationSeconds, fromDatabase, fromDatabaseValue (+28 more)
 
-### Community 472 - "Media Grid Cell Widget"
+### Community 545 - "media_grid_cell.dart"
 Cohesion: 0.05
 Nodes (36): attachment, borderRadius, build, _buildContent, _buildEvictedPlaceholder, _buildGifBadge, _buildLoadingPlaceholder, _buildOverlayCount (+28 more)
 
-### Community 473 - "Test Gates Runner Script"
-Cohesion: 0.08
-Nodes (34): APP_DEFAULT_RELAY_ADDRESSES, array_contains(), BASELINE_TESTS, classify_path(), FEED_TESTS, GROUP_LIFECYCLE_SIM_HARNESS, GROUP_LIFECYCLE_SIM_SCENARIOS, GROUP_TESTS (+26 more)
-
-### Community 474 - "Half-Open Resilience Tests"
+### Community 546 - "group_exit_intents_db_helpers_test.dart"
 Cohesion: 0.05
-Nodes (36): connectedPeerId, currentState, dialPeer, discoverLocalPeer, _DiscoverMissProbeConnectedP2PService, discoverPeer, dispose, drainOfflineInbox (+28 more)
+Nodes (35): package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart, package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart, package:flutter_app/features/groups/data/repositories/group_pending_broadcast_repository_impl.dart, _closeSharedDatabasePair, _createdAt, db, directory, dissolved (+27 more)
 
-### Community 475 - "Group Multi-Party Sims Runner"
+### Community 547 - "announcement_forward_test_harness.dart"
+Cohesion: 0.05
+Nodes (36): allDestinationSerializedSurfaces, AnnouncementForwardHarness, announcementOwnPeerId, announcementSourceAttachmentId, announcementSourceGroupId, announcementSourceKey, announcementSourceMessageId, announcementSourceNonce (+28 more)
+
+### Community 548 - "@immutable"
 Cohesion: 0.06
-Nodes (34): _AdapterResult, group_multi_party_device_criteria.dart, group_multi_party_runtime_config.dart, _AdapterResult, _artifactValidatorId, _blocked, _capabilityId, child (+26 more)
+Nodes (35): @immutable, GroupMediaIosBackgroundE2ERequest, GroupMediaReliabilityBarrierReached, GroupMediaReliabilityBarrierRequest, GroupMediaReliabilityE2ERequest, GroupMediaReliabilityPriorStatusEvidence, PictureInPictureCommandResult, PictureInPictureRequest (+27 more)
 
-### Community 476 - "Feed Swipe Card"
-Cohesion: 0.06
-Nodes (34): Alignment, _active, alignment, build, child, color, createState, dismissFraction (+26 more)
-
-### Community 477 - "Audio Player Widget"
-Cohesion: 0.06
-Nodes (35): AudioPlayer, attachment, AudioPlayerWidget, _AudioPlayerWidgetState, build, _buildEvictedAudio, _buildUnavailableAudio, _canRetryUnavailableMedia (+27 more)
-
-### Community 478 - "Just Audio Regression Tests"
+### Community 549 - "conversation_audio_source_regression_test.dart"
 Cohesion: 0.06
 Nodes (35): AudioPlayerPlatform, JustAudioPlatform, _FakeAudioPlayerPlatform, _FakeJustAudioPlatform, _buildScreen, dispose, disposeAllPlayers, _disposed (+27 more)
 
-### Community 479 - "Relay Rendezvous Failover (Go)"
-Cohesion: 0.10
-Nodes (33): newMemoryRendezvousBackend(), newRelayPair(), TestTwoRelayServers_SharedGroupCursorContinuation(), TestTwoRelayServers_SharedGroupInboxBackend(), TestTwoRelayServers_SharedInboxBackend(), TestTwoRelayServers_SharedInboxPaginationContinuation(), TestTwoRelayServers_SharedRendezvousBackend(), relayPair (+25 more)
+### Community 550 - "typedef"
+Cohesion: 0.06
+Nodes (31): ../../../core/notifications/notification_route_target.dart, ../../../core/utils/cold_start_notif_anchor.dart, _channel, channelName, DiskSpaceChannel, DiskSpacePlatformInvoker, getAvailableBytes, _invokeMethod (+23 more)
 
-### Community 480 - "Migration Media Durability Tests"
+### Community 551 - "group_media_reliability_runner_contract_test.dart"
+Cohesion: 0.06
+Nodes (34): FileSystemException, ../../integration_test/scripts/group_media_ios_background_recovery_evidence.dart, ../../integration_test/scripts/group_media_prepared_artifact_custody.dart, ../../integration_test/scripts/group_media_reliability_runner_contract.dart, ../../integration_test/support/android_picture_in_picture_system_ui_selection_result.dart, MapBase, Object?, main (+26 more)
+
+### Community 552 - "group_inbox_test.go"
+Cohesion: 0.12
+Nodes (30): newMemoryGroupInboxBackend(), assertGroupInboxCapEvictionSurfacesRepairableGap(), opaqueGroupReplayEnvelope(), TestComputeGroupHistoryRangeHashGoldenVector(), TestComputeGroupHistoryRangeHashIgnoresID(), TestComputeGroupHistoryRangeHashRealisticEnvelopeGoldenVector(), TestGI017GroupInboxStoreAuthorizedCursorPaginationReturns120MessagesExactlyOnce(), TestGI035GroupInboxStorePersistsEncryptedEnvelopeWithoutPlaintext() (+22 more)
+
+### Community 553 - "account_migration_group_media_durability_simulator_test.dart"
 Cohesion: 0.06
 Nodes (34): _BundleDatabases, _bundleSource, captureCipherMetadata, close, _createGroupMessagesTable, _createIdentityTable, _createMediaAttachmentsTable, documentsRootPath (+26 more)
 
-### Community 481 - "Message Repository Contracts"
-Cohesion: 0.07
-Nodes (35): _TrackingMessageRepository, _TrackingMessageRepository, ConversationThreadSummaryRepository, getConversationThreadSummaries, getConversationThreadSummary, ConversationReadEventSource, MessageRepositoryImpl, MessageRepository (+27 more)
-
-### Community 482 - "iOS Relay Fixture Driver (Python)"
+### Community 554 - "ios_notification_relay_fixture_driver.py"
 Cohesion: 0.19
 Nodes (35): _blocked(), _bounded(), _bounded_fixture_text(), _canonical(), _decode_base64(), _envelope(), _failed(), FixtureBlocked (+27 more)
 
-### Community 483 - "Group Reaction Device Runner"
+### Community 555 - "run_group_reaction_notification_device.dart"
 Cohesion: 0.06
 Nodes (35): artifactDirectory, _artifactFor, _artifactValidator, capture, captureArgs, _captureDriver, captureExit, direct (+27 more)
 
-### Community 484 - "Upload Media Use Case"
+### Community 556 - "android_notification_payload_campaign.dart"
 Cohesion: 0.06
-Nodes (35): bytes, committedFile, contentHash, _copyToOwnedMediaPath, debugGroupMediaUploadPostCommitProbeDelays, deleteAppOwnedMediaFileIfExists, deleteSourceWhenDone, _DurableMediaCopyResult (+27 more)
+Nodes (35): AndroidNotificationActionResultDisposition, androidNotificationBuildProfileId, androidNotificationCapabilityId, androidNotificationChannelStateSha256, androidNotificationScenarioArtifact, AndroidStagedEnvelopeObservation, bindingMatches, ciphertext (+27 more)
 
-### Community 485 - "Feed Store Projection"
+### Community 557 - "consume_private_media_use_case_test.dart"
+Cohesion: 0.06
+Nodes (35): PrivateMediaDirection, PrivateMediaOpeningLease, advanceClock, claimOpening, cleanupCalls, cleanupTerminalWithinLock, consume, consumeCalls (+27 more)
+
+### Community 558 - "package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart"
+Cohesion: 0.06
+Nodes (33): attachment, _canLinkLocalMedia, deadline, decision, effectiveInterval, _findAttachmentById, hasLocalPath, kDefaultLocalMediaMetadataGrace (+25 more)
+
+### Community 559 - "orbit_friend.dart"
+Cohesion: 0.06
+Nodes (33): count, fromAttachments, isGif, isMixed, MediaPreviewDescriptor, type, avatarPath, contact (+25 more)
+
+### Community 560 - "message_repository.dart"
+Cohesion: 0.06
+Nodes (35): commitOutgoingDirectPrivateWireEnvelope, conditionalTransitionStatus, contactPeerId, conversationReadStream, deleteMessage, deleteMessagesForContact, DirectMessageRemoval, existsByContent (+27 more)
+
+### Community 561 - "feed_store.dart"
 Cohesion: 0.06
 Nodes (34): _buildItems, clearClearedLocally, _clearedWatermarks, connectionForContact, _connectionsByContactId, contactMessageIds, containsMessageId, dispose (+26 more)
 
-### Community 486 - "Create Group Picker Screen"
+### Community 562 - "load_feed_use_case.dart"
 Cohesion: 0.06
-Nodes (34): backgroundPreference, build, _buildContactList, _buildEmptyState, _buildHeader, _buildLoadErrorState, _buildLoadingState, _buildSearchField (+26 more)
+Nodes (34): allGroupMessages, allMessages, base, connectionItems, contactBlocked, contacts, contactUsernames, floor (+26 more)
 
-### Community 487 - "Avatar Storage & Media Tests"
+### Community 563 - "group_private_media_lifecycle_test_fixture.dart"
 Cohesion: 0.06
-Nodes (34): package:path_provider_platform_interface/path_provider_platform_interface.dart, package:plugin_platform_interface/plugin_platform_interface.dart, deleteGroupForwardSnapshotDirectoryOnce, docsPath, Fake, fileManager, getApplicationDocumentsPath, groupForwardSnapshotRootPath (+26 more)
+Nodes (35): GroupPrivateMediaLifecycleEngine, absolutePath, attachment, _buildGroupMessageRepository, cleanupRepository, create, db, deleteFile (+27 more)
 
-### Community 488 - "Incoming Router Tests"
+### Community 564 - "settings_screen.dart"
 Cohesion: 0.06
-Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, FakeP2PService, incomingLocalMediaStream (+27 more)
+Nodes (35): activeTab, avatarBytes, _backgroundValueLabel, build, currentBackgroundPreference, currentQuality, currentVideoQuality, debugSection (+27 more)
 
-### Community 489 - "Direct Library Test Stubs"
+### Community 565 - "direct_library_test_stubs.dart"
 Cohesion: 0.06
 Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, gatePageRequests, getMessagesPage (+27 more)
 
-### Community 490 - "Message Payload Models"
+### Community 566 - "reconcile_missed_group_dissolves_use_case_test.dart"
 Cohesion: 0.06
-Nodes (33): conversation_message.dart, PrivateMediaPolicy, ConversationMessage, contactPeerId, ConversationThreadSummary, lastOutgoingAt, latestMessage, messageCount (+25 more)
+Nodes (35): addPage, _adminDeviceId, _adminDevicePublicKey, _adminPeerId, _adminTransportPeerId, bridge, _buildDissolveReplayEnvelope, buildGroupOfflineReplayEnvelope (+27 more)
 
-### Community 491 - "Group Pending Membership Repository"
+### Community 567 - "profile_update_listener_test.dart"
 Cohesion: 0.06
-Nodes (31): group_pending_membership_message_repository.dart, all, countForGroup, enqueue, forGroup, remove, deletePendingMessage, deletePendingMessageByGroupAndMessageId (+23 more)
+Nodes (34): _FakeContactRepo, package:flutter_app/features/settings/application/profile_update_listener.dart, addContact, archiveContact, blockContact, bridge, checkHealth, contactExists (+26 more)
 
-### Community 492 - "Key Distribution Service Tests"
-Cohesion: 0.06
-Nodes (33): InMemoryGroupPendingKeyDistributionRepository, package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart, bridge, daveRow, daveRowId, device, enqueue, finalizeDistributed (+25 more)
-
-### Community 493 - "Keyless Rotation Converge Proof"
+### Community 568 - "group_removal_rotation_keyless_converge_proof_test.dart"
 Cohesion: 0.06
 Nodes (34): decrypted, encrypted, enqueue, finalizeDistributed, finalizeUnreachable, _generateIdentity, _generateMlKem, getDistribution (+26 more)
 
-### Community 494 - "Upload Wake Lock Tests"
+### Community 569 - "ios_apns_notification_open_bridge.dart"
 Cohesion: 0.06
-Nodes (32): UploadWakeLockDriver, WakelockPlusUploadWakeLockDriver, package:flutter_app/core/device/upload_wake_lock.dart, package:record/record.dart, ../../shared/fakes/fake_upload_wake_lock_driver.dart, driver, main, disable (+24 more)
+Nodes (31): ios_receiver_bootstrap_contract.dart, ios_sender_projection_fixture_contract.dart, _compiledSimsBuildProfile, _iosReceiverBootstrapChannel, publishIosReceiverBootstrapIdentityWhenReady, timeout, _channel, _compiledSimsBuildProfile (+23 more)
 
-### Community 495 - "Private Media Policy"
+### Community 570 - "private_media_policy.dart"
 Cohesion: 0.06
 Nodes (34): allowedDurationsSeconds, allowsAutomaticDownload, allowsExplicitDownload, attachmentCount, attachmentKind, disappearing, durationSeconds, fromDatabase (+26 more)
 
-### Community 496 - "Flow Event Emitter"
-Cohesion: 0.06
-Nodes (34): any, contains, debugSetFlowEventSink, emitFlowEvent, flowEventLoggingEnabled, FlowEventSink, _flowEventTestSink, _isPeerIdKey (+26 more)
-
-### Community 497 - "Migration Size Estimator"
+### Community 571 - "migration_account_size_estimator.dart"
 Cohesion: 0.06
 Nodes (34): absolutePath, AccountMigrationAccountSizeEstimator, accountMigrationDisplayMegabytes, accountMigrationMaxAccountBytes, accountMigrationReceiverStorageInsufficientMessage, accountMigrationReceiverStorageUnavailableMessage, accountMigrationSizeCapBlockedMessage, accountMigrationSizeEstimateLabel (+26 more)
 
-### Community 498 - "Send Group Reaction Use Case"
+### Community 572 - "group_private_media_lifecycle.dart"
 Cohesion: 0.06
-Nodes (34): _attemptReactionInboxStore, canonical, currentReaction, _defaultGroupReactionTransitionId, _deterministicAddReactionId, digest, entry, exactRetry (+26 more)
+Nodes (34): acquire, attachmentId, cleanupCompleted, cleanupRepository, cleanupTerminalMessage, consumeAtFirstFrame, consumedAtFirstFrame, _deleteExactAppOwnedArtifacts (+26 more)
 
-### Community 499 - "Attach Post Media Use Case"
+### Community 573 - "cosmic_background.dart"
 Cohesion: 0.06
-Nodes (34): allowedPeers, attachments, attachPostMedia, AttachPostMediaResult, blobId, _draftFromRecoveryItem, _draftMime, drafts (+26 more)
+Nodes (34): animation, build, child, _clock, _controller, CosmicBackground, _CosmicBackgroundState, createState (+26 more)
 
-### Community 500 - "Android PiP Validators (Python)"
+### Community 574 - "validate_android_picture_in_picture_interruption.py"
 Cohesion: 0.14
 Nodes (33): _activity_identity(), _ActivityGraph, _arguments(), _arguments(), _fail(), main(), _component_histories(), _exact_assignment() (+25 more)
 
-### Community 501 - "Incoming Router Profile Tests"
+### Community 575 - "incoming_message_router_posts_test.dart"
 Cohesion: 0.06
-Nodes (34): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, FakeP2PService, incomingLocalMediaStream (+26 more)
+Nodes (34): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, inject (+26 more)
 
-### Community 502 - "Contact Request Replay Tests"
+### Community 576 - "incoming_message_router_test.dart"
 Cohesion: 0.06
-Nodes (34): addContact, addContactCount, addRequest, _aPeerId, bridge, callLog, checkHealth, commandLog (+26 more)
+Nodes (34): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, inject (+26 more)
 
-### Community 503 - "Contact Request & QR Payload"
+### Community 577 - "dtr18_layering_relocation_contract_test.dart"
 Cohesion: 0.06
-Nodes (31): dart:collection, ContactRequestSendIntent, dataToSign, identity, intent, messageJson, sanitizedUsername, sendContactRequest (+23 more)
+Nodes (34): _applicationRootNormalizedSha256, candidate, _closureConsumerUriRewrites, _contactSha256, _contractPath, convert, _dartFiles, directive (+26 more)
 
-### Community 504 - "iOS Receiver Bootstrap (Python)"
+### Community 578 - "expandable_fab.dart"
+Cohesion: 0.06
+Nodes (30): EdgeInsets, anchor, build, _buildMenuItem, _close, _controller, createState, dispose (+22 more)
+
+### Community 579 - "ingest_staged_push_envelopes_use_case.dart"
+Cohesion: 0.06
+Nodes (32): fixtures/frozen_pre256_reaction_v2_reader.dart, accountMigrationNetworkGate, _allowMigrationNetwork, _allowSender, attempted, blocked, call, clearedMalformed (+24 more)
+
+### Community 580 - "buildTestEnvelopeWithPlaintext"
+Cohesion: 0.15
+Nodes (30): assertGA026DiagnosticHash(), assertGA026DiagnosticKeys(), assertGA026DiagnosticsOmitSensitive(), assertGO005ValidationRejectTotals(), assertLP002LogsOmitSensitive(), assertLP002NoAcceptedGroupEvents(), captureLP002ValidatorLogs(), countLP002RejectLogs() (+22 more)
+
+### Community 581 - "NewRendezvousStore"
+Cohesion: 0.11
+Nodes (32): newMemoryRendezvousBackend(), newRelayPair(), TestTwoRelayServers_SharedGroupCursorContinuation(), TestTwoRelayServers_SharedGroupInboxBackend(), TestTwoRelayServers_SharedInboxBackend(), TestTwoRelayServers_SharedInboxPaginationContinuation(), TestTwoRelayServers_SharedRendezvousBackend(), relayPair (+24 more)
+
+### Community 582 - "MessageRepository"
+Cohesion: 0.07
+Nodes (33): _TrackingMessageRepository, _TrackingMessageRepository, ConversationThreadSummaryRepository, getConversationThreadSummaries, getConversationThreadSummary, ConversationReadEventSource, MessageRepository, MessageRepositoryChangeSource (+25 more)
+
+### Community 583 - "direct_private_media_platform_protection_proof_test.dart"
+Cohesion: 0.06
+Nodes (33): advanceClock, _app, claimOpening, cleanupTerminalWithinLock, consume, consumeOpening, consumes, controller (+25 more)
+
+### Community 584 - "ios_receiver_bootstrap.py"
 Cohesion: 0.17
 Nodes (28): BootstrapBlocked, BootstrapFailure, _capture(), _DeviceControl, _die(), _is_exact_ml_kem_public(), main(), _parse_utc() (+20 more)
 
-### Community 505 - "Routing Smoke Runner Script"
+### Community 585 - "run_routing_smoke_e2e.dart"
 Cohesion: 0.06
 Nodes (33): alice, aliceDevice, _aliceHarness, aliceLog, args, bob, bobDevice, _bobHarness (+25 more)
 
-### Community 506 - "Device Campaign Criteria Tests"
+### Community 586 - "P2PService"
 Cohesion: 0.06
-Nodes (29): ../../integration_test/support/android_keepalive_drop_campaign.dart, ../../integration_test/support/ios_notification_payload_campaign.dart, package:flutter_app/core/debug/keepalive_drop_e2e_contract.dart, main, main, invocation, main, messageId (+21 more)
+Nodes (34): DurableLanSender, P2PFullInboxDrain, P2PService, PeerDropSignal, ReadinessProofRecorder, RelayLiveSendObserver, FakeP2PService, _FakeP2PService (+26 more)
 
-### Community 507 - "Feed Projection Models"
+### Community 587 - "group_exit_intent_coordinator.dart"
 Cohesion: 0.06
-Nodes (30): ClearedWatermarks, feedItemMatchesThreadId, feedThreadKindConnection, feedThreadKindContact, feedThreadKindGroup, isPendingFeedItem, kept, projectPendingFeed (+22 more)
+Nodes (33): active, cancelQueued, cause, current, diagnosticFacts, _enqueue, _EnqueueResult, _executeProcessor (+25 more)
 
-### Community 508 - "Accept Introduction Use Case"
+### Community 588 - "group_exit_diagnostic.dart"
 Cohesion: 0.06
-Nodes (33): acceptIntroduction, acceptPayload, bridge, contact, contactMlKemPublicKey, createIntroductionOutboxDelivery, _createPayloadDeliveryForContact, deliverStagedIntroductionDelivery (+25 more)
+Nodes (33): canonicalGroupExitDiagnosticTime, _canonicalOccurredAtPattern, code, create, databaseValue, fromDatabase, fromMap, GroupExitDiagnosticKind (+25 more)
 
-### Community 509 - "Post Create Envelope"
+### Community 589 - "post_create_envelope.dart"
 Cohesion: 0.06
 Nodes (33): audience, authorPeerId, authorUsername, buildEncryptedEnvelope, createdAt, _deriveMediaKeysFromAttachments, eventId, expiresAt (+25 more)
 
-### Community 510 - "Full-Screen Image Viewer"
+### Community 590 - "live_direct_notification_integration_test.dart"
 Cohesion: 0.06
-Nodes (32): allPaths, build, _buildErrorState, _controller, _createController, createState, _currentPage, didUpdateWidget (+24 more)
+Nodes (32): package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart, main, map, bridge, calledCommands, checkHealth, contactRepo, conversationTracker (+24 more)
 
-### Community 511 - "Profile Picture Flow Tests"
-Cohesion: 0.06
-Nodes (33): package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart, bobPeerId, buildProfileUpdateMessage, checkHealth, _compressToBytes, dispose, docsPath, envelope (+25 more)
-
-### Community 512 - "Router Posts Engagement Tests"
+### Community 591 - "incoming_message_router_posts_engagement_test.dart"
 Cohesion: 0.06
 Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
 
-### Community 513 - "Router Posts Pass Tests"
+### Community 592 - "incoming_message_router_posts_pass_test.dart"
 Cohesion: 0.06
 Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
 
-### Community 514 - "Router Posts Pins Tests"
+### Community 593 - "incoming_message_router_posts_presence_test.dart"
 Cohesion: 0.06
 Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
 
-### Community 515 - "Invite Matrix Sim Runner"
+### Community 594 - "incoming_message_router_profile_test.dart"
+Cohesion: 0.06
+Nodes (33): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, inject (+25 more)
+
+### Community 595 - "direct_media_batch_forward_picker_wired.dart"
+Cohesion: 0.06
+Nodes (32): direct_media_batch_forward_picker_screen.dart, DirectMediaLibraryBatchForwardDraft, DirectMediaBatchForwardDeliveryCoordinator, _allowPop, build, _captionControllers, contactRepository, _contacts (+24 more)
+
+### Community 596 - "send_voice_message_durable_copy_test.dart"
+Cohesion: 0.06
+Nodes (30): ../features/conversation/application/send_chat_message_use_case_test.dart, package:flutter_app/features/conversation/application/send_voice_message_use_case.dart, package:flutter_app/features/conversation/domain/models/audio_recording.dart, _RecordingMediaAttachmentRepository, bridge, createRecording, deleteAttachmentsForContact, deleteAttachmentsForMessage (+22 more)
+
+### Community 597 - "group_pending_key_distributions_db_helpers.dart"
+Cohesion: 0.06
+Nodes (32): ../../../features/groups/domain/models/group_pending_key_distribution.dart, args, attempts, current, db, dbFinalizeGroupPendingKeyDistribution, dbFinalizeGroupPendingKeyDistributionIfExact, dbLoadGroupPendingKeyDistribution (+24 more)
+
+### Community 598 - "group_pending_key_repairs_db_helpers.dart"
+Cohesion: 0.06
+Nodes (32): ../../../features/groups/domain/models/group_pending_key_repair.dart, attempts, current, db, dbDeleteGroupPendingKeyRepair, dbDeleteGroupPendingKeyRepairIfExact, dbFinalizeGroupPendingKeyRepair, dbFinalizeGroupPendingKeyRepairIfExact (+24 more)
+
+### Community 599 - "run_group_invite_status_matrix_sim.dart"
 Cohesion: 0.06
 Nodes (32): args, deadline, devices, exitCode, failures, file, _harnessPath, _HarnessRole (+24 more)
 
-### Community 516 - "Voice Message Evidence Schema"
+### Community 600 - "android_voice_message_evidence.dart"
 Cohesion: 0.06
 Nodes (32): androidVoiceMessageArtifactValidatorId, androidVoiceMessageDurablePayload, androidVoiceMessageEvidenceSchema, attachmentId, buildArtifact, counterpartTargetId, deviceIds, expectedKind (+24 more)
 
-### Community 517 - "Introduction Outbox DB Helpers"
+### Community 601 - "introduction_outbox_db_helpers.dart"
 Cohesion: 0.06
 Nodes (32): introductions_db_helpers.dart, action, createdAt, createdTime, dbDeleteIntroductionOutboxDeliveriesForIntroduction, dbDeleteIntroductionOutboxDelivery, dbLoadIntroductionOutboxDeliveriesForIntroduction, dbLoadRetryableIntroductionOutboxDeliveries (+24 more)
 
-### Community 518 - "Migration Group Manifest Builder"
-Cohesion: 0.06
-Nodes (32): build, _buildCommittedKeyItem, _buildGroup, _buildInboxCursors, _buildMembers, _buildPendingKeyItem, _buildPendingKeyRepairs, _buildPendingMembershipMessages (+24 more)
-
-### Community 519 - "Migration Pending Work Manifest"
+### Community 602 - "migration_pending_work_manifest.dart"
 Cohesion: 0.06
 Nodes (32): accountPeerId, blocking, code, currentStatus, eventId, field, groupId, hasIssue (+24 more)
 
-### Community 520 - "Message Threading Utils"
+### Community 603 - "group_group_messages_into_threads.dart"
 Cohesion: 0.06
 Nodes (29): aboveDivider, belowDivider, byGroup, _compareGroupThreadFeedItemsDescending, copyWith, groupFeedMediaUnavailableText, groupGroupMessagesIntoThreads, groupMap (+21 more)
 
-### Community 521 - "Group Media Delete Tests"
+### Community 604 - "orbit_geometry_prefs.dart"
 Cohesion: 0.06
-Nodes (30): DeleteGroupMediaForMeUseCase, defaultGroupMediaDeleteForMeCoordinator, deleteForMe, GroupMediaDeleteForMeCoordinator, package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart, calls, _ControlledDelete, deleteForMe (+22 more)
+Nodes (32): arcWrap, arcWrapStep, avatarScale, avatarScaleStep, copyWith, defaults, fromStorageString, hashCode (+24 more)
 
-### Community 522 - "Remove Group Reaction Use Case"
-Cohesion: 0.06
-Nodes (31): _attemptRemoveReactionInboxStore, canonical, currentReaction, _defaultGroupReactionTransitionId, _deterministicRemoveReactionId, digest, entry, exactRetry (+23 more)
-
-### Community 523 - "Cosmic Background Widget"
-Cohesion: 0.06
-Nodes (32): animation, build, child, _clock, _controller, createState, delay, didChangeDependencies (+24 more)
-
-### Community 524 - "Handle Incoming Passed Post"
-Cohesion: 0.06
-Nodes (32): avatarBase64, avatarBlob, candidate, contactRepo, current, currentLocalPassCount, currentLocalSharedToCount, currentPassRecipientCount (+24 more)
-
-### Community 525 - "Post Engagement Follow-On"
-Cohesion: 0.06
-Nodes (32): _aggregatePostEngagementFollowOnSettlement, commentId, createdAt, defaultPostCommentDeliveryConcurrency, deliveries, _deliverPostEngagementFollowOnRecipients, deliverQueuedPostEngagementFollowOn, envelope (+24 more)
-
-### Community 526 - "Post Follow-On Delivery"
+### Community 605 - "post_follow_on_delivery.dart"
 Cohesion: 0.06
 Nodes (32): _aggregatePostFollowOnResult, attemptedAt, defaultPostFollowOnDeliveryConcurrency, _deliverPostFollowOnEnvelope, deliveryPath, deliveryStatus, _dialDiscoveredPostRecipient, dialed (+24 more)
 
-### Community 527 - "Direct Media Library Controller"
+### Community 606 - "p2p_service_impl_presence_cache_test.dart"
+Cohesion: 0.06
+Nodes (31): package:clock/clock.dart, ageMs, bridge, checkHealth, _CountingBridge, dispose, initialize, isInitialized (+23 more)
+
+### Community 607 - "in_memory_introduction_repository.dart"
+Cohesion: 0.06
+Nodes (31): package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart, package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart, main, allOutboxDeliveries, clear, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction (+23 more)
+
+### Community 608 - "p2p_service_contact_request_inbox_replay_test.dart"
+Cohesion: 0.06
+Nodes (32): addContact, addContactCount, addRequest, _aPeerId, bridge, callLog, checkHealth, commandLog (+24 more)
+
+### Community 609 - "post_delivery_runner_test.dart"
+Cohesion: 0.06
+Nodes (32): clearWriteLog, _contact, contacts, created, _createLocalPost, dialAttempts, _dialedPeers, dialPeer (+24 more)
+
+### Community 610 - "upload_retry_projection.dart"
+Cohesion: 0.07
+Nodes (31): CountingGroupMessageRepository, applied, attachmentId, blockedByActiveLease, completeUploadRetry, downloadStatus, GroupUploadRetryCompletionRepository, GroupUploadRetryProjectionRepository (+23 more)
+
+### Community 611 - "direct_media_library_controller.dart"
 Cohesion: 0.06
 Nodes (31): ../domain/models/media_library.dart, clearSelection, DirectMediaLibraryFilter, DirectMediaLibraryFilterSignature, _entries, _entryIds, _filter, _generation (+23 more)
 
-### Community 528 - "Group Reaction Replay Outbox"
-Cohesion: 0.06
-Nodes (29): group_reaction_replay_outbox_repository.dart, deleteEntry, getEntry, getLatestEntryForTarget, GroupReactionReplayOutboxRepository, deleteEntry, getEntry, getLatestEntryForTarget (+21 more)
+### Community 612 - "direct_private_media_lifecycle_repository.dart"
+Cohesion: 0.07
+Nodes (31): _SqlLifecycleRepository, MessageRepositoryImpl, advancePrivateMediaClock, claimExactPrivateMediaOpening, claimPrivateMediaOpening, commitPrivateDeleteForEveryoneTombstone, consumeExactPrivateMedia, consumePrivateMedia (+23 more)
 
-### Community 529 - "iOS Sender Projection Fixture"
+### Community 613 - "inbox_staging_entry.dart"
 Cohesion: 0.06
-Nodes (31): action, actualMap, apnsPayloadSha256, captureNonce, _cleanup, createdAt, execute, expectedMap (+23 more)
+Nodes (30): attemptCount, copyWith, entryId, envelope, fromMap, InboxStagingEntry, lastAttemptedAt, messageType (+22 more)
 
-### Community 530 - "Identity & Reaction Repositories"
+### Community 614 - "send_voice_message_use_case_test.dart"
 Cohesion: 0.06
-Nodes (30): GroupReactionNotificationProjection, applyIncomingAdd, applyIncomingRemove, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved, getReactionsForMessage, getReactionsForMessages (+22 more)
+Nodes (31): DirectUploadRetryProjectionRepository, _RecordingDirectUploadRetryProjection, attachmentId, bridge, callCount, connectivityFailure, createRecording, deleteAttachmentsForContact (+23 more)
 
-### Community 531 - "Intro Notification Routing"
-Cohesion: 0.06
-Nodes (29): NotificationRouteTarget, contact, conversation, identity, intro, IntroductionNotificationTargetResolution, intros, opensConversation (+21 more)
-
-### Community 532 - "Ring Avatar Generator"
+### Community 615 - "ring_avatar_generator.dart"
 Cohesion: 0.06
 Nodes (31): accentColorForPeerId, _cacheCapacity, _calculateRingRadii, color, dashGap, dashLength, djb2Hash, gap (+23 more)
 
-### Community 533 - "Presence Cache Tests"
+### Community 616 - "send_voice_message_use_case.dart"
 Cohesion: 0.06
-Nodes (30): package:clock/clock.dart, ageMs, bridge, checkHealth, _CountingBridge, dispose, initialize, isInitialized (+22 more)
+Nodes (29): emitVoiceTiming, file, _maxFileSizeBytes, message, _persistDurableVoiceCopyOnUploadFailure, result, sendStopwatch, sendVoiceMessage (+21 more)
 
-### Community 534 - "iOS PiP Fail-Closed Tests"
+### Community 617 - "group_exit_diagnostics_sheet.dart"
+Cohesion: 0.07
+Nodes (31): GroupExitDiagnostic, _announcement, backgroundPreference, build, _clear, createState, diagnostic, _DiagnosticCard (+23 more)
+
+### Community 618 - "media_download_slow_transfer_simulator_test.dart"
 Cohesion: 0.06
-Nodes (30): package:flutter_app/core/media/picture_in_picture_gateway.dart, addListener, aspectRatio, authorize, buildSurface, dispose, disposeCalls, duration (+22 more)
+Nodes (31): attachment, basePath, bytes, checkHealth, delay, deleteAttachmentsForContact, deleteAttachmentsForMessage, dispose (+23 more)
 
-### Community 535 - "Fake Audio Recorder Service"
+### Community 619 - "run_group_multi_party_sims.dart"
 Cohesion: 0.06
-Nodes (30): Amplitude, _amplitudeController, amplitudeStream, cancel, cancelCallCount, _currentOutputPath, deletedPaths, dispose (+22 more)
+Nodes (30): _AdapterResult, group_multi_party_device_criteria.dart, group_multi_party_runtime_config.dart, _AdapterResult, _artifactValidatorId, _blocked, _capabilityId, child (+22 more)
 
-### Community 536 - "Identity Repository Impl Tests"
+### Community 620 - "identity_repository_impl_test.dart"
 Cohesion: 0.06
 Nodes (30): CountingSecureKeyStore, backingSecureKeyStore, containsKey, containsKeyCount, _delegate, delete, deleteCount, lastUpsertedRow (+22 more)
 
-### Community 537 - "Timeout Accuracy Benchmark Script"
+### Community 621 - "Bool"
+Cohesion: 0.14
+Nodes (23): Date, Hashable, canonicalJSONString(), DirectContactsProjectionSnapshot, DirectReactionProjectedContact, DirectReactionProjectionSnapshot, exactCanonicalStringArray(), exactISO8601Date() (+15 more)
+
+### Community 622 - "run_timeout_accuracy_benchmark.dart"
 Cohesion: 0.06
 Nodes (30): _benchmarkKey, command, commandOk, _defaultDevice, deviceId, _handleStdout, harness, _harnessPath (+22 more)
 
-### Community 538 - "Group Media Integrity Policy"
-Cohesion: 0.06
-Nodes (30): canDisplayVerifiedGroupMedia, CanonicalGroupMediaPlaintextValidationResult, computeFileSha256Hex, GroupMediaIntegrityPolicy, hasRequiredVerificationMetadata, hasValidContentHash, invalid, isQuarantinedGroupMedia (+22 more)
-
-### Community 539 - "Show Notification Use Case"
+### Community 623 - "show_notification_use_case.dart"
 Cohesion: 0.06
 Nodes (30): DurableNotificationEventClaim, DurableNotificationToneLease, DurableNotificationToneReservation, allSameType, backgroundDuplicateGuardDelay, claimCommitted, claimStorageFailedOpen, ConsumeRecentRemoteNotificationAnnouncement (+22 more)
 
-### Community 540 - "Nav Bar Theme"
+### Community 624 - "nav_bar_theme.dart"
 Cohesion: 0.06
 Nodes (30): activeIconColor, activePillGradient, activeTextColor, activeWeight, animationCurve, animationDuration, badgeGradientColors, badgeShadowColor (+22 more)
 
-### Community 541 - "Group Received Media Actions"
+### Community 625 - "delete_self_removed_group_shell_use_case_test.dart"
 Cohesion: 0.06
-Nodes (30): attachment, candidate, _defaultCurrentGroupFileExists, _defaultRequestId, egressService, GroupMediaCurrentRowDecision, GroupMediaEgressRestriction, GroupReceivedMediaEgressAttempt (+22 more)
+Nodes (30): SelfRemovedShellAuthoritySnapshot, SelfRemovedShellFreshnessFloor, SelfRemovedShellMutationOutcome, appendSelfRemovedShellFreshnessFloor, authority, authorizeAcceptedReentryRetry, callOrder, commitAcceptedReentry (+22 more)
 
-### Community 542 - "Post Pin Delivery Support"
-Cohesion: 0.06
-Nodes (30): _aggregatePostPinFollowOnSettlement, defaultPostPinDeliveryConcurrency, deliveries, _deliverPostPinFollowOnRecipients, envelope, eventId, eventType, fanoutPostFollowOnEnvelope (+22 more)
-
-### Community 543 - "Post Repost Engagement Support"
+### Community 626 - "post_repost_engagement_support.dart"
 Cohesion: 0.06
 Nodes (30): activePeerIds, contains, hasRepostThreadState, _isRepostOrigin, isTrustedRepostThreadParticipant, loadLocalRepostSharedToCount, loadPersistedRepostParticipantPeerIds, loadProjectedActiveHeartPeerIds (+22 more)
 
-### Community 544 - "Post Media Attachment Model"
+### Community 627 - "post_media_attachment_model.dart"
 Cohesion: 0.06
 Nodes (30): blobId, contentHash, copyWith, createdAt, _decodeWaveform, deriveMediaKind, downloadStatus, durationMs (+22 more)
 
-### Community 545 - "Host Test Gates Script"
+### Community 628 - "push_registration_coordinator.dart"
+Cohesion: 0.07
+Nodes (26): _attemptRegistration, dispose, _disposed, ensureStarted, _inFlightAttempt, _permissionState, _PushPermissionState, PushRegistrationCoordinator (+18 more)
+
+### Community 629 - "retry_incomplete_group_downloads_use_case_test.dart"
+Cohesion: 0.07
+Nodes (30): PreferenceBackedMediaAutoDownloadDecider, MediaAutoDownloadDecider, package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart, _AllowAllDownloads, attachment, _CallbackDecider, _candidate, conversationKind (+22 more)
+
+### Community 630 - "direct_media_batch_forward_picker_screen.dart"
+Cohesion: 0.06
+Nodes (30): DirectMediaBatchForwardMatrix, DirectMediaBatchForwardProgress, build, _buildActions, _buildContactList, _buildContactsHeader, _buildHeader, _buildMatrixSummary (+22 more)
+
+### Community 631 - "media_grid.dart"
+Cohesion: 0.06
+Nodes (28): build, _buildFourPlus, _buildLayout, _buildSingle, _buildThree, _buildTwo, media, MediaGrid (+20 more)
+
+### Community 632 - "run_host_test_gates.sh"
 Cohesion: 0.11
 Nodes (29): ANDROID_RENDERER_MANIFEST_CONTRACT, GO_BRIDGE_CONNECTED_PEER_TEST, GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN, GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST, GO_BRIDGE_FEATUREFLAGS_RUN, GO_BRIDGE_FEATUREFLAGS_TEST, GO_NODE_ADDR_VISIBILITY_RUN, GO_NODE_ADDR_VISIBILITY_TEST (+21 more)
 
-### Community 546 - "Fake Bridge"
+### Community 633 - "run_reliability_simulations.sh"
+Cohesion: 0.11
+Nodes (22): all_group_multi_party_scenarios(), device_arg_for_path(), extract_runner_targets(), four_device_ids(), group_multi_party_only_scenario(), ios_notification_tap_devices(), is_group_multi_party_scenario(), multi_device_ids() (+14 more)
+
+### Community 634 - "fake_bridge.dart"
 Cohesion: 0.06
 Nodes (30): _blobKeygenCount, checkHealth, checkHealthCallCount, checkHealthResult, commandLog, consumeUploadMediaResult, dispose, FakeBridge (+22 more)
 
-### Community 547 - "P2P Health Drain Tests"
+### Community 635 - "p2p_service_impl_health_drain_test.dart"
 Cohesion: 0.06
 Nodes (30): bridge, calledCommands, _captureFlowEvents, checkHealth, circuitAddresses, dispose, drains, enqueue (+22 more)
 
-### Community 548 - "Android Performance Evidence Schema"
+### Community 636 - "post_pass_retry_integration_test.dart"
+Cohesion: 0.06
+Nodes (30): addContact, author, bridge, condition, _contact, contactRepo, create, deadline (+22 more)
+
+### Community 637 - "android_critical_performance_evidence.dart"
 Cohesion: 0.07
 Nodes (29): android_campaign_evidence_validation.dart, android_critical_performance_budget.dart, androidCriticalPerformanceArtifactValidatorId, androidCriticalPerformanceDurablePayload, androidCriticalPerformanceEvidenceSchema, assertionById, assertions, averageBuildMs (+21 more)
 
-### Community 549 - "Audio Recorder Service"
+### Community 638 - "record_audio_recorder_service.dart"
 Cohesion: 0.07
 Nodes (28): AudioRecorder, _acquireWakeLock, _amplitudeBridgeSub, _amplitudeController, amplitudeStream, cancel, _currentOutputPath, _defaultOutputPath (+20 more)
 
-### Community 550 - "Group History Gap Repair"
+### Community 639 - "group_smoke_harness.dart"
 Cohesion: 0.07
-Nodes (28): group_history_gap_repair_repository.dart, GroupHistoryGapRepair, created, getLatestRepairForGroup, getRepair, getVisibleRepairsForGroup, GroupHistoryGapRepairRepository, GroupHistoryGapRepairUpsertResult (+20 more)
+Nodes (28): group_multi_device_real_harness.dart, _buildCliJoinFixture, _configuredRunId, _configuredSharedDir, _createCliGroupNode, deadline, file, runGroupPublishBenchmark (+20 more)
 
-### Community 551 - "Inbox Proof Kick Tests"
-Cohesion: 0.07
-Nodes (28): ../../../integration_test/_support/node_readiness.dart, main, bridge, calledCommands, _captureFlowEvents, checkHealth, dispose, drains (+20 more)
-
-### Community 552 - "Received Video PiP Fixture"
-Cohesion: 0.07
-Nodes (27): canonicalFixture, canonicalRoot, deadline, digest, documents, expectedRoot, fixture, receivedVideoPictureInPictureFixtureBytes (+19 more)
-
-### Community 553 - "Group Media Deletion Journal"
+### Community 640 - "group_media_deletion_journal_db_helpers.dart"
 Cohesion: 0.07
 Nodes (29): attachmentId, canonicalGroupMediaRelativePathOrNull, canonicalRelativePath, createdAt, dbFinalizeGroupMediaDeletionJournalEntry, dbIsGroupMediaDeletionJournaled, dbLoadGroupMediaDeletionJournalEntry, dbLoadGroupMediaDeletionJournalPage (+21 more)
 
-### Community 554 - "Notification Route Dispatch"
-Cohesion: 0.06
-Nodes (28): data, getInitialMessage, handleInitialRemoteMessage, MissingGroupNotificationRouteIdHandler, MissingNotificationRouteTargetHandler, NotificationRouteTargetHandler, onBeforeRouteTarget, onMissingGroupRouteId (+20 more)
-
-### Community 555 - "Message Repository Interface"
+### Community 641 - "fake_media_attachment_repository.dart"
 Cohesion: 0.07
-Nodes (29): conditionalTransitionStatus, contactPeerId, conversationReadStream, deleteMessage, deleteMessagesForContact, DirectMessageRemoval, existsByContent, existsByDedupKey (+21 more)
+Nodes (28): dbValue, kMediaOwnerLaneUnresolved, MediaOwnerLane, MediaOwnerLaneDbValue, mediaOwnerLaneFromDbValue, message, toString, allSavedAttachments (+20 more)
 
-### Community 556 - "Orbit & Feed Data Loading"
+### Community 642 - "group_avatar_storage.dart"
 Cohesion: 0.07
-Nodes (28): connectionItem, contact, ContactFeedSnapshot, loadContactFeedSnapshot, messages, summary, threadItem, _buildOrbitFriend (+20 more)
+Nodes (29): appDir, canonicalPath, commitPreparedGroupAvatar, committedPath, deleteGroupAvatar, downloadGroupAvatar, DownloadGroupAvatarFn, effectiveBlobId (+21 more)
 
-### Community 557 - "Group Welcome Key Packages"
+### Community 643 - "group_welcome_key_package.dart"
 Cohesion: 0.07
 Nodes (29): create, defaultGroupWelcomeKeyPackageIdForDevice, expiresAt, fromJson, groupId, GroupWelcomeKeyPackage, groupWelcomeKeyPackageIdPrefix, groupWelcomeKeyPackageMinPublicMaterialLength (+21 more)
 
-### Community 558 - "Post Sending Use Case"
+### Community 644 - "p2p_service_stop_race_test.dart"
 Cohesion: 0.07
-Nodes (29): created, createdAt, createResult, createStopwatch, deduped, _deriveDraftMediaKind, emitPostTiming, firstKind (+21 more)
+Nodes (28): package:fake_async/fake_async.dart, package:flutter_app/features/groups/application/group_pending_key_repair_backoff_timer.dart, checkHealth, commandLog, dispose, gateNodeStatusOnCallNumber, inboxRetrieveGate, initialize (+20 more)
 
-### Community 559 - "Post Comments Sheet UI"
-Cohesion: 0.07
-Nodes (29): build, comment, comments, _commentsScrollController, CommentsSheet, _CommentsSheetState, _CommentTile, createState (+21 more)
-
-### Community 560 - "iOS Notification Tap Smoke Script"
+### Community 645 - "run_ios_notification_tap_ui_smoke.sh"
 Cohesion: 0.12
 Nodes (26): assert_log_contains(), assert_log_not_contains(), assert_scenario_markers(), discover_booted_devices(), install_app_on_device(), is_booted_ios_device(), is_supported_scenario(), launch_warm_app_for_host_push() (+18 more)
 
-### Community 561 - "Media Attachment Repository Tests"
-Cohesion: 0.07
-Nodes (27): fake_media_attachment_repository.dart, localPath, main, _makeAttachment, mime, bookmarked, directBookmarkResult, downloadStatus (+19 more)
+### Community 646 - "NotificationPreviewResolver.swift"
+Cohesion: 0.11
+Nodes (25): AnyObject, CryptoKit, Darwin, Foundation, GoMknoon, applyNotificationPreviewResult(), applyOrSanitizeNotificationPreviewResult(), NotificationPreviewResolver (+17 more)
 
-### Community 562 - "Group Pending Key Distribution Repository"
+### Community 647 - "in_memory_group_pending_membership_message_repository.dart"
 Cohesion: 0.07
-Nodes (27): group_pending_key_distribution_repository.dart, _InMemoryDistributionRepo, GroupPendingKeyDistribution, created, distribution, enqueue, finalizeDistributed, finalizeUnreachable (+19 more)
+Nodes (26): ../../domain/models/group_pending_membership_message.dart, ../../domain/repositories/group_pending_membership_message_repository.dart, deletePendingMessage, deletePendingMessageByGroupAndMessageId, getPendingMessages, getPendingMessagesForGroupAndSenders, GroupPendingMembershipMessageRepositoryImpl, pruneGroup (+18 more)
 
-### Community 563 - "Android Notification E2E Protocol"
+### Community 648 - "inboxMessage"
+Cohesion: 0.15
+Nodes (10): pruneExpiredInboxMessages(), TestMemoryInbox_StoreAtCapEvictsOldestReturnsStored(), normalizeInboxEntries(), ensureInboxMessageID(), extractMessageId(), inboxMessage, InboxStoreResult, memoryInboxBackend (+2 more)
+
+### Community 649 - "group_multi_party_launch_spec_test.dart"
+Cohesion: 0.07
+Nodes (28): AndroidAppFileTransportException, AndroidSignalProtocolException, ../../integration_test/_support/android_app_file_broker.dart, ../../integration_test/_support/group_multi_party_harness_runtime_loader.dart, ../../integration_test/_support/group_multi_party_verdict_handshake.dart, ../../integration_test/_support/signal_files.dart, appDataDirectory, appDataDirectoryValue (+20 more)
+
+### Community 650 - "android_notification_payload_e2e_protocol.dart"
 Cohesion: 0.07
 Nodes (28): action, _actions, androidNotificationA6ObserveAction, androidNotificationClearStagingAction, androidNotificationDrainObserveAction, androidNotificationPayloadE2EFailureReceipt, AndroidNotificationPayloadE2ERequest, androidNotificationPayloadE2ERequestSchema (+20 more)
 
-### Community 564 - "iOS APNs Notification Open Bridge"
+### Community 651 - "migration_cutover_coordinator.dart"
 Cohesion: 0.07
-Nodes (26): _channel, channelName, consumeInitialNotificationOpen, consumeInitialNotificationOpenMethod, dispose, _emitOpenError, IosApnsNotificationOpenBridge, IosApnsNotificationOpenHandler (+18 more)
+Nodes (28): _authorityRepository, _baseRecord, clearLocalStalePushToken, commitNewActive, _cutoverRepository, _isValidNewActiveProof, _isValidOldBlockProof, markExportingNetworkPaused (+20 more)
 
-### Community 565 - "Pending Group Invite Persistence"
+### Community 652 - "load_orbit_data_use_case.dart"
 Cohesion: 0.07
-Nodes (27): deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones, deletePendingInvite, getConsumedInvite, getPendingInvite, getPendingInvites (+19 more)
+Nodes (27): connectionItem, contact, ContactFeedSnapshot, loadContactFeedSnapshot, messages, summary, threadItem, _buildOrbitFriend (+19 more)
 
-### Community 566 - "Introduction Pass Use Case"
+### Community 653 - "group_history_gap_repair.dart"
 Cohesion: 0.07
-Nodes (28): bridge, contact, contactMlKemPublicKey, contactRepo, deliverIntroductionPayloadReliably, didUpdate, effectiveMlKemKey, finalIntro (+20 more)
+Nodes (28): attemptedSourcePeerIds, candidateSourcePeerIds, copyWith, createdAt, _decodeStringList, expectedHeadMessageId, expectedRangeHash, failedAt (+20 more)
 
-### Community 567 - "Staged Push Envelope Ingestion"
+### Community 654 - "full_screen_image_viewer.dart"
 Cohesion: 0.07
-Nodes (28): accountMigrationNetworkGate, _allowMigrationNetwork, _allowSender, attempted, blocked, call, clearedMalformed, committed (+20 more)
+Nodes (28): allPaths, build, _buildErrorState, _controller, _createController, createState, _currentPage, didUpdateWidget (+20 more)
 
-### Community 568 - "Group Media Forward Authorization Tests"
-Cohesion: 0.08
-Nodes (28): backing, beforeMessages, coordinator, _DemoteOwnMemberOnSnapshotGroups, didMutate, _expectDeniedGroupForward, getContact, getGroup (+20 more)
-
-### Community 569 - "In-Memory Introduction Repository Fake"
+### Community 655 - "android_push_relay_registration_contract_test.dart"
 Cohesion: 0.07
-Nodes (28): allOutboxDeliveries, clear, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+20 more)
+Nodes (27): package:flutter_app/features/push/application/push_relay_registration_proof.dart, _commandBytes, _currentTokenCommandBytes, main, _tokenHash, _accountHash, _baseProofDetails, _baseProofDetailsV2 (+19 more)
 
-### Community 570 - "Android Performance Campaign Harness"
+### Community 656 - "check_reliability_simulation_discovery.sh"
+Cohesion: 0.17
+Nodes (24): classify_path(), emit_failures_if_any(), expand_1to1_device_real(), expand_dart_test_declarations(), expand_group_media_reliability(), expand_group_multi_party_device_real(), expand_group_reaction_notification_device(), expand_intro_smoke() (+16 more)
+
+### Community 657 - "fake_audio_recorder_service.dart"
+Cohesion: 0.07
+Nodes (28): _amplitudeController, amplitudeStream, cancel, cancelCallCount, _currentOutputPath, deletedPaths, dispose, _durationController (+20 more)
+
+### Community 658 - "android_critical_performance_campaign.dart"
 Cohesion: 0.07
 Nodes (27): android_critical_performance_evidence.dart, artifact, assertions, bridge, _bridgeMeasuredSamples, _BridgePerformanceResult, _bridgeWarmupSamples, _budgetAssertion (+19 more)
 
-### Community 571 - "iOS Payload Producer (Go)"
+### Community 659 - "group_reaction_e2e_probe_test.dart"
+Cohesion: 0.07
+Nodes (25): BackgroundPushCrypto, FormatException, _duplicateRedrivePrefix, _firstMarker, _groupName, main, _request, _scenario (+17 more)
+
+### Community 660 - "media_thumbnail_image.dart"
+Cohesion: 0.07
+Nodes (26): BoxFit, build, _buildImage, cacheHeight, cacheWidth, _configureThumbnailFuture, createState, didUpdateWidget (+18 more)
+
+### Community 661 - "main.go"
 Cohesion: 0.12
 Nodes (26): Decoder, bounded(), boundedFixtureText(), decodeExactJSON(), execute(), main(), parseOptions(), producePayload() (+18 more)
 
-### Community 572 - "Group Media Fanout Tests"
+### Community 662 - "introduction_repository_impl.dart"
 Cohesion: 0.07
-Nodes (27): _DownloadWritingBridge, _JourneyGroupBridge, attachment, _DownloadWritingBridge, expectNoForbiddenKeys, expectNoFragmentsInJson, expectOutgoingAttachment, expectSingleAttachment (+19 more)
+Nodes (27): ../../domain/models/introduction_model.dart, ../../domain/models/introduction_outbox_delivery.dart, ../../domain/models/pending_introduction_response.dart, ../../domain/repositories/introduction_repository.dart, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery (+19 more)
 
-### Community 573 - "Posts DB Schema Capabilities"
+### Community 663 - "post_schema_capabilities.dart"
 Cohesion: 0.07
 Nodes (27): Expando, _capabilityCache, columns, hasPassDeliveryStatus, hasPassInnerPayloadJson, hasPassRecipientCount, hasPostsAudienceRadiusM, hasPostsLastEngagementAt (+19 more)
 
-### Community 574 - "Direct Private Media Lifecycle"
+### Community 664 - "nearby_location_service_test.dart"
 Cohesion: 0.07
-Nodes (27): _SqlLifecycleRepository, PrivateMediaInterruptedDownloadRecoveryAdapter, advanceClock, claimOpening, cleanupTerminalWithinLock, consume, _deleteExactAppOwnedArtifacts, DirectPrivateMediaLifecycle (+19 more)
+Nodes (27): _FakeNearbyLocationPlatformAdapter, accuracyM, capturedAt, checkedPermissionState, checkPermissionCallCount, checkPermissionState, currentPosition, getCurrentPosition (+19 more)
 
-### Community 575 - "Private Media Lifecycle Tests"
-Cohesion: 0.07
-Nodes (27): _ProofLane, PrivateMediaLifecycleLaneAdapter, PrivateMediaLifecycleTarget, PrivateMediaOpeningLease, PrivateMediaLifecycleState, advanceClock, claimOpening, cleanupCalls (+19 more)
+### Community 665 - "AppGroupNotificationToneLeaseStore"
+Cohesion: 0.21
+Nodes (10): Int, AppGroupNotificationToneLeaseStore, AppGroupNotificationToneReservation, AppGroupPushDedupeStore, AppGroupPushEnvelopeStore, ToneReservationRecord, TimeInterval, ToneReservationRecord (+2 more)
 
-### Community 576 - "Received Media Egress Proof Tests"
+### Community 666 - "received_media_native_egress_proof_test.dart"
 Cohesion: 0.07
 Nodes (27): androidMode, before, binding, completer, _copyFixture, data, directory, docs (+19 more)
 
-### Community 577 - "Group Multi-Party Runtime Config"
-Cohesion: 0.07
-Nodes (27): _boolValue, dbName, groupMultiPartyDbNameKey, groupMultiPartyModeKey, groupMultiPartyRestoreIdentityPathKey, groupMultiPartyRestoreMnemonicKey, groupMultiPartyReuseExistingIdentityKey, groupMultiPartyRoleKey (+19 more)
-
-### Community 578 - "Group Routing Smoke Criteria"
+### Community 667 - "routing_smoke_group_criteria.dart"
 Cohesion: 0.07
 Nodes (27): aliceTimeline, bobTimeline, bothReceived, count, detail, e2eMs, evaluateG2, evaluateG4 (+19 more)
 
-### Community 579 - "Identity Restore & Key Exchange Retry"
+### Community 668 - "android_notification_payload_e2e.dart"
 Cohesion: 0.07
-Nodes (26): contacts, eligible, identity, markerStore, reannouncePending, retryIncompleteKeyExchanges, rng, sent (+18 more)
+Nodes (26): ../../integration_test/support/android_notification_payload_campaign.dart, AndroidNotificationE2EProgressWriter, AndroidNotificationFcmTokenProvider, consecutiveExactObservations, deadline, _delayWithinDeadline, _DuplicateDrainObservation, entries (+18 more)
 
-### Community 580 - "Incoming Message Deletion Handling"
-Cohesion: 0.07
-Nodes (26): _bestEffortIncomingCleanup, blockedSenderOwnsStoredMessage, contact, envelopeSenderPeerId, handleIncomingMessageDeletion, HandleMessageDeletionResult, maybeSendDeliveryReceipt, mediaAttachmentRepo (+18 more)
-
-### Community 581 - "Introduction Outbox Delivery Model"
+### Community 669 - "introduction_outbox_delivery.dart"
 Cohesion: 0.07
 Nodes (27): action, copyWith, createdAt, delivered, deliveryId, deliveryPath, deliveryStatus, direct (+19 more)
 
-### Community 582 - "Post Pin Envelopes"
+### Community 670 - "post_pin_envelope.dart"
 Cohesion: 0.07
 Nodes (27): audience, authorPeerId, authorUsername, buildJson, createdAt, effectiveAt, eventId, expiresAt (+19 more)
 
-### Community 583 - "Reliability Simulation Discovery Script"
-Cohesion: 0.18
-Nodes (23): classify_path(), emit_failures_if_any(), expand_1to1_device_real(), expand_dart_test_declarations(), expand_group_multi_party_device_real(), expand_group_reaction_notification_device(), expand_intro_smoke(), expand_ios_notification_tap() (+15 more)
+### Community 671 - "addr_visibility_denial_test.go"
+Cohesion: 0.21
+Nodes (26): Addr, avAddrsContain(), avBoundIP4QuicPorts(), avCaptureLogs(), avDenyNetroute(), avInstallAnetShaped(), avInstallDenial(), avIP4QuicPort() (+18 more)
 
-### Community 584 - "Bridge Group Topics (Go)"
-Cohesion: 0.16
-Nodes (27): groupBridgeMessageParams, testIdentityMaterial, buildGroupBridgeMessageOpts(), buildGroupPublishOpts(), decodeGroupBridgeMessageParams(), decodeGroupPrivateMediaPolicy(), GenerateGroupKey(), GroupJoinTopic() (+19 more)
-
-### Community 585 - "Xctestrun Relocator Support Tests"
+### Community 672 - "group_history_gap_repairs_db_helpers.dart"
 Cohesion: 0.07
-Nodes (24): Directory, FileSystemException, ../../integration_test/support/android_picture_in_picture_system_ui_selection_result.dart, application, environment, iosTestWithoutBuildingArguments, IosXctestrunRelocation, patch (+16 more)
+Nodes (26): ../../../features/groups/domain/models/group_history_gap_repair.dart, current, currentStatus, db, dbInsertOrdinaryGroupOwnedRow, dbLoadGroupHistoryGapRepair, dbLoadLatestGroupHistoryGapRepair, dbLoadVisibleGroupHistoryGapRepairs (+18 more)
 
-### Community 586 - "Received Media Egress Gateway"
-Cohesion: 0.08
-Nodes (25): _Gateway, _aggregateForItems, _aggregateOutcomes, _channel, _decode, _exactKeys, _failure, _itemOutcomes (+17 more)
-
-### Community 587 - "Relay Failover Integration Tests (Go)"
+### Community 673 - "watchdog_failover_test.go"
 Cohesion: 0.21
 Nodes (25): startLocalRelayPair(), waitForNodeStatus(), relayDNS4Addr(), startSingleLocalRelay(), startWedgedReserveOkNode(), TestDefaultFlagsKeepPrivateReachability_CircuitPublished(), TestNoCircuitCyclesDoNotChurnGroupsOrRestartUnbounded(), TestPeerCanDialReservationAfterRecovery() (+17 more)
 
-### Community 588 - "Conversation Media Library Tests"
-Cohesion: 0.07
-Nodes (25): helpers/direct_library_test_stubs.dart, package:flutter_app/features/conversation/application/delete_message_use_case.dart, package:flutter_app/features/conversation/application/direct_media_library_batch_delete.dart, package:flutter_app/features/conversation/presentation/screens/direct_shared_media_library_screen.dart, getMessage, getMessageCalls, identity, kContactPeerId (+17 more)
+### Community 674 - "group_pending_key_distribution_repository.dart"
+Cohesion: 0.08
+Nodes (26): _InMemoryDistributionRepo, GroupPendingKeyDistributionRepositoryImpl, GroupPendingKeyDistribution, created, current, distribution, enqueue, finalizeDistributed (+18 more)
 
-### Community 589 - "Wake Token Directionality E2E"
+### Community 675 - "posts_db_helpers.dart"
 Cohesion: 0.07
-Nodes (25): ../../integration_test/scripts/android_wake_token_directionality_campaign.dart, WakeTokenAcceptedAttachmentObserver, package:flutter_app/core/debug/wake_token_directionality_e2e.dart, attachedToken, clear, _digest, main, messages (+17 more)
+Nodes (26): columns, dbDeletePostCascade, dbInsertPost, dbLoadExpiredPosts, dbLoadPost, dbLoadPostsByIds, dbLoadPostsFeed, dbLoadRetryableOutgoingPosts (+18 more)
 
-### Community 590 - "Invite Reliability Multi-Device Runner"
-Cohesion: 0.07
-Nodes (26): args, deadline, _defaultPrimaryDevice, _defaultRelayAddresses, _defaultSiblingDevice, devices, env, _harnessPath (+18 more)
-
-### Community 591 - "iOS Sender Projection Fixture"
+### Community 676 - "ios_sender_projection_fixture_contract_test.dart"
 Cohesion: 0.07
 Nodes (26): IosSenderProjectionFixtureStore, _Backing, changed, changedCoordinator, cleaned, cleanup, collision, collisionResult (+18 more)
 
-### Community 592 - "Migration QR Payload Use Case"
-Cohesion: 0.07
-Nodes (26): buildMigrationQrPayload, BuildMigrationQrPayloadResult, bytes, createdAt, currentTime, decoded, deriveMigrationPairingConfirmationCode, expiresAt (+18 more)
-
-### Community 593 - "Contact Request Use Cases"
-Cohesion: 0.07
-Nodes (24): declineContactRequest, DeclineContactRequestResult, peerIdPrefix, request, contact, ContactRequestNotificationTarget, ContactRequestNotificationTargetState, conversation (+16 more)
-
-### Community 594 - "Inbox Custody Verification"
-Cohesion: 0.07
-Nodes (26): _applyOutcome, checked, checkedAt, current, difference, expiresAtMs, _isOldRelayZombie, _isStaleUnreceipted (+18 more)
-
-### Community 595 - "Group History Gap Repair Model"
-Cohesion: 0.07
-Nodes (26): attemptedSourcePeerIds, candidateSourcePeerIds, copyWith, createdAt, _decodeStringList, expectedHeadMessageId, expectedRangeHash, failedAt (+18 more)
-
-### Community 596 - "Pending Group Invite Model"
+### Community 677 - "pending_group_invite.dart"
 Cohesion: 0.07
 Nodes (26): avatarBlobId, avatarMime, createdAt, createdBy, expiresAt, fromMap, fromPayload, groupDescription (+18 more)
 
-### Community 597 - "Introduction Payload Model"
+### Community 678 - "introduction_payload.dart"
 Cohesion: 0.07
 Nodes (26): action, buildEncryptedEnvelope, buildEnvelopeMessageId, ensureEnvelopeMessageId, fromInnerJson, fromJson, introducedId, introducedMlKemPublicKey (+18 more)
 
-### Community 598 - "Avatar & Image Processing"
-Cohesion: 0.08
-Nodes (23): avatarBase64, avatarByteLength, maxBytes, normalizer, PreparedRepostAvatarSnapshot, prepareRepostAvatarSnapshot, sourceFile, tempDir (+15 more)
+### Community 679 - "introduction_repository.dart"
+Cohesion: 0.07
+Nodes (26): countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction, getIntroductionsByIntroduced, getIntroductionsByIntroducer (+18 more)
 
-### Community 599 - "Nearby Post Eligibility Service"
+### Community 680 - "nearby_eligibility_service.dart"
 Cohesion: 0.07
 Nodes (26): c, calculateNearbyDistanceM, capturedAt, contact, contacts, currentTime, deltaLat, deltaLng (+18 more)
 
-### Community 600 - "Contact Presence Snapshot Repository"
-Cohesion: 0.09
-Nodes (24): ContactPresenceSnapshotRepository, dispose, ContactPresenceSnapshotRepositoryImpl, dispose, load, loadAll, save, snapshotChanges (+16 more)
+### Community 681 - "media_download_preferences.dart"
+Cohesion: 0.07
+Nodes (25): codecVersion, copyWithChoice, defaults, _disabled, _entryKey, fromStorageString, hashCode, isAutoDownloadEnabled (+17 more)
 
-### Community 601 - "Reliability Simulations Runner Script"
-Cohesion: 0.13
-Nodes (19): all_group_multi_party_scenarios(), device_arg_for_path(), extract_runner_targets(), four_device_ids(), group_multi_party_only_scenario(), ios_notification_tap_devices(), is_group_multi_party_scenario(), multi_device_ids() (+11 more)
+### Community 682 - "member_removal_integration_test.dart"
+Cohesion: 0.07
+Nodes (26): package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart, package:flutter_app/features/groups/application/group_membership_update_listener.dart, ../../../shared/helpers/durable_group_exit_surface_harness.dart, adminPeerId, bindActiveDevice, bridge, charlieMember, _decodeDirectKeyUpdatePayload (+18 more)
 
-### Community 602 - "Encrypted Media Test Bridge Fake"
+### Community 683 - "p2p_service_impl_inbox_proof_kick_test.dart"
+Cohesion: 0.07
+Nodes (26): bridge, calledCommands, _captureFlowEvents, checkHealth, dispose, drains, _FakeBridge, initialize (+18 more)
+
+### Community 684 - "encrypted_media_test_bridge.dart"
 Cohesion: 0.07
 Nodes (26): allowedPeersByBlobId, baseDir, blobIds, ciphertextByBlobId, deletedBlobIds, deriveTestBlobKey, deriveTestBlobNonce, failBlobDecrypt (+18 more)
 
-### Community 603 - "Notification Service Extension (iOS)"
-Cohesion: 0.14
-Nodes (17): Equatable, Foundation, applyNotificationPreviewResult(), applyOrSanitizeNotificationPreviewResult(), NotificationServiceCompletionGate, NotificationServiceCompletionGeneration, sanitizeNotificationContentForUnresolvedExpiry(), NotificationService (+9 more)
-
-### Community 604 - "Peer Session Management (Go)"
-Cohesion: 0.12
-Nodes (18): startDeadDialListener(), TestStartEmitsColdStartLockWindow(), waitForStartupPhase(), newPeerSessionNotifiee(), selectBestConnAddr(), Listener, Network, deadDialListener (+10 more)
-
-### Community 605 - "App Group Push Stores (iOS)"
-Cohesion: 0.23
-Nodes (10): Int, AppGroupNotificationToneLeaseStore, AppGroupNotificationToneReservation, AppGroupPushDedupeStore, AppGroupPushEnvelopeStore, ToneReservationRecord, TimeInterval, ToneReservationRecord (+2 more)
-
-### Community 606 - "Group Invite Delivery Attempt Repository"
+### Community 685 - "group_pending_key_repair_repository_impl.dart"
 Cohesion: 0.08
-Nodes (25): _SpyDeliveryRepo, _MatrixInviteDeliveryAttemptRepository, _InMemoryGroupInviteDeliveryAttemptRepository, deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers (+17 more)
+Nodes (25): ../../domain/models/group_pending_key_repair.dart, ../../domain/repositories/group_pending_key_repair_repository.dart, deleteRepair, deleteRepairIfExact, _finalizeIfExact, finalizeRepaired, finalizeRepairedIfExact, finalizeUndecryptable (+17 more)
 
-### Community 607 - "1:1 Reaction Notification Device Runner"
+### Community 686 - "group_private_media_platform_proof_test.dart"
+Cohesion: 0.08
+Nodes (25): advanceGroupPrivateMediaClock, anchorOutgoingGroupPrivateMediaCustody, _app, _attachmentId, attachments, completeGroupPrivateMediaCleanup, consumeGroupPrivateMedia, deleteGroupPrivateMediaAttachmentWithinLock (+17 more)
+
+### Community 687 - "run_1to1_reaction_notification_device.dart"
 Cohesion: 0.08
 Nodes (25): _androidBackgroundCryptoPreflightDriver, artifact, artifactDir, artifactDirectory, _artifactFor, _closureCaptureDriver, direct, _headProvenanceCaptureDriver (+17 more)
 
-### Community 608 - "Sibling Device Convergence Runner"
+### Community 688 - "run_b1b_sibling_device_convergence.dart"
 Cohesion: 0.08
 Nodes (25): args, _defaultPrimaryDevice, _defaultSiblingDevice, devices, _harnessPath, _isIosDeviceId, _log, main (+17 more)
 
-### Community 609 - "Benchmark Suite Runner"
+### Community 689 - "run_benchmark_suite.dart"
 Cohesion: 0.08
 Nodes (25): allBenchmarks, args, _benchmarkHarness, command, dartDefines, deviceId, _extractBenchmarkLines, fixtureDir (+17 more)
 
-### Community 610 - "Foreground Group Push Smoke Runner"
+### Community 690 - "run_foreground_group_push_simulator_smoke.dart"
 Cohesion: 0.08
 Nodes (25): alice, aliceDevice, aliceLog, args, bob, bobDevice, bobLog, _detectBootedSimulators (+17 more)
 
-### Community 611 - "Notification Open UI Smoke Runner"
+### Community 691 - "run_notification_open_ui_smoke.dart"
 Cohesion: 0.08
 Nodes (25): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, flutterArgs (+17 more)
 
-### Community 612 - "Introduction Repository Implementation"
+### Community 692 - "private_media_action_eligibility.dart"
 Cohesion: 0.08
-Nodes (25): introduction_repository.dart, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction, getIntroductionsByIntroduced (+17 more)
+Nodes (25): PrivateMediaLifecycleState, PrivateMediaMode, allows, canEnterPictureInPicture, denied, diagnosticCode, DirectPrivateMediaAction, DirectPrivateMediaActionDecision (+17 more)
 
-### Community 613 - "Relay Presence Set Use Case"
+### Community 693 - "message_payload.dart"
 Cohesion: 0.08
-Nodes (24): PresenceSetResult, RelayPresenceSet, dispose, _heartbeat, _heartbeatInterval, isHeartbeatActive, kPresenceForegroundHeartbeat, kPresenceSelfTtl (+16 more)
+Nodes (25): PrivateMediaPolicy, action, actionEdit, actionSend, buildEncryptedEnvelope, dedupKey, editedAt, fromDecryptedJson (+17 more)
 
-### Community 614 - "Migration File Manifest Model"
+### Community 694 - "rejoin_group_topics_use_case.dart"
 Cohesion: 0.08
-Nodes (25): blocking, code, criticality, diagnostics, hasIssue, issues, isValid, items (+17 more)
+Nodes (25): baseMs, canAcknowledgeGroupRecovery, capMs, deferredCount, errorCount, groups, joinedGroupCount, _maxRejoinAttempts (+17 more)
 
-### Community 615 - "Contact Domain Model"
+### Community 695 - "pending_post_delivery_retrier.dart"
 Cohesion: 0.08
-Nodes (25): archivedAt, avatarPath, avatarVersion, blockedAt, copyWith, fromMap, fromQRPayload, hashCode (+17 more)
+Nodes (25): accountMigrationNetworkGate, allowed, _allowsPostDeliveryNetworkSideEffects, bridge, contactRepo, _debounceTimer, dispose, _isOnline (+17 more)
 
-### Community 616 - "Feed Quote & Color Widgets"
-Cohesion: 0.08
-Nodes (23): build, onDismiss, QuotePreviewBar, text, build, child, _controller, createState (+15 more)
-
-### Community 617 - "Introduction Repository Interface"
-Cohesion: 0.08
-Nodes (25): countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction, getIntroductionsByIntroduced, getIntroductionsByIntroducer (+17 more)
-
-### Community 618 - "QR Scanner Screen"
+### Community 696 - "qr_scanner_screen.dart"
 Cohesion: 0.08
 Nodes (25): build, _buildCloseButton, _buildFlashButton, contactDefaults, _controller, copy, _copyFor, createState (+17 more)
 
-### Community 619 - "Sims Tooling Tests"
-Cohesion: 0.10
-Nodes (22): SimsManifest, SimsVerdict, main, manifest, main, dependencies, executor, main (+14 more)
+### Community 697 - "media_video_controls.dart"
+Cohesion: 0.08
+Nodes (25): adapter, build, clamped, createState, _cycleSpeed, didUpdateWidget, dispose, _dragValueMs (+17 more)
 
-### Community 620 - "Fake Contact Repository"
+### Community 698 - "fake_contact_repository.dart"
 Cohesion: 0.08
 Nodes (25): addContact, addContactCallCount, archiveContact, blockContact, contactExists, _contacts, deleteContact, deleteContactCallCount (+17 more)
 
-### Community 621 - "Push Ingest & Reaction Payload Tests"
+### Community 699 - "direct_media_library_batch_actions.dart"
 Cohesion: 0.08
-Nodes (23): fixtures/frozen_pre256_reaction_v2_reader.dart, package:flutter_app/features/conversation/domain/models/reaction_payload.dart, main, testPayload, action, clear, cleared, _committed (+15 more)
+Nodes (24): ../domain/repositories/media_attachment_repository.dart, attachmentId, _defaultEgressRequestId, _defaultFileExists, denial, DirectMediaLibraryBatchActionsCoordinator, DirectMediaLibraryBatchItemOutcome, DirectMediaLibraryBatchResult (+16 more)
 
-### Community 622 - "Conversation Wiring Coalesce Tests"
-Cohesion: 0.08
-Nodes (24): Incoming, buildWidget, chatListener, _contactPeerId, contactRepo, dispose, emitIncoming, _FakeChatListener (+16 more)
-
-### Community 623 - "Media Delivery UI Smoke Runner"
+### Community 700 - "run_media_delivery_ui_smoke.dart"
 Cohesion: 0.08
 Nodes (24): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, id (+16 more)
 
-### Community 624 - "Posts Repost Delivery Migration"
+### Community 701 - "group_pending_membership_messages_db_helpers.dart"
+Cohesion: 0.08
+Nodes (24): db, dbDeleteGroupPendingMembershipMessage, dbDeleteGroupPendingMembershipMessageByGroupAndMessageId, dbLoadGroupPendingMembershipMessages, dbLoadGroupPendingMembershipMessagesForSenders, dbPruneGroupPendingMembershipMessages, dbUpdateOrdinaryGroupOwnedRows, dbUpsertGroupPendingMembershipMessage (+16 more)
+
+### Community 702 - "035_posts_repost_delivery_state.dart"
 Cohesion: 0.08
 Nodes (24): _aggregateDeliveryStatus, alreadyMigrated, columns, delete, _ensurePostPassDeliveryStatus, eventRows, execute, failureCount (+16 more)
 
-### Community 625 - "Keepalive Drop E2E Contract"
+### Community 703 - "keepalive_drop_e2e_contract.dart"
 Cohesion: 0.08
 Nodes (24): common, installedProfileId, _installedSimsBuildProfile, keepaliveDroppedSendAction, keepaliveDroppedSendRequestSchema, keepaliveDroppedSendResultSchema, keepaliveDroppedSendStepId, keepaliveDropProfileId (+16 more)
 
-### Community 626 - "In-App QR Smoke Test Runner"
-Cohesion: 0.08
-Nodes (23): config, configFile, delayed, delete, dir, exportIdentityForSmokeTest, file, friends (+15 more)
-
-### Community 627 - "Local Discovery Service Fakes"
+### Community 704 - "fake_local_discovery_service.dart"
 Cohesion: 0.08
 Nodes (24): LocalPeer, addPeer, advertisedPeerId, advertisedPort, advertisedQuicPort, advertisedTcpPort, discoveredPeers, discoveredPeersStream (+16 more)
 
-### Community 628 - "Private Media Action Eligibility"
-Cohesion: 0.08
-Nodes (24): PrivateMediaMode, allows, canEnterPictureInPicture, denied, diagnosticCode, DirectPrivateMediaAction, DirectPrivateMediaActionDecision, DirectPrivateMediaActionEligibility (+16 more)
+### Community 705 - "native_mdns_resolver.dart"
+Cohesion: 0.09
+Nodes (23): attributes, _events, host, _method, NativeMdnsResolver, NativeResolvedPeer, peerId, PlatformChannelMdnsResolver (+15 more)
 
-### Community 629 - "Group Received Media Actions Tests"
+### Community 706 - "app_root_notification_open_test.dart"
 Cohesion: 0.08
-Nodes (24): MediaEgressDestination, GroupReceivedMediaActionsController, package:flutter_app/features/groups/application/group_received_media_actions.dart, attachment, calls, controller, destination, egress (+16 more)
+Nodes (23): NotificationOpenDeferredAttemptResult, package:flutter_app/core/notifications/notification_open_dedupe_gate.dart, _AppRootNotificationHarness, cancel, clear, _deferContext, dispatch, events (+15 more)
 
-### Community 630 - "Notification Open Dedupe Gate"
-Cohesion: 0.08
-Nodes (24): completed, completedTtl, createdAt, _DedupeEntry, dedupeKeyFor, _DedupeState, _entries, finish (+16 more)
-
-### Community 631 - "Notification Route Targets"
+### Community 707 - "notification_route_target.dart"
 Cohesion: 0.08
 Nodes (24): commentId, contactRequest, conversation, fromPayload, fromRemoteMessageData, group, groupId, groupIdFromRemoteMessageData (+16 more)
 
-### Community 632 - "Private Media Expiry Scheduler"
+### Community 708 - "private_media_expiry_scheduler.dart"
 Cohesion: 0.08
 Nodes (24): _armRetry, _clockFloorMs, directPrivateMediaExpiryRescheduleSignals, dispose, _disposed, _enqueueRecoveryAndArm, _foreground, _generation (+16 more)
 
-### Community 633 - "Feed Reaction Store"
+### Community 709 - "verify_inbox_custody_use_case.dart"
 Cohesion: 0.08
-Nodes (22): applyChange, clearMessageIds, dispose, FeedReactionStore, listenableForMessage, _notifierFor, _notifiers, reactionsForMessage (+14 more)
+Nodes (24): _applyOutcome, checked, checkedAt, difference, expiresAtMs, _isOldRelayZombie, _isStaleUnreceipted, kCustodyStaleReceiptRestoreAfter (+16 more)
 
-### Community 634 - "Group Membership Timeline Messages"
+### Community 710 - "group_membership_timeline_message.dart"
 Cohesion: 0.08
 Nodes (24): actor, buildGroupDissolvedTimelineMessage, buildGroupDissolvedTimelineText, buildGroupMetadataUpdatedTimelineMessage, buildGroupMetadataUpdatedTimelineText, buildMemberJoinedTimelineMessage, buildMemberJoinedTimelineText, buildMemberRemovedTimelineMessage (+16 more)
 
-### Community 635 - "Group Topic Rejoin Use Case"
+### Community 711 - "retry_failed_group_inbox_stores_use_case.dart"
 Cohesion: 0.08
-Nodes (24): baseMs, canAcknowledgeGroupRecovery, capMs, deferredCount, errorCount, groups, joinedGroupCount, _maxRejoinAttempts (+16 more)
+Nodes (24): _completeLegacyInboxStoreRetry, current, emitRetryTiming, limit, _matchesCurrentPrivateRetryRecipients, messages, persisted, privateMediaAvailability (+16 more)
 
-### Community 636 - "Introduction UI Copy"
+### Community 712 - "group_pending_key_repair.dart"
+Cohesion: 0.08
+Nodes (24): attempts, copyWith, createdAt, finalizedAt, fromMap, groupId, groupPendingKeyRepairPlaceholderText, groupPendingKeyRepairStatusPendingKey (+16 more)
+
+### Community 713 - "introduction_copy.dart"
 Cohesion: 0.08
 Nodes (24): acceptedText, base, connectedText, _displayName, fallbackResponder, formatIncomingIntroductionMessage, formatIntroducerAcceptanceProgressSystemMessage, formatIntroducerIntroductionSystemMessage (+16 more)
 
-### Community 637 - "Incoming Post Presence Handling"
+### Community 714 - "handle_incoming_post_presence_use_case.dart"
 Cohesion: 0.08
 Nodes (24): accuracyM, _buildActiveSnapshot, _buildInactiveSnapshot, capturedAt, _compareIso, existing, handleIncomingPostPresence, HandleIncomingPostPresenceResult (+16 more)
 
-### Community 638 - "Media Video Controls Widget"
+### Community 715 - "group_exit_diagnostics_sheet_test.dart"
 Cohesion: 0.08
-Nodes (24): adapter, build, clamped, createState, _cycleSpeed, didUpdateWidget, dispose, _dragValueMs (+16 more)
+Nodes (24): package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart, _app, appendOutcome, calls, clear, clearError, diagnostic, fromMap (+16 more)
 
-### Community 639 - "P2P Inbox Ack Ordering Tests"
+### Community 716 - "p2p_service_inbox_ack_ordering_test.dart"
 Cohesion: 0.08
 Nodes (24): calledCommands, checkHealth, _committed, deadline, dispose, _FakeBridge, initialize, _initialized (+16 more)
 
-### Community 640 - "Sims Verification Tests"
-Cohesion: 0.08
-Nodes (24): _artifactDigest, assessment, base, _buildRow, buildVerdict, _clone, _currentReportJson, decoded (+16 more)
-
-### Community 641 - "QR Display Screen"
-Cohesion: 0.08
-Nodes (23): ../../application/build_qr_payload_use_case.dart, ../../../../core/bridge/bridge.dart, backgroundPreference, bridgeClient, build, _buildErrorScreen, _buildPayload, createState (+15 more)
-
-### Community 642 - "Claude Host Tool Bridge Script"
+### Community 717 - "claude_host_tool_bridge.py"
 Cohesion: 0.18
 Nodes (19): BaseHTTPRequestHandler, _allowed_invocation(), BridgeHandler, BridgeServer, client(), _first_shell_script_arg(), _host_env(), _is_relative_to() (+11 more)
 
-### Community 643 - "Contact Request Repository"
-Cohesion: 0.09
-Nodes (22): contact_request_repository.dart, addRequest, ContactRequestRepository, deleteRequest, getPendingRequests, getRequest, addRequest, ContactRequestRepositoryImpl (+14 more)
+### Community 718 - "package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart"
+Cohesion: 0.08
+Nodes (21): ../../domain/repositories/group_invite_delivery_attempt_repository.dart, deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers, getStatusForMember, markDeclined (+13 more)
 
-### Community 644 - "Group Sync Receipts DB Helpers"
+### Community 719 - "chaos_p2p_network.dart"
+Cohesion: 0.08
+Nodes (23): fake_p2p_network.dart, Random, ChaosConfig, config, content, deliver, deliveredCount, _deliverWithDuplicate (+15 more)
+
+### Community 720 - "group_sync_receipts_db_helpers.dart"
 Cohesion: 0.08
 Nodes (23): ../../../features/groups/domain/models/group_message_receipt.dart, args, dbApplyGroupInboxPageTransaction, dbLoadGroupInboxCursor, dbLoadGroupMessageReceipts, dbUpsertGroupInboxCursor, dbUpsertGroupMessageReceipt, dbWriteTransaction (+15 more)
 
-### Community 645 - "Node Event Dispatcher (Go)"
+### Community 721 - "EventDispatcher"
 Cohesion: 0.17
 Nodes (9): addCriticalEventIdentifiers(), cloneEventData(), EventDispatcher, eventItem, EventCallback, Mutex, Once, Time (+1 more)
 
-### Community 646 - "Media Message Journey E2E Runner"
+### Community 722 - "quic_identify_revalidation_test.go"
+Cohesion: 0.17
+Nodes (23): TestHandleLANPeerFound_ConnectsDirect_IdentifyCompletes(), TestLANDirectStream_ClassifiesDirect(), s2Budget(), s2BuildHost(), s2Iters(), s2Max(), s2Pctl(), s2PickListenAddr() (+15 more)
+
+### Community 723 - "group_pending_key_distribution_service_test.dart"
+Cohesion: 0.08
+Nodes (23): InMemoryGroupPendingKeyDistributionRepository, bridge, daveRow, daveRowId, device, enqueue, finalizeDistributed, finalizeUnreachable (+15 more)
+
+### Community 724 - "run_media_message_journey_e2e.dart"
 Cohesion: 0.08
 Nodes (23): decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, id, isMobile (+15 more)
 
-### Community 647 - "Notification Open During Chat Runner"
+### Community 725 - "run_notification_open_during_other_chat.dart"
 Cohesion: 0.08
 Nodes (23): alice, aliceDevice, aliceLog, args, bob, bobDevice, bobLog, devices (+15 more)
 
-### Community 648 - "Android Notification E2E Harness"
-Cohesion: 0.08
-Nodes (23): AndroidNotificationE2EProgressWriter, AndroidNotificationFcmTokenProvider, consecutiveExactObservations, deadline, _delayWithinDeadline, _DuplicateDrainObservation, entries, events (+15 more)
+### Community 726 - "ring_avatar_painter.dart"
+Cohesion: 0.09
+Nodes (20): RingAvatarData, build, data, _drawCenterGlow, _drawDashedRing, _drawRing, paint, RingAvatarPainter (+12 more)
 
-### Community 649 - "LAN Local Media Sender"
-Cohesion: 0.08
-Nodes (23): add, close, complete, _computeSha256, defaultOfferTimeout, defaultUploadedTimeout, emitSendTiming, failure (+15 more)
-
-### Community 650 - "Received Media Egress Models"
-Cohesion: 0.08
-Nodes (23): attachmentId, destination, displayName, extension, isSupportedMediaEgressMime, isValidMediaEgressRequestId, items, kMaxMediaEgressItems (+15 more)
-
-### Community 651 - "Ring Avatar Spec"
+### Community 727 - "ring_avatar_spec.dart"
 Cohesion: 0.08
 Nodes (23): black, glowInnerOpacity, glowInnerRadiusRatio, glowLuminance, glowMiddleOpacity, glowMiddleRadiusRatio, glowOuterOpacity, glowOuterRadiusRatio (+15 more)
 
-### Community 652 - "Group Creation Use Case"
+### Community 728 - "undo_bar.dart"
+Cohesion: 0.08
+Nodes (23): _attach, build, cancel, _commit, _controller, handle, isActive, l10n (+15 more)
+
+### Community 729 - "create_group_use_case.dart"
 Cohesion: 0.08
 Nodes (23): appendGroupEventLogEntry, _appendSignedCreateEvent, canonicalPayload, createGroup, deleteGroup, group, groupId, groupKey (+15 more)
 
-### Community 653 - "Group Pending Key Repair Model"
+### Community 730 - "group_key_update_listener_test.dart"
 Cohesion: 0.08
-Nodes (23): attempts, copyWith, createdAt, finalizedAt, fromMap, groupId, groupPendingKeyRepairPlaceholderText, groupPendingKeyRepairStatusPendingKey (+15 more)
+Nodes (23): GroupKeyUpdateListener, package:flutter_app/features/groups/application/group_key_update_listener.dart, package:flutter_app/features/groups/application/group_key_update_signature.dart, append, bridge, controller, entries, errorCode (+15 more)
 
-### Community 654 - "Push Token Registration Use Case"
+### Community 731 - "group_pending_key_repair_repository.dart"
 Cohesion: 0.08
-Nodes (23): accountMigrationNetworkGate, deadline, effectiveDelay, effectiveGetApnsToken, effectiveGetPlatform, effectiveGetToken, effectiveGetTokenWithTimeout, effectiveIsIOS (+15 more)
+Nodes (23): GroupPendingKeyRepair, created, current, deleteGroupPendingKeyRepairIfExact, deleteRepair, deleteRepairIfExact, finalizeGroupPendingKeyRepairIfExact, finalizeGroupPendingKeyRepairUndecryptableIfExact (+15 more)
 
-### Community 655 - "Push Token Store"
+### Community 732 - "resolve_group_notification_route_target_use_case.dart"
+Cohesion: 0.08
+Nodes (23): PendingGroupInvite, allowCurrentMember, drainOfflineInbox, existingGroup, existingPendingInvite, existingResolution, group, GroupMessageNotificationDisplayEligibility (+15 more)
+
+### Community 733 - "fake_push_token_store.dart"
 Cohesion: 0.09
 Nodes (21): clearToken, PushTokenStore, writeToken, clearToken, pushFcmPlatformSecureStorageKey, pushFcmTokenSecureStorageKey, PushTokenStoreImpl, _secureKeyStore (+13 more)
 
-### Community 656 - "Bonsoir Discovery Contract Tests"
+### Community 734 - "group_private_media_notification_test.dart"
 Cohesion: 0.08
-Nodes (23): package:bonsoir/bonsoir.dart, build, _controller, emit, eventStream, flush, isReady, isStopped (+15 more)
+Nodes (23): package:flutter_app/features/push/application/private_media_notification_body.dart, availability, bridge, _contentHash, createdAt, files, _fixture, getAttachmentsForMessage (+15 more)
 
-### Community 657 - "Add Contact Use Case Tests"
+### Community 735 - "conversation_voice_capture_controller_test.dart"
 Cohesion: 0.08
-Nodes (23): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, existsResult, _FakeContactRepository (+15 more)
+Nodes (23): package:flutter_app/shared/widgets/conversation/conversation_voice_capture_controller.dart, _amplitudeController, amplitudeStream, cancel, cancelCalls, dispose, _durationController, durationStream (+15 more)
 
-### Community 658 - "Inbox Custody Verify Tests"
+### Community 736 - "inbox_custody_verify_test.dart"
 Cohesion: 0.08
 Nodes (23): ack, _AckGatedRelay, base, calledCommands, checkHealth, dispose, _entries, _entryIdByMessage (+15 more)
 
-### Community 659 - "Post Follow-On Delivery Tests"
-Cohesion: 0.08
-Nodes (23): _ControlledP2PService, dialAttempts, _dialedPeers, dialPeer, discoverAttempts, discoverPeer, _drainMicrotasks, inboxAttempts (+15 more)
+### Community 737 - "DefaultFeatureFlags"
+Cohesion: 0.13
+Nodes (13): TestDcutrFlagOff_ForcesPrivate_ZeroPunches(), TestDcutrFlagOn_SelectsUpgradeReachability(), DefaultFeatureFlags(), TestMergeFeatureFlags_EveryStructFieldIsMergeable(), TestMergeFeatureFlagsOverDefaults_OmittedKeyKeepsDefaultNotZeroValue(), MergeFeatureFlagsOverDefaults(), featureFlagsStatusMap(), limitRelayAddresses() (+5 more)
 
-### Community 660 - "In-Memory Group Invite Fake"
-Cohesion: 0.08
-Nodes (23): consumedCount, _consumptions, count, deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones, deletePendingInvite (+15 more)
+### Community 738 - "GroupMessageRepositoryImpl"
+Cohesion: 0.10
+Nodes (21): Gr, _LifecycleMessageRepository, _ProofLifecycleRepository, GroupMessageRepositoryImpl, GroupConversationReadEventSource, GroupInboxStoreRetryCompletionRepository, GroupMembershipRepairDeletionRepository, GroupMessageLocalDeletionAuthority (+13 more)
 
-### Community 661 - "Sims Device Binding Tests"
-Cohesion: 0.08
-Nodes (23): _androidControlConsumer, _androidTarget, _androidThreePeerConsumer, _buildRow, _consumer, create, dispose, environment (+15 more)
-
-### Community 662 - "Bonsoir Native Resolver Tests"
+### Community 739 - "package:flutter/widgets.dart"
 Cohesion: 0.09
-Nodes (22): BonsoirService, fake_native_mdns_resolver.dart, build, _controller, emit, eventStream, flush, iphone (+14 more)
+Nodes (21): config, configFile, _configFileName, dbName, documentsDir, main, marker, markerFile (+13 more)
 
-### Community 663 - "P2P Node State Model"
-Cohesion: 0.09
-Nodes (22): connection_state.dart, circuitAddresses, connections, copyWith, directReady, featureFlags, fromJson, healthyRelayCount (+14 more)
-
-### Community 664 - "Flutter Local Notification Service"
-Cohesion: 0.09
-Nodes (22): FlutterLocalNotificationsPlugin, DurableConversationNotificationIdRegistry, clearDeliveredNotifications, consumeInitialPayload, ConversationNotificationIdRegistryResolver, ConversationNotificationIdResolver, _dismissNotificationById, dispose (+14 more)
-
-### Community 665 - "Real Device Notification Tap Runner"
+### Community 740 - "run_notification_tap_device_real.dart"
 Cohesion: 0.09
 Nodes (22): _androidPayloadCampaignIds, artifactDir, devices, _emitResult, id, listScenarios, main, matches (+14 more)
 
-### Community 666 - "Integration Test Signal Files"
+### Community 741 - "signal_files.dart"
 Cohesion: 0.09
 Nodes (22): _buildMessage, delete, dir, exists, flat, forDirectory, kSignalPollInterval, lastError (+14 more)
 
-### Community 667 - "Contacts DB Helpers"
+### Community 742 - "contacts_db_helpers.dart"
 Cohesion: 0.09
 Nodes (22): dbArchiveContact, dbBlockContact, dbContactExists, dbDeleteContact, dbDismissIntroBanner, dbGetContactCount, dbLoadActiveContacts, dbLoadAllContacts (+14 more)
 
-### Community 668 - "Group Pending Membership DB Helpers"
+### Community 743 - "active_peer_keepalive_use_case.dart"
 Cohesion: 0.09
-Nodes (22): dbDeleteGroupPendingMembershipMessage, dbDeleteGroupPendingMembershipMessageByGroupAndMessageId, dbLoadGroupPendingMembershipMessages, dbLoadGroupPendingMembershipMessagesForSenders, dbPruneGroupPendingMembershipMessages, dbUpsertGroupPendingMembershipMessage, delete, existing (+14 more)
+Nodes (22): ActivePeerKeepAliveUseCase, _clearDropSignalIfAny, _consecutiveMisses, dispose, _dropHandled, _interval, isProbeActive, kKeepAliveInterval (+14 more)
 
-### Community 669 - "Local P2P WebSocket Service"
-Cohesion: 0.09
-Nodes (22): configureInboundChatCommitHandler, discoveredPeers, discoveredPeersStream, discoverLocalPeer, _discovery, dispose, isLocalPeer, localMessageStream (+14 more)
-
-### Community 670 - "Reaction Change Models & Fakes"
-Cohesion: 0.09
-Nodes (21): MessageReaction, messageId, reaction, ReactionChangeType, senderPeerId, type, applyIncomingAdd, deleteReactionsForContact (+13 more)
-
-### Community 671 - "Sibling Device Admission Use Case"
-Cohesion: 0.09
-Nodes (22): AdmitSiblingDeviceFn, admitSiblingDeviceIfTrusted, alreadyPresent, deviceId, EnqueueDeferredGroupKeyDistributionFn, existingById, existingByTransport, latestKey (+14 more)
-
-### Community 672 - "Group Offline Replay Envelope Tests"
+### Community 744 - "group_offline_replay_envelope_test.dart"
 Cohesion: 0.09
 Nodes (22): GroupOfflineReplaySignatureException, bridge, ciphertext, _cloneJsonMap, decoded, expectedRecipients, expectedRecipientSetHash, expectedSignedPayload (+14 more)
 
-### Community 673 - "Group Join Use Case"
-Cohesion: 0.09
-Nodes (22): bridge, callGroupJoinWithConfig, groupConfig, groupKey, _hasNonEmptyString, joinGroup, key, keyEpoch (+14 more)
-
-### Community 674 - "Group Notification Route Resolution"
-Cohesion: 0.09
-Nodes (22): allowCurrentMember, drainOfflineInbox, existingGroup, existingPendingInvite, existingResolution, group, GroupMessageNotificationDisplayEligibility, GroupNotificationRouteResolution (+14 more)
-
-### Community 675 - "Chaos P2P Network Fake"
-Cohesion: 0.09
-Nodes (22): Random, ChaosConfig, config, content, deliver, deliveredCount, _deliverWithDuplicate, droppedMessages (+14 more)
-
-### Community 676 - "iOS Notification Provider Adapter Tests"
+### Community 745 - "_Fixture"
 Cohesion: 0.25
 Nodes (7): _Fixture, IosNotificationProviderAdapterTest, _load_adapter(), _write_executable(), _write_private(), CompletedProcess, Path
 
-### Community 677 - "Post Pin Test Fixtures"
+### Community 746 - "strict_direct_media_library_repository.dart"
+Cohesion: 0.09
+Nodes (22): bookmarked, directBookmarkResult, downloadStatus, expectedContactPeerId, filterSignature, gateRequests, gates, getMediaLibraryPage (+14 more)
+
+### Community 747 - "shared_media_test_fakes.dart"
+Cohesion: 0.09
+Nodes (22): bookmarked, contentHash, cursor, downloadStatus, _entries, expectedGroupId, filter, getMediaLibraryPage (+14 more)
+
+### Community 748 - "post_pin_fixtures.dart"
 Cohesion: 0.09
 Nodes (22): authorPeerId, authorUsername, blocked, createdAt, envelope, eventId, expiresAt, keepAvailable (+14 more)
 
-### Community 678 - "Android Push Registration Contract Tests"
+### Community 749 - "fake_media_file_manager.dart"
 Cohesion: 0.09
-Nodes (22): _accountHash, _baseProofDetails, _baseProofDetailsV2, _boundDetails, _boundDetailsV2, _commandHash, _commandId, _currentAuthorizationArtifactHash (+14 more)
+Nodes (22): copyToDurableStorage, deletedContactIds, deletedFilePaths, deletedPostIds, deleteFile, deleteMediaForContact, deleteMediaForPost, deletePendingUploadDir (+14 more)
 
-### Community 679 - "Testpeer Event Listener (Go)"
+### Community 750 - "GroupMessage"
+Cohesion: 0.10
+Nodes (20): AfterDownload, FailureEvent, group_message.dart, GroupRemoved, GroupMessage, groupId, GroupThreadPreview, hasSent (+12 more)
+
+### Community 751 - "production_application_bootstrap_phase_contract_test.dart"
+Cohesion: 0.10
+Nodes (20): BlockFunctionBody, ClassDeclaration, FunctionDeclarationStatement, main, runApplicationBootstrap, MethodDeclaration, package:flutter_app/app/application_root.dart, package:flutter_app/app/bootstrap/application_bootstrap.dart (+12 more)
+
+### Community 752 - "messageCollector"
 Cohesion: 0.13
 Nodes (14): Cond, int64Val(), strVal(), emitAsyncEvent(), main(), writeResponse(), incomingGroupMessage, incomingMessage (+6 more)
 
-### Community 680 - "Fake P2P Network Harness"
+### Community 753 - "cold_start_notif_anchor.dart"
 Cohesion: 0.09
-Nodes (21): fake_p2p_service_integration.dart, ackDelay, deliver, deliverCallCount, deliveryDelay, deliveryFails, duplicateOnDeliver, FakeP2PNetwork (+13 more)
+Nodes (20): dart:developer, flow_event_emitter.dart, ColdStartNotifAnchor, _emitted, instance, _maybeEmit, _nodeReady, _notifTapSeen (+12 more)
 
-### Community 681 - "Node Feature Flags (Go)"
-Cohesion: 0.14
-Nodes (12): TestDcutrFlagOff_ForcesPrivate_ZeroPunches(), TestDcutrFlagOn_SelectsUpgradeReachability(), DefaultFeatureFlags(), TestMergeFeatureFlags_EveryStructFieldIsMergeable(), TestMergeFeatureFlagsOverDefaults_OmittedKeyKeepsDefaultNotZeroValue(), MergeFeatureFlagsOverDefaults(), featureFlagsStatusMap(), dcutrReachabilityMode() (+4 more)
+### Community 754 - "NotificationService"
+Cohesion: 0.18
+Nodes (13): Equatable, LogPushPreviewEventEmitter, NotificationServiceCompletionGate, NotificationServiceCompletionGeneration, nsePublicProofPayload(), NotificationService, UInt64, UNNotificationContent (+5 more)
 
-### Community 682 - "Group Message Repositories"
-Cohesion: 0.11
-Nodes (20): _LifecycleMessageRepository, _ProofLifecycleRepository, GroupConversationReadEventSource, GroupMembershipRepairDeletionRepository, GroupMessageAuthorizationChangeSource, GroupMessageLocalDeletionAuthority, GroupOutgoingLocalMessageChangeSource, GroupPrivateMediaLifecycleRepository (+12 more)
+### Community 755 - "benchmark_timeout_accuracy_harness.dart"
+Cohesion: 0.09
+Nodes (21): actual, checkHealth, configured, _configuredRunId, _configuredSharedDir, deadline, dispose, _expectedGoTimeoutMessages (+13 more)
 
-### Community 683 - "Android Connectivity Restore Campaign"
+### Community 756 - "group_media_prepared_artifact_custody.dart"
+Cohesion: 0.09
+Nodes (21): candidate, canonical, components, _containedRelativeLinkTarget, convert, current, depth, entries (+13 more)
+
+### Community 757 - "android_background_crypto_preflight_contract_test.dart"
+Cohesion: 0.09
+Nodes (21): BackgroundCryptoStagedFileFailure, ListBase, PUSH_BACKGROUND_MESSAGE_RECEIVED
+PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED, _boundedClaimName, _conversationKey, _copy, _FailOnSecondTraversalBytes, _groupIdForContext (+13 more)
+
+### Community 758 - "android_connectivity_restore_campaign.dart"
 Cohesion: 0.09
 Nodes (21): chatAction, connectivityRestoreMessageTexts, connectivityRestoreSenderStepId, connectivityRestoreWindowAckFileName, connectivityRestoreWindowAckSchema, connectivityRestoreWindowRequestFileName, connectivityRestoreWindowRequestSchema, digest (+13 more)
 
-### Community 684 - "Voice Recorder Smoke Tests"
+### Community 759 - "android_voice_recorder_smoke.dart"
 Cohesion: 0.09
 Nodes (20): AndroidVoiceRecordingFixture, captureDuration, completed, delete, durationMs, file, fixture, mime (+12 more)
 
-### Community 685 - "Media Attachment Lifecycle Lock"
+### Community 760 - "ios_xctestrun_relocator.dart"
+Cohesion: 0.09
+Nodes (21): application, environment, fullSelector, iosTestWithoutBuildingArguments, IosXctestrunRelocation, patch, patcher, _patchString (+13 more)
+
+### Community 761 - "groups_db_helpers.dart"
+Cohesion: 0.09
+Nodes (21): any, columns, dbAdvanceGroupMembershipWatermark, dbArchiveGroup, dbCountGroups, dbDeleteGroup, dbInsertGroup, dbLoadActiveGroups (+13 more)
+
+### Community 762 - "media_attachment_lifecycle_lock.dart"
 Cohesion: 0.09
 Nodes (21): _acquireExclusive, _acquireShared, _activeShared, attachmentIds, completer, _drainBarrierQueue, exclusive, _exclusiveActive (+13 more)
 
-### Community 686 - "App Root Notification Open Tests"
-Cohesion: 0.09
-Nodes (21): NotificationOpenDeferredAttemptResult, _AppRootNotificationHarness, cancel, clear, _deferContext, dispatch, events, finishPreparation (+13 more)
+### Community 763 - "media_library.dart"
+Cohesion: 0.10
+Nodes (21): attachment, bookmarkedOnly, direct, entries, group, hashCode, id, incomingOnly (+13 more)
 
-### Community 687 - "Share Intent Service"
+### Community 764 - "group_pending_broadcast_sink.dart"
 Cohesion: 0.09
-Nodes (21): bufferIntent, captureInitialIntent, consumePendingIntent, _convertMediaList, dispose, _getCacheDirectory, GetCacheDirectoryFn, getInitialIntent (+13 more)
+Nodes (21): broadcast, clearGroupRolePreparationInFlight, discardGroupPendingBroadcasts, drainGroupPendingBroadcastsForGroup, enqueueGroupPendingBroadcast, groupId, groupPendingBroadcastCount, hasGroupPendingBroadcastEnqueueSink (+13 more)
 
-### Community 688 - "Migration Export Authorization"
+### Community 765 - "group_pending_key_distribution_service.dart"
 Cohesion: 0.09
-Nodes (21): authenticatedChannelBinding, AuthenticatedMigrationChannelTranscript, authorizationNonce, authorizedAt, authorizeMigrationExport, authorizes, bytes, consumeResult (+13 more)
+Nodes (21): attemptCap, bridge, drainAllPending, _drainOne, _drainOneLocked, drainPendingForGroup, drainPendingForPeer, existingDevices (+13 more)
 
-### Community 689 - "Group Feed Media Verification"
+### Community 766 - "group_pending_key_distribution.dart"
 Cohesion: 0.09
-Nodes (20): block, contentHashValidation, copyWith, _emitGroupFeedMediaVerifyEvent, file, fileBytes, fileExists, _idPrefix (+12 more)
+Nodes (21): attempts, copyWith, createdAt, deviceId, finalizedAt, fromMap, groupId, groupPendingKeyDistributionId (+13 more)
 
-### Community 690 - "Group Media Batch Forward Policy"
+### Community 767 - "package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart"
+Cohesion: 0.10
+Nodes (18): package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart, package:flutter_app/core/database/migrations/063_group_pending_key_repairs.dart, package:flutter_app/core/database/migrations/080_group_pending_key_repairs_status_index.dart, package:flutter_app/features/groups/data/repositories/group_pending_key_repair_repository_impl.dart, package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart, db, main, repairRow (+10 more)
+
+### Community 768 - "p2p_service_impl_wake_attach_test.dart"
 Cohesion: 0.09
-Nodes (21): GroupMediaBatchForwardDraft, GroupMediaBatchForwardDeliveryCoordinator, package:flutter_app/features/share/presentation/navigation/group_media_batch_forward_picker_route.dart, backing, deliverInitial, delivery, _draft, getActiveGroups (+13 more)
+Nodes (20): package:flutter_app/features/push/infrastructure/received_wake_token_store_impl.dart, _CapturingBridge, checkHealth, containsKey, _CountingSecureKeyStore, delete, dispose, initialize (+12 more)
 
-### Community 691 - "Post Follow-On Retry"
-Cohesion: 0.09
-Nodes (21): accountMigrationNetworkGate, allowed, _allowsPostFollowOnNetworkSideEffects, _debounceTimer, dispose, _isOnline, _isRetrying, jobs (+13 more)
-
-### Community 692 - "Received Wake Token Store"
-Cohesion: 0.09
-Nodes (20): clear, readTokenFor, ReceivedWakeTokenStore, removeTokenFor, writeTokenFor, _cache, clear, _ensureLoaded (+12 more)
-
-### Community 693 - "Fake Notification Service"
-Cohesion: 0.09
-Nodes (21): package:flutter_app/core/notifications/notification_service.dart, body, clearDeliveredNotifications, clearedDeliveredNotificationsCount, consumeInitialPayload, contactPeerId, dispose, FakeGenericNotification (+13 more)
-
-### Community 694 - "iOS Notification Relay Fixture Tests"
+### Community 769 - "_load"
 Cohesion: 0.20
 Nodes (8): _executable(), _FakeRedis, IosNotificationRelayFixtureDriverTest, IosNotificationRelayRemoteHelperTest, _load(), _private(), _valid_remote_request(), Path
 
-### Community 695 - "Fake Media Attachment Repository"
-Cohesion: 0.09
-Nodes (21): allSavedAttachments, _attachments, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentById, getAttachmentsForMessage, getAttachmentsForMessageCallCount, getAttachmentsForMessages (+13 more)
-
-### Community 696 - "Direct Text Gate Authorization Tests"
+### Community 770 - "direct_text_gate_a_authorization_test.dart"
 Cohesion: 0.09
 Nodes (21): _apkHash, artifact, _authorizationHash, capturedAt, clone, command, _commandHash, _commandId (+13 more)
 
-### Community 697 - "Media Thumbnail Widget"
-Cohesion: 0.10
-Nodes (20): BoxFit, build, _buildImage, cacheHeight, cacheWidth, _configureThumbnailFuture, createState, didUpdateWidget (+12 more)
+### Community 771 - "dtr18_placement_closure_contract_test.dart"
+Cohesion: 0.09
+Nodes (21): _bodySha256, candidate, _contractPath, convert, _dartFiles, _dependencyDispositionSha256, _dependencyDispositionSha256For, _dependencyIdentitySha256 (+13 more)
 
-### Community 698 - "1:1 Reaction Notification Proof Tests"
+### Community 772 - "group_parent_write_guard.dart"
+Cohesion: 0.10
+Nodes (20): ConflictAlgorithm, any, columns, conflict, conflictAlgorithm, _conflictSql, dbAllowsOrdinaryGroupWrite, dbHasSelfRemovedGroupWriteGuard (+12 more)
+
+### Community 773 - "contact_repository_impl.dart"
+Cohesion: 0.10
+Nodes (20): ../../domain/models/contact_model.dart, ../../domain/repositories/contact_repository.dart, addContact, archiveContact, blockContact, contactExists, deleteContact, directReactionProjection (+12 more)
+
+### Community 774 - "one_to_one_reaction_notification_proof_test.dart"
 Cohesion: 0.10
 Nodes (20): artifact, artifactDirectory, _artifactFile, contract, decoded, evidence, evidenceByKind, _expectEvidenceContains (+12 more)
 
-### Community 699 - "Reactions DB Helpers"
+### Community 775 - "application_bootstrap_test.dart"
+Cohesion: 0.10
+Nodes (20): PreparedApplication, _CallbackPreparedApplication, afterRunApp, buildFailure, buildRootWidget, expectedRoot, failure, _FailurePhase (+12 more)
+
+### Community 776 - "reactions_db_helpers.dart"
 Cohesion: 0.10
 Nodes (20): dbApplyIncomingReactionMutation, dbDeleteReaction, dbDeleteReactionsForContact, dbDeleteReactionsForMessage, DbIncomingReactionApplyResult, DbIncomingReactionMutation, dbInsertReaction, dbLoadActiveOrTombstonedReactionForSender (+12 more)
 
-### Community 700 - "Mic Permission Gateway"
+### Community 777 - "group_media_disposable_transport_start.dart"
 Cohesion: 0.10
-Nodes (18): MicPermissionGateway, MicPermissionStatus, openAppSettings, PermissionHandlerMicGateway, request, package:flutter_app/core/permissions/mic_permission_gateway.dart, package:flutter_app/core/permissions/mic_permission_prompt.dart, package:permission_handler/permission_handler.dart (+10 more)
+Nodes (20): accountMigrationNetworkGate, accountPeerId, _credentialsFromGeneratedIdentity, _credentialsFromStoredDocument, _DisposableTransportCredentials, GenerateGroupMediaDisposableTransportIdentity, groupMediaDisposableTransportIdentitySchema, groupMediaDisposableTransportIdentityStorageKey (+12 more)
 
-### Community 701 - "Feed Theme Tokens"
+### Community 778 - "private_media_outbox_e2e_protocol.dart"
+Cohesion: 0.10
+Nodes (20): privateMediaOutboxConversationReadyCondition, privateMediaOutboxE2EAction, privateMediaOutboxE2EBuildProfile, privateMediaOutboxE2EEndpointResultSchema, privateMediaOutboxE2EHostReleaseFileName, privateMediaOutboxE2EHostReleaseSchema, privateMediaOutboxE2ERequestSchema, privateMediaOutboxE2EScenario (+12 more)
+
+### Community 779 - "announcement_media_forward_request.dart"
+Cohesion: 0.10
+Nodes (19): ForwardProvenance, AnnouncementForwardCaptionMode, announcementForwardDestinationOwner, AnnouncementMediaForwardRequest, captionMode, composedCaption, editedCaption, forTest (+11 more)
+
+### Community 780 - "feed_tokens.dart"
 Cohesion: 0.10
 Nodes (20): blurLetter, blurNav, borderSoft, canvas, copyWith, dark, green500, greenFill15 (+12 more)
 
-### Community 702 - "Migration Entry Streaming"
-Cohesion: 0.10
-Nodes (20): AccountMigrationStreamingEntry, build, chunkSize, entryId, _FileAccountMigrationStreamingEntry, filePath, fileReader, kind (+12 more)
-
-### Community 703 - "Contact Request Message Handling"
-Cohesion: 0.10
-Nodes (20): blockedGuard, dataToVerify, existingRequest, handleIncomingMessage, HandleMessageResult, isContact, isValid, json (+12 more)
-
-### Community 704 - "Group Upload Retry Use Case"
-Cohesion: 0.10
-Nodes (19): absolutePath, age, doneCount, emitRetryTiming, _isFreshOutgoingGroupSend, kFreshGroupUploadRetrySendingThreshold, _lateGroupSendAbortReason, pendingAttachment (+11 more)
-
-### Community 705 - "Group Invite Revocation Use Case"
+### Community 781 - "revoke_pending_group_invite_use_case.dart"
 Cohesion: 0.10
 Nodes (19): canonicalPayload, deletePendingInvite, envelopeJson, invite, payload, revokedAt, revokePendingGroupInvite, RevokePendingGroupInviteResult (+11 more)
 
-### Community 706 - "Group Pending Key Distribution Model"
-Cohesion: 0.10
-Nodes (20): attempts, copyWith, createdAt, deviceId, finalizedAt, fromMap, groupId, groupPendingKeyDistributionId (+12 more)
-
-### Community 707 - "Group Reaction Replay Outbox"
+### Community 782 - "group_reaction_replay_outbox_entry.dart"
 Cohesion: 0.10
 Nodes (20): action, copyWith, createdAt, deliveryStatus, emoji, failed, fromMap, groupId (+12 more)
 
-### Community 708 - "Push Preview Telemetry Gate"
-Cohesion: 0.10
-Nodes (20): blocksRelease, blockThreshold, calculatePushPreviewDegradeRate, denominator, _denominatorEvents, event, excludedReasons, fromFlowPayload (+12 more)
-
-### Community 709 - "Push Envelope Staging Tests"
-Cohesion: 0.10
-Nodes (18): package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart, package:flutter_app/features/push/application/push_envelope_staging.dart, clear, entries, main, prune, readAll, stage (+10 more)
-
-### Community 710 - "Post Presence Handling Tests"
+### Community 783 - "handle_incoming_post_presence_use_case_test.dart"
 Cohesion: 0.10
 Nodes (20): accuracyM, _activePayload, blocked, capturedAt, _contact, contacts, createdAt, _inactivePayload (+12 more)
 
-### Community 711 - "Benchmark Harness Tests"
+### Community 784 - "group_pending_reaction_repository_impl.dart"
 Cohesion: 0.10
-Nodes (19): benchmark_1_1_send_harness.dart, benchmark_ack_harness.dart, benchmark_background_resume_harness.dart, benchmark_bridge_crossing_harness.dart, benchmark_connection_reuse_harness.dart, benchmark_encryption_harness.dart, benchmark_event_queue_harness.dart, benchmark_group_publish_harness.dart (+11 more)
+Nodes (18): ../../domain/models/group_pending_reaction.dart, ../../domain/repositories/group_pending_reaction_repository.dart, deleteExpired, deletePendingReaction, getPendingReactions, getPendingReactionsForMessage, GroupPendingReactionRepositoryImpl, pruneGroup (+10 more)
 
-### Community 712 - "Contact Repository Implementation"
-Cohesion: 0.10
-Nodes (19): contact_repository.dart, addContact, archiveContact, blockContact, contactExists, deleteContact, directReactionProjection, dismissIntroBanner (+11 more)
-
-### Community 713 - "Local Media Server Tests"
-Cohesion: 0.10
-Nodes (19): Digest, _DigestSink, _SingleDigestSink, _CallbackSink, _CallbackSink, _DigestSink, Sink, add (+11 more)
-
-### Community 714 - "Identity Progress Performance Tests"
+### Community 785 - "identity_progress_performance_test.dart"
 Cohesion: 0.10
 Nodes (19): _callback, _fakeIdentityJson, _FakeIdentityRepo, _fakeMlKemResponse, _FrameTimingCollector, hasData, loadIdentity, printSummary (+11 more)
 
-### Community 715 - "Media Stable ID Smoke Runner"
+### Community 786 - "group_media_reliability_criteria_test.dart"
+Cohesion: 0.10
+Nodes (19): ../../integration_test/scripts/group_media_reliability_criteria.dart, _artifactFixture, _cleanupReceipt, codeUnits, _deepCopy, _digest, _firstRow, _flowEvents (+11 more)
+
+### Community 787 - "run_media_stable_id_smoke.dart"
 Cohesion: 0.10
 Nodes (19): decoded, _detectAndroidEmulator, detected, _detectIosSimulator, deviceId, devices, devicesByRuntime, exitCode (+11 more)
 
-### Community 716 - "Inbox Staging DB Helpers"
+### Community 788 - "group_pending_reactions_db_helpers.dart"
+Cohesion: 0.10
+Nodes (19): db, dbDeleteExpiredGroupPendingReactions, dbDeleteGroupPendingReaction, dbLoadGroupPendingReactions, dbLoadGroupPendingReactionsForMessage, dbPruneGroupPendingReactions, dbUpdateOrdinaryGroupOwnedRows, dbUpsertGroupPendingReaction (+11 more)
+
+### Community 789 - "inbox_staging_db_helpers.dart"
 Cohesion: 0.10
 Nodes (19): attemptedAt, dbCountNeedsAttentionInboxStagingEntries, dbCountQuarantinedInboxStagingEntries, dbDeleteInboxStagingEntry, dbInsertInboxStagingEntry, dbLoadInboxStagingEntry, dbLoadRecoverableInboxStagingEntries, dbMarkInboxStagingEntryQuarantined (+11 more)
 
-### Community 717 - "P2P Inbound Transport Tests"
+### Community 790 - "p2p_service_inbound_transport_test.dart"
 Cohesion: 0.10
 Nodes (19): TransportMetrics, bridge, _captureFlowEvents, checkHealth, dispose, _FakeBridge, inboxStagingRepository, initialize (+11 more)
 
-### Community 718 - "Group Media MIME Policy"
+### Community 791 - "group_media_mime_policy.dart"
 Cohesion: 0.10
 Nodes (19): allowedMimeToMediaType, _DetectedSignature, _detectKnownSignature, fileMatchesDeclaredMime, GroupMediaMimePolicy, GroupMediaValidationResult, invalid, isAllowedMime (+11 more)
 
-### Community 719 - "Media Storage Usage Settings"
-Cohesion: 0.11
-Nodes (19): MediaStorageManager, MediaLibraryScope, build, _clearType, createState, formatBytes, initState, _inventories (+11 more)
-
-### Community 720 - "Recent Background Notification Gate"
-Cohesion: 0.10
-Nodes (19): clear, _coerceTimestamp, debugResetRecentBackgroundNotificationGate, debugSetRecentBackgroundNotificationGate, _defaultRecentBackgroundGateLoadError, _doResolveFilePath, _explicitFilePath, filePath (+11 more)
-
-### Community 721 - "Migration QR Payload Model"
-Cohesion: 0.10
-Nodes (19): accountMigrationPairingQrKind, channelNonce, consumedAt, createdAt, currentAccountMigrationPairingQrVersion, expiresAt, fromJson, MigrationConsumedPairingSession (+11 more)
-
-### Community 722 - "Contact Request Model"
+### Community 792 - "contact_request_model.dart"
 Cohesion: 0.10
 Nodes (19): ContactRequestStatus, copyWith, fromMap, fromP2PPayload, hashCode, mlKemPublicKey, operator, peerId (+11 more)
 
-### Community 723 - "Feed Letter Models"
-Cohesion: 0.12
-Nodes (19): canWrite, contactPeerId, displayName, FeedLetter, fromConnection, fromThread, groupId, GroupLetter (+11 more)
-
-### Community 724 - "Trusted Group System Events"
+### Community 793 - "trusted_private_group_system_event.dart"
 Cohesion: 0.10
 Nodes (19): eventAt, fieldNames, member, parseTrustedPrivateMemberSystemEvent, parseTrustedPrivateMessageDeleteEvent, _parseUtc, raw, _readString (+11 more)
 
-### Community 725 - "Inbox Custody Use Case Tests"
+### Community 794 - "block_contact_use_case_test.dart"
 Cohesion: 0.10
-Nodes (19): package:flutter_app/core/services/inbox_store_outcome.dart, call, callIndex, calls, captureFlowEvents, contactPeerId, fixedNow, id (+11 more)
+Nodes (19): package:flutter_app/features/contacts/application/block_contact_use_case.dart, addContact, archiveContact, blockContact, blockedPeerIds, contactExists, deleteContact, dismissIntroBanner (+11 more)
 
-### Community 726 - "Archive Contact Tests"
-Cohesion: 0.10
-Nodes (19): package:flutter_app/features/contacts/application/archive_contact_use_case.dart, addContact, archiveContact, archivedPeerIds, blockContact, contactExists, deleteContact, dismissIntroBanner (+11 more)
-
-### Community 727 - "Unarchive Contact Tests"
-Cohesion: 0.10
-Nodes (19): package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart, addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository (+11 more)
-
-### Community 728 - "Unblock Contact Tests"
+### Community 795 - "unblock_contact_use_case_test.dart"
 Cohesion: 0.10
 Nodes (19): package:flutter_app/features/contacts/application/unblock_contact_use_case.dart, addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository (+11 more)
 
-### Community 729 - "Post Presence Listener Tests"
+### Community 796 - "post_presence_listener_test.dart"
 Cohesion: 0.10
 Nodes (19): package:flutter_app/features/posts/application/post_presence_listener.dart, accuracyM, blocked, capturedAt, _contact, contacts, controller, latE3 (+11 more)
 
-### Community 730 - "Notification Cancellation Wiring Tests"
+### Community 797 - "wake_token_directionality_readiness_test.dart"
+Cohesion: 0.10
+Nodes (19): bridge, checkHealth, clear, commands, dispose, initialize, isInitialized, main (+11 more)
+
+### Community 798 - "local_notification_exact_cancellation_wiring_test.dart"
 Cohesion: 0.10
 Nodes (19): beforeTarget, _between, clear, create, dispatch, end, _expectEarlyRemoteContextWiring, _expectPairedContextWiring (+11 more)
 
-### Community 731 - "Fake Contact Request Repository"
+### Community 799 - "p2p_service_lan_forward_test.dart"
 Cohesion: 0.10
-Nodes (19): addRequest, addRequestCallCount, deleteRequest, deleteRequestCallCount, getPendingRequests, getPendingRequestsCallCount, getRequest, getRequestCallCount (+11 more)
+Nodes (19): bridge, checkHealth, commandsSent, dispose, events, _FakeBridge, flush, initialize (+11 more)
 
-### Community 732 - "Group Media Action Policy Tests"
+### Community 800 - "group_received_media_action_policy_test.dart"
 Cohesion: 0.10
 Nodes (19): _attachment, canWrite, _capabilities, capabilitiesFor, contentHash, downloadStatus, encryptionKeyBase64, encryptionNonce (+11 more)
 
-### Community 733 - "P2P Node Use Cases"
-Cohesion: 0.12
-Nodes (15): ../../account_migration/application/account_migration_runtime_network_gate.dart, ../../../core/services/p2p_service.dart, ../../../core/utils/flow_event_emitter.dart, ../domain/models/discovered_peer.dart, ../../identity/domain/repositories/identity_repository.dart, dialP2PPeer, discoverP2PPeer, DiscoverPeerResult (+7 more)
+### Community 801 - "group_media_reliability_wiring_test.dart"
+Cohesion: 0.10
+Nodes (19): arguments, argumentStart, _balancedInvocations, blockComment, braces, brackets, _compactDart, escaped (+11 more)
 
-### Community 734 - "Connection Status Indicator UI"
+### Community 802 - "connection_status_indicator_test.dart"
+Cohesion: 0.10
+Nodes (19): _captureFlowEvents, containers, _currentState, dispose, _dotColor, _FakeP2PService, fakeService, _labelTextWidget (+11 more)
+
+### Community 803 - "contact_request_repository_impl.dart"
 Cohesion: 0.11
-Nodes (18): ../../domain/models/node_state.dart, BadgeReadinessState, build, _connectionCount, ConnectionHealth, createState, _displayedBadgeState, dispose (+10 more)
+Nodes (17): ../../domain/models/contact_request_model.dart, ../../domain/repositories/contact_request_repository.dart, addRequest, ContactRequestRepositoryImpl, deleteRequest, getPendingRequests, getRequest, requestExists (+9 more)
 
-### Community 735 - "Bridge Group Key Rotation (Go)"
-Cohesion: 0.18
-Nodes (18): DecryptContactRequest(), EncryptContactRequest(), TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(), TestGroupGenerateNextKey_InvalidJSON(), TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(), TestGroupGenerateNextKey_KE013UsesRestoredEpochAfterRestartMemoryLoss(), TestGroupGenerateNextKey_MissingGroupId(), TestGroupGenerateNextKey_NodeNotInitialized() (+10 more)
-
-### Community 736 - "Node Config & Timeouts (Go)"
+### Community 804 - "NodeConfig"
 Cohesion: 0.15
 Nodes (10): BackgroundTimeouts(), InteractiveTimeouts(), RelayAddress(), TestForegroundRelayProbeIsNotRequiredForActiveSendPath(), TestInteractiveAndBackgroundTimeoutProfilesRemainDistinct(), TestOutboundStreams_ApplyDeadlineAcrossChatInboxRendezvousGroupInboxAndMedia(), NodeConfig, NodeState (+2 more)
 
-### Community 737 - "Media Delete Telemetry"
+### Community 805 - "lanDialHandler"
+Cohesion: 0.19
+Nodes (12): hasNonCircuitAddr(), newLANDialHandler(), lanDialHandler, AddrInfo, Context, Host, ID, Multiaddr (+4 more)
+
+### Community 806 - "pubsub_unsubscribe_exit_paths_test.go"
+Cohesion: 0.29
+Nodes (18): assertBB009NoPostLeaveTopicEventsAfter(), assertGL008NoPostLeaveGroupActivity(), assertLP003GroupPubSubStateRemoved(), assertLP003NoExitedGroupEventsAfter(), gl008DiscoveryStepRepresentsWork(), go010GroupRuntimeGoroutineSnapshot(), startLocalNodeForUnsubscribeExitPathWithCollector(), TestBB009LeaveRemovesTopicSubscriptionForValidatorsAndPubSub() (+10 more)
+
+### Community 807 - "app_owned_media_delete_telemetry.dart"
 Cohesion: 0.11
 Nodes (18): appOwnedMediaPathKind, baseDetails, bytesBefore, caller, count, deleteAppOwnedMediaDirectoryIfExists, deleteAppOwnedMediaFileIfExists, _deleteAppOwnedMediaTargetIfExists (+10 more)
 
-### Community 738 - "Video Thumbnail Cache"
+### Community 808 - "media_upload_in_flight_tracker.dart"
+Cohesion: 0.11
+Nodes (18): attachmentCount, _attachmentIds, clearAll, inFlightCount, isInFlight, manual, MediaUploadLease, MediaUploadTriggerSource (+10 more)
+
+### Community 809 - "video_thumbnail_cache.dart"
 Cohesion: 0.11
 Nodes (18): baseName, contains, debugSetVideoThumbnailGenerator, _defaultThumbnailGenerator, derivedVideoThumbnailPath, directory, dotIndex, ext (+10 more)
 
-### Community 739 - "Send Presence Emphasis Tests"
+### Community 810 - "notification_route_dispatch.dart"
+Cohesion: 0.11
+Nodes (18): data, getInitialMessage, handleInitialRemoteMessage, MissingGroupNotificationRouteIdHandler, MissingNotificationRouteTargetHandler, NotificationRouteTargetHandler, onBeforeRouteTarget, onMissingGroupRouteId (+10 more)
+
+### Community 811 - "send_presence_emphasis_test.dart"
 Cohesion: 0.11
 Nodes (18): RelayPresenceLookup, RelayPresence, send_chat_message_use_case_test.dart, connected, discoverLocalPeer, discoverPeer, _emphasis, _has (+10 more)
 
-### Community 740 - "Reaction Payload Model"
+### Community 812 - "conversation_reaction_projection_controller.dart"
+Cohesion: 0.11
+Nodes (18): DirectMediaLibraryController, GroupSharedMediaLibraryController, _PokeNotifier, ChangeNotifier, applyChange, clear, ConversationReactionProjectionController, ConversationReactionUpsertPlacement (+10 more)
+
+### Community 813 - "media_storage.dart"
+Cohesion: 0.11
+Nodes (18): add, attachment, bytes, byType, count, entries, MediaStorageEntry, MediaStorageInventory (+10 more)
+
+### Community 814 - "reaction_payload.dart"
 Cohesion: 0.11
 Nodes (18): action, addAction, buildEncryptedEnvelope, emoji, fromDecryptedJson, fromJson, id, isSupportedAction (+10 more)
 
-### Community 741 - "Group Invite Decline Use Case"
-Cohesion: 0.11
-Nodes (18): bridge, contactRepo, declinedAtUtc, declinePendingGroupInvite, DeclinePendingGroupInviteResult, declinerPeerId, declinerPrivateKey, deletePendingInvite (+10 more)
-
-### Community 742 - "Group Sender Device Binding"
+### Community 815 - "group_sender_device_binding.dart"
 Cohesion: 0.11
 Nodes (18): activeDevices, byDeviceId, bySigningKey, byTransport, device, deviceId, devicePublicKey, GroupSenderDeviceBinding (+10 more)
 
-### Community 743 - "Group Key Repair Repositories"
-Cohesion: 0.11
-Nodes (18): GroupPendingKeyRepairRepository, GroupPendingKeyRepairRepositoryImpl, _InMemoryGroupPendingKeyRepairRepository, _InMemoryGroupPendingKeyRepairRepository, _SmokeInMemoryGroupPendingKeyRepairRepository, _InMemoryGroupPendingKeyRepairRepository, _byCreatedThenId, deleteRepair (+10 more)
-
-### Community 744 - "Pending Group Invite Repository"
+### Community 816 - "pending_group_invite_repository.dart"
 Cohesion: 0.11
 Nodes (18): deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones, deletePendingInvite, getConsumedInvite, getPendingInvite, getPendingInvites (+10 more)
 
-### Community 745 - "Nearby Posts & Surface Hydration"
+### Community 817 - "load_orbit_groups_use_case.dart"
 Cohesion: 0.11
-Nodes (17): avatarSnapshots, hydratePostSurfaceItems, mediaMap, postList, repostHeartBaselines, viewerSharedToCounts, wait, package:flutter_app/features/posts/application/nearby_eligibility_service.dart (+9 more)
+Nodes (18): _buildOrbitGroup, descriptors, group, ids, includeArchived, latestMessage, _latestMessageIds, _loadGroupThreadSummaries (+10 more)
 
-### Community 746 - "Group Gap Repair DB Helpers"
+### Community 818 - "in_memory_contact_presence_snapshot_repository.dart"
 Cohesion: 0.11
-Nodes (17): ../../../features/groups/domain/models/group_history_gap_repair.dart, current, currentStatus, dbLoadGroupHistoryGapRepair, dbLoadLatestGroupHistoryGapRepair, dbLoadVisibleGroupHistoryGapRepairs, dbSaveGroupHistoryGapRepair, dbUpsertGroupHistoryGapRepair (+9 more)
+Nodes (17): ContactPresenceSnapshotRepositoryImpl, dispose, load, loadAll, save, snapshotChanges, _snapshotChangesController, ContactPresenceSnapshotRepository (+9 more)
 
-### Community 747 - "PubSub Unsubscribe Tests (Go)"
-Cohesion: 0.30
-Nodes (17): assertBB009NoPostLeaveTopicEventsAfter(), assertGL008NoPostLeaveGroupActivity(), assertLP003GroupPubSubStateRemoved(), assertLP003NoExitedGroupEventsAfter(), gl008DiscoveryStepRepresentsWork(), go010GroupRuntimeGoroutineSnapshot(), startLocalNodeForUnsubscribeExitPathWithCollector(), TestBB009LeaveRemovesTopicSubscriptionForValidatorsAndPubSub() (+9 more)
-
-### Community 748 - "Multi-Party Runtime Channel Probe"
+### Community 819 - "announcement_private_reply_entry_surface_test.dart"
 Cohesion: 0.11
-Nodes (17): config, configFile, _configFileName, dbName, documentsDir, main, marker, markerFile (+9 more)
+Nodes (18): blockComment, close, depth, escaped, _extractFunction, _extractInvocations, lineComment, main (+10 more)
 
-### Community 749 - "Notification Preview Resolver (iOS)"
-Cohesion: 0.34
-Nodes (4): boundedReactionNotificationIdentity(), NotificationPreviewResolver, NotificationPreviewResult, Bool
+### Community 820 - "application_bootstrap.dart"
+Cohesion: 0.12
+Nodes (17): AppBuildInfo, afterRunApp, ApplicationBootstrap, ApplicationBootstrapFactory, ApplicationHost, bootstrap, buildRootWidget, FlutterApplicationHost (+9 more)
 
-### Community 750 - "Group Pending Reactions DB Helpers"
+### Community 821 - "reaction_repository_impl.dart"
 Cohesion: 0.11
-Nodes (17): dbDeleteExpiredGroupPendingReactions, dbDeleteGroupPendingReaction, dbLoadGroupPendingReactions, dbLoadGroupPendingReactionsForMessage, dbPruneGroupPendingReactions, dbUpsertGroupPendingReaction, delete, existing (+9 more)
+Nodes (17): ../../domain/models/message_reaction.dart, ../../domain/repositories/reaction_repository.dart, GroupReactionNotificationProjection, applyIncomingAdd, applyIncomingRemove, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved (+9 more)
 
-### Community 751 - "Identity Secrets DB Migration"
+### Community 822 - "reaction_notification_proof_support_test.dart"
+Cohesion: 0.11
+Nodes (17): ../../integration_test/scripts/reaction_notification_proof_support.dart, artifact, class, digestA, digestB, digestC, evidenceKinds, flow (+9 more)
+
+### Community 823 - "005_secret_null_checks.dart"
 Cohesion: 0.11
 Nodes (17): avatar_blob, avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key (+9 more)
 
-### Community 752 - "Inbox Store Outcomes"
+### Community 824 - "group_media_ios_disposable_profile.dart"
+Cohesion: 0.11
+Nodes (17): groupMediaAndroidDisposableArtifactEnvironment, groupMediaAndroidDisposableArtifactSha256Environment, groupMediaAndroidDisposableBuildProfile, groupMediaAndroidDisposablePackageDefine, groupMediaAndroidDisposablePackageId, groupMediaIosDisposableAppGroupId, groupMediaIosDisposableBuildProfile, groupMediaIosDisposableBundleDefine (+9 more)
+
+### Community 825 - "inbox_store_outcome.dart"
 Cohesion: 0.11
 Nodes (17): accepted, capacity, DetailedInboxStore, errorCode, errorMessage, expiresAtMs, fromBridgeResponse, InboxStoreOutcome (+9 more)
 
-### Community 753 - "Feed Color Palette"
+### Community 826 - "share_intent_model.dart"
+Cohesion: 0.11
+Nodes (17): attachmentIds, contactPeerId, copyWith, DirectForwardSourceAuthority, filePaths, hasFiles, hasText, messageId (+9 more)
+
+### Community 827 - "feed_colors.dart"
 Cohesion: 0.11
 Nodes (17): accentPurple, accentTeal, backgroundBottom, backgroundTop, cardBg, cardBorder, chevronColor, FeedColors (+9 more)
 
-### Community 754 - "Migration Authority State"
+### Community 828 - "reaction_repository.dart"
 Cohesion: 0.11
-Nodes (17): AccountMigrationRuntimeNetworkPolicy, AccountMigrationAuthorityState, accountPeerId, allowsNormalStartup, blocksNormalStartup, currentVersion, failClosed, fromPersistedJson (+9 more)
+Nodes (17): ReactionRepositoryImpl, applyIncomingAdd, applyIncomingRemove, AtomicIncomingReactionMutationRepository, currentAt, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved (+9 more)
 
-### Community 755 - "Local Media Linking Use Case"
+### Community 829 - "group_invite_identity_callbacks.dart"
 Cohesion: 0.11
-Nodes (17): attachment, _canLinkLocalMedia, deadline, decision, effectiveInterval, _findAttachmentById, hasLocalPath, kDefaultLocalMediaMetadataGrace (+9 more)
+Nodes (17): accountPeerId, buildGroupIdentityCallbacks, deviceId, GroupIdentityCallbacks, GroupInviteLocalIdentitySnapshot, hasLiveTransport, identity, inviteIdentity (+9 more)
 
-### Community 756 - "Group Key Repair Responder"
-Cohesion: 0.11
-Nodes (17): _bridge, dispose, DistributeGroupKeyAtEpochToPeer, _emitUnauthorized, _enqueue, GroupKeyRepairResponderListener, _groupRepo, _handle (+9 more)
-
-### Community 757 - "Group Invite Policy"
+### Community 830 - "group_invite_policy.dart"
 Cohesion: 0.11
 Nodes (17): allowedDevices, assignedRole, canInviteOthers, expiresAt, fromJson, GroupInvitePolicy, GroupInviteReusePolicy, inlineGroupKeyKind (+9 more)
 
-### Community 758 - "Group Reaction Payload"
+### Community 831 - "group_reaction_payload.dart"
 Cohesion: 0.11
 Nodes (17): action, actionAdd, actionRemove, emoji, eventId, fromDecryptedJson, GroupReactionPayload, id (+9 more)
 
-### Community 759 - "Post Recipient Delivery Model"
+### Community 832 - "post_recipient_delivery.dart"
 Cohesion: 0.11
 Nodes (17): copyWith, createdAt, deliveryOwnerId, deliveryOwnerKind, deliveryPath, deliveryStatus, fromMap, lastAttemptAt (+9 more)
 
-### Community 760 - "Posts Privacy Settings"
+### Community 833 - "posts_privacy_settings.dart"
 Cohesion: 0.12
 Nodes (17): copyWith, fromMap, fromWireValue, hasFreshSnapshotAt, lastLocalAccuracyM, lastLocalCapturedAt, lastLocalLatE3, lastLocalLngE3 (+9 more)
 
-### Community 761 - "Readability Widget Test Helpers"
-Cohesion: 0.10
-Nodes (15): package:flutter_app/features/conversation/presentation/widgets/amplitude_bars.dart, package:flutter_app/features/identity/presentation/widgets/identity_loading_card.dart, buildTestWidget, main, main, wrap, backgroundLuminance, contrastRatio (+7 more)
+### Community 834 - "group_pending_key_distribution_repository_impl_test.dart"
+Cohesion: 0.12
+Nodes (15): package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart, package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart, package:flutter_app/features/groups/data/repositories/group_pending_key_distribution_repository_impl.dart, package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart, db, distributionRow, main, columns (+7 more)
 
-### Community 762 - "Identity Generation (Go)"
+### Community 835 - "refresh_nearby_on_startup_use_case_test.dart"
+Cohesion: 0.11
+Nodes (17): package:flutter_app/features/posts/application/refresh_nearby_on_startup_use_case.dart, handleSharingDisabled, handleSharingDisabledCallCount, loadComposeAvailability, loadComposeAvailabilityCallCount, main, openAppSettings, refreshInteractivelyFromCompose (+9 more)
+
+### Community 836 - "p2p_service_transport_upgrade_test.dart"
+Cohesion: 0.11
+Nodes (17): bridge, checkHealth, connectViaCircuit, dispose, _FakeBridge, inboundTransport, inboxStagingRepository, initialize (+9 more)
+
+### Community 837 - "android_picture_in_picture_interruption_ownership_test.dart"
+Cohesion: 0.11
+Nodes (17): _appComponent, appUid, audioPath, _cleanupValidator, directory, _expectRejected, _fixture, _fixtureRoot (+9 more)
+
+### Community 838 - "group_exit_intent_repository_impl.dart"
+Cohesion: 0.12
+Nodes (16): ../../domain/models/group_exit_intent.dart, ../../domain/models/group_message.dart, ../../domain/models/group_pending_broadcast.dart, ../../domain/repositories/group_exit_intent_repository.dart, advance, all, cancelQueued, cleanupOrRetire (+8 more)
+
+### Community 839 - "contact_presence_snapshot.dart"
+Cohesion: 0.12
+Nodes (16): extension, accuracyM, capturedAt, ContactPresenceSnapshot, ContactPresenceSnapshotStatus, ContactPresenceSnapshotStatusWireValue, copyWith, fromMap (+8 more)
+
+### Community 840 - "GenerateIdentity"
 Cohesion: 0.24
 Nodes (14): GenerateIdentity(), identityFromMnemonic(), RestoreIdentity(), TestGenerateIdentity_PeerIdStartsWith12D3KooW(), TestGenerateIdentity_PrivateKeyIs64Bytes(), TestGenerateIdentity_ProducesUniquePeerIds(), TestGenerateIdentity_PublicKeyIs32Bytes(), TestGenerateIdentity_ReturnsValidIdentityWithAllFields() (+6 more)
 
-### Community 763 - "Personal Rendezvous Integration Tests (Go)"
-Cohesion: 0.29
-Nodes (16): startLocalRelayPairWithRegistrationTTL(), startNodeWithRelayConfig(), startNodeWithRelays(), startPersonalNodeWithExplicitInitialRegister(), startPersonalNodeWithExplicitInitialRegisterAndFlags(), TestPersonalNamespaceRecovery_ReRegistersAfterInPlaceRefresh(), TestPersonalNamespaceRefresh_KeepsDiscoverablePastShortTTL(), TestPersonalNamespaceRefresh_RefreshesBeforeExpiryUnderIdleNode() (+8 more)
-
-### Community 764 - "Group Thread Previews"
-Cohesion: 0.12
-Nodes (15): group_message.dart, GroupMessage, groupId, GroupThreadPreview, hasSent, lastOutgoingAt, latestMessage, messageCount (+7 more)
-
-### Community 765 - "Reaction Notification Proof Support Tests"
-Cohesion: 0.12
-Nodes (16): ../../integration_test/scripts/reaction_notification_proof_support.dart, artifact, digestA, digestB, digestC, evidenceKinds, flow, ios (+8 more)
-
-### Community 766 - "Android PiP UI Control Tests"
+### Community 841 - "android_picture_in_picture_system_ui_control_test.dart"
 Cohesion: 0.12
 Nodes (16): AndroidPictureInPictureSystemUiSelectionException, ../../integration_test/support/android_picture_in_picture_system_ui_control.dart, bounds, _boundsFromJson, boundsValues, coordinates, counts, display (+8 more)
 
-### Community 767 - "Group Media Size Policy"
+### Community 842 - "group_media_size_policy.dart"
 Cohesion: 0.12
 Nodes (16): groupMediaPerTypeLimitBytes, GroupMediaSizePolicy, kGroupMediaAudioLimitBytes, kGroupMediaFileLimitBytes, kGroupMediaImageLimitBytes, kGroupMediaPerAttachmentLimitBytes, kGroupMediaTotalMessageLimitBytes, kGroupMediaVideoLimitBytes (+8 more)
 
-### Community 768 - "Pending Composer Media Model"
-Cohesion: 0.12
-Nodes (16): budgetBytes, durationMs, file, formatPendingComposerBudgetBytes, gb, height, kb, kGeneralMediaAttachmentBudgetBytes (+8 more)
-
-### Community 769 - "Migration Group Manifest Validation"
-Cohesion: 0.12
-Nodes (15): MigrationGroupManifestBuilder, builder, MigrationGroupManifestValidator, validateRows, package:flutter_app/features/account_migration/application/migration_group_manifest_builder.dart, package:flutter_app/features/account_migration/application/migration_group_manifest_validator.dart, package:flutter_app/features/account_migration/domain/models/migration_group_manifest.dart, _groupRow (+7 more)
-
-### Community 770 - "Contact Repository Interface"
+### Community 843 - "contact_repository.dart"
 Cohesion: 0.12
 Nodes (16): addContact, archiveContact, blockContact, contactExists, ContactRepository, deleteContact, dismissIntroBanner, getActiveContacts (+8 more)
 
-### Community 771 - "Message Reaction Model"
-Cohesion: 0.12
-Nodes (16): copyWith, createdAt, emoji, fromJson, fromMap, hashCode, id, isRemoved (+8 more)
-
-### Community 772 - "Group Key Repair Backoff Timer"
+### Community 844 - "group_pending_key_repair_backoff_timer.dart"
 Cohesion: 0.12
 Nodes (16): createTimer, dispose, GroupPendingKeyRepairBackoffTimer, GroupPendingKeyRepairSweep, GroupPendingKeyRepairTimerFactory, isRunning, _onTick, _running (+8 more)
 
-### Community 773 - "Group Invite Delivery Attempt Model"
+### Community 845 - "group_history_gap_repair_repository.dart"
+Cohesion: 0.12
+Nodes (16): GroupHistoryGapRepair, created, current, getLatestRepairForGroup, getRepair, getVisibleRepairsForGroup, GroupHistoryGapRepairUpsertResult, markFailed (+8 more)
+
+### Community 846 - "group_invite_delivery_attempt.dart"
 Cohesion: 0.12
 Nodes (16): attemptedAt, copyWith, fromMap, fromValue, groupId, GroupInviteDeliveryAttempt, GroupInviteDeliveryStatus, inviteId (+8 more)
 
-### Community 774 - "Group Pending Membership Message Model"
+### Community 847 - "group_pending_membership_message.dart"
 Cohesion: 0.12
 Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingMembershipMessage, groupPendingMembershipMessageId, id, messageId (+8 more)
 
-### Community 775 - "Group Pending Reaction Model"
+### Community 848 - "group_pending_reaction.dart"
 Cohesion: 0.12
 Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingReaction, id, messageId, reactionJson (+8 more)
 
-### Community 776 - "Post Pass Model"
+### Community 849 - "orbit_find_matches.dart"
 Cohesion: 0.12
-Nodes (16): copyWith, createdAt, deliveryStatus, eventId, fromMap, innerPayloadJson, isIncoming, passedAt (+8 more)
+Nodes (16): active, chips, computeOrbitFind, hasMatches, inactive, index, item, kOrbitFindChipCap (+8 more)
 
-### Community 777 - "Post Reaction Envelope"
+### Community 850 - "group_media_disposable_transport_start_test.dart"
 Cohesion: 0.12
-Nodes (16): buildCommentReactionJson, buildPostReactionJson, commentId, createdAt, eventId, fromJson, isActive, isCommentReaction (+8 more)
+Nodes (16): package:flutter_app/core/debug/group_media_disposable_transport_start.dart, _accountIdentity, _accountPeerId, containsKey, delete, _generatedIdentity, main, read (+8 more)
 
-### Community 778 - "Media Library Batch Forward Tests"
+### Community 851 - "handle_app_resumed_nearby_test.dart"
 Cohesion: 0.12
-Nodes (16): builder, expectInvalid, getAttachmentsForMessage, identity, main, parent, parents, repository (+8 more)
+Nodes (16): handleSharingDisabled, handleSharingDisabledCallCount, loadComposeAvailability, loadComposeAvailabilityCallCount, main, openAppSettings, refreshInteractivelyFromCompose, refreshInteractivelyFromComposeCallCount (+8 more)
 
-### Community 779 - "Announcement Private Reply Tests"
-Cohesion: 0.12
-Nodes (16): blockComment, close, depth, escaped, _extractFunction, _extractInvocations, lineComment, main (+8 more)
-
-### Community 780 - "Nearby Post Sending Tests"
-Cohesion: 0.12
-Nodes (16): _contact, contacts, dispose, freshIso, load, _loadCount, main, network (+8 more)
-
-### Community 781 - "Seeded Group Reproduction Log Fake"
+### Community 852 - "seeded_group_reproduction_log.dart"
 Cohesion: 0.12
 Nodes (16): _bridgeResponses, _canonicalize, canonicalJson, _diagnostics, _failure, _operations, recordBridgeResponse, recordDiagnostic (+8 more)
 
-### Community 782 - "Sims Proof Binding Tests"
-Cohesion: 0.12
-Nodes (16): _captureOwnedBindings, category, _commandReferences, _deletedProofFiles, discovery, _DiscoveryRecord, _executableDiscoveryRecords, kind (+8 more)
-
-### Community 783 - "Bridge Callback Initialization (Go)"
+### Community 853 - "TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents"
 Cohesion: 0.18
 Nodes (11): nodeCallbackAdapter, recordingBridgeCallback, Initialize(), assertGroupMessageEvent(), TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents(), TestNodeCallbackAdapter_ForwardsRelayStateEventUntouched(), TestNodeCallbackAdapter_SetCallbackSwapsAndDropsNil(), waitForBridgeEventCount() (+3 more)
 
-### Community 784 - "Testpeer Envelope Handling (Go)"
+### Community 854 - "group_pending_key_distribution_repository_impl.dart"
+Cohesion: 0.12
+Nodes (15): ../../domain/models/group_pending_key_distribution.dart, ../../domain/repositories/group_pending_key_distribution_repository.dart, enqueue, finalizeDistributed, finalizeDistributedIfExact, _finalizeIfExact, finalizeUnreachable, finalizeUnreachableIfExact (+7 more)
+
+### Community 855 - "main_bootstrap_boundary_test.dart"
+Cohesion: 0.12
+Nodes (15): ExportDirective, Function, FunctionDeclaration, ImportDirective, package:analyzer/dart/analysis/utilities.dart, package:analyzer/dart/ast/ast.dart, _libraryPath, main (+7 more)
+
+### Community 856 - "enrichChatMessageResult"
 Cohesion: 0.19
 Nodes (14): cmdGetMessages(), copyPayloadString(), enrichChatMessageResult(), buildV1Envelope(), buildV2Envelope(), parseV1Envelope(), parseV2Envelope(), TestParseV1Envelope() (+6 more)
 
-### Community 785 - "Relay Business Metrics (Go)"
+### Community 857 - "startNodeWithRelays"
+Cohesion: 0.32
+Nodes (15): startLocalRelayPairWithRegistrationTTL(), startNodeWithRelayConfig(), startNodeWithRelays(), startPersonalNodeWithExplicitInitialRegister(), startPersonalNodeWithExplicitInitialRegisterAndFlags(), TestPersonalNamespaceRecovery_ReRegistersAfterInPlaceRefresh(), TestPersonalNamespaceRefresh_KeepsDiscoverablePastShortTTL(), TestPersonalNamespaceRefresh_RefreshesBeforeExpiryUnderIdleNode() (+7 more)
+
+### Community 858 - "startLANDialTestNode"
+Cohesion: 0.29
+Nodes (15): drainLANEvents(), newFakeLANPeer(), startLANDialTestNode(), TestHandleLANPeerFound_ConcurrentDistinctPeers_NoRace(), TestHandleLANPeerFound_DebouncesRepeatedFinds_WithinCooldown(), TestHandleLANPeerFound_IgnoresSelf(), TestHandleLANPeerFound_SeedsPeerstore_PrivateAddr(), TestHandleLANPeerFound_UpgradesRelayConnToDirect() (+7 more)
+
+### Community 859 - "businessMetrics"
 Cohesion: 0.20
 Nodes (8): newBusinessMetrics(), newHLLRegister(), businessMetrics, hllRegister, Month, Sketch, Int64, Mutex
 
-### Community 786 - "App Color Theme"
+### Community 860 - "group_media_ios_background_e2e_contract.dart"
+Cohesion: 0.12
+Nodes (15): group_media_ios_disposable_profile.dart, groupMediaIosAddContactPhase, groupMediaIosAndroidSenderBuildProfile, groupMediaIosBackgroundBuildProfile, groupMediaIosBackgroundE2EAction, groupMediaIosBackgroundE2ECommandSchema, groupMediaIosBackgroundE2EResultSchema, groupMediaIosBackgroundE2EStateSchema (+7 more)
+
+### Community 861 - "app_colors.dart"
 Cohesion: 0.12
 Nodes (15): AppColors, background, glassBackground, glassBorder, greenGlow, primaryAccent, redGlow, secondaryAccent (+7 more)
 
-### Community 787 - "Message Deletion Listener"
-Cohesion: 0.12
-Nodes (15): bridge, contactRepo, _deletionController, deletionStream, dispose, incomingDeletionStream, mediaAttachmentRepo, mediaFileManager (+7 more)
-
-### Community 788 - "Reaction Repository Interface"
-Cohesion: 0.12
-Nodes (15): applyIncomingAdd, applyIncomingRemove, currentAt, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved, getReactionsForMessage, getReactionsForMessages (+7 more)
-
-### Community 789 - "Group Inbox Store Retry"
-Cohesion: 0.12
-Nodes (15): emitRetryTiming, limit, _matchesCurrentPrivateRetryRecipients, messages, persisted, privateMediaAvailability, _privateRetryRecipientPeerIds, reactionEntries (+7 more)
-
-### Community 790 - "Group Backlog Retention Notices"
-Cohesion: 0.12
-Nodes (14): bannerText, emptySubtitle, emptyTitle, GroupBacklogRetentionNotice, groupBacklogRetentionNoticeFor, GroupBacklogRetentionNoticeKind, GroupHistoryGapRepairNotice, groupHistoryGapRepairNoticeFor (+6 more)
-
-### Community 791 - "Identity Domain Model"
+### Community 862 - "identity_model.dart"
 Cohesion: 0.12
 Nodes (15): avatarBlob, avatarVersion, createdAt, fromJson, mlKemPublicKey, mlKemSecretKey, mnemonic12, operator (+7 more)
 
-### Community 792 - "P2P Chat Message Model"
+### Community 863 - "chat_message.dart"
 Cohesion: 0.12
 Nodes (15): ChatMessage, confirmNonce, content, copyWith, from, fromJson, hashCode, isIncoming (+7 more)
 
-### Community 793 - "macOS Clipboard Bridge Script"
+### Community 864 - "claude_macos_clipboard.py"
 Cohesion: 0.31
 Nodes (15): _applescript_path(), _clipboard_info(), has_image(), main(), print_targets(), read_text(), _repo_root(), _resolve_shared_file() (+7 more)
 
-### Community 794 - "Rendezvous Discovery (Go)"
-Cohesion: 0.24
-Nodes (9): marshalDiscover(), marshalRegister(), marshalRzMessage(), marshalUnregister(), parseDiscoverResponse(), parseRegisterResponse(), AddrInfo, ID (+1 more)
+### Community 865 - "dtr03_dead_core_surface_contract_test.dart"
+Cohesion: 0.12
+Nodes (15): _collectDartFiles, _currentArchitectureDocs, _derivedDirectoryNames, _expectNoCurrentDocMatch, file, main, _ownedDartFiles, _ownedDartRoots (+7 more)
 
-### Community 795 - "Relay Push Token Store (Go)"
+### Community 866 - "direct_media_batch_forward_delivery_coordinator_test.dart"
+Cohesion: 0.12
+Nodes (15): cell, _contact, contacts, events, getContact, getContactCalls, _group, _item (+7 more)
+
+### Community 867 - "memoryPushTokenStore"
 Cohesion: 0.17
 Nodes (7): failingRegisterPushTokenBackend, memoryPushTokenStore, newFailingRegisterPushTokenBackend(), TestPushServiceRegisterTokenPropagatesBackendPersistenceFailure(), normalizeCapabilities(), RWMutex, tokenEntry
 
-### Community 796 - "Android PiP Selection Scripts"
+### Community 868 - "select_android_picture_in_picture_pixel6_api36_geometry.dart"
 Cohesion: 0.14
 Nodes (13): action, coordinates, displayDensity, displayHeight, displayWidth, main, rotation, sdk (+5 more)
 
-### Community 797 - "Android Campaign Evidence Validation"
+### Community 869 - "android_campaign_evidence_validation.dart"
 Cohesion: 0.13
 Nodes (14): AndroidCampaignEvidenceValidation, AndroidRuntimeProofValidator, detail, fail, item, ok, pass, validatedAndroidRuntimeProofPayload (+6 more)
 
-### Community 798 - "Pending Introduction Response Model"
+### Community 870 - "ios_notification_payload_campaign_support_test.dart"
+Cohesion: 0.13
+Nodes (14): ../../integration_test/support/ios_notification_payload_campaign.dart, _automationReceipt, _cleanupReceipt, _digestA, _digestB, main, _nonce, _peer (+6 more)
+
+### Community 871 - "pending_introduction_response.dart"
 Cohesion: 0.13
 Nodes (14): introduction_payload.dart, action, buildResponseKey, createdAt, fromMap, fromPayload, introductionId, PendingIntroductionResponse (+6 more)
 
-### Community 799 - "Group Members DB Helpers"
-Cohesion: 0.13
-Nodes (14): dbCountGroupMembers, dbDeleteAllGroupMembers, dbDeleteGroupMember, dbInsertGroupMember, dbInsertRemovedGroupMemberSnapshot, dbLoadAllGroupMembers, dbLoadGroupMember, dbLoadGroupMemberDeviceSnapshot (+6 more)
-
-### Community 800 - "Secret Columns DB Migration"
+### Community 872 - "004_nullify_secret_columns.dart"
 Cohesion: 0.13
 Nodes (14): avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key, mnemonic12 (+6 more)
 
-### Community 801 - "Wake Token E2E Protocol"
+### Community 873 - "wake_token_directionality_e2e_protocol.dart"
 Cohesion: 0.13
 Nodes (14): isWakeTokenDirectionalityAction, wakeTokenAttachmentMessage, wakeTokenDirectionalityProfileId, wakeTokenDirectionalityScenarioId, wakeTokenDurableEvidenceSchema, wakeTokenEndpointResultSchema, wakeTokenIssuerAction, wakeTokenIssuerRequestSchema (+6 more)
 
-### Community 802 - "LAN Address Classifier"
+### Community 874 - "lan_address_classifier.dart"
 Cohesion: 0.13
 Nodes (14): a, b, h, _isMdnsLocalHost, _isPrivateIpv4, _isPrivateIpv6, label, lower (+6 more)
 
-### Community 803 - "Media Picker & Fakes"
-Cohesion: 0.13
-Nodes (14): MediaPicker, SystemMediaPicker, package:flutter_app/core/media/media_picker.dart, FakeMediaPicker, imageResult, multipleMediaResult, pickImage, pickImageCalls (+6 more)
-
-### Community 804 - "Message Repository Tests"
+### Community 875 - "message_repository_impl_test.dart"
 Cohesion: 0.13
 Nodes (14): DirectReactionNotificationProjection, containsKey, dbLoadMessageCallCount, delete, directReactionProjection, expectMessageShape, main, makeMessage (+6 more)
 
-### Community 805 - "Notification Channel Constants"
-Cohesion: 0.13
-Nodes (14): android, ensureMknoonNotificationChannel, mknoonConversationNotificationDetails, mknoonMessagesChannel, mknoonMessagesChannelDescription, mknoonMessagesChannelId, mknoonMessagesChannelName, mknoonMessagesNotificationDetails (+6 more)
+### Community 876 - "fake_mic_permission_gateway.dart"
+Cohesion: 0.15
+Nodes (13): MicPermissionGateway, MicPermissionStatus, openAppSettings, PermissionHandlerMicGateway, request, package:permission_handler/permission_handler.dart, FakeMicPermissionGateway, openAppSettings (+5 more)
 
-### Community 806 - "Group Membership Watermarks"
+### Community 877 - "group_media_deletion_journal_reconciler.dart"
 Cohesion: 0.13
-Nodes (14): candidate, canonicalMembershipEventId, current, gate, group, _groupMembershipMutationLocks, isStaleGroupMembershipEvent, last (+6 more)
+Nodes (14): _cleanupEntry, completed, _emit, fileGateway, GroupMediaDeletionCleanupStats, GroupMediaDeletionJournalReconciler, kGroupMediaDeletionReconcilerPageSize, lifecycleLock (+6 more)
 
-### Community 807 - "Group Config Resync Payload"
+### Community 878 - "group_config_resync_payload.dart"
 Cohesion: 0.13
 Nodes (14): build, fromInnerJson, GroupConfigRequestBody, groupConfigRequestType, groupConfigResponseType, GroupConfigResyncEnvelope, groupConfigResyncEnvelopeVersion, groupId (+6 more)
 
-### Community 808 - "Group Message Receipt Model"
+### Community 879 - "group_message_receipt.dart"
 Cohesion: 0.13
 Nodes (14): createdAt, fromMap, groupId, GroupMessageReceipt, groupMessageReceiptTypeDelivered, groupMessageReceiptTypeRead, memberPeerId, messageId (+6 more)
 
-### Community 809 - "Post Comment Model"
-Cohesion: 0.13
-Nodes (14): authorUsername, body, commentedAt, copyWith, eventId, fromMap, heartCount, id (+6 more)
-
-### Community 810 - "Post Media Upload Recovery"
+### Community 880 - "post_media_upload_recovery_item.dart"
 Cohesion: 0.13
 Nodes (14): createdAt, _decodeWaveform, durationMs, fromMap, height, kind, localFilePath, mime (+6 more)
 
-### Community 811 - "Post Pin State Model"
+### Community 881 - "post_pin_state_model.dart"
 Cohesion: 0.13
 Nodes (14): createdAt, effectiveAt, eventId, fromMap, isActive, pinEventId, pinnedAt, postId (+6 more)
 
-### Community 812 - "QR Payload Model"
+### Community 882 - "set_presence_use_case.dart"
 Cohesion: 0.13
-Nodes (14): buildUnsignedPayload, fromJson, mlkem, ns, operator, pk, QRPayloadModel, rv (+6 more)
+Nodes (14): dispose, _heartbeat, _heartbeatInterval, isHeartbeatActive, kPresenceForegroundHeartbeat, kPresenceSelfTtl, onBackgrounded, onForegrounded (+6 more)
 
-### Community 813 - "Media Download Preferences"
+### Community 883 - "bridge_contact_request_crypto_test.dart"
 Cohesion: 0.13
-Nodes (14): codecVersion, copyWithChoice, defaults, _disabled, _entryKey, fromStorageString, hashCode, isAutoDownloadEnabled (+6 more)
+Nodes (14): bridge, checkHealth, decryptResponse, dispose, encryptResponse, _FakeBridge, initialize, isInitialized (+6 more)
 
-### Community 814 - "Media Display & Path Helpers"
+### Community 884 - "legacy_group_key_rotation_removal_contract_test.dart"
 Cohesion: 0.13
-Nodes (13): formatDurationMs, localPath, mediaGridContainerRadius, mediaGridGap, mediaGridItemRadius, minutes, ownedRelative, ownedResolved (+5 more)
+Nodes (14): _collectDartFiles, _contractPath, _derivedDirectoryNames, file, main, _ownedDartFiles, _ownedDartRoots, prefix (+6 more)
 
-### Community 815 - "Sims Device Resolver Tests"
+### Community 885 - "old_join_group_removal_contract_test.dart"
 Cohesion: 0.13
-Nodes (14): SimsDiscoveryCommandRunner, _adbDevices, _emulatorList, _FakeRunner, _flutterDevices, _flutterEmulatorList, _flutterEmulators, _inventory (+6 more)
+Nodes (14): _collectDartFiles, _currentArchitectureDocs, _derivedDirectoryNames, file, main, _ownedDartFiles, _ownedDartRoots, prefix (+6 more)
 
-### Community 816 - "Localization Integrity Tests"
+### Community 886 - "l10n_integrity_test.dart"
 Cohesion: 0.13
 Nodes (14): _allowedLiteral, _dartFiles, exactAllowed, file, _firstCapture, _lineNumber, _loadArb, main (+6 more)
 
-### Community 817 - "Audio Player Widget Tests"
-Cohesion: 0.14
-Nodes (12): ../../fakes/fake_just_audio.dart, package:flutter_app/core/constants/retry_constants.dart, package:flutter_app/shared/widgets/media/waveform_seek_bar.dart, package:just_audio_platform_interface/just_audio_platform_interface.dart, availableAttachment, baseAttachment, buildApp, flushAsyncPlayerTasks (+4 more)
+### Community 887 - "Any"
+Cohesion: 0.24
+Nodes (7): AnyHashable, capPreview(), containsGroupPrivateMediaPolicyMarker(), groupUserPreviewBody(), pushPreviewBody(), RecentRemoteShownMarkerStore, Any
 
-### Community 818 - "Invite Delivery Attempt Repository Impl"
+### Community 888 - "direct_media_library_batch_delete.dart"
 Cohesion: 0.14
-Nodes (13): group_invite_delivery_attempt_repository.dart, deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers, getStatusForMember, markDeclined (+5 more)
+Nodes (13): direct_media_library_controller.dart, ../domain/models/conversation_message.dart, ../domain/repositories/message_repository.dart, attachmentsByParent, deletedAttachmentIds, deleteDirectMediaSelectionForMe, deletedMessageIds, DirectDeleteMessageForMe (+5 more)
 
-### Community 819 - "Android PiP Selection Result"
+### Community 889 - "group_history_gap_repair_repository_impl.dart"
+Cohesion: 0.14
+Nodes (13): ../../domain/models/group_history_gap_repair.dart, ../../domain/repositories/group_history_gap_repair_repository.dart, getLatestRepairForGroup, getRepair, getVisibleRepairsForGroup, implements, markFailed, markRepaired (+5 more)
+
+### Community 890 - "direct_private_media_device_local_journey_criteria_test.dart"
+Cohesion: 0.14
+Nodes (13): ../../integration_test/scripts/direct_private_media_device_local_journey_criteria.dart, _claims, _fixtureDigest, jsonDecode, main, _pendingOpenProofSequence, _recipient, _recipientObservations (+5 more)
+
+### Community 891 - "android_picture_in_picture_system_ui_selection_result.dart"
 Cohesion: 0.14
 Nodes (13): AndroidPictureInPictureSystemUiSelectionResult, androidPictureInPictureSystemUiSelectionSchema, bounds, center, contentDescription, _exactIntList, geometryEvidence, parseExact (+5 more)
 
-### Community 820 - "Introductions DB Helpers"
+### Community 892 - "received_video_picture_in_picture_fixture_seed.dart"
+Cohesion: 0.14
+Nodes (13): canonicalFixture, canonicalRoot, deadline, digest, documents, expectedRoot, fixture, receivedVideoPictureInPictureFixtureBytes (+5 more)
+
+### Community 893 - "introductions_db_helpers.dart"
 Cohesion: 0.14
 Nodes (13): dbCountPendingIntroductions, dbDeleteIntroduction, dbInsertIntroduction, dbLoadIntroduction, dbLoadIntroductionsByIntroduced, dbLoadIntroductionsByIntroducer, dbLoadIntroductionsByRecipient, dbLoadIntroductionsForRecipientAndIntroducer (+5 more)
 
-### Community 821 - "Pending Group Broadcast DB Helpers"
-Cohesion: 0.14
-Nodes (13): dbCountPendingGroupBroadcastsForGroup, dbDeletePendingGroupBroadcast, dbInsertPendingGroupBroadcast, dbLoadAllPendingGroupBroadcasts, dbLoadPendingGroupBroadcastsForGroup, delete, groupId, insert (+5 more)
-
-### Community 822 - "Native mDNS Resolver"
-Cohesion: 0.16
-Nodes (13): attributes, _events, host, _method, NativeMdnsResolver, NativeResolvedPeer, peerId, PlatformChannelMdnsResolver (+5 more)
-
-### Community 823 - "Chat Console Logger"
-Cohesion: 0.14
-Nodes (13): attemptPart, buildTextPreview, idPart, logChatIncoming, logChatOutgoing, logChatTransportIncoming, logChatWireEnvelope, normalized (+5 more)
-
-### Community 824 - "Migration Pending Work Manifests"
+### Community 894 - "app_shell_theme_binding.dart"
 Cohesion: 0.15
-Nodes (11): MigrationPendingWorkManifestBuilder, builder, MigrationPendingWorkManifestValidator, validateRows, package:flutter_app/features/account_migration/application/migration_pending_work_manifest_builder.dart, package:flutter_app/features/account_migration/application/migration_pending_work_manifest_validator.dart, package:flutter_app/features/account_migration/domain/models/migration_pending_work_manifest.dart, isIncoming (+3 more)
+Nodes (13): AppShellThemeBinding, _AppShellThemeBindingState, build, controller, createState, didUpdateWidget, dispose, initState (+5 more)
 
-### Community 825 - "Private Media Lifecycle Repository"
+### Community 895 - "package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart"
 Cohesion: 0.14
-Nodes (13): advancePrivateMediaClock, claimPrivateMediaOpening, consumePrivateMedia, failClosedCorruptPrivateMediaState, hidePrivateMediaForMe, loadActiveDisappearingPrivateMedia, loadNextPrivateMediaExpiryAtMs, loadPrivateMediaLifecycleMessage (+5 more)
+Nodes (11): clearOrbitGeometryPrefs, delete, fromStorageString, loadOrbitGeometryPrefs, saveOrbitGeometryPrefs, value, write, package:flutter_app/features/orbit/application/orbit_geometry_prefs_use_cases.dart (+3 more)
 
-### Community 826 - "Group Recovery Gate"
-Cohesion: 0.14
-Nodes (13): _activeDepth, _activeDepthListenable, begin, end, GroupRecoveryGate, groupRecoveryPendingError, isActive, isGroupRecoveryInProgress (+5 more)
-
-### Community 827 - "Text Sanitization & Sender Names"
-Cohesion: 0.14
-Nodes (12): _cleanDisplayName, groupPeerFallbackLabel, memberName, preferMemberName, resolveGroupSenderDisplayName, sanitized, senderPeerId, shortPeerId (+4 more)
-
-### Community 828 - "Group Membership Limit Policy"
-Cohesion: 0.14
-Nodes (13): currentMemberCount, ensureWithinGroupMembershipLimit, exceedsGroupMembershipLimit, groupMembershipLimit, groupMembershipOverflowCount, groupMembershipRemainingSlots, maxMembers, overflow (+5 more)
-
-### Community 829 - "Group Key Repair Repository Interface"
-Cohesion: 0.14
-Nodes (13): GroupPendingKeyRepair, created, deleteRepair, finalizeRepaired, finalizeUndecryptable, getAllPendingRepairs, getPendingRepairsForGroup, getPendingRepairsForGroupEpoch (+5 more)
-
-### Community 830 - "Post Audience Model"
-Cohesion: 0.15
-Nodes (13): allFriends, fromMap, kind, peopleNearby, pickPeople, PostAudience, PostAudienceKind, PostAudienceKindWireValue (+5 more)
-
-### Community 831 - "Post Follow-On Outbox Delivery"
+### Community 896 - "post_follow_on_outbox_recipient_delivery.dart"
 Cohesion: 0.14
 Nodes (13): copyWith, createdAt, deliveryPath, deliveryStatus, eventId, fromMap, isSettled, lastAttemptAt (+5 more)
 
-### Community 832 - "QR Payload Parsing Use Case"
-Cohesion: 0.14
-Nodes (13): contact, dataToVerify, isValid, json, maxAge, parseQRPayload, ParseQRResult, peerId (+5 more)
-
-### Community 833 - "Android PiP Validation Scripts"
+### Community 897 - "ValueError"
 Cohesion: 0.31
 Nodes (12): atomic_write(), main(), regular_unlinked_file(), select_topology(), task_blocks(), main(), reject_duplicate_keys(), require_int_list() (+4 more)
 
-### Community 834 - "Delivery Receipt Tests"
+### Community 898 - "handle_delivery_receipt_use_case_test.dart"
 Cohesion: 0.14
 Nodes (13): buildReceipt, captureFlowEvents, contactPeerId, from, id, isIncoming, main, makeInboxedOutgoing (+5 more)
 
-### Community 835 - "DB Write Transaction Guard"
+### Community 899 - "hydrate_groups_from_peers_removal_contract_test.dart"
+Cohesion: 0.14
+Nodes (13): _collectDartFiles, _derivedDirectoryNames, file, main, _ownedDartFiles, _ownedDartRoots, prefix, _read (+5 more)
+
+### Community 900 - "db_write_transaction.dart"
 Cohesion: 0.15
 Nodes (11): Error, assertNotInsideDbWriteTransaction, body, BridgeCallInsideDbTransactionError, commandPreview, _dbWriteTxnZoneKey, isInsideDbWriteTransaction, runZoned (+3 more)
 
-### Community 836 - "Android Voice Message Campaign Tests"
+### Community 901 - "android_voice_message_device_campaign_test.dart"
 Cohesion: 0.15
 Nodes (11): ../../integration_test/scripts/android_voice_message_device_campaign.dart, package:flutter_app/core/debug/android_voice_message_e2e.dart, _config, main, _voiceAttachment, _aggregate, _artifactDigest, main (+3 more)
 
-### Community 837 - "Private Media Journey Criteria Tests"
+### Community 902 - "intro_e2e_runner_test.dart"
 Cohesion: 0.15
-Nodes (12): ../../integration_test/scripts/direct_private_media_device_local_journey_criteria.dart, _claims, _fixtureDigest, jsonDecode, main, _recipient, _recipientObservations, _sender (+4 more)
+Nodes (11): ../../../integration_test/scripts/run_intro_accept_notification_android.dart, ../../../integration_test/scripts/run_intro_accept_notification_sims.dart, intro_sims.IntroChildProcess, main, _exit, exitCode, _FakeIntroChildProcess, kill (+3 more)
 
-### Community 838 - "Android Performance Budget"
+### Community 903 - "android_critical_performance_budget.dart"
 Cohesion: 0.15
 Nodes (12): androidBridgeMinimumSamples, androidBridgeP99BudgetMs, androidCriticalPerformanceAssertionCount, androidFeedAverageBuildBudgetMs, androidFeedP99BuildBudgetMs, androidFeedWorstBuildBudgetMs, androidFrameTimingMeasurementSource, androidGoBridgeMeasurementSource (+4 more)
 
-### Community 839 - "Group Keys DB Helpers"
+### Community 904 - "node_readiness.dart"
+Cohesion: 0.15
+Nodes (12): interval, isPlainOnlineBadgeState, isRelayReadyBadgeState, isSendableBadgeState, label, sw, timeout, waitFor (+4 more)
+
+### Community 905 - "package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart"
+Cohesion: 0.15
+Nodes (11): GroupEventLogTamperException, canonicalGroupKeyUpdateSignedPayload, canonicalizeGroupEventLogPayload, groupId, groupKeyUpdateSignatureAlgorithm, groupKeyUpdateSignatureSchemaVersion, groupKeyUpdateSignedPayloadType, sourcePeerId (+3 more)
+
+### Community 906 - "group_keys_db_helpers.dart"
 Cohesion: 0.15
 Nodes (12): dbDeleteAllGroupKeys, dbDeleteGroupKeysBeforeGeneration, dbDeletePendingGroupKeyRotation, dbDeletePendingGroupKeyRotations, dbInsertGroupKey, dbLoadAllGroupKeys, dbLoadGroupKeyByGeneration, dbLoadLatestGroupKey (+4 more)
 
-### Community 840 - "Group Sync Receipts Migration"
+### Community 907 - "066_group_sync_receipts.dart"
 Cohesion: 0.15
 Nodes (12): _createGroupInboxCursorsSql, _createGroupMessageReceiptsMemberIndexSql, _createGroupMessageReceiptsMessageIndexSql, _createGroupMessageReceiptsSql, group_id, group_message_receipts, member_peer_id, message_id (+4 more)
 
-### Community 841 - "Migration Import Preconditions"
+### Community 908 - "migration_transfer_keep_alive.dart"
 Cohesion: 0.15
-Nodes (12): AccountMigrationImportPreconditionResult, AccountMigrationImportPreconditionStatus, activeAccountExists, allowed, authority, canStartImport, cleanupRequired, evaluateAccountMigrationImportPrecondition (+4 more)
+Nodes (12): acquire, activeHolds, _channel, _channelInvoke, channelName, _holds, _invoke, MigrationKeepAliveInvoker (+4 more)
 
-### Community 842 - "Group Pending Broadcast Model"
+### Community 909 - "group_exit_diagnostic_sink.dart"
 Cohesion: 0.15
-Nodes (12): createdAt, eventAt, fromMap, groupId, GroupPendingBroadcast, id, kind, recipientPeerIds (+4 more)
+Nodes (12): available, cause, diagnostics, GroupExitDiagnosticLookupResult, GroupExitDiagnosticLookupStatus, isAvailable, load, _loadForAction (+4 more)
 
-### Community 843 - "Welcome Key Package Tombstones"
+### Community 910 - "group_welcome_key_package_tombstone.dart"
 Cohesion: 0.15
 Nodes (12): consumedAt, copyWith, expiresAt, fromMap, groupId, GroupWelcomeKeyPackageTombstone, inviteId, isActiveAt (+4 more)
 
-### Community 844 - "Pending Sibling Device Model"
+### Community 911 - "pending_sibling_device.dart"
 Cohesion: 0.15
 Nodes (12): announcedAt, deviceId, deviceSigningPublicKey, fromMap, groupId, id, keyPackageId, memberPeerId (+4 more)
 
-### Community 845 - "Post Presence Listener"
+### Community 912 - "group_invite_delivery_attempt_repository.dart"
+Cohesion: 0.15
+Nodes (12): deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers, getStatusForMember, markDeclined, markJoined (+4 more)
+
+### Community 913 - "post_presence_listener.dart"
 Cohesion: 0.15
 Nodes (12): contactRepo, dispose, incomingPresenceStream, _onMessage, PostPresenceListener, postPresenceStream, _presenceController, snapshotRepo (+4 more)
 
-### Community 846 - "Post Presence Publishing"
+### Community 914 - "direct_notification_projection_lifecycle_test.dart"
 Cohesion: 0.15
-Nodes (12): contacts, createdAt, defaultPostPresenceDeliveryConcurrency, envelope, fanoutPostFollowOnEnvelope, maxConcurrentRecipients, p2pService, _postPresenceInteractiveBudget (+4 more)
+Nodes (12): package:flutter_app/core/notifications/direct_reaction_notification_projection.dart, _contact, containsKey, delete, failNextWriteKeys, failWrites, main, _MemorySecureKeyStore (+4 more)
 
-### Community 847 - "Post Comment Envelope"
+### Community 915 - "media_attachment_repository_descriptors_test.dart"
 Cohesion: 0.15
-Nodes (12): body, commentedAt, commentId, createdAt, eventId, fromJson, _isValidCreatedAt, _maxFutureClockSkew (+4 more)
+Nodes (12): package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart, containsKey, delete, main, read, readCount, _ReadForbiddenSecureKeyStore, repo (+4 more)
 
-### Community 848 - "Share Target Selection Model"
-Cohesion: 0.15
-Nodes (12): contact, contactKey, group, groupKey, key, kind, label, requireContact (+4 more)
-
-### Community 849 - "Group Convergence & Mute Tests"
-Cohesion: 0.15
-Nodes (11): package:flutter_app/features/groups/application/set_group_muted_use_case.dart, groupRepo, main, makeGroup, group, latestKey, main, maxTicks (+3 more)
-
-### Community 850 - "Video PiP Proof Script"
+### Community 916 - "run_received_video_picture_in_picture_proof.sh"
 Cohesion: 0.27
 Nodes (9): assert_no_pinned_owner(), capture_state(), select_and_tap_pip_system_ui_control(), run_received_video_picture_in_picture_proof.sh script, usage(), wait_for_exact_pinned_task_absent(), wait_for_flutter_shutdown(), wait_for_log() (+1 more)
 
-### Community 851 - "Android PiP Ownership Validation Script"
+### Community 917 - "main"
 Cohesion: 0.31
 Nodes (12): _activity_identity(), _arguments(), _fail(), _history_blocks(), main(), _native_history_blocks(), _task_id(), _task_intent_component() (+4 more)
 
-### Community 852 - "Sims Device Preparer Tests"
+### Community 918 - "group_group_messages_into_threads_test.dart"
 Cohesion: 0.15
-Nodes (12): SimsDevicePreparationCommandRunner, _FakePreparationRunner, invocations, main, _ok, _outcome, outcomes, run (+4 more)
+Nodes (12): groupId, id, isIncoming, main, _makeGroup, _makeMsg, quotedMessageId, readAt (+4 more)
 
-### Community 853 - "Migration DB Schema Inventory Tests"
-Cohesion: 0.15
-Nodes (12): db, execute, group_members, group_messages, group_pending_key_repairs, group_sync_receipts, group_welcome_key_package_tombstones, identity (+4 more)
-
-### Community 854 - "Push Message Test Fixtures"
+### Community 919 - "remote_message_fixtures.dart"
 Cohesion: 0.15
 Nodes (12): contactRequestData, data, groupId, groupInviteData, groupMessageData, introsData, messageId, newMessageData (+4 more)
 
-### Community 855 - "Initial Identity Tables Migration"
+### Community 920 - "run_group_media_send_reliability.dart"
+Cohesion: 0.17
+Nodes (11): android_group_media_reliability_controller.dart, group_media_ios_background_recovery.dart, group_media_reliability_criteria.dart, group_media_reliability_runner_contract.dart, androidCompanion, _executeScenario, fixtureDriverPath, main (+3 more)
+
+### Community 921 - "001_identity_table.dart"
 Cohesion: 0.17
 Nodes (11): avatar_path, _createContactRequestsTableSql, _createContactsTableSql, _createIdentityTableSql, IdentityTableMigration, migrationName, NULL, run (+3 more)
 
-### Community 856 - "Relay Wake Token Store (Go)"
+### Community 922 - "group_forward_authorization_db_helpers.dart"
+Cohesion: 0.17
+Nodes (11): FROM, dbLoadGroupForwardAuthorizationSnapshot, first, GroupForwardAuthorizationSnapshotRows, groupRow, groups, _latestKeyGenerationAlias, _memberPrefix (+3 more)
+
+### Community 923 - "memoryWakeTokenStore"
 Cohesion: 0.20
 Nodes (5): memoryWakeTokenStore, newMemoryWakeTokenStore(), TestWakeTokenStore_FailOpenUntilRegisteredThenMemberOnly(), TestWakeTokenStore_RaceClean(), RWMutex
 
-### Community 857 - "Group Key Repair Repository Impl"
-Cohesion: 0.17
-Nodes (11): group_pending_key_repair_repository.dart, deleteRepair, finalizeRepaired, finalizeUndecryptable, getAllPendingRepairs, getPendingRepairsForGroup, getPendingRepairsForGroupEpoch, getRepair (+3 more)
-
-### Community 858 - "Local WS Server Tests"
-Cohesion: 0.17
-Nodes (11): HttpServer, LanInboundDecision, connectionCount, _DelayedAckPeer, main, _messageCount, _server, _sockets (+3 more)
-
-### Community 859 - "Inbox Staging Repository"
-Cohesion: 0.17
-Nodes (11): inbox_staging_entry.dart, countNeedsAttentionEntries, countQuarantinedEntries, deleteEntry, getEntry, getRecoverableEntries, getRecoverableEntriesByIds, markQuarantined (+3 more)
-
-### Community 860 - "Android App Package Resolver"
-Cohesion: 0.17
-Nodes (11): _androidAppPackagePattern, _defaultAndroidAppPackage, envValue, isValidAndroidAppPackage, localProperties, match, resolveAndroidAppPackage, resolveAndroidAppPackageFromSources (+3 more)
-
-### Community 861 - "Post Follow-On Outbox DB Helpers"
+### Community 924 - "post_follow_on_outbox_db_helpers.dart"
 Cohesion: 0.17
 Nodes (11): dbLoadPostFollowOnOutboxEvent, dbLoadPostFollowOnOutboxRecipientDeliveries, dbLoadRetryablePostFollowOnOutboxEvents, dbLoadRetryablePostFollowOnOutboxRecipientDeliveries, dbUpsertPostFollowOnOutboxEvent, dbUpsertPostFollowOnOutboxRecipientDelivery, insert, placeholders (+3 more)
 
-### Community 862 - "Group Gap Repairs Migration"
+### Community 925 - "065_group_history_gap_repairs.dart"
 Cohesion: 0.17
 Nodes (11): _createGroupHistoryGapRepairsRangeIndexSql, _createGroupHistoryGapRepairsStatusIndexSql, _createGroupHistoryGapRepairsTableSql, gap_id, group_history_gap_repairs, group_id, missing_after_message_id, missing_before_message_id (+3 more)
 
-### Community 863 - "Pending Membership Messages Migration"
+### Community 926 - "072_group_pending_membership_messages.dart"
 Cohesion: 0.17
 Nodes (11): _createGroupPendingMembershipMessagesGroupIndexSql, _createGroupPendingMembershipMessagesMessageIndexSql, _createGroupPendingMembershipMessagesSenderIndexSql, _createGroupPendingMembershipMessagesTableSql, group_id, group_pending_membership_messages, message_id, NULL (+3 more)
 
-### Community 864 - "Group Media Deletion Journal Migration"
+### Community 927 - "098_group_media_deletion_journal.dart"
 Cohesion: 0.17
 Nodes (11): attachment_id, _createGroupMediaDeletionJournalGroupMessageIndexSql, _createGroupMediaDeletionJournalOperationIndexSql, _createGroupMediaDeletionJournalSql, group_id, group_media_deletion_journal, message_id, NULL (+3 more)
 
-### Community 865 - "Upload Wake Lock"
-Cohesion: 0.17
-Nodes (11): acquire, _activeHolds, debugActiveHolds, debugReset, debugSetDriver, disable, _driver, enable (+3 more)
-
-### Community 866 - "LAN Inbound Ack Handling"
-Cohesion: 0.17
-Nodes (11): accepted, committed, isAccepted, isCommitted, isRejected, _kind, LanInboundChatCommitHandler, _LanInboundDecisionKind (+3 more)
-
-### Community 867 - "iOS Remote Gate Wiring"
-Cohesion: 0.17
-Nodes (11): configureRecentRemoteNotificationGateForIos, dir, file, persistAppGroupContainerPathForGate, persisted, _persistedAppGroupPathFileName, _persistResolvedAppGroupPath, readPersistedAppGroupContainerPath (+3 more)
-
-### Community 868 - "Remote Notification Identity"
-Cohesion: 0.17
-Nodes (11): discardSidecarMarker, discardSuppressedForegroundRemoteSidecar, markAnnouncement, markRemoteNotificationOpenAsRecentAnnouncement, messageId, remoteNotificationMessageIdFromData, routeTarget, routeTargetSupportsMessageAwareRemoteDedupe (+3 more)
-
-### Community 869 - "Text Sanitizer Utility"
+### Community 928 - "text_sanitizer.dart"
 Cohesion: 0.17
 Nodes (11): _bidiPattern, isMessageTooLong, isValidUsername, maxMessageLength, maxUsernameLength, replaceAll, sanitizeMessageText, sanitizeUsername (+3 more)
 
-### Community 870 - "Message Run Grouping"
+### Community 929 - "message_run_grouping.dart"
 Cohesion: 0.17
 Nodes (11): difference, gapThreshold, kMessageRunGapThreshold, kMessageRunTightSpacing, messageRunBottomSpacing, MessageRunChrome, messageRunStartsNewRun, MessageRunSurface (+3 more)
 
-### Community 871 - "Member Identity Safety Numbers"
+### Community 930 - "feed_reaction_store.dart"
 Cohesion: 0.17
-Nodes (10): compare, currentSafetyNumber, _fingerprints, GroupMemberIdentitySafety, identityChanged, _normalize, _sameFingerprints, savedSafetyNumber (+2 more)
+Nodes (11): applyChange, clearMessageIds, dispose, FeedReactionStore, listenableForMessage, _notifierFor, _notifiers, reactionsForMessage (+3 more)
 
-### Community 872 - "Feed Thread Grouping Tests"
+### Community 931 - "fake_media_picker.dart"
+Cohesion: 0.17
+Nodes (11): package:flutter_app/core/media/media_picker.dart, imageResult, multipleMediaResult, pickImage, pickImageCalls, pickMultipleMedia, pickMultipleMediaCalls, pickVideo (+3 more)
+
+### Community 932 - "group_messages_into_threads_test.dart"
 Cohesion: 0.17
 Nodes (11): contactPeerId, id, isIncoming, main, _msg, quotedMessageId, readAt, status (+3 more)
 
-### Community 873 - "Sims Build Cache Tests"
+### Community 933 - "benchmark_harness.dart"
 Cohesion: 0.17
-Nodes (11): androidDigest, _androidProfile, file, identity, _input, iosDigest, _iosProfile, main (+3 more)
+Nodes (11): assertBudget, captureFlowEvents, captureFlowEventsUntil, dispose, extractElapsedMs, filterEvents, firstEventDetails, formatBenchmarkLine (+3 more)
 
-### Community 874 - "Sims Executor Tests"
-Cohesion: 0.17
-Nodes (11): _artifactRow, _buildRow, executeArtifactSentinel, executeStructuredSentinel, main, passSentinel, _processRow, sentinel (+3 more)
-
-### Community 875 - "Media Egress Receiver (Android)"
+### Community 934 - "ReceiverActivity"
 Cohesion: 0.33
 Nodes (6): Activity, Bundle, ReceiverActivity, Intent, Override, Uri
 
-### Community 876 - "App Shell Theme Tests"
+### Community 935 - "decodeGroupBridgeMessageParams"
+Cohesion: 0.24
+Nodes (11): groupBridgeMessageParams, buildGroupBridgeMessageOpts(), buildGroupPublishOpts(), decodeGroupBridgeMessageParams(), decodeGroupPrivateMediaPolicy(), TestBuildGroupPublishOpts_EmptyReturnsNil(), TestBuildGroupPublishOpts_IncludesQuotedMessageId(), TestGK030GroupPrivateMediaPolicyPreservesExplicitNullAndRejectsMalformed() (+3 more)
+
+### Community 936 - "app_shell_theme_binding_test.dart"
 Cohesion: 0.20
 Nodes (10): Brightness, package:flutter_app/core/theme/app_shell_theme_binding.dart, build, buildApp, counter, createState, main, observedBrightness (+2 more)
 
-### Community 877 - "Sims Dispatcher Harness"
-Cohesion: 0.18
-Nodes (10): _installedProfileId, main, rename, temporary, _writeAckAtomically, writeAsString, _writeJsonAtomically, support/android_critical_performance_campaign.dart (+2 more)
-
-### Community 878 - "Intro Review Seen Repository"
-Cohesion: 0.18
-Nodes (9): intro_review_seen_repository.dart, IntroReviewSeenRepositoryImpl, loadSeenKeys, markAllSeen, IntroReviewSeenRepository, loadSeenKeys, markAllSeen, _InMemoryIntroReviewSeenRepository (+1 more)
-
-### Community 879 - "Groups DB Helpers"
-Cohesion: 0.18
-Nodes (10): dbArchiveGroup, dbCountGroups, dbDeleteGroup, dbInsertGroup, dbLoadActiveGroups, dbLoadAllGroups, dbLoadGroup, dbUnarchiveGroup (+2 more)
-
-### Community 880 - "Pending Key Repairs Migration"
+### Community 937 - "063_group_pending_key_repairs.dart"
 Cohesion: 0.18
 Nodes (10): created_at, _createGroupPendingKeyRepairsEpochIndexSql, _createGroupPendingKeyRepairsMessageIndexSql, _createGroupPendingKeyRepairsTableSql, group_id, group_pending_key_repairs, key_epoch, message_id (+2 more)
 
-### Community 881 - "Media Upload In-Flight Tracker"
+### Community 938 - "direct_private_media_transfer_registry.dart"
 Cohesion: 0.18
-Nodes (9): begin, clearAll, end, _inFlight, inFlightCount, isInFlight, MediaUploadInFlightTracker, package:flutter_app/core/media/media_upload_in_flight_tracker.dart (+1 more)
+Nodes (10): DirectPrivateMediaTransferRegistry, end, hasAnyActive, hasUnscopedActive, isActive, isActiveForMessage, _messageIds, owns (+2 more)
 
-### Community 882 - "Group Private Media Availability"
+### Community 939 - "message_deletion_payload.dart"
+Cohesion: 0.18
+Nodes (10): buildEncryptedEnvelope, fromDecryptedJson, fromJson, MessageDeletionPayload, messageId, parseEncryptedEnvelope, senderPeerId, timestamp (+2 more)
+
+### Community 940 - "voice_record_button.dart"
+Cohesion: 0.20
+Nodes (10): build, createState, _isPressed, isRecording, onTapCancel, onTapDown, onTapUp, _startedRecordingWithThisTap (+2 more)
+
+### Community 941 - "group_private_media_availability.dart"
 Cohesion: 0.18
 Nodes (10): allowsMediaDerivatives, canAuthorPrivateMedia, canCurrentMemberAuthorPrivateMedia, disabled, enabled, enabledForTesting, GroupPrivateMediaAvailability, hasEligibleCurrentAuthorRole (+2 more)
 
-### Community 883 - "Expired Invite Sweep Use Case"
+### Community 942 - "sweep_expired_group_invites_use_case.dart"
 Cohesion: 0.18
 Nodes (10): consumedInvites, cutoff, empty, GroupInviteSweepResult, pendingInvites, revokedInvites, sweepExpiredGroupInvites, total (+2 more)
 
-### Community 884 - "Group Key Info Model"
+### Community 943 - "group_key_info.dart"
 Cohesion: 0.18
 Nodes (10): createdAt, encryptedKey, fromMap, groupId, GroupKeyInfo, hashCode, keyGeneration, operator (+2 more)
 
-### Community 885 - "Posts Feed Loading Use Case"
-Cohesion: 0.18
-Nodes (10): createdAt, hydratePostSurfaceItems, loadPostsFeed, mediaFileManager, now, postRepo, posts, _shouldHideFromNormalFeed (+2 more)
-
-### Community 886 - "Post Comment Reaction Model"
+### Community 944 - "post_comment_reaction_model.dart"
 Cohesion: 0.18
 Nodes (10): commentId, eventId, fromMap, isActive, PostCommentReactionModel, postId, reactedAt, reactionId (+2 more)
 
-### Community 887 - "Post Origin Model"
+### Community 945 - "post_origin_model.dart"
 Cohesion: 0.18
 Nodes (10): fromMap, originKind, passCreatedAt, passerPeerId, passerUsername, passId, postId, PostOriginKind (+2 more)
 
-### Community 888 - "Repost Visual State"
+### Community 946 - "post_repost_visual_state.dart"
 Cohesion: 0.18
 Nodes (10): count, hasCount, isActive, isAuthorView, isPassedAlongReceiver, isPassiveReceiver, none, PostRepostVisualState (+2 more)
 
-### Community 889 - "Fake mDNS Resolver"
+### Community 947 - "prepare_notification_open_use_case.dart"
 Cohesion: 0.18
-Nodes (10): package:flutter_app/core/local_discovery/native_mdns_resolver.dart, _controller, dispose, emit, resolvedPeers, start, startCallCount, startedServiceType (+2 more)
+Nodes (10): DrainGroupOfflineInboxForGroupFn, error, failed, IngestStagedPushEnvelopesFn, ok, prepareNotificationOpen, PrepareNotificationOpenResult, stagedPushEnvelopeIngestTimeout (+2 more)
 
-### Community 890 - "Wake Token Binary Freshness Script"
+### Community 948 - "in_memory_group_pending_key_distribution_repository.dart"
+Cohesion: 0.18
+Nodes (10): package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart, enqueue, finalizeDistributed, finalizeUnreachable, getDistribution, getPendingForGroup, getPendingForPeer, recordAttempt (+2 more)
+
+### Community 949 - "check_wake_token_binary_freshness.sh"
 Cohesion: 0.25
 Nodes (10): ANDROID_AAR, ANDROID_JNI, check_android_aar(), check_binary(), fail(), IOS_DEVICE, IOS_SIM, MACOS (+2 more)
 
-### Community 891 - "Push Decrypt Simulator Smoke Script"
+### Community 950 - "smoke_test_push_decrypt_simulator.sh"
 Cohesion: 0.31
 Nodes (9): ANDROID_SCENARIOS, IOS_SCENARIOS, list_scenario_entries(), run_android_scenario(), run_injection(), run_ios_scenario(), smoke_test_push_decrypt_simulator.sh script, usage() (+1 more)
 
-### Community 892 - "Gomobile Bindings Verification Script"
+### Community 951 - "flutter_analyze_strict_contract_test.sh"
+Cohesion: 0.47
+Nodes (10): assert_empty_log(), assert_exact_log(), assert_retired_analyzer_state_absent(), assert_status(), assert_strict_helper_call(), capture_git_status(), capture_policy_state(), fail() (+2 more)
+
+### Community 952 - "verify_gomobile_bindings.sh"
 Cohesion: 0.25
 Nodes (5): check_android(), check_ios(), check_macos(), verify_gomobile_bindings.sh script, usage()
 
-### Community 893 - "Media Byte Fixtures"
+### Community 953 - "orbit_arc_layout_test.dart"
+Cohesion: 0.18
+Nodes (10): bottom, _bottomTapPokeOracle, expectSameDir, _g, layout, main, max, mirrored (+2 more)
+
+### Community 954 - "media_bytes.dart"
 Cohesion: 0.18
 Nodes (10): lower, normalized, validGifFixtureBytes, validJpegFixtureBytes, validMediaFixtureBytesForMime, validMediaFixtureBytesForPath, validMediaFixtureHashForMime, validMp4FixtureBytes (+2 more)
 
-### Community 894 - "Push Diagnostics Logger"
-Cohesion: 0.20
-Nodes (9): dart:developer, flow_event_emitter.dart, details, digest, line, logPushDiagnostic, sanitizedDetails, suffix (+1 more)
+### Community 955 - "GenerateIdentity"
+Cohesion: 0.31
+Nodes (10): DecryptContactRequest(), EncryptContactRequest(), GenerateIdentity(), TestDecryptContactRequest_RoundTrip(), TestDecryptContactRequest_TamperedAAD(), TestDecryptContactRequest_WrongKey(), TestEncryptContactRequest_Success(), TestGenerateIdentity_ReturnsValidIdentity() (+2 more)
 
-### Community 895 - "File Encryption (Go)"
+### Community 956 - "GenerateSymmetricKey"
 Cohesion: 0.47
 Nodes (8): DecryptFile(), EncryptFile(), GenerateSymmetricKey(), TestDecryptCorruptedCiphertextFails(), TestDecryptWithWrongKeyFails(), TestEncryptDecryptFileRoundTrip(), TestGenerateSymmetricKey(), TestLargeFileRoundTrip()
 
-### Community 896 - "Invite Delivery Attempts DB Helpers"
+### Community 957 - "group_announcement_reaction_notification_proof_test.dart"
+Cohesion: 0.20
+Nodes (9): artifact, _artifactFor, direct, main, _proofArtifact, _proofDirectory, _validateScenario, validation (+1 more)
+
+### Community 958 - "group_invite_delivery_attempts_db_helpers.dart"
 Cohesion: 0.20
 Nodes (9): dbDeleteGroupInviteDeliveryAttempt, dbDeleteGroupInviteDeliveryAttemptsForGroup, dbLoadGroupInviteDeliveryAttempt, dbLoadGroupInviteDeliveryAttemptsForGroup, dbUpdateGroupInviteDeliveryAttemptStatus, dbUpsertGroupInviteDeliveryAttempt, groupId, peerId (+1 more)
 
-### Community 897 - "Reaction Replay Outbox DB Helpers"
-Cohesion: 0.20
-Nodes (9): dbDeleteGroupReactionReplayOutboxEntry, dbLoadGroupReactionReplayOutboxEntry, dbLoadLatestGroupReactionReplayOutboxEntryForTarget, dbLoadRetryableGroupReactionReplayOutboxEntries, dbUpdateGroupReactionReplayOutboxEntryStatus, dbUpsertGroupReactionReplayOutboxEntry, limit, reactionId (+1 more)
-
-### Community 898 - "Media Library DB Helpers"
+### Community 959 - "media_library_db_helpers.dart"
 Cohesion: 0.20
 Nodes (9): _attachmentColumns, _attachmentSelectList, dbLoadMediaLibraryPage, dbLoadMediaStoragePage, _directOrdinaryMediaParentPredicate, _groupOrdinaryMediaParentPredicate, incomingOnly, map (+1 more)
 
-### Community 899 - "Messages Table Migration"
+### Community 960 - "002_messages_table.dart"
 Cohesion: 0.20
 Nodes (9): _createContactIndexSql, _createMessagesTableSql, _createTimestampIndexSql, MessagesTableMigration, migrationName, NULL, run, runMessagesTableMigration (+1 more)
 
-### Community 900 - "Pending Key Distributions Migration"
+### Community 961 - "055_group_invite_revocations.dart"
+Cohesion: 0.20
+Nodes (9): _createGroupInviteRevocationsExpiresAtIndexSql, _createGroupInviteRevocationsGroupIdIndexSql, _createGroupInviteRevocationsTableSql, expires_at, group_id, group_invite_revocations, runGroupInviteRevocationsMigration, TEXT (+1 more)
+
+### Community 962 - "078_group_pending_key_distributions.dart"
 Cohesion: 0.20
 Nodes (9): created_at, _createGroupPendingKeyDistributionsGroupStatusIndexSql, _createGroupPendingKeyDistributionsPeerStatusIndexSql, _createGroupPendingKeyDistributionsTableSql, group_id, group_pending_key_distributions, peer_id, runGroupPendingKeyDistributionsMigration (+1 more)
 
-### Community 901 - "Pending Reactions Migration"
+### Community 963 - "081_group_pending_reactions.dart"
 Cohesion: 0.20
 Nodes (9): _createGroupPendingReactionsGroupMessageIndexSql, _createGroupPendingReactionsGroupReceivedIndexSql, _createGroupPendingReactionsTableSql, group_id, group_pending_reactions, message_id, NULL, received_at (+1 more)
 
-### Community 902 - "Pending Broadcasts Migration"
+### Community 964 - "audio_recorder_service.dart"
 Cohesion: 0.20
-Nodes (9): created_at, _createPendingGroupBroadcastsDedupIndexSql, _createPendingGroupBroadcastsGroupIndexSql, _createPendingGroupBroadcastsTableSql, group_id, NULL, pending_group_broadcasts, runPendingGroupBroadcastsMigration (+1 more)
+Nodes (9): amplitudeStream, cancel, dispose, durationStream, hasPermission, isRecording, requestPermission, start (+1 more)
 
-### Community 903 - "Startup Timing Utility"
+### Community 965 - "startup_timing.dart"
 Cohesion: 0.20
 Nodes (9): elapsed, instance, mark, _marks, printSummary, processStart, processStartEpochMs, sinceProcessStartMs (+1 more)
 
-### Community 904 - "Feed Session Reply Tracker"
+### Community 966 - "key_exchange_retry_coordinator.dart"
+Cohesion: 0.20
+Nodes (9): cooldown, _inFlight, KeyExchangeRetryCoordinator, _lastNonZeroRetryAt, _lastNonZeroRetryCount, PerformKeyExchangeRetry, _performRetry, retryNow (+1 more)
+
+### Community 967 - "feed_pending_projection.dart"
+Cohesion: 0.20
+Nodes (9): ClearedWatermarks, feedItemMatchesThreadId, feedThreadKindConnection, feedThreadKindContact, feedThreadKindGroup, isPendingFeedItem, kept, projectPendingFeed (+1 more)
+
+### Community 968 - "session_reply.dart"
 Cohesion: 0.20
 Nodes (9): clear, hasReply, justNow, _replies, SessionReply, SessionReplyTracker, text, time (+1 more)
 
-### Community 905 - "Group Shared Media Navigation"
+### Community 969 - "group_shared_media_navigation.dart"
 Cohesion: 0.20
 Nodes (9): _generation, GroupSharedMediaAnchorRequestCoordinator, includeAnnouncements, live, load, loadGroupSharedMediaAnchorWindow, resolveGroupSharedMediaRoute, supportedType (+1 more)
 
-### Community 906 - "Group Invite Revocation Model"
+### Community 970 - "GroupRepositoryImpl"
+Cohesion: 0.20
+Nodes (10): GroupRepositoryImpl, GroupExitCleanupRepository, GroupForwardAuthorizationSnapshotRepository, GroupKeyRotationDraftRepository, GroupMemberDeviceSnapshotRepository, GroupMembershipWatermarkRepository, RemovedGroupMemberSnapshotRepository, SelfRemovedGroupShellRepository (+2 more)
+
+### Community 971 - "group_invite_revocation.dart"
 Cohesion: 0.20
 Nodes (9): expiresAt, fromMap, groupId, GroupInviteRevocation, inviteId, isActiveAt, revokedAt, revokedBy (+1 more)
 
-### Community 907 - "Group Message Payload"
+### Community 972 - "identity_avatar_resolver.dart"
 Cohesion: 0.20
-Nodes (9): extra, fromJson, GroupMessagePayload, quotedMessageId, text, timestamp, toJson, toString (+1 more)
+Nodes (9): _cache, _cacheKey, _generation, IdentityAvatarDocumentsDirLoader, IdentityAvatarResolver, _inFlight, invalidatePeer, _loadFromDisk (+1 more)
 
-### Community 908 - "Group Message Ordering"
-Cohesion: 0.20
-Nodes (9): byId, compareGroupMessagesAscending, compareGroupMessagesDescending, ordered, orderGroupMessagesForTimeline, placed, sorted, timestampCompare (+1 more)
-
-### Community 909 - "Identity Generation Use Case"
-Cohesion: 0.20
-Nodes (9): GenerateIdentityResult, generateNewIdentity, identity, identityJson, keygenStopwatch, mlKemFuture, mlKemResponse, ok (+1 more)
-
-### Community 910 - "Send Message Result Model"
+### Community 973 - "send_message_result.dart"
 Cohesion: 0.20
 Nodes (9): acked, acknowledged, ackWaitMs, reply, SendMessageResult, sent, streamOpenMs, transport (+1 more)
 
-### Community 911 - "Post Pending Child Events"
+### Community 974 - "post_pending_child_event.dart"
 Cohesion: 0.20
 Nodes (9): createdAt, eventId, eventType, fromMap, postId, PostPendingChildEvent, rawEnvelope, senderPeerId (+1 more)
 
-### Community 912 - "Post Reaction Model"
+### Community 975 - "post_reaction_model.dart"
 Cohesion: 0.20
 Nodes (9): eventId, fromMap, isActive, postId, PostReactionModel, reactedAt, reactionId, senderPeerId (+1 more)
 
-### Community 913 - "Claude Docker Runner Script"
+### Community 976 - "pass_post_along_sheet.dart"
+Cohesion: 0.22
+Nodes (9): build, createState, eligibleContacts, _isSubmitting, PassPostAlongSheet, _PassPostAlongSheetState, PassPostAlongSubmitOutcome, _selectedPeerIds (+1 more)
+
+### Community 977 - "run_claude_docker.sh"
 Cohesion: 0.36
 Nodes (7): cleanup_host_bridge(), is_image_update_request(), prepare_android_debug_keystore(), run_claude_docker.sh script, start_host_bridge(), write_clipboard_shims(), write_host_tool_shims()
 
-### Community 914 - "Contact Request Model Tests"
+### Community 978 - "contact_request_model_test.dart"
 Cohesion: 0.20
 Nodes (9): main, makeRequest, testMlKem, testPeerId, testPublicKey, testReceivedAt, testRendezvous, testSignature (+1 more)
 
-### Community 915 - "Performance Test Harnesses"
+### Community 979 - "readability_test_helpers.dart"
+Cohesion: 0.20
+Nodes (9): backgroundLuminance, contrastRatio, darker, effectiveForeground, expectComponentContrast, expectTextContrast, foregroundLuminance, lighter (+1 more)
+
+### Community 980 - "performance_harness.dart"
 Cohesion: 0.22
 Nodes (8): conversation_wired_performance_harness.dart, conversation_wired_subscription_performance_harness.dart, feed_performance_test.dart, feed_wired_init_performance_harness.dart, identity_progress_performance_test.dart, main, target, orbit_performance_harness.dart
 
-### Community 916 - "Fake Path Provider Stubs"
-Cohesion: 0.50
-Nodes (9): Fake, MockPlatformInterfaceMixin, PathProviderPlatform, _FakePathProvider, _FakePathProvider, _FakePathProvider, _FakePathProvider, _FakePathProvider (+1 more)
-
-### Community 917 - "Stuck Sending Query Tests"
-Cohesion: 0.22
-Nodes (8): fake_message_repository.dart, id, isIncoming, main, _makeMsg, status, ts, wireEnvelope
-
-### Community 918 - "Message Envelope Parsing (Go)"
+### Community 981 - "envelope.go"
 Cohesion: 0.31
 Nodes (5): ParseV1Envelope(), ParseV2Envelope(), V1Envelope, V2Encrypted, V2Envelope
 
-### Community 919 - "Contact Requests DB Helpers"
+### Community 982 - "contact_requests_db_helpers.dart"
 Cohesion: 0.22
 Nodes (8): dbDeleteRequest, dbLoadPendingRequests, dbLoadRequest, dbRequestExists, dbUpdateRequestStatus, dbUpsertRequest, peerId, peerIdPrefix
 
-### Community 920 - "Group Rejoin State DB Helpers"
-Cohesion: 0.22
-Nodes (8): dbClearGroupRejoinState, dbForceGroupRejoinEligible, dbLoadGroupRejoinStates, dbRecordGroupRejoinFailure, delete, query, rawInsert, update
-
-### Community 921 - "Sibling Devices DB Helpers"
-Cohesion: 0.22
-Nodes (8): dbDeletePendingSiblingDevice, dbLoadPendingSiblingDevice, dbLoadPendingSiblingDevicesForGroup, dbUpsertPendingSiblingDevice, delete, insert, query, rows
-
-### Community 922 - "Group Messages Tables Migration"
+### Community 983 - "018_group_messages_tables.dart"
 Cohesion: 0.22
 Nodes (8): _createGroupKeysTableSql, _createGroupMessagesGroupIndexSql, _createGroupMessagesTableSql, _createGroupMessagesTimestampIndexSql, group_id, key_generation, NULL, runGroupMessagesTablesMigration
 
-### Community 923 - "Invite Consumptions Migration"
+### Community 984 - "056_group_invite_consumptions.dart"
 Cohesion: 0.22
 Nodes (8): _createGroupInviteConsumptionsExpiresAtIndexSql, _createGroupInviteConsumptionsGroupIdIndexSql, _createGroupInviteConsumptionsTableSql, expires_at, group_id, group_invite_consumptions, NULL, runGroupInviteConsumptionsMigration
 
-### Community 924 - "Key Package Tombstones Migration"
+### Community 985 - "064_group_welcome_key_package_tombstones.dart"
 Cohesion: 0.22
 Nodes (8): _createGroupWelcomeKeyPackageTombstonesExpiresAtIndexSql, _createGroupWelcomeKeyPackageTombstonesTableSql, expires_at, group_id, group_welcome_key_package_tombstones, package_id, recipient_device_id, runGroupWelcomeKeyPackageTombstonesMigration
 
-### Community 925 - "Invite Delivery Attempts Migration"
+### Community 986 - "ios_apns_notification_open_bridge_test.dart"
 Cohesion: 0.22
-Nodes (8): _createGroupInviteDeliveryAttemptsGroupStatusIndexSql, _createGroupInviteDeliveryAttemptsPeerIndexSql, _createGroupInviteDeliveryAttemptsSql, group_id, group_invite_delivery_attempts, peer_id, runGroupInviteDeliveryAttemptsMigration, status
+Nodes (8): IosApnsNotificationOpenBridge, package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart, bridge, channel, completer, data, main, _sendNativeMethodCall
 
-### Community 926 - "URL Text Parser"
+### Community 987 - "url_parser.dart"
 Cohesion: 0.22
 Nodes (8): isUrl, lastEnd, parseUrls, segments, text, TextSegment, _trailingPunctuation, _urlPattern
 
-### Community 927 - "Migration Import Cleanup"
-Cohesion: 0.22
-Nodes (8): cancelledImportCleanup, _deleteArtifacts, failedImportCleanup, failedSecureStorageCleanup, MigrationDatabaseImportCleanup, MigrationFailedSecureStorageCleanup, _sqliteSidecars, successfulImportCleanup
-
-### Community 928 - "Audio Recording Model"
+### Community 988 - "audio_recording.dart"
 Cohesion: 0.22
 Nodes (8): AudioRecording, durationMs, filePath, hashCode, mime, operator, sizeBytes, toString
 
-### Community 929 - "Feed Route Change Signals"
+### Community 989 - "full_emoji_picker.dart"
+Cohesion: 0.25
+Nodes (8): build, createState, _emojiCategories, _FullEmojiPicker, _FullEmojiPickerState, readableColors, _selectedCategory, showFullEmojiPicker
+
+### Community 990 - "feed_route_changes.dart"
 Cohesion: 0.22
 Nodes (8): changedContactPeerIds, changedGroupIds, FeedRouteChanges, hasChanges, merge, refreshPendingIntroductions, reloadAllContacts, reloadAllGroups
 
-### Community 930 - "Group Invite Consumption Model"
+### Community 991 - "group_invite_consumption.dart"
 Cohesion: 0.22
 Nodes (8): consumedAt, expiresAt, fromMap, groupId, GroupInviteConsumption, inviteId, isActiveAt, toMap
 
-### Community 933 - "Group Local Deletions DB Helpers"
+### Community 992 - "group_multi_device_policy.dart"
+Cohesion: 0.22
+Nodes (8): GroupMultiDeviceFacet, groupMultiDeviceImplemented, GroupMultiDeviceScope, groupMultiDeviceScopeFor, groupMultiDeviceScopes, isGroupMultiDeviceDeviceLocal, isGroupMultiDeviceImplemented, isGroupMultiDeviceShared
+
+### Community 993 - "NearbyLocationService"
+Cohesion: 0.22
+Nodes (9): NearbyLocationService, NearbyLocationServiceImpl, _FakeNearbyLocationService, _FakeNearbyLocationService, _FakeNearbyLocationService, _FakeNearbyLocationService, _FakeNearbyLocationService, _FakeNearbyLocationService (+1 more)
+
+### Community 994 - "wake_token_reissue_coalescer.dart"
+Cohesion: 0.22
+Nodes (8): dispose, _fire, _pending, _subscriptions, _timer, trigger, WakeTokenReissueCoalescer, window
+
+### Community 996 - "reliability_simulation_discovery_contract_test.sh"
+Cohesion: 0.53
+Nodes (7): assert_capability(), assert_group_media_scenario_selectable(), assert_invite_scenario_selectable(), assert_not_executable(), assert_record_once(), fail(), reliability_simulation_discovery_contract_test.sh script
+
+### Community 997 - "android_picture_in_picture_restored_ownership_test.dart"
+Cohesion: 0.22
+Nodes (8): activitiesFixture, audioFixture, flutterComponent, main, nativeComponent, package, validate, validator
+
+### Community 998 - "dtr11_remaining_test_only_leaves_disposition_test.dart"
+Cohesion: 0.22
+Nodes (8): file, main, _originalTestOnlyAppPaths, _read, readAsStringSync, repository, _requiredSource, _retiredSutOnlyTests
+
+### Community 999 - "group.go"
+Cohesion: 0.32
+Nodes (7): isSupportedBridgeGroupType(), GroupEpochKey, GroupKeyInfo, GroupMember, GroupRole, GroupType, Time
+
+### Community 1000 - "notification_tap_proof_artifact.dart"
+Cohesion: 0.25
+Nodes (7): _artifactFileForScenario, checks, decoded, expect225ProofArtifact, file, _proofArtifact, _proofDir
+
+### Community 1001 - "group_message_local_deletions_db_helpers.dart"
 Cohesion: 0.25
 Nodes (7): dbIsGroupMessageLocallyDeleted, dbLoadGroupMessageLocalDeletion, dbUpsertGroupMessageLocalDeletion, _hasGroupMessageLocalDeletionsTable, insert, now, rows
 
-### Community 934 - "Intro Review Seen DB Helpers"
+### Community 1002 - "intro_review_seen_db_helpers.dart"
 Cohesion: 0.25
 Nodes (7): batch, commit, dbLoadIntroReviewSeenKeys, dbMarkIntroReviewItemsSeen, map, rows, seenAtIso
 
-### Community 935 - "Read-At Column Migration"
+### Community 1003 - "006_read_at_column.dart"
 Cohesion: 0.25
 Nodes (7): columns, contact_peer_id, hasReadAt, is_incoming, messages, read_at, runReadAtColumnMigration
 
-### Community 936 - "Groups Tables Migration"
+### Community 1004 - "017_groups_tables.dart"
 Cohesion: 0.25
 Nodes (7): _createGroupMembersIndexSql, _createGroupMembersTableSql, _createGroupsTableSql, group_id, peer_id, runGroupsTablesMigration, TEXT
 
-### Community 937 - "Local Deletions Migration"
-Cohesion: 0.25
-Nodes (7): _createGroupMessageLocalDeletionsGroupIndexSql, _createGroupMessageLocalDeletionsSql, deleted_at, group_id, group_message_local_deletions, NULL, runGroupMessageLocalDeletionsMigration
-
-### Community 938 - "Key Rotation Drafts Migration"
+### Community 1005 - "070_group_key_rotation_drafts.dart"
 Cohesion: 0.25
 Nodes (7): _createGroupKeyRotationDraftsEpochIndexSql, _createGroupKeyRotationDraftsSql, group_id, group_key_rotation_drafts, key_generation, NULL, runGroupKeyRotationDraftsMigration
 
-### Community 939 - "Pending Sibling Devices Migration"
+### Community 1006 - "085_pending_sibling_devices.dart"
 Cohesion: 0.25
 Nodes (7): _createPendingSiblingDevicesIndexSql, _createPendingSiblingDevicesSql, device_id, group_id, member_peer_id, pending_sibling_devices, runPendingSiblingDevicesMigration
 
-### Community 940 - "Android Voice Message E2E Protocol"
+### Community 1007 - "103_group_exit_intents.dart"
+Cohesion: 0.25
+Nodes (7): _createGroupExitIntentsStateUpdatedIndexSql, _createGroupExitIntentsTableSql, group_exit_intents, _migrationName, runGroupExitIntentsMigration, state, updated_at
+
+### Community 1008 - "android_voice_message_e2e_protocol.dart"
 Cohesion: 0.25
 Nodes (7): androidVoiceMessageE2EAction, androidVoiceMessageE2EBuildProfile, androidVoiceMessageE2EEndpointResultSchema, androidVoiceMessageE2ERequestSchema, androidVoiceMessageE2EScenario, androidVoiceMessageReceiverRole, androidVoiceMessageSenderRole
 
-### Community 941 - "iOS Receiver Bootstrap Contract"
-Cohesion: 0.25
-Nodes (7): base58, iosReceiverBootstrapBuildProfile, isIosReceiverBootstrapBuildProfile, isIosReceiverBootstrapMlKemPublicKey, isIosReceiverBootstrapNotificationAlertSetting, isIosReceiverBootstrapNotificationAuthorization, isIosReceiverBootstrapTransportPeerId
-
-### Community 942 - "Disk Space Channel"
-Cohesion: 0.25
-Nodes (7): _channel, channelName, DiskSpaceChannel, DiskSpacePlatformInvoker, getAvailableBytes, _invokeMethod, invoker
-
-### Community 943 - "Audio Amplitude Buffer"
+### Community 1009 - "amplitude_buffer.dart"
 Cohesion: 0.25
 Nodes (7): AmplitudeBuffer, _data, _full, push, reset, size, _writeIndex
 
-### Community 944 - "App Group Path Channel (iOS)"
-Cohesion: 0.25
-Nodes (7): AppGroupPathChannel, AppGroupPathPlatformInvoker, _channel, channelName, containerPath, _invokeMethod, invoker
-
-### Community 945 - "Notification Service Interface"
+### Community 1010 - "notification_service.dart"
 Cohesion: 0.25
 Nodes (7): clearDeliveredNotifications, consumeInitialPayload, dispose, initialize, NotificationService, showMessageNotification, showNotification
 
-### Community 946 - "Device Announce Marker"
+### Community 1011 - "secret_storage_references.dart"
 Cohesion: 0.25
-Nodes (7): clearGroupDeviceAnnounceMarker, delete, kGroupDeviceAnnouncePendingKey, markGroupDeviceAnnouncePending, raw, readGroupDeviceAnnounceMarker, write
+Nodes (7): groupAcceptedKeyMaterialStoreName, groupKeyMaterialStoreName, isSecureStoreReference, mediaAttachmentEncryptionKeyStoreName, secureStoreKeyFromReference, secureStoreReferenceForKey, secureStoreReferencePrefix
 
-### Community 947 - "Group Key Update Signatures"
+### Community 1012 - "contact_request_presentation_gate.dart"
 Cohesion: 0.25
-Nodes (7): canonicalGroupKeyUpdateSignedPayload, canonicalizeGroupEventLogPayload, groupId, groupKeyUpdateSignatureAlgorithm, groupKeyUpdateSignatureSchemaVersion, groupKeyUpdateSignedPayloadType, sourcePeerId
+Nodes (7): ContactRequestPresentationGate, release, releaseAll, shouldSuppress, suppress, _suppressAll, _suppressedPeerIds
 
-### Community 948 - "Group Inbox Cursor Model"
-Cohesion: 0.25
-Nodes (7): createdAt, cursor, fromMap, groupId, GroupInboxCursor, toMap, updatedAt
-
-### Community 949 - "Orbit Geometry Preferences"
-Cohesion: 0.25
-Nodes (7): clearOrbitGeometryPrefs, delete, fromStorageString, loadOrbitGeometryPrefs, saveOrbitGeometryPrefs, value, write
-
-### Community 950 - "Post Media Draft Model"
+### Community 1013 - "post_media_draft.dart"
 Cohesion: 0.25
 Nodes (7): durationMs, height, localFilePath, mime, PostMediaDraft, waveform, width
 
-### Community 951 - "Group Missed Message Telemetry Tests"
+### Community 1014 - "group_missed_message_telemetry_test.dart"
 Cohesion: 0.25
 Nodes (7): package:flutter_app/features/groups/application/group_missed_message_telemetry.dart, _diagnostic, _expected, keyEpoch, main, messageId, recipientPeerId
 
-### Community 952 - "Host Test Gate Contract Tests"
+### Community 1015 - "host_test_gate_batch_contract_test.sh"
 Cohesion: 0.36
 Nodes (6): expect_error(), fail(), FAKE_FLUTTER_LOG, FAKE_GO_LOG, PATH, host_test_gate_batch_contract_test.sh script
 
-### Community 953 - "Sims Checkpoint Contract Tests"
+### Community 1016 - "sims_checkpoint_process_contract_test.sh"
 Cohesion: 0.39
 Nodes (7): assert_report_ids(), fail(), run_sims(), sims_checkpoint_process_contract_test.sh script, SIMS_FIXTURE_DUPLICATE_FLUTTER_ROW, SIMS_FIXTURE_SOURCE_DIGEST, write_manifest()
 
-### Community 954 - "Sims Test Gate Contract Tests"
+### Community 1017 - "sims_test_gate_contract_test.sh"
 Cohesion: 0.32
 Nodes (7): fail(), FAKE_DART_LOG, FAKE_FLUTTER_LOG, PATH, sims_test_gate_contract_test.sh script, SIMS_FIXTURE_LOG, write_fixture()
 
-### Community 955 - "Voice Message Sims Runner"
-Cohesion: 0.29
-Nodes (6): android_voice_message_device_campaign.dart, _artifact, _devices, main, result, values
+### Community 1018 - "received_media_action_transport_boundary_test.dart"
+Cohesion: 0.25
+Nodes (7): controllerPath, count, importTargets, main, mediaActionUiFiles, read, wiredPath
 
-### Community 956 - "Testpeer Inbox Store Commands (Go)"
+### Community 1019 - "group_key_repair_wiring_test.dart"
+Cohesion: 0.25
+Nodes (7): logOnlyToken, main, nsePath, productionPath, readSource, routerPath, senderToken
+
+### Community 1020 - "cmdInboxStoreV1"
 Cohesion: 0.48
 Nodes (7): cmdInboxStoreRaw(), cmdInboxStoreV1(), cmdInboxStoreV2(), inboxStoreErrorResult(), inboxStoreOutcomeResult(), TestInboxStoreOutcomeResultExposesDetailedFields(), InboxStoreOutcome
 
-### Community 957 - "Relay Transport Smoke Tests (Go)"
+### Community 1021 - "quic_smoke_test.go"
 Cohesion: 0.52
 Nodes (6): skipIfNoNetwork(), TestAllTransportsSmokeCompare(), TestQUICSmokeIdentify(), TestQUICSmokeRelayReservation(), TestTCPSmokeIdentify(), TestWSSSmokeIdentify()
 
-### Community 958 - "Group Reaction Artifact Validation"
+### Community 1022 - "validate_group_reaction_notification_artifacts.dart"
 Cohesion: 0.29
 Nodes (6): group_reaction_notification_device_criteria.dart, main, scenario, _selectedScenarios, _usageError, _valueFor
 
-### Community 959 - "Group Rejoin State DB Tests"
-Cohesion: 0.33
-Nodes (5): main, package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart, package:flutter_app/core/database/migrations/088_group_rejoin_state.dart, db, main
+### Community 1023 - "ios_notification_payload_xcui_contract_test.dart"
+Cohesion: 0.29
+Nodes (6): ../../integration_test/scripts/ios_notification_payload_xcui_driver.dart, _between, endIndex, main, startIndex, substring
 
-### Community 960 - "iOS Notification Payload Sims Runner"
+### Community 1024 - "run_ios_notification_payload_sims.dart"
 Cohesion: 0.29
 Nodes (6): environment, main, result, _valueFor, notification_ios_payload_campaign.dart, ../support/ios_notification_payload_campaign.dart
 
-### Community 961 - "Pending Group Invites DB Helpers"
+### Community 1025 - "intro_accept_notification_proof_artifact.dart"
+Cohesion: 0.29
+Nodes (6): checks, decoded, expect252ProofArtifact, file, _proofDir, requiredChecks
+
+### Community 1026 - "feed_cleared_threads_db_helpers.dart"
+Cohesion: 0.29
+Nodes (6): dbClearFeedClearedThread, dbLoadFeedClearedThreads, dbMarkFeedClearedThread, delete, insert, query
+
+### Community 1027 - "pending_group_invites_db_helpers.dart"
 Cohesion: 0.29
 Nodes (6): dbDeleteExpiredPendingGroupInvites, dbDeletePendingGroupInvite, dbLoadPendingGroupInvite, dbLoadPendingGroupInvites, dbUpsertPendingGroupInvite, groupId
 
-### Community 962 - "Post Location Presence DB Helpers"
+### Community 1028 - "post_comment_reactions_db_helpers.dart"
+Cohesion: 0.29
+Nodes (6): dbLoadPostCommentReaction, dbLoadPostCommentReactions, dbUpsertPostCommentReaction, insert, query, rows
+
+### Community 1029 - "post_location_presence_db_helpers.dart"
 Cohesion: 0.29
 Nodes (6): dbLoadAllPostLocationPresence, dbLoadPostLocationPresence, dbUpsertPostLocationPresence, insert, query, rows
 
-### Community 963 - "Pending Child Events DB Helpers"
+### Community 1030 - "post_pending_child_events_db_helpers.dart"
 Cohesion: 0.29
 Nodes (6): dbDeletePendingPostChildEvent, dbInsertPendingPostChildEvent, dbLoadPendingPostChildEvents, delete, insert, query
 
-### Community 964 - "Post Pin Dismissals DB Helpers"
+### Community 1031 - "post_pin_dismissals_db_helpers.dart"
 Cohesion: 0.29
 Nodes (6): dbDeletePostPinDismissal, dbLoadPostPinDismissals, dbUpsertPostPinDismissal, delete, insert, query
 
-### Community 965 - "Introductions Table Migration"
+### Community 1032 - "post_reactions_db_helpers.dart"
+Cohesion: 0.29
+Nodes (6): dbLoadPostReaction, dbLoadPostReactions, dbUpsertPostReaction, insert, query, rows
+
+### Community 1033 - "019_introductions_table.dart"
 Cohesion: 0.29
 Nodes (6): _createIntroducedIndexSql, _createIntroducerIndexSql, _createIntroductionsTableSql, _createRecipientIndexSql, runIntroductionsTableMigration, TEXT
 
-### Community 966 - "Message Reliability Columns Migration"
+### Community 1034 - "041_group_message_reliability_columns.dart"
 Cohesion: 0.29
 Nodes (6): columnNames, columns, hasInboxRetryPayload, hasInboxStored, hasWireEnvelope, runGroupMessageReliabilityColumnsMigration
 
-### Community 967 - "Messages Deleted State Migration"
+### Community 1035 - "044_messages_deleted_state.dart"
 Cohesion: 0.29
 Nodes (6): columnNames, columns, hasDeletedAt, hasDeletedByPeerId, hasHiddenAt, runMessagesDeletedStateMigration
 
-### Community 968 - "Pending Group Invites Migration"
+### Community 1036 - "051_pending_group_invites.dart"
 Cohesion: 0.29
 Nodes (6): _createPendingGroupInvitesExpiresAtIndexSql, _createPendingGroupInvitesTableSql, expires_at, NULL, pending_group_invites, runPendingGroupInvitesMigration
 
-### Community 969 - "Removed Member Snapshots Migration"
-Cohesion: 0.29
-Nodes (6): _createRemovedGroupMemberSnapshotsIndexSql, _createRemovedGroupMemberSnapshotsSql, group_id, peer_id, removed_group_member_snapshots, runRemovedGroupMemberSnapshotsMigration
-
-### Community 970 - "Member Device Snapshots Migration"
+### Community 1037 - "084_group_member_device_snapshots.dart"
 Cohesion: 0.29
 Nodes (6): _createGroupMemberDeviceSnapshotsIndexSql, _createGroupMemberDeviceSnapshotsSql, group_id, group_member_device_snapshots, peer_id, runGroupMemberDeviceSnapshotsMigration
 
-### Community 971 - "Connectivity Restore E2E Contract"
+### Community 1038 - "094_group_messages_group_ts_index.dart"
+Cohesion: 0.29
+Nodes (6): _createGroupMessagesGroupTsIndexSql, group_id, group_messages, id, runGroupMessagesGroupTsIndexMigration, timestamp
+
+### Community 1039 - "connectivity_restore_e2e_contract.dart"
 Cohesion: 0.29
 Nodes (6): connectivityRestoreExpectedTexts, connectivityRestoreObserveAction, connectivityRestoreObserveRequestSchema, connectivityRestoreObserveResultSchema, connectivityRestoreScenarioId, connectivityRestoreSendStepId
 
-### Community 972 - "Private Media Transfer Registry"
-Cohesion: 0.29
-Nodes (6): DirectPrivateMediaTransferRegistry, end, isActive, owns, _tokens, tryBegin
-
-### Community 973 - "Media File Path Convention"
-Cohesion: 0.29
-Nodes (6): extensionFromMime, MediaFilePathConvention, relativePathForAttachment, relativePathForPendingUpload, relativePathForPostAttachment, _
-
-### Community 974 - "Secure Storage Key References"
-Cohesion: 0.29
-Nodes (6): groupKeyMaterialStoreName, isSecureStoreReference, mediaAttachmentEncryptionKeyStoreName, secureStoreKeyFromReference, secureStoreReferenceForKey, secureStoreReferencePrefix
-
-### Community 975 - "Pending Sibling Device Repository"
+### Community 1040 - "pending_sibling_device_repository.dart"
 Cohesion: 0.29
 Nodes (6): deletePendingSiblingDevice, getPendingSiblingDevice, getPendingSiblingDevicesForGroup, PendingSiblingDeviceRepository, savePendingSiblingDevice, ../models/pending_sibling_device.dart
 
-### Community 976 - "Push Release Gate Script"
+### Community 1041 - "package:flutter_app/features/posts/domain/models/contact_presence_snapshot.dart"
+Cohesion: 0.29
+Nodes (6): dispose, load, loadAll, save, snapshotChanges, package:flutter_app/features/posts/domain/models/contact_presence_snapshot.dart
+
+### Community 1042 - "check_push_release_gate.sh"
 Cohesion: 0.48
 Nodes (5): contains_literal(), fail(), pass(), check_push_release_gate.sh script, warn()
 
-### Community 977 - "Gomobile Binding Inputs Script"
+### Community 1043 - "gomobile_binding_inputs.sh"
 Cohesion: 0.33
 Nodes (3): gomobile_binding_input_digest(), gomobile_sha256_stream(), gomobile_binding_inputs.sh script
 
-### Community 978 - "Simulation Discovery Contract Tests"
-Cohesion: 0.62
-Nodes (5): assert_capability(), assert_not_executable(), assert_record_once(), fail(), reliability_simulation_discovery_contract_test.sh script
+### Community 1044 - "sims_ios_device_companion_bundle_contract_test.sh"
+Cohesion: 0.67
+Nodes (6): assert_fingerprint_rebuild(), assert_ios_artifact_fault_rejected(), fail(), run_prepare(), sims_ios_device_companion_bundle_contract_test.sh script, write_signing_attestation()
 
-### Community 979 - "Push Tone Reservation (iOS)"
+### Community 1045 - "CountingMediaAttachmentRepository"
 Cohesion: 0.33
-Nodes (6): AnyObject, PushToneReservation, PushToneReservationOutcome, leaseHeld, reserved, storageUnavailable
+Nodes (6): CountingMediaAttachmentRepository, GateFirstSingleMediaReadRepository, GateNthExactMediaReadRepository, MixedViewerMediaAttachmentRepository, _SqlDefaultingMediaAttachmentRepository, _WriteCountingMediaAttachmentRepository
 
-### Community 980 - "Bridge Entrypoint Contract Tests (Go)"
+### Community 1046 - "TestBridgeGroupPublishContractsPreservedAfterHelperExtraction"
 Cohesion: 0.53
 Nodes (5): functionCallsHelper(), TestBridgeExportedHandlersUseSharedEntrypoint(), TestBridgeGroupPublishContractsPreservedAfterHelperExtraction(), validGroupSendParamsJSON(), withNoSingletonNode()
 
-### Community 981 - "Messages Index Migration"
+### Community 1047 - "group_multi_party_verdict_handshake.dart"
+Cohesion: 0.33
+Nodes (5): groupMultiPartyVerdictHostCapturedSignalName, orderedRoles, verdicts, waitForSignal, writeGroupMultiPartyVerdictAndAwaitHostCapture
+
+### Community 1048 - "080_group_pending_key_repairs_status_index.dart"
+Cohesion: 0.33
+Nodes (5): created_at, _createGroupPendingKeyRepairsStatusIndexSql, group_pending_key_repairs, runGroupPendingKeyRepairsStatusIndexMigration, status
+
+### Community 1049 - "093_messages_contact_ts_index.dart"
 Cohesion: 0.33
 Nodes (5): contact_peer_id, _createMessagesContactTsIndexSql, messages, runMessagesContactTsIndexMigration, timestamp
 
-### Community 982 - "Video Process Result Model"
+### Community 1050 - "video_process_result.dart"
 Cohesion: 0.33
 Nodes (5): durationMs, height, path, VideoProcessResult, width
 
-### Community 983 - "App Shell Tab Enum"
+### Community 1051 - "app_shell_tab.dart"
 Cohesion: 0.33
 Nodes (5): AppShellTab, feed, isValid, orbit, values
 
-### Community 984 - "Feed Session Reply Model"
+### Community 1052 - "feed_session_reply.dart"
 Cohesion: 0.33
 Nodes (5): copyWith, failed, FeedSessionReply, messageId, text
 
-### Community 985 - "Announcement Private Reply Model"
+### Community 1053 - "letter_line.dart"
+Cohesion: 0.33
+Nodes (5): hasMedia, LetterLine, media, messageId, text
+
+### Community 1054 - "announcement_private_reply_request.dart"
 Cohesion: 0.33
 Nodes (5): AnnouncementPrivateReplyRequest, hashCode, operator, senderPeerId, sourceMessageId
 
-### Community 986 - "iOS Bootstrap Contract Tests"
+### Community 1055 - "group_member_device_safety.dart"
 Cohesion: 0.33
-Nodes (5): package:flutter_app/core/debug/ios_receiver_bootstrap_contract.dart, _fail, main, mlKem, peer
+Nodes (5): asGroupMemberDeviceSnapshotRepository, compare, multiDeviceSyncEnabled, resolveGroupMemberDeviceSafety, savedDevices
 
-### Community 987 - "Multi-Party Probe Script"
+### Community 1056 - "GroupHistoryGapRepairRepository"
+Cohesion: 0.33
+Nodes (6): GroupHistoryGapRepairRepositoryImpl, GroupHistoryGapRepairExactRepository, GroupHistoryGapRepairRepository, _InMemoryGroupHistoryGapRepairRepository, _InMemoryGroupHistoryGapRepairRepository, _InMemoryGroupHistoryGapRepairRepository
+
+### Community 1057 - "firebase_readiness.dart"
+Cohesion: 0.33
+Nodes (5): addOnReadyListener, ensureReady, FirebaseReadiness, isReady, _ready
+
+### Community 1058 - "push_listener_armer.dart"
+Cohesion: 0.33
+Nodes (5): arm, _armed, _kinds, _platform, PushListenerArmer
+
+### Community 1059 - "run_group_multi_party_phase0_probe.sh"
 Cohesion: 0.47
 Nodes (3): run_group_multi_party_phase0_probe.sh script, timed_build(), wait_for_marker()
 
-### Community 988 - "Multi-Party Sims Adapter Tests"
+### Community 1060 - "group_multi_party_sims_adapter_contract_test.sh"
 Cohesion: 0.73
 Nodes (4): assert_blocked_without_child(), assert_one_typed_result(), fail(), group_multi_party_sims_adapter_contract_test.sh script
 
-### Community 989 - "Group Reaction Sims Adapter Tests"
+### Community 1061 - "group_reaction_notification_sims_adapter_contract_test.sh"
 Cohesion: 0.73
 Nodes (4): assert_one_blocked_result(), assert_typed_preflight(), fail(), group_reaction_notification_sims_adapter_contract_test.sh script
 
-### Community 990 - "Intro Accept Sims Adapter Tests"
+### Community 1062 - "intro_accept_notification_sims_adapter_contract_test.sh"
 Cohesion: 0.73
 Nodes (4): assert_blocked_without_child(), assert_one_typed_result(), fail(), intro_accept_notification_sims_adapter_contract_test.sh script
 
-### Community 991 - "Sims Build Count Contract Tests"
+### Community 1063 - "sims_build_count_contract_test.sh"
 Cohesion: 0.67
 Nodes (5): assert_build_report(), fail(), run_prepare(), sims_build_count_contract_test.sh script, write_manifest()
 
-### Community 992 - "Sims iOS Bundle Contract Tests"
-Cohesion: 0.73
-Nodes (5): assert_fingerprint_rebuild(), fail(), run_prepare(), sims_ios_device_companion_bundle_contract_test.sh script, write_signing_attestation()
-
-### Community 993 - "Sims Simultaneous Contract Tests"
+### Community 1064 - "sims_simultaneous_contract_test.sh"
 Cohesion: 0.40
 Nodes (5): fail(), PATH, REAL_FLUTTER, sims_simultaneous_contract_test.sh script, SIMS_ACTIVITY_LOG
 
-### Community 994 - "Sims Verdict Contract Tests"
+### Community 1065 - "sims_verdict_process_contract_test.sh"
 Cohesion: 0.67
 Nodes (5): assert_report(), fail(), run_case(), sims_verdict_process_contract_test.sh script, write_manifest()
 
-### Community 995 - "Testpeer Offline Replay (Go)"
+### Community 1066 - "private_media_ux_strings_test.dart"
+Cohesion: 0.33
+Nodes (5): exactEnglish, file, _loadArb, main, placeholderTypes
+
+### Community 1067 - "intro_review_seen_repository_impl.dart"
+Cohesion: 0.40
+Nodes (4): ../../domain/repositories/intro_review_seen_repository.dart, IntroReviewSeenRepositoryImpl, loadSeenKeys, markAllSeen
+
+### Community 1068 - "TestBridgeGroupHistoryRepairRange_ReturnsRelayReplayEnvelopes"
+Cohesion: 0.40
+Nodes (5): readBridgeTestFrame(), TestBridgeGroupHistoryRepairRange_ReturnsRelayReplayEnvelopes(), writeBridgeTestFrame(), Reader, Writer
+
+### Community 1069 - "buildGroupOfflineReplayEnvelope"
 Cohesion: 0.50
 Nodes (5): buildGroupOfflineReplayEnvelope(), canonicalJSON(), canonicalStringList(), hashString(), TestBuildGroupOfflineReplayEnvelopeSignsEncryptedReplay()
 
-### Community 997 - "Posts Phase 1 Smoke Script"
+### Community 1071 - "group_multi_party_scenarios_to_run_test.dart"
+Cohesion: 0.40
+Nodes (3): ../../integration_test/scripts/group_multi_party_device_criteria.dart, main, main
+
+### Community 1072 - "posts_phase1_smoke.sh"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase1_smoke.sh script
 
-### Community 998 - "Posts Phase 2 Smoke Script"
+### Community 1073 - "posts_phase2_smoke.sh"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase2_smoke.sh script
 
-### Community 999 - "Posts Phase 3 Smoke Script"
+### Community 1074 - "posts_phase3_smoke.sh"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase3_smoke.sh script
 
-### Community 1000 - "Posts Phase 4 Smoke Script"
+### Community 1075 - "posts_phase4_smoke.sh"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase4_smoke.sh script
 
-### Community 1001 - "Posts Phase 5 Smoke Script"
+### Community 1076 - "posts_phase5_smoke.sh"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase5_smoke.sh script
 
-### Community 1002 - "Notification Preview Errors (iOS)"
+### Community 1077 - "NotificationPreviewError"
 Cohesion: 0.40
 Nodes (5): NotificationPreviewError, bridgeFailure, bridgeUnavailable, invalidBridgeInput, invalidBridgeResponse
 
-### Community 1003 - "Invite Revocations DB Helpers"
+### Community 1078 - "052_groups_dissolve_columns.dart"
 Cohesion: 0.40
-Nodes (4): dbDeleteExpiredGroupInviteRevocations, dbLoadGroupInviteRevocation, dbUpsertGroupInviteRevocation, inviteId
+Nodes (4): _groupsDissolvedAtColumn, _groupsDissolvedByColumn, _groupsIsDissolvedColumn, runGroupsDissolveColumnsMigration
 
-### Community 1004 - "Key Package Tombstones DB Helpers"
+### Community 1079 - "059_media_attachment_encryption_columns.dart"
 Cohesion: 0.40
-Nodes (4): dbDeleteExpiredGroupWelcomeKeyPackageTombstones, dbLoadGroupWelcomeKeyPackageTombstone, dbUpsertGroupWelcomeKeyPackageTombstone, packageId
+Nodes (4): columnNames, columns, missingColumns, runMediaAttachmentEncryptionColumnsMigration
 
-### Community 1005 - "Post Feed State DB Helpers"
+### Community 1080 - "104_group_exit_diagnostics.dart"
 Cohesion: 0.40
-Nodes (4): dbMarkPostFocused, insert, now, update
+Nodes (4): _createGroupExitDiagnosticsTableSql, _migrationName, runGroupExitDiagnosticsMigration, strftime
 
-### Community 1006 - "E2E Test Mode Flags"
+### Community 1081 - "e2e_test_mode.dart"
 Cohesion: 0.40
 Nodes (4): kDisableLocalDiscovery, kE2ETestMode, kProductionFcmTestMode, shouldEnableProductionPushRegistration
 
-### Community 1007 - "Delivery Receipt Use Case"
-Cohesion: 0.40
-Nodes (4): fromPreview, handleDeliveryReceipt, messageIds, package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart
-
-### Community 1008 - "Group Role Authorization"
+### Community 1082 - "group_role_update_authorization.dart"
 Cohesion: 0.40
 Nodes (4): canApplyGroupMemberRoleUpdate, canManageRoles, _explicitlyAllows, permissionEscalationBlockedMessage
 
-### Community 1009 - "Unseen Review Count"
+### Community 1083 - "unseen_review_count.dart"
 Cohesion: 0.40
 Nodes (4): computeUnseenReviewKeys, difference, introReviewKeyForGroupInvite, introReviewKeyForIntroTarget
 
-### Community 1010 - "Post Route Target Model"
+### Community 1084 - "post_route_target.dart"
 Cohesion: 0.40
 Nodes (4): commentId, opensComments, postId, PostRouteTarget
 
-### Community 1011 - "Private Reply Request Tests"
+### Community 1085 - "RecursiveAstVisitor"
 Cohesion: 0.40
-Nodes (4): package:flutter_app/features/groups/application/announcement_private_reply_request.dart, declarations, _instanceFinalFieldNames, main
+Nodes (5): RecursiveAstVisitor, _CreationCollector, _IdentifierCollector, _CreationCollector, _CreationCollector
 
-### Community 1014 - "Go Binding Staleness Tests"
+### Community 1088 - "architecture_boundary_checker_contract_test.sh"
+Cohesion: 0.60
+Nodes (3): fail(), run_cli(), architecture_boundary_checker_contract_test.sh script
+
+### Community 1089 - "go_binding_staleness_contract_test.sh"
 Cohesion: 0.70
 Nodes (4): fail(), run_android(), run_ios(), go_binding_staleness_contract_test.sh script
 
-### Community 1015 - "Performance Runner Contract Tests"
+### Community 1090 - "performance_prebuilt_runner_contract_test.sh"
 Cohesion: 0.80
 Nodes (4): assert_one_result(), fail(), run_performance(), performance_prebuilt_runner_contract_test.sh script
 
-### Community 1017 - "Sims Fingerprint Contract Tests"
+### Community 1092 - "sims_profile_build_fingerprint_contract_test.sh"
 Cohesion: 0.70
 Nodes (4): assert_report(), fail(), run_prepare(), sims_profile_build_fingerprint_contract_test.sh script
 
-### Community 1018 - "Sims Skill Adapter Tests"
+### Community 1093 - "sims_skill_adapter_contract_test.sh"
 Cohesion: 0.60
 Nodes (3): fail(), run_adapter(), sims_skill_adapter_contract_test.sh script
 
-### Community 1019 - "Voice Recorder Runner Contract Tests"
+### Community 1094 - "voice_recorder_prebuilt_runner_contract_test.sh"
 Cohesion: 0.80
 Nodes (4): assert_one_result(), fail(), run_voice(), voice_recorder_prebuilt_runner_contract_test.sh script
 
-### Community 1020 - "Bonsoir Discovery Fakes"
-Cohesion: 0.67
-Nodes (4): BonsoirDiscovery, BonsoirDiscoveryEvent, _FakeBonsoirDiscovery, _FakeBonsoirDiscovery
+### Community 1095 - "_DownloadWritingBridge"
+Cohesion: 0.50
+Nodes (4): _DownloadWritingBridge, _JourneyGroupBridge, _FailingDownloadBridge, _FailOncePartialDownloadBridge
 
-### Community 1022 - "Retry Constants"
+### Community 1096 - "group_multi_party_device_real_android_harness.dart"
+Cohesion: 0.50
+Nodes (3): group_multi_party_device_real_harness.dart, main, runGroupMultiPartyDeviceRealHarness
+
+### Community 1097 - "retry_constants.dart"
 Cohesion: 0.50
 Nodes (3): kMaxDownloadRetries, kMaxUploadRetries, kReuploadMaxAttachmentsPerMessage
 
-### Community 1023 - "Waveform Downsampling"
+### Community 1098 - "downsample_waveform.dart"
 Cohesion: 0.50
 Nodes (3): bucketSize, downsampleWaveform, result
 
-### Community 1024 - "Message Window Cap"
+### Community 1099 - "message_window_cap.dart"
 Cohesion: 0.50
 Nodes (3): cap, kMaxInMemoryMessages, sublist
 
-### Community 1025 - "Group Backlog Retention Policy"
+### Community 1100 - "IncomingGroupMessageDetailedOutcome"
+Cohesion: 0.50
+Nodes (4): IncomingGroupMessageDelivered, IncomingGroupMessageDetailedOutcome, IncomingGroupMessageDuplicateEnriched, IncomingGroupMessageIgnored
+
+### Community 1101 - "group_backlog_retention_policy.dart"
 Cohesion: 0.50
 Nodes (3): groupBacklogRetentionCutoff, groupBacklogRetentionWindow, groupBacklogRetentionWindowDays
 
-### Community 1026 - "Group Key Retention Policy"
+### Community 1102 - "group_key_retention_policy.dart"
 Cohesion: 0.50
 Nodes (3): groupKeyReplayRetentionGenerationCount, minGeneration, minRetainedGroupKeyGeneration
 
-### Community 1027 - "Bonsoir Peer Eviction Tests"
-Cohesion: 0.50
-Nodes (3): package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart, main, peerDiscoveredAt
-
-### Community 1029 - "Group Flake Budget Script"
+### Community 1104 - "run_group_fake_flake_budget.sh"
 Cohesion: 0.67
 Nodes (3): REPEAT_COUNT, run_iteration(), run_group_fake_flake_budget.sh script
 
-### Community 1030 - "Keepalive Runner Contract Tests"
+### Community 1105 - "keepalive_prebuilt_runner_contract_test.sh"
 Cohesion: 1.00
 Nodes (3): assert_one_result(), fail(), keepalive_prebuilt_runner_contract_test.sh script
 
-### Community 1031 - "Notification Tap Adapter Tests"
+### Community 1106 - "notification_tap_campaign_adapter_contract_test.sh"
 Cohesion: 0.67
 Nodes (3): fail(), notification_tap_campaign_adapter_contract_test.sh script, SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM
 
-### Community 1032 - "Docker Update Contract Tests"
+### Community 1107 - "run_claude_docker_update_contract_test.sh"
 Cohesion: 0.83
 Nodes (3): fail(), run_runner(), run_claude_docker_update_contract_test.sh script
 
-### Community 1033 - "Sims Continuity Contract Tests"
+### Community 1109 - "sims_checkpoint_preparation_continuity_contract_test.sh"
 Cohesion: 0.83
 Nodes (3): fail(), run_sims(), sims_checkpoint_preparation_continuity_contract_test.sh script
 
-### Community 1034 - "Sims Mutation Contract Tests"
+### Community 1110 - "sims_command_family_mutation_contract_test.sh"
 Cohesion: 0.83
 Nodes (3): fail(), run_mutation(), sims_command_family_mutation_contract_test.sh script
 
-### Community 1035 - "Sims iOS Cache Contract Tests"
+### Community 1111 - "sims_ios_app_cache_contract_test.sh"
 Cohesion: 0.83
 Nodes (3): fail(), run_prepare(), sims_ios_app_cache_contract_test.sh script
 
-### Community 1036 - "Wake Token Runner Contract Tests"
+### Community 1112 - "wake_token_prebuilt_runner_contract_test.sh"
 Cohesion: 1.00
 Nodes (3): assert_one_result(), fail(), wake_token_prebuilt_runner_contract_test.sh script
 
-### Community 1037 - "Bonsoir Broadcast Fake"
+### Community 1113 - "@pragma"
 Cohesion: 0.67
-Nodes (3): BonsoirBroadcast, _FakeBonsoirBroadcast, _FakeBonsoirBroadcast
+Nodes (3): @pragma, firebaseMessagingBackgroundHandler, backgroundHandler
 
-### Community 1038 - "Theme Context Extensions"
+### Community 1114 - "BuildContext"
 Cohesion: 0.67
 Nodes (3): BuildContext, BackgroundReadableColorsContext, FeedTokensContext
 
-### Community 1039 - "Android App State Guard"
+### Community 1115 - "FakeDecryptBridge"
 Cohesion: 0.67
-Nodes (3): AndroidHostProcessRunner, SystemAndroidHostProcessRunner, _FakeAdbState
+Nodes (3): FakeDecryptBridge, _RingFallbackDecryptBridge, ThrowingDecryptBridge
 
-### Community 1047 - "Go Module Declarations"
+### Community 1117 - "AndroidAppFileTransport"
+Cohesion: 0.67
+Nodes (3): AdbRunAsAppFileTransport, AndroidAppFileTransport, _FakeAndroidAppFileTransport
+
+### Community 1123 - "github.com/elastic/gosigar"
 Cohesion: 0.67
 Nodes (3): github.com/elastic/gosigar, github.com/mknoon/go-mknoon, github.com/mknoon/relay-server
 
-### Community 1062 - "Service Resolver Test Fakes"
+### Community 1140 - "TrackingDurableMediaFileManager"
 Cohesion: 0.67
-Nodes (3): ServiceResolver, _RecordingResolver, _RecordingResolver
+Nodes (3): _ScopedTrackingDurableMediaFileManager, ThrowingAfterCopyDurableMediaFileManager, TrackingDurableMediaFileManager
 
 ## Knowledge Gaps
-- **45194 isolated node(s):** `EventCallback`, `innerMessage`, `github.com/mknoon/go-mknoon`, `localInboxRequest`, `Node` (+45189 more)
+- **51678 isolated node(s):** `EventCallback`, `innerMessage`, `github.com/mknoon/go-mknoon`, `localInboxRequest`, `Node` (+51673 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **69 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **75 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `class` connect `Group Pending Membership Repository` to `Group Multi-Party Device Harness`, `Cross-Feature Wired UI Tests`, `Group Domain Fakes & Tests`, `Media Forwarding Policy Tests`, `Contact Request Flow Tests`, `StatelessWidget Screens Hub`, `Group Reaction Replay Outbox`, `Post Pass Integration Tests`, `Identity & Reaction Repositories`, `Group Invite Flow Tests`, `StatefulWidget UI Hub`, `Group Messaging Smoke Tests`, `Group Message Use Case Tests`, `Group History Gap Repair`, `Group Conversation Wired Tests`, `Group Pending Key Distribution Repository`, `Group Resume Recovery Tests`, `Conversation Wired Tests`, `Orbit Inner Circle UI`, `Migration Journey UI`, `Conversation BG Task Tests`, `Group Membership Smoke Tests`, `Group Info Wired Tests`, `Contact Presence Snapshot Repository`, `Group Message Repository Tests`, `Share Batch Coordinator Tests`, `Group Message Listener Tests`, `Group Inbox Drain Tests`, `Notification Open UI Smoke Tests`, `Posts Nearby & Privacy Settings`, `Migration Database Import`, `Migration Pairing & QR Tests`, `Share Batch Delivery Coordinator`, `Fake P2P Service`, `Full-Screen Media Viewer`, `Received Media Egress Tests`, `Feed Wired Tests`, `Migration Transfer Runtime Tests`, `Media Download Use Case`, `In-Memory Group Invite Fake`, `App Resume Group Recovery`, `Migration Cutover Coordinator`, `Media Read Gating Test Fakes`, `Group Creation Use Case Tests`, `Group Media Batch Forward Policy`, `Fake Media Attachment Repository`, `Migration Entry Streaming`, `Group Media Forward Picker`, `Migration Authority & Startup`, `Migration Bundle Transfer Tests`, `Shared Media Go-To-Message Tests`, `Direct Shared Media Library`, `Migration End-to-End Tests`, `Group Shared Media Library`, `Group Key Repair Repositories`, `Migration Scale Benchmark`, `Direct Media Forward Picker`, `Send Chat No-BG-Task Tests`, `Send Voice No-BG-Task Tests`, `Reaction Notification Proof Support Tests`, `Background Readable Colors`, `Load Feed Use Case Tests`, `Nearby Post Sending Tests`, `Group Pending Reaction Repository`, `Migration Local Discovery Tests`, `Migration Snapshot Exporter`, `Direct Media Forward Picker Tests`, `Invite Delivery Attempt Repository Impl`, `Private Media Cleanup Race Tests`, `Compose & Member Row Tests`, `Contact Picker Wired Tests`, `Load Orbit Data Tests`, `Offline Send UX Tests`, `Group Invite Matrix Harness`, `Sims Device Preparer Tests`, `Group Key Repair Repository Impl`, `Group Private Media Platform Proof`, `Migration Checkpoint Store`, `Media Auto-Download Policy`, `Media Viewer Widget Tests`, `Sending-to-Failed UX Tests`, `Send Introduction Tests`, `Migration Media Durability Tests`, `Key Distribution Service Tests`, `Keyless Rotation Converge Proof`?**
-  _High betweenness centrality (0.012) - this node is a cross-community bridge._
-- **Why does `GroupPendingKeyRepairRepository` connect `Group Key Repair Repositories` to `Group Key Repair Service`, `Group Message Listener`, `Group Key Update Listeners`, `Share Intent & Startup Routing`, `Orbit Wired Screen`, `Group Key Repair Repository Interface`?**
-  _High betweenness centrality (0.010) - this node is a cross-community bridge._
-- **Why does `GroupPendingKeyRepair` connect `Group Key Repair Repository Interface` to `Group Pending Key Repair Model`?**
+- **Why does `GroupModel` connect `StateError` to `group_multi_party_device_real_harness.dart`, `group_model.dart`, `group_conversation_wired.dart`, `share_batch_delivery_coordinator.dart`, `announcement_private_reply_policy_test.dart`, `group_info_screen.dart`, `retry_incomplete_group_downloads_use_case.dart`, `group_media_batch_forward_delivery_coordinator.dart`, `create_group_with_members_use_case.dart`, `conversation_controller_notification_budget_test.dart`, `group_invite_status_matrix_harness.dart`, `share_target_picker_screen.dart`, `orbit_friend.dart`, `package:flutter_app/core/bridge/bridge_group_helpers.dart`, `orbit_wired_test.dart`, `package:flutter_app/features/groups/application/group_membership_event_watermark.dart`, `group_repository.dart`, `group_exit_intent_coordinator.dart`, `group_conversation_screen.dart`, `group_conversation_screen_test.dart`, `resolve_group_notification_route_target_use_case.dart`, `contact_picker_wired.dart`, `in_memory_group_repository.dart`, `group_exit_policy.dart`, `media_message_journey_e2e_test.dart`, `group_info_wired.dart`?**
+  _High betweenness centrality (0.009) - this node is a cross-community bridge._
+- **Why does `BadgeReadinessState` connect `node_state.dart` to `qr_display_wired.dart`?**
+  _High betweenness centrality (0.009) - this node is a cross-community bridge._
+- **Why does `SessionReplyTracker` connect `session_reply.dart` to `feed_wired.dart`?**
   _High betweenness centrality (0.009) - this node is a cross-community bridge._
 - **What connects `EventCallback`, `innerMessage`, `github.com/mknoon/go-mknoon` to the rest of the system?**
-  _45194 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Group Multi-Party Device Harness` be split into smaller, more focused modules?**
-  _Cohesion score 0.001026167265264238 - nodes in this community are weakly interconnected._
-- **Should `Group Multi-Party Device Criteria` be split into smaller, more focused modules?**
-  _Cohesion score 0.0029239766081871343 - nodes in this community are weakly interconnected._
-- **Should `Cross-Feature Wired UI Tests` be split into smaller, more focused modules?**
-  _Cohesion score 0.0044574580724434975 - nodes in this community are weakly interconnected._
+  _51678 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `group_multi_party_device_real_harness.dart` be split into smaller, more focused modules?**
+  _Cohesion score 0.0010193679918450561 - nodes in this community are weakly interconnected._
+- **Should `package:flutter_app/features/p2p/domain/models/chat_message.dart` be split into smaller, more focused modules?**
+  _Cohesion score 0.004422143760013216 - nodes in this community are weakly interconnected._
+- **Should `dart:async` be split into smaller, more focused modules?**
+  _Cohesion score 0.003898894401687698 - nodes in this community are weakly interconnected._

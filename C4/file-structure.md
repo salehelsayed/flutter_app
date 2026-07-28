@@ -6,6 +6,13 @@ lib/
 ├── smoke_test_main.dart                         # Smoke test entry point
 ├── smoke_test_restore.dart                      # Smoke test for identity restore
 ├── smoke_test_messages.dart                     # Smoke test for messages DB layer
+├── app/
+│   ├── application_root.dart                    # Application host: widget root, lifecycle, push, and disposal ownership
+│   ├── bootstrap/
+│   │   ├── application_bootstrap.dart           # Stable preparation/launch interfaces and phase sequencer
+│   │   └── production_application_bootstrap.dart # Production composition graph and startup phases
+│   └── lifecycle/
+│       └── handle_app_resumed.dart              # Application resume orchestration: reconnect, recovery, retries, and inbox drain
 ├── core/
 │   ├── bridge/
 │   │   ├── bridge.dart                          # Bridge abstract interface (send, initialize, checkHealth, reinitialize, dispose, callbacks) + identity/crypto helper functions (callIdentityGenerate, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage)
@@ -52,7 +59,10 @@ lib/
 │   │   └── migrate_secrets_to_secure_storage.dart # One-time DB→secure storage migration
 │   ├── services/
 │   │   ├── p2p_service.dart                    # P2PService abstract interface (incl. inbox, sendMessageWithReply, startNodeCore, warmBackground, isLocalPeer, sendLocalMessage)
-│   │   ├── p2p_service_impl.dart               # P2PServiceImpl with streams, offline inbox drain, local WiFi discovery (mDNS/Bonsoir), periodic health check (30s)
+│   │   ├── p2p_service_impl.dart               # Stable P2PServiceImpl facade: raw Bridge callbacks, lifecycle/readiness/recovery, state projection, disposal
+│   │   ├── p2p_impl/
+│   │   │   ├── p2p_inbox_coordinator.dart      # Private durable inbox custody/replay coordinator
+│   │   │   └── p2p_peer_transport_coordinator.dart # Private peer/LAN policy coordinator
 │   │   ├── incoming_message_router.dart        # Routes P2P messages by type to streams
 │   │   ├── pending_message_retrier.dart        # PendingMessageRetrier: subscribes to stateStream, retries failed messages on reconnect (5s debounce)
 │   │   └── chat_message_listener.dart          # Stub ChatMessageListener (core-level; real impl in features/conversation)
@@ -69,8 +79,6 @@ lib/
 │   │   ├── notification_service.dart           # NotificationService abstract interface
 │   │   ├── flutter_notification_service.dart   # Production impl using flutter_local_notifications
 │   │   └── active_conversation_tracker.dart    # Tracks active conversation to suppress notifications
-│   ├── lifecycle/
-│   │   └── handle_app_resumed.dart             # Handles app resume: reconnect, retry key exchanges, drain inbox
 │   ├── theme/
 │   │   ├── app_colors.dart                     # Color constants (Custom1 dark)
 │   │   ├── app_theme.dart                      # ThemeData configuration
@@ -164,11 +172,13 @@ lib/
 │   │   │   │   └── reaction_payload.dart       # Wire-format model for emoji reactions (v1/v2 envelope)
 │   │   │   └── repositories/
 │   │   │       ├── message_repository.dart     # Abstract interface
-│   │   │       ├── message_repository_impl.dart # DB-backed implementation
 │   │   │       ├── media_attachment_repository.dart      # MediaAttachmentRepository abstract interface
-│   │   │       ├── media_attachment_repository_impl.dart # DB-backed implementation
-│   │   │       ├── reaction_repository.dart    # ReactionRepository abstract interface
-│   │   │       └── reaction_repository_impl.dart # DB-backed implementation
+│   │   │       └── reaction_repository.dart    # ReactionRepository abstract interface
+│   │   ├── data/
+│   │   │   └── repositories/
+│   │   │       ├── message_repository_impl.dart # DB-backed MessageRepository adapter
+│   │   │       ├── media_attachment_repository_impl.dart # DB-backed media adapter
+│   │   │       └── reaction_repository_impl.dart # DB-backed reaction adapter
 │   │   ├── application/
 │   │   │   ├── send_chat_message_use_case.dart # Send: encrypt (v2) or plaintext (v1), 3x retry, inbox fallback
 │   │   │   ├── handle_incoming_chat_message_use_case.dart  # Receive: decrypt v2 or parse v1
@@ -216,9 +226,22 @@ lib/
 │   │   │   │   └── group_key_info.dart         # GroupKeyInfo model (maps to group_keys table)
 │   │   │   └── repositories/
 │   │   │       ├── group_repository.dart       # GroupRepository abstract interface (groups, members, keys)
-│   │   │       ├── group_repository_impl.dart  # DB-backed implementation
-│   │   │       ├── group_message_repository.dart     # GroupMessageRepository abstract interface
-│   │   │       └── group_message_repository_impl.dart # DB-backed implementation
+│   │   │       └── group_message_repository.dart     # GroupMessageRepository abstract interface
+│   │   ├── data/
+│   │   │   └── repositories/
+│   │   │       ├── group_repository_impl.dart  # DB-backed group/member/key adapter
+│   │   │       ├── group_message_repository_impl.dart # DB-backed group-message adapter
+│   │   │       ├── group_exit_diagnostic_repository_impl.dart
+│   │   │       ├── group_exit_intent_repository_impl.dart
+│   │   │       ├── group_history_gap_repair_repository_impl.dart
+│   │   │       ├── group_invite_delivery_attempt_repository_impl.dart
+│   │   │       ├── group_pending_broadcast_repository_impl.dart
+│   │   │       ├── group_pending_key_distribution_repository_impl.dart
+│   │   │       ├── group_pending_key_repair_repository_impl.dart
+│   │   │       ├── group_pending_membership_message_repository_impl.dart
+│   │   │       ├── group_pending_reaction_repository_impl.dart
+│   │   │       ├── group_reaction_replay_outbox_repository_impl.dart
+│   │   │       └── pending_group_invite_repository_impl.dart
 │   │   ├── application/
 │   │   │   ├── create_group_use_case.dart              # Create group locally + join GossipSub topic
 │   │   │   ├── create_group_with_members_use_case.dart # Create group + invite initial members
@@ -325,8 +348,10 @@ lib/
 │   │   │   ├── models/
 │   │   │   │   └── identity_model.dart         # IdentityModel class
 │   │   │   └── repositories/
-│   │   │       ├── identity_repository.dart    # Abstract interface
-│   │   │       └── identity_repository_impl.dart
+│   │   │       └── identity_repository.dart    # Abstract interface
+│   │   ├── data/
+│   │   │   └── repositories/
+│   │   │       └── identity_repository_impl.dart # Secure-store/DB-backed adapter
 │   │   ├── application/
 │   │   │   ├── startup_decision.dart           # decideStartupRoute() (3-way)
 │   │   │   ├── generate_identity_use_case.dart
@@ -362,8 +387,10 @@ lib/
 │   │   │   ├── models/
 │   │   │   │   └── contact_model.dart          # ContactModel class
 │   │   │   └── repositories/
-│   │   │       ├── contact_repository.dart     # Abstract interface
-│   │   │       └── contact_repository_impl.dart
+│   │   │       └── contact_repository.dart     # Abstract interface
+│   │   ├── data/
+│   │   │   └── repositories/
+│   │   │       └── contact_repository_impl.dart # DB-backed adapter
 │   │   └── application/
 │   │       ├── add_contact_use_case.dart        # Add with duplicate check
 │   │       ├── archive_contact_use_case.dart    # Archive contact
@@ -377,8 +404,10 @@ lib/
 │   │   │   ├── models/
 │   │   │   │   └── contact_request_model.dart  # ContactRequestModel + status enum
 │   │   │   └── repositories/
-│   │   │       ├── contact_request_repository.dart      # Abstract interface
-│   │   │       └── contact_request_repository_impl.dart
+│   │   │       └── contact_request_repository.dart      # Abstract interface
+│   │   ├── data/
+│   │   │   └── repositories/
+│   │   │       └── contact_request_repository_impl.dart # DB-backed adapter
 │   │   ├── application/
 │   │   │   ├── send_contact_request_use_case.dart       # Build, sign, discover, dial, send
 │   │   │   ├── accept_contact_request_use_case.dart     # Request → contact
@@ -391,6 +420,28 @@ lib/
 │   │   └── presentation/
 │   │       └── widgets/
 │   │           └── contact_request_dialog.dart           # Accept/Decline modal
+│   │
+│   ├── introduction/
+│   │   ├── domain/
+│   │   │   └── repositories/
+│   │   │       ├── introduction_repository.dart          # Abstract interface
+│   │   │       └── intro_review_seen_repository.dart     # Abstract interface
+│   │   └── data/
+│   │       └── repositories/
+│   │           ├── introduction_repository_impl.dart     # DB-backed introduction adapter
+│   │           └── intro_review_seen_repository_impl.dart # DB-backed review-state adapter
+│   │
+│   ├── posts/
+│   │   ├── domain/
+│   │   │   └── repositories/
+│   │   │       ├── post_repository.dart                   # Abstract interface
+│   │   │       ├── contact_presence_snapshot_repository.dart # Abstract interface
+│   │   │       └── posts_privacy_settings_repository.dart # Abstract interface
+│   │   └── data/
+│   │       └── repositories/
+│   │           ├── post_repository_impl.dart              # DB-backed post adapter
+│   │           ├── contact_presence_snapshot_repository_impl.dart # DB-backed presence adapter
+│   │           └── posts_privacy_settings_repository_impl.dart # DB-backed privacy adapter
 │   │
 │   └── p2p/
 │       ├── domain/

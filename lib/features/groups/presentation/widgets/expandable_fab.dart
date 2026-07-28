@@ -30,6 +30,7 @@ class ExpandableFab extends StatefulWidget {
   final ExpandableFabAnchor anchor;
   final double fabSize;
   final EdgeInsets? safeAreaPadding;
+  final String? fabSemanticLabel;
 
   const ExpandableFab({
     super.key,
@@ -37,6 +38,7 @@ class ExpandableFab extends StatefulWidget {
     this.anchor = ExpandableFabAnchor.bottomRight,
     this.fabSize = 56,
     this.safeAreaPadding,
+    this.fabSemanticLabel,
   });
 
   @override
@@ -87,7 +89,7 @@ class _ExpandableFabState extends State<ExpandableFab>
     final isTopRight = widget.anchor == ExpandableFabAnchor.topRight;
     final readableColors = context.backgroundReadableColors;
 
-    final fab = GlowFab(
+    final glowFab = GlowFab(
       size: widget.fabSize,
       onPressed: _toggle,
       backgroundColor: readableColors.ctaBg,
@@ -107,6 +109,15 @@ class _ExpandableFabState extends State<ExpandableFab>
         ),
       ),
     );
+    final fab = widget.fabSemanticLabel == null
+        ? glowFab
+        : Semantics(
+            container: true,
+            button: true,
+            label: widget.fabSemanticLabel,
+            onTap: _toggle,
+            child: ExcludeSemantics(child: glowFab),
+          );
 
     final menuItems = _isOpen
         ? widget.items.map((item) => _buildMenuItem(item)).toList()

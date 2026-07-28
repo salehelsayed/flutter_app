@@ -30,7 +30,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';

@@ -9,7 +9,9 @@ void main() {
   final appProof = File(
     'lib/core/debug/intro_e2e_runner.dart',
   ).readAsStringSync();
-  final mainSource = File('lib/main.dart').readAsStringSync();
+  final applicationRootSource = File(
+    'lib/app/application_root.dart',
+  ).readAsStringSync();
   final routeDiagnostics = File(
     'lib/core/notifications/initial_local_notification_route_diagnostics.dart',
   ).readAsStringSync();
@@ -324,14 +326,17 @@ void main() {
     expect(routeDiagnostics, isNot(contains("'payload': normalizedPayload")));
     expect(routeDiagnostics, isNot(contains("'peerId': normalizedPeer")));
 
-    final initialOpenStart = mainSource.indexOf(
+    final initialOpenStart = applicationRootSource.indexOf(
       'Future<void> _handleInitialLocalNotificationLaunch() async',
     );
-    final warmOpenStart = mainSource.indexOf(
+    final warmOpenStart = applicationRootSource.indexOf(
       'Future<void> _onNotificationTap(String payload) async',
       initialOpenStart,
     );
-    final initialOpen = mainSource.substring(initialOpenStart, warmOpenStart);
+    final initialOpen = applicationRootSource.substring(
+      initialOpenStart,
+      warmOpenStart,
+    );
     final marker = initialOpen.indexOf(
       'event: initialLocalNotificationRouteParsedEvent',
     );

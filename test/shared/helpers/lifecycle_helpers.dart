@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';

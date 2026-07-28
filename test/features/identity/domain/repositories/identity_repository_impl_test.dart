@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 

@@ -239,37 +239,45 @@ void main() {
         GroupExitDiagnosticPublicCode.ex02,
       ]);
 
-      final mainSource = File('lib/main.dart').readAsStringSync();
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
       expect(
-        RegExp(r'rawGroupExitIntentRunner').allMatches(mainSource),
+        RegExp(r'rawGroupExitIntentRunner').allMatches(productionSource),
         hasLength(2),
         reason: 'The raw runner may appear only at construction and as inner.',
       );
-      expect(mainSource, contains('inner: rawGroupExitIntentRunner'));
+      expect(productionSource, contains('inner: rawGroupExitIntentRunner'));
       expect(
-        mainSource,
+        productionSource,
         isNot(contains('processor: rawGroupExitIntentRunner')),
       );
-      expect(mainSource, contains('processor: groupExitIntentProcessor'));
+      expect(productionSource, contains('processor: groupExitIntentProcessor'));
       expect(
-        mainSource,
+        productionSource,
         contains('await groupExitIntentProcessor.processAll()'),
       );
       expect(
         RegExp(
           r'groupExitIntentProcessor\.processGroup\(groupId\)',
-        ).allMatches(mainSource),
+        ).allMatches(productionSource),
         hasLength(greaterThanOrEqualTo(3)),
       );
-      expect(mainSource, contains('resolveSnapshot: groupExitActionAdapter'));
-      expect(mainSource, contains('requestLeave: groupExitActionAdapter'));
       expect(
-        mainSource,
+        productionSource,
+        contains('resolveSnapshot: groupExitActionAdapter'),
+      );
+      expect(
+        productionSource,
+        contains('requestLeave: groupExitActionAdapter'),
+      );
+      expect(
+        productionSource,
         contains('queueLeaveInner: groupExitIntentCoordinator'),
       );
-      expect(mainSource, contains('retry: groupExitActionAdapter.retry'));
-      expect(mainSource, contains('runTypedGroupExitNativeLeave('));
-      expect(mainSource, contains('throwGroupExitAuthorityFailure('));
+      expect(productionSource, contains('retry: groupExitActionAdapter.retry'));
+      expect(productionSource, contains('runTypedGroupExitNativeLeave('));
+      expect(productionSource, contains('throwGroupExitAuthorityFailure('));
 
       for (final path in const <String>[
         'lib/features/groups/presentation/screens/group_info_wired.dart',

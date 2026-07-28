@@ -13,7 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 
 import '../test/shared/fakes/in_memory_message_repository.dart';
 import 'benchmark_helpers.dart';

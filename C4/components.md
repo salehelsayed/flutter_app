@@ -414,33 +414,47 @@
 │  │  │ (chat/ann./qa)   │  │ (admin/member)   │  (admin/writer/reader)   │ │
 │  │  └──────────────────┘  └──────────────────┘                           │ │
 │  │                                                                        │ │
-│  │  ── Repositories ──────────────────────────────────────────────────── │ │
+│  │  ── Repository Interfaces (`domain/repositories/`) ────────────────── │ │
 │  │  ┌──────────────────────┐  ┌──────────────────────────────────────┐   │ │
 │  │  │  IdentityRepository  │  │  ContactRepository                   │   │ │
-│  │  │  [Interface + Impl]  │  │  [Interface + Impl]                  │   │ │
+│  │  │  [Interface]         │  │  [Interface]                         │   │ │
 │  │  └──────────────────────┘  └──────────────────────────────────────┘   │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  ContactRequestRepository                │                         │ │
-│  │  │  [Interface + Impl]                      │                         │ │
+│  │  │  [Interface]                             │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  MessageRepository                       │                         │ │
-│  │  │  [Interface + Impl]                      │                         │ │
+│  │  │  [Interface]                             │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  MediaAttachmentRepository               │                         │ │
-│  │  │  [Interface + Impl]                      │                         │ │
+│  │  │  [Interface]                             │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  GroupRepository                         │                         │ │
-│  │  │  [Interface + Impl]                      │                         │ │
+│  │  │  [Interface]                             │                         │ │
 │  │  │  Groups + members + keys CRUD            │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
 │  │  ┌──────────────────────────────────────────┐                         │ │
 │  │  │  GroupMessageRepository                  │                         │ │
-│  │  │  [Interface + Impl]                      │                         │ │
+│  │  │  [Interface]                             │                         │ │
 │  │  │  Group messages CRUD + unread tracking   │                         │ │
 │  │  └──────────────────────────────────────────┘                         │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │                           DATA LAYER                                   │ │
+│  │                                                                        │ │
+│  │  Concrete repository adapters live under each feature's                │ │
+│  │  `data/repositories/` directory; domain directories retain only        │ │
+│  │  repository interfaces.                                                │ │
+│  │                                                                        │ │
+│  │  Identity / Contacts / Contact Request: 3 concrete adapters            │ │
+│  │  Conversation: Message, MediaAttachment, Reaction adapters             │ │
+│  │  Groups: 13 group persistence, outbox, repair, and intent adapters     │ │
+│  │  Introduction: Introduction + review-state adapters                    │ │
+│  │  Posts: Post + presence-snapshot + privacy-settings adapters           │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -1080,20 +1094,22 @@
 | GroupType | Enum | Group types: chat, announcement, qa |
 | GroupRole | Enum | Local user's role in group: admin, member |
 | MemberRole | Enum | Member role within group: admin, writer, reader |
-| IdentityRepository | Interface + Impl | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
-| ContactRepository | Interface + Impl | Abstracts contact persistence (add, get, getAll, delete, exists, count, archiveContact, unarchiveContact, getActiveContacts, getArchivedContacts, blockContact, unblockContact) |
-| ContactRequestRepository | Interface + Impl | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
-| MessageRepository | Interface + Impl | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage, getUnackedOutgoingMessages) |
-| MediaAttachmentRepository | Interface + Impl | Abstracts media attachment persistence (saveAttachment, getAttachmentsForMessage, getAttachmentsForMessages, updateLocalPath, updateDownloadStatus, deleteForMessage, deleteForContact, getPendingDownloads) |
-| GroupRepository | Interface + Impl | Abstracts group + member + key persistence (saveGroup, getAllGroups, getGroup, updateGroup, deleteGroup, getActiveGroups, archiveGroup, unarchiveGroup, saveMember, getMembers, getMember, updateMemberRole, removeMember, removeAllMembers, saveKey, getLatestKey, getKeyByGeneration, removeAllKeys) |
-| GroupMessageRepository | Interface + Impl | Abstracts group message persistence (saveMessage, getMessagesPage, getMessage, getLatestMessage, updateMessageStatus, getMessageCount, getUnreadCount, getTotalUnreadCount, markAsRead, deleteMessage, deleteMessagesForGroup, existsByContent) |
+| IdentityRepository | Domain Interface + Data Adapter | Abstracts identity persistence; IdentityRepositoryImpl takes SecureKeyStore, reads secrets from secure storage (falls back to DB for pre-migration), writes secrets only to secure storage |
+| ContactRepository | Domain Interface + Data Adapter | Abstracts contact persistence (add, get, getAll, delete, exists, count, archiveContact, unarchiveContact, getActiveContacts, getArchivedContacts, blockContact, unblockContact) |
+| ContactRequestRepository | Domain Interface + Data Adapter | Abstracts request persistence (add, get, getPending, updateStatus, delete, exists) |
+| MessageRepository | Domain Interface + Data Adapter | Abstracts message persistence (save, getForContact, getLatest, updateStatus, exists, getMessageCountForContact, markConversationAsRead, getUnreadCountForContact, getTotalUnreadCount, getTotalUnreadCountExcludingArchived, deleteMessagesForContact, getFailedOutgoingMessages, getMessagesPage, getUnackedOutgoingMessages) |
+| MediaAttachmentRepository | Domain Interface + Data Adapter | Abstracts media attachment persistence (saveAttachment, getAttachmentsForMessage, getAttachmentsForMessages, updateLocalPath, updateDownloadStatus, deleteForMessage, deleteForContact, getPendingDownloads) |
+| GroupRepository | Domain Interface + Data Adapter | Abstracts group + member + key persistence (saveGroup, getAllGroups, getGroup, updateGroup, deleteGroup, getActiveGroups, archiveGroup, unarchiveGroup, saveMember, getMembers, getMember, updateMemberRole, removeMember, removeAllMembers, saveKey, getLatestKey, getKeyByGeneration, removeAllKeys) |
+| GroupMessageRepository | Domain Interface + Data Adapter | Abstracts group message persistence (saveMessage, getMessagesPage, getMessage, getLatestMessage, updateMessageStatus, getMessageCount, getUnreadCount, getTotalUnreadCount, markAsRead, deleteMessage, deleteMessagesForGroup, existsByContent) |
 | **Core** | | |
 | GoBridgeClient | Bridge Client | Sends requests to Go native library via MethodChannel, receives push events via EventChannel; checkHealth() probes bridge liveness (node:status, 5s timeout); reinitialize() re-initializes Go bridge preserving callbacks; send() catches PlatformException and returns `{errorCode: 'PLATFORM_ERROR'}`; platform wrappers: GoBridge.swift (iOS) + GoBridge.kt (Android) |
 | P2PBridgeClient | Bridge Client | P2P-specific bridge calls (start, stop, status, register, discover, dial, disconnect, send, inbox store/retrieve, inbox register token) |
 | Bridge Helper Functions (in bridge.dart) | Bridge Helpers | Identity + signing + verification + ML-KEM encryption/decryption helper functions: callIdentityGenerate, callIdentityRestore, callSignPayload, callVerifyPayload, callMlKemKeygen, callEncryptMessage, callDecryptMessage, callEncryptContactRequest, callDecryptContactRequest |
 | P2P Bridge Helper Functions (in p2p_bridge_client.dart) | Bridge Helpers | P2P-specific helper functions: callP2PNodeStart/Stop/Status, callP2PRendezvousRegister/Discover, callP2PPeerDial/Disconnect, callP2PMessageSend, callP2PInboxStore/Retrieve/RegisterToken, callP2PRelayReconnect, callP2PRelayProbe; also exports defaultRendezvousAddress constant |
 | Group Bridge Helper Functions (in bridge_group_helpers.dart) | Bridge Helpers | Group-specific helper functions: callGroupCreate, callGroupJoinWithConfig, callGroupLeave, callGroupPublish, callGroupUpdateConfig, callGroupGenerateNextKey, callGroupUpdateKey, callGroupInboxStore, callGroupInboxRetrieve, callGroupKeygen, callGroupEncrypt, callGroupDecrypt; also exports BridgeCommandException |
-| P2PService / P2PServiceImpl | Service | Reactive P2P service with state and message streams, sendMessageWithReply() for ACK-based chat, offline inbox fallback + registerPushToken for FCM push notifications; public performImmediateHealthCheck() and drainOfflineInbox() wrappers for app-resume lifecycle; startNodeCore() / warmBackground() split for deferred startup; isLocalPeer() / sendLocalMessage() for WiFi-first delivery; local WiFi discovery via Bonsoir mDNS |
+| P2PService / P2PServiceImpl | Stable Service Facade | Stable reactive P2P facade retaining raw Bridge callback registration/clearing, node lifecycle, readiness/health/recovery, state projection, and final disposal; delegates durable inbox custody/replay and peer/LAN policy to private coordinators |
+| _P2PInboxCoordinator | Private Component | Durable inbox custody/replay: staging, predecrypt, replay/disposition/quarantine, drains/pagination, direct/LAN commit ordering, detailed store/retrieve/readiness, deferred drains, and attention counts |
+| _P2PPeerTransportCoordinator | Private Component | Peer/LAN policy: discovery/advertising and peer forwarding, warm/connectivity debounce, learned transport, presence/liveness/drop state, local send/media, and transport diagnostics |
 | IncomingMessageRouter | Service | Routes P2P messages by JSON envelope type to typed broadcast streams |
 | LocalDiscoveryService | Interface | Abstract mDNS service discovery for local WiFi peers |
 | BonsoirDiscoveryService | Impl | Bonsoir-based mDNS service discovery implementation |

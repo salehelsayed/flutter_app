@@ -20,14 +20,15 @@ import 'package:flutter_app/main.dart' as app;
 
 /// Slice the `_MyAppState` class body out of [src] (from its declaration to the
 /// next top-level class), so member assertions cannot collide with another
-/// class's `dispose()` / `_onPaused()` elsewhere in the large main.dart.
+/// class's `dispose()` / `_onPaused()` elsewhere in application_root.dart.
 String _myAppStateClass(String src) {
   const sig = 'class _MyAppState extends State<MyApp>';
   final start = src.indexOf(sig);
   expect(start, isNonNegative, reason: 'expected to find: $sig');
   final after = start + sig.length;
-  final next = RegExp(r'\n(?:class |abstract class |mixin )')
-      .firstMatch(src.substring(after));
+  final next = RegExp(
+    r'\n(?:class |abstract class |mixin )',
+  ).firstMatch(src.substring(after));
   final end = next == null ? src.length : after + next.start;
   return src.substring(start, end);
 }
@@ -38,9 +39,9 @@ String _member(String classBody, String startSig) {
   final start = classBody.indexOf(startSig);
   expect(start, isNonNegative, reason: 'expected to find member: $startSig');
   final after = start + startSig.length;
-  final next =
-      RegExp(r'\n  (?:@override|void |Future<|bool |Widget |String |int )')
-          .firstMatch(classBody.substring(after));
+  final next = RegExp(
+    r'\n  (?:@override|void |Future<|bool |Widget |String |int )',
+  ).firstMatch(classBody.substring(after));
   final end = next == null ? classBody.length : after + next.start;
   return classBody.substring(start, end);
 }
@@ -50,53 +51,62 @@ String _classBlock(String src, String startSig) {
   final start = src.indexOf(startSig);
   expect(start, isNonNegative, reason: 'expected to find: $startSig');
   final after = start + startSig.length;
-  final next = RegExp(r'\n(?:abstract |enum |class |mixin )')
-      .firstMatch(src.substring(after));
+  final next = RegExp(
+    r'\n(?:abstract |enum |class |mixin )',
+  ).firstMatch(src.substring(after));
   final end = next == null ? src.length : after + next.start;
   return src.substring(start, end);
 }
 
 void main() {
-  late String mainSrc;
+  late String applicationRootSrc;
   late String myAppState;
   late String p2pSrc;
 
   setUpAll(() async {
-    mainSrc = await File('lib/main.dart').readAsString();
-    myAppState = _myAppStateClass(mainSrc);
+    applicationRootSrc = await File(
+      'lib/app/application_root.dart',
+    ).readAsString();
+    myAppState = _myAppStateClass(applicationRootSrc);
     p2pSrc = await File('lib/core/services/p2p_service.dart').readAsString();
   });
 
-  test('TC-181-W1: _MyAppState constructs SetPresenceUseCase from the concrete p2p service', () {
-    // Anchor: this is the real shipped app entry, not a stub.
-    expect(app.MyApp.navigatorKey, isNotNull);
+  test(
+    'TC-181-W1: _MyAppState constructs SetPresenceUseCase from the concrete p2p service',
+    () {
+      // Anchor: this is the real shipped app entry, not a stub.
+      expect(app.MyApp.navigatorKey, isNotNull);
 
-    expect(
-      mainSrc,
-      contains('set_presence_use_case.dart'),
-      reason: 'SetPresenceUseCase must be imported into main.dart',
-    );
-    expect(
-      myAppState,
-      contains('SetPresenceUseCase('),
-      reason: 'the producer must be constructed in _MyAppState',
-    );
-    // Wired from the concrete P2PServiceImpl field (widget.p2pService), which
-    // implements RelayPresenceSet — NO cast, and NO new base-interface method
-    // (W6 guards the interface separately).
-    expect(
-      myAppState,
-      contains('presenceSetter: widget.p2pService'),
-      reason: 'must wire the RelayPresenceSet param from the concrete impl (no cast)',
-    );
-  });
+      expect(
+        applicationRootSrc,
+        contains('set_presence_use_case.dart'),
+        reason:
+            'SetPresenceUseCase must be imported into application_root.dart',
+      );
+      expect(
+        myAppState,
+        contains('SetPresenceUseCase('),
+        reason: 'the producer must be constructed in _MyAppState',
+      );
+      // Wired from the concrete P2PServiceImpl field (widget.p2pService), which
+      // implements RelayPresenceSet — NO cast, and NO new base-interface method
+      // (W6 guards the interface separately).
+      expect(
+        myAppState,
+        contains('presenceSetter: widget.p2pService'),
+        reason:
+            'must wire the RelayPresenceSet param from the concrete impl (no cast)',
+      );
+    },
+  );
 
   test('TC-181-W2: resume announces foreground, unawaited', () {
     final onResumed = _member(myAppState, 'Future<void> _onResumed() async {');
     expect(
       onResumed,
       contains('unawaited(_setPresenceUseCase.onForegrounded())'),
-      reason: '_onResumed must announce foreground UNAWAITED (no resume-path latency)',
+      reason:
+          '_onResumed must announce foreground UNAWAITED (no resume-path latency)',
     );
   });
 
@@ -108,8 +118,11 @@ void main() {
       reason: '_onPaused must announce background',
     );
     // The only background edges remain paused||hidden routing into _onPaused.
-    expect(mainSrc, contains('state == AppLifecycleState.paused ||'));
-    expect(mainSrc, contains('state == AppLifecycleState.hidden'));
+    expect(
+      applicationRootSrc,
+      contains('state == AppLifecycleState.paused ||'),
+    );
+    expect(applicationRootSrc, contains('state == AppLifecycleState.hidden'));
   });
 
   test('TC-181-W4: teardown disposes the producer (no Timer leak)', () {
@@ -117,7 +130,8 @@ void main() {
     expect(
       dispose,
       contains('_setPresenceUseCase.dispose()'),
-      reason: 'the 60s heartbeat Timer leaks unless dispose() is called on teardown',
+      reason:
+          'the 60s heartbeat Timer leaks unless dispose() is called on teardown',
     );
   });
 
@@ -126,21 +140,28 @@ void main() {
     expect(
       onDetached.contains('onBackgrounded'),
       isFalse,
-      reason: 'detached is teardown-only; presence announces only on resume/pause',
+      reason:
+          'detached is teardown-only; presence announces only on resume/pause',
     );
   });
 
-  test('TC-181-W6: setPresence stays OFF the base P2PService interface (~31-fake invariant)', () {
-    // setPresence belongs to the opt-in RelayPresenceSet capability...
-    final relayPresenceSet =
-        _classBlock(p2pSrc, 'abstract interface class RelayPresenceSet {');
-    expect(relayPresenceSet, contains('setPresence'));
-    // ...and must NOT be on the base interface (would force ~31 fakes to grow it).
-    final baseP2P = _classBlock(p2pSrc, 'abstract class P2PService {');
-    expect(
-      baseP2P.contains('setPresence'),
-      isFalse,
-      reason: 'hoisting setPresence to the base P2PService interface breaks ~31 fakes',
-    );
-  });
+  test(
+    'TC-181-W6: setPresence stays OFF the base P2PService interface (~31-fake invariant)',
+    () {
+      // setPresence belongs to the opt-in RelayPresenceSet capability...
+      final relayPresenceSet = _classBlock(
+        p2pSrc,
+        'abstract interface class RelayPresenceSet {',
+      );
+      expect(relayPresenceSet, contains('setPresence'));
+      // ...and must NOT be on the base interface (would force ~31 fakes to grow it).
+      final baseP2P = _classBlock(p2pSrc, 'abstract class P2PService {');
+      expect(
+        baseP2P.contains('setPresence'),
+        isFalse,
+        reason:
+            'hoisting setPresence to the base P2PService interface breaks ~31 fakes',
+      );
+    },
+  );
 }

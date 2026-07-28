@@ -4,7 +4,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_pending_key_distribution_repository_impl.dart';
 
 void main() {
   sqfliteFfiInit();

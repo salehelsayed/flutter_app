@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';

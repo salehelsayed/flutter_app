@@ -17,8 +17,7 @@ List<File> _goProductionFiles(String root) {
       .listSync(recursive: true)
       .whereType<File>()
       .where(
-        (file) =>
-            file.path.endsWith('.go') && !file.path.endsWith('_test.go'),
+        (file) => file.path.endsWith('.go') && !file.path.endsWith('_test.go'),
       )
       .toList(growable: false);
 }
@@ -71,10 +70,7 @@ void main() {
     // does NOT protect (strip) the marker out of received events.
     final pubsubSource = File('go-mknoon/node/pubsub.go').readAsStringSync();
     expect(pubsubSource, contains('func buildGroupMessageExtra'));
-    expect(
-      pubsubSource,
-      contains('func isProtectedGroupMessageEventField'),
-    );
+    expect(pubsubSource, contains('func isProtectedGroupMessageEventField'));
     expect(
       pubsubSource.contains(_marker),
       isFalse,
@@ -87,11 +83,9 @@ void main() {
     final helperSource = File(
       'lib/core/bridge/bridge_group_helpers.dart',
     ).readAsStringSync();
-    final groupCommands =
-        RegExp(r"'cmd':\s*'(group:[a-zA-Z]+)'")
-            .allMatches(helperSource)
-            .map((match) => match.group(1)!)
-            .toSet();
+    final groupCommands = RegExp(
+      r"'cmd':\s*'(group:[a-zA-Z]+)'",
+    ).allMatches(helperSource).map((match) => match.group(1)!).toSet();
     expect(
       groupCommands,
       {
@@ -124,6 +118,7 @@ void main() {
       'lib/features/groups/application/send_group_message_use_case.dart',
       'lib/features/groups/application/handle_incoming_group_message_use_case.dart',
       'lib/features/groups/application/group_message_listener.dart',
+      'lib/features/groups/application/group_message_listener_membership_dependent_message_buffer.dart',
       'lib/features/groups/application/drain_group_offline_inbox_use_case.dart',
       'lib/features/groups/application/retry_failed_group_messages_use_case.dart',
       'lib/features/groups/application/retry_incomplete_group_uploads_use_case.dart',

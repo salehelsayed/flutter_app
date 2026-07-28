@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../integration_test/scripts/ios_notification_payload_xcui_driver.dart'
+    as ios_payload_driver;
+
 String _between(String source, String start, String end) {
   final startIndex = source.indexOf(start);
   final endIndex = source.indexOf(end, startIndex + start.length);
@@ -293,6 +296,48 @@ void main() {
     expect(stop, contains('final terminationRequested = process.kill('));
     expect(stop, contains('preStopExitCode != null || !terminationRequested'));
   });
+
+  test(
+    'cleanup verifies devicectl result apps rather than echoed arguments',
+    () {
+      expect(
+        ios_payload_driver.devicectlResultAppsAreEmpty(
+          '{"info":{"arguments":["--bundle-id","com.mknoon.app"]},'
+          '"result":{"matchingBundleIdentifier":"com.mknoon.app","apps":[]}}',
+        ),
+        isTrue,
+      );
+      expect(
+        ios_payload_driver.devicectlResultAppsAreEmpty(
+          '{"result":{"apps":[{"bundleIdentifier":"com.mknoon.app"}]}}',
+        ),
+        isFalse,
+      );
+      expect(
+        () => ios_payload_driver.devicectlResultAppsAreEmpty(
+          '{"result":{"matchingBundleIdentifier":"com.mknoon.app"}}',
+        ),
+        throwsFormatException,
+      );
+
+      final source = File(
+        'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+      ).readAsStringSync();
+      final cleanup = _between(
+        source,
+        'Future<void> _verifyCandidateApplicationRemoved() async {',
+        'Future<File> _installedApplicationsJson',
+      );
+      expect(
+        cleanup,
+        contains('devicectlResultAppsAreEmpty(apps.readAsStringSync())'),
+      );
+      expect(
+        cleanup,
+        isNot(contains('apps.readAsStringSync().contains(_bundleId)')),
+      );
+    },
+  );
 
   test(
     'XCUITest restores inline after visibility and retains fallback cleanup',

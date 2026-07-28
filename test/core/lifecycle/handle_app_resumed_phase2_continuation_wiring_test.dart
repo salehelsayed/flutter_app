@@ -16,7 +16,7 @@ void main() {
     'conditionally outside the gate',
     () async {
       final source = await File(
-        'lib/core/lifecycle/handle_app_resumed.dart',
+        'lib/app/lifecycle/handle_app_resumed.dart',
       ).readAsString();
 
       // The resume drain feeds ack from the fast first page.

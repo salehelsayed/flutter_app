@@ -19,10 +19,10 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -1068,7 +1068,9 @@ void main() {
   test(
     'PB264-10 production wiring preserves the typed preparation refusal',
     () async {
-      final source = await File('lib/main.dart').readAsString();
+      final source = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
       final runnerStart = source.indexOf(
         'final rawGroupExitIntentRunner = GroupExitIntentRunner(',
       );

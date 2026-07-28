@@ -97,7 +97,11 @@ void main() {
             1,
         'lib/features/groups/application/group_membership_timeline_message.dart':
             6,
-        'lib/features/groups/application/group_message_listener.dart': 3,
+        // DTR-16 moved the same three system-transition writes behind the
+        // listener's constructor-once processor without changing their
+        // local/system-row semantics.
+        'lib/features/groups/application/group_message_listener_system_transition_processor.dart':
+            3,
         'lib/smoke_test_messages.dart': 1,
       };
 

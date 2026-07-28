@@ -7,7 +7,7 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 

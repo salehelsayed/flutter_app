@@ -296,6 +296,47 @@ void main() {
   });
 
   test(
+    'critical manifest pins architecture boundary release capability',
+    () {
+      final capability = manifest.capabilityById('architecture.boundaries');
+
+      expect(capability, isNotNull);
+      expect(capability!.owner, 'flutter-app');
+      expect(
+        capability.proofBoundaryId,
+        'host.architecture-boundaries.enforced',
+      );
+      expect(capability.assertionIds, <String>[
+        'architecture_boundaries.current_exceptions_exact',
+      ]);
+      expect(capability.lane, 'host-dart');
+      expect(capability.modes, <SimsMode>{SimsMode.major});
+      expect(capability.families, <String>{'infra'});
+      expect(capability.required, isTrue);
+      expect(capability.command, <String>[
+        './scripts/run_test_gates.sh',
+        'architecture-boundaries',
+      ]);
+      expect(capability.buildProfileId, 'host.flutter_tester');
+      expect(capability.dependencies, isEmpty);
+      expect(capability.resources, hasLength(1));
+      expect(capability.resources.single.name, 'host.cpu');
+      expect(capability.resources.single.access, ResourceAccess.read);
+      expect(capability.targetCapabilities, <String>[
+        'host.flutter-tester',
+        'host.bash',
+        'host.git',
+      ]);
+      expect(capability.artifactRequired, isFalse);
+      expect(capability.artifactValidators, isEmpty);
+      expect(capability.allowedNaReason, isNull);
+      expect(capability.active, isTrue);
+      expect(capability.automationReady, isTrue);
+      expect(capability.declaredBuildException, isFalse);
+    },
+  );
+
+  test(
     'analyzer capability runs strict analysis and production unused suppression ratchet',
     () {
       final capability = manifest.capabilityById('analyzer.flutter');

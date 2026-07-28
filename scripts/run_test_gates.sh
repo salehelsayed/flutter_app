@@ -6,6 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 readonly BASELINE_TESTS=(
+  # 293 DTR-14: stable application bootstrap seam and production phase owners.
+  "test/core/bootstrap/main_bootstrap_boundary_test.dart"
+  "test/core/bootstrap/application_bootstrap_test.dart"
+  "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart"
   "test/features/identity/presentation/screens/startup_router_recovery_test.dart"
   "test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
@@ -55,6 +59,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
   "test/core/inbox/inbox_staging_repository_impl_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
+  # 295 DTR-17: exact P2P facade/component ownership and callback boundaries.
+  "test/core/services/p2p_service_impl_composition_contract_test.dart"
   # FDC-07: cold-start early mDNS discovery hoist + idempotent/move-gated seam.
   "test/core/services/p2p_service_early_discovery_ordering_test.dart"
   # FDC-13: relay->direct 'upgraded' badge — the _inferTransportForPeer flip is
@@ -81,6 +87,13 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  # 294 DTR-15: shared compositional conversation-controller ownership,
+  # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   "test/features/conversation/presentation/widgets/attachment_preview_strip_test.dart"
   "test/features/conversation/domain/models/media_rejection_test.dart"
   "test/features/push/application/prepare_notification_open_use_case_test.dart"
@@ -370,6 +383,13 @@ readonly GROUP_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
   "test/features/groups/presentation/group_conversation_wired_test.dart"
+  # 294 DTR-15: the same shared controller contracts must stay reachable from
+  # the curated group lane as well as both 1:1 inventories.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
   # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
@@ -528,6 +548,8 @@ readonly GROUP_TESTS=(
   "test/core/database/helpers/group_messages_db_helpers_sending_test.dart"
   "test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart"
   "test/features/groups/application/group_message_listener_test.dart"
+  "test/features/groups/application/group_message_listener_decomposition_contract_test.dart"
+  "test/features/groups/application/group_message_listener_device_announce_test.dart"
   "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
   "test/features/groups/integration/group_forwarding_transport_boundary_test.dart"
   # 269 W2: transport-identity media ACLs and fail-closed empty group ACLs
@@ -659,9 +681,14 @@ readonly POSTS_TESTS=(
   "integration_test/posts_phase4_fake_test.dart"
   "integration_test/posts_phase5_fake_test.dart"
   "test/features/posts/phase3/post_presence_listener_test.dart"
+  # 297 DTR-18: relocated Phase-3 data adapters retain real SQLite coverage.
+  "test/features/posts/phase3/contact_presence_snapshot_repository_test.dart"
+  "test/features/posts/phase3/posts_privacy_settings_repository_test.dart"
 )
 
 readonly TRANSPORT_TESTS=(
+  # 295 DTR-17: the P2P ownership split is shared by every transport path.
+  "test/core/services/p2p_service_impl_composition_contract_test.dart"
   "integration_test/background_reconnect_test.dart"
   "integration_test/wifi_relay_fallback_smoke_test.dart"
   "integration_test/transport_e2e_test.dart"
@@ -794,6 +821,7 @@ Usage:
   ./scripts/run_test_gates.sh performance-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim
   ./scripts/run_test_gates.sh group-lifecycle-sim-host
+  ./scripts/run_test_gates.sh architecture-boundaries
   ./scripts/run_test_gates.sh runtime-roots
   ./scripts/run_test_gates.sh completeness-check
 
@@ -1245,6 +1273,17 @@ run_runtime_roots_gate() {
   ./scripts/check_runtime_root_inventory.sh check --format text
 }
 
+run_architecture_boundaries_gate() {
+  if (($# > 0)); then
+    printf 'architecture-boundaries does not accept arguments.\n' >&2
+    return 2
+  fi
+
+  flutter test --no-pub \
+    test/unit/architecture_boundary_checker_test.dart || return $?
+  ./scripts/check_architecture_boundaries.sh
+}
+
 has_host_batch_control() {
   local arg
   for arg in "$@"; do
@@ -1565,6 +1604,13 @@ main() {
         run_runtime_roots_gate
       else
         run_runtime_roots_gate "${gate_args[@]}"
+      fi
+      ;;
+    architecture-boundaries)
+      if ((${#gate_args[@]} == 0)); then
+        run_architecture_boundaries_gate
+      else
+        run_architecture_boundaries_gate "${gate_args[@]}"
       fi
       ;;
     completeness-check)

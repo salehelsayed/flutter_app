@@ -7,9 +7,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1828,6 +1833,126 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       expect(received!['watchdogRestartCount'], equals(2));
       expect(received!['needsGroupRecovery'], isTrue);
     });
+
+    test(
+      'TC-295-02 callbacks survive bridge reinitialize and delegate once',
+      () async {
+        installMockGoBridgeEventChannel();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                if (call.method == 'startNode') {
+                  return jsonEncode({
+                    'ok': true,
+                    'peerId': 'self-tc295',
+                    'isStarted': true,
+                    'listenAddresses': ['/ip4/127.0.0.1/tcp/4001'],
+                    'circuitAddresses': ['/p2p-circuit/tc295'],
+                    'connections': <Map<String, dynamic>>[],
+                  });
+                }
+                return jsonEncode({'ok': true});
+              },
+            );
+
+        final service = P2PServiceImpl(
+          bridge: client,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(service.dispose);
+
+        await client.initialize();
+        expect(
+          await service.startNodeCore(
+            'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=',
+            'self-tc295',
+          ),
+          isTrue,
+        );
+
+        final onMessageReceived = client.onMessageReceived;
+        final onPeerConnected = client.onPeerConnected;
+        final onPeerDisconnected = client.onPeerDisconnected;
+        final onAddressesUpdated = client.onAddressesUpdated;
+        final onRelayStateChanged = client.onRelayStateChanged;
+        expect(onMessageReceived, isNotNull);
+        expect(onPeerConnected, isNotNull);
+        expect(onPeerDisconnected, isNotNull);
+        expect(onAddressesUpdated, isNotNull);
+        expect(onRelayStateChanged, isNotNull);
+
+        await client.reinitialize();
+
+        expect(identical(client.onMessageReceived, onMessageReceived), isTrue);
+        expect(identical(client.onPeerConnected, onPeerConnected), isTrue);
+        expect(
+          identical(client.onPeerDisconnected, onPeerDisconnected),
+          isTrue,
+        );
+        expect(
+          identical(client.onAddressesUpdated, onAddressesUpdated),
+          isTrue,
+        );
+        expect(
+          identical(client.onRelayStateChanged, onRelayStateChanged),
+          isTrue,
+        );
+
+        final receivedMessages = <ChatMessage>[];
+        final stateEvents = <NodeState>[];
+        final messageSub = service.messageStream.listen(receivedMessages.add);
+        final stateSub = service.stateStream.listen(stateEvents.add);
+        addTearDown(messageSub.cancel);
+        addTearDown(stateSub.cancel);
+
+        await sendMockGoBridgeEvent(
+          jsonEncode({
+            'event': 'message:received',
+            'data': {
+              'from': 'peer-tc295',
+              'to': 'self-tc295',
+              'content': 'direct callback after reinitialize',
+              'timestamp': '2026-07-28T12:00:00.000Z',
+              'isIncoming': true,
+              'transport': 'direct',
+            },
+          }),
+        );
+        await sendMockGoBridgeEvent(
+          jsonEncode({
+            'event': 'peer:connected',
+            'data': {
+              'peerId': 'peer-tc295',
+              'multiaddrs': ['/ip4/10.0.0.2/tcp/4001'],
+              'direction': 'inbound',
+              'status': 'connected',
+            },
+          }),
+        );
+
+        await waitForCondition(
+          () => receivedMessages.isNotEmpty && stateEvents.isNotEmpty,
+          description: 'P2P facade effects after Go bridge reinitialize',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(receivedMessages, hasLength(1));
+        expect(receivedMessages.single.from, 'peer-tc295');
+        expect(
+          receivedMessages.single.content,
+          'direct callback after reinitialize',
+        );
+        expect(stateEvents, hasLength(1));
+        expect(
+          stateEvents.single.connections.where(
+            (connection) => connection.peerId == 'peer-tc295',
+          ),
+          hasLength(1),
+        );
+      },
+    );
 
     test(
       'DE-009 group message callback survives reinitialize and receives event once',

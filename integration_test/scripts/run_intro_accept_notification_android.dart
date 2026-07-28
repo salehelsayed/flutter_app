@@ -44,6 +44,140 @@ const _navErrorEvents = [
   'NOTIFICATION_TAP_NAV_ERROR',
   'INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR',
 ];
+const Duration introAcceptanceCampaignBudget = Duration(minutes: 24);
+
+typedef IntroDeadlineClock = DateTime Function();
+
+List<({int left, int top, int right, int bottom})>
+exactNotificationTitleNodeBounds(String xml, String title) {
+  final bounds = <({int left, int top, int right, int bottom})>[];
+  for (final match in RegExp(r'<node[^>]*/?>').allMatches(xml)) {
+    final node = match.group(0)!;
+    if (!node.contains('text="$title"')) {
+      continue;
+    }
+    final boundsMatch = RegExp(
+      r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+    ).firstMatch(node);
+    if (boundsMatch == null) {
+      continue;
+    }
+    bounds.add((
+      left: int.parse(boundsMatch.group(1)!),
+      top: int.parse(boundsMatch.group(2)!),
+      right: int.parse(boundsMatch.group(3)!),
+      bottom: int.parse(boundsMatch.group(4)!),
+    ));
+  }
+  return bounds;
+}
+
+/// Accepts ActivityManager's successful launch result and its bounded
+/// `am start -W` wait timeout.
+///
+/// A wait timeout does not mean the launch intent failed: the process can keep
+/// starting after ActivityManager's synchronous wait expires. The campaign's
+/// next phase still requires a fresh identity export from every launched app,
+/// so accepting this provisional status cannot turn a non-launch into proof.
+bool isAndroidActivityStartAccepted(String output) {
+  return RegExp(
+    r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$',
+    multiLine: true,
+  ).hasMatch(output);
+}
+
+/// One absolute campaign deadline with phase allocations underneath it.
+///
+/// Beginning a new phase grants that phase its declared allocation, capped by
+/// the campaign deadline. Repeated waits inside the same phase consume the
+/// same deadline; they cannot each obtain a fresh timeout.
+final class IntroCampaignDeadline {
+  IntroCampaignDeadline({
+    required this.campaignDeadline,
+    IntroDeadlineClock? now,
+  }) : _now = now ?? DateTime.now;
+
+  final DateTime campaignDeadline;
+  final IntroDeadlineClock _now;
+  DateTime? _phaseDeadline;
+  String? _phaseName;
+
+  String? get phaseName => _phaseName;
+
+  void beginPhase(String name, Duration budget) {
+    if (name.trim().isEmpty || budget <= Duration.zero) {
+      throw ArgumentError('Intro campaign phases require a name and budget.');
+    }
+    final allocated = _now().add(budget);
+    _phaseName = name;
+    _phaseDeadline = allocated.isBefore(campaignDeadline)
+        ? allocated
+        : campaignDeadline;
+  }
+
+  Duration remaining({Duration? ceiling}) {
+    final phaseDeadline = _phaseDeadline ?? campaignDeadline;
+    final effectiveDeadline = phaseDeadline.isBefore(campaignDeadline)
+        ? phaseDeadline
+        : campaignDeadline;
+    final value = effectiveDeadline.difference(_now());
+    if (value <= Duration.zero) return Duration.zero;
+    if (ceiling != null && ceiling < value) return ceiling;
+    return value;
+  }
+}
+
+/// True only for the explicit acceptance completion belonging to [stepId].
+///
+/// Health checks and inbox replay occur before every Intro E2E action. Their
+/// completion is not acceptance evidence, even when it is otherwise healthy.
+bool isIntroAcceptanceResult(
+  Map<String, dynamic> result, {
+  required String stepId,
+}) {
+  if (result['stepId'] != stepId ||
+      result['status'] != 'complete' ||
+      result['success'] != true) {
+    return false;
+  }
+  final action = result['introAction'];
+  final custody = result['introDeliveryCustody'];
+  if (action is! Map || custody is! Map || action['action'] != 'accept_all') {
+    return false;
+  }
+  final actedOn = action['actedOn'];
+  if (actedOn is! List || actedOn.isEmpty) return false;
+  final introductionIds = actedOn.whereType<String>().where(
+    (value) => value.isNotEmpty,
+  );
+  final uniqueIntroductionIds = introductionIds.toSet();
+  if (uniqueIntroductionIds.length != actedOn.length) return false;
+  final custodyCount = custody['introductionCount'];
+  return custody['status'] == 'confirmed' &&
+      custodyCount is int &&
+      custodyCount >= uniqueIntroductionIds.length;
+}
+
+/// Shares one cleanup operation across timeout, late-event, and finally paths.
+final class IntroLateEventCleanup {
+  Future<void>? _operation;
+
+  Future<void> run(Future<void> Function() cleanup) {
+    return _operation ??= Future<void>.sync(cleanup);
+  }
+}
+
+final class _CommandResult {
+  const _CommandResult({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+  });
+
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+}
 
 class _Scenario {
   const _Scenario({
@@ -107,17 +241,23 @@ Future<void> main(List<String> args) async {
   final introducedAndroid = _valueFor(args, '--introduced-android');
   final introduced = introducedAndroid ?? _valueFor(args, '--introduced');
   final preparedArtifact = _valueFor(args, '--artifact');
+  final campaignDeadlineValue = _valueFor(args, '--campaign-deadline-epoch-ms');
+  final campaignDeadlineEpochMs = campaignDeadlineValue == null
+      ? null
+      : int.tryParse(campaignDeadlineValue);
   if (scenarioArg == 'all' ||
       introducer == null ||
       recipient == null ||
-      introduced == null) {
+      introduced == null ||
+      (campaignDeadlineValue != null && campaignDeadlineEpochMs == null)) {
     stderr.writeln(
       'Usage: dart run integration_test/scripts/'
       'run_intro_accept_notification_android.dart '
       '--scenario <physical_introducer|emulator_introducer> '
       '--introducer <android-id> --recipient <android-id> '
       '--introduced-android <second-android-emulator-id> '
-      '--artifact <central-prebuilt-apk> [--artifact-dir <dir>] [--verbose]',
+      '--artifact <central-prebuilt-apk> [--artifact-dir <dir>] '
+      '[--campaign-deadline-epoch-ms <utc-epoch-ms>] [--verbose]',
     );
     stderr.writeln(
       'All three sims-major parties are Android adb targets. A legacy direct '
@@ -131,6 +271,16 @@ Future<void> main(List<String> args) async {
     _valueFor(args, '--artifact-dir') ??
         'build/intro_accept_notification_proof/${scenario.id}',
   )..createSync(recursive: true);
+  final campaignDeadline = campaignDeadlineEpochMs == null
+      ? DateTime.now().add(introAcceptanceCampaignBudget)
+      : DateTime.fromMillisecondsSinceEpoch(
+          campaignDeadlineEpochMs,
+          isUtc: true,
+        );
+  if (!campaignDeadline.isAfter(DateTime.now())) {
+    stderr.writeln('FAIL: intro campaign deadline is already expired');
+    exit(64);
+  }
 
   try {
     final campaign = _Campaign(
@@ -144,6 +294,7 @@ Future<void> main(List<String> args) async {
           : File(preparedArtifact).absolute,
       statePreparedByParent: args.contains('--android-state-prepared'),
       artifactDir: artifactDir,
+      campaignDeadline: campaignDeadline,
     );
     await campaign.run();
     stdout.writeln('PASS: ${scenario.id} artifacts at ${artifactDir.path}');
@@ -174,6 +325,13 @@ class _Party {
 }
 
 class _Campaign {
+  static const Duration _preflightBudget = Duration(minutes: 2);
+  static const Duration _installBudget = Duration(minutes: 4);
+  static const Duration _bootstrapBudget = Duration(minutes: 5);
+  static const Duration _fixtureBudget = Duration(minutes: 7);
+  static const Duration _acceptanceBudget = Duration(minutes: 6);
+  static const Duration _finalizationBudget = Duration(minutes: 2);
+
   _Campaign({
     required this.scenario,
     required this.introducerAndroidId,
@@ -183,7 +341,9 @@ class _Campaign {
     required this.preparedArtifact,
     required this.statePreparedByParent,
     required this.artifactDir,
-  }) : a = _Party(role: 'A', deviceId: introducerAndroidId, isIos: false),
+    required DateTime campaignDeadline,
+  }) : deadline = IntroCampaignDeadline(campaignDeadline: campaignDeadline),
+       a = _Party(role: 'A', deviceId: introducerAndroidId, isIos: false),
        b = _Party(role: 'B', deviceId: recipientAndroidId, isIos: false),
        c = _Party(
          role: 'C',
@@ -199,53 +359,79 @@ class _Campaign {
   final File? preparedArtifact;
   final bool statePreparedByParent;
   final Directory artifactDir;
+  final IntroCampaignDeadline deadline;
 
   final _Party a;
   final _Party b;
   final _Party c;
 
   final Map<String, bool> checks = <String, bool>{};
+  final IntroLateEventCleanup _lateEventCleanup = IntroLateEventCleanup();
   String copyExtractor = '';
 
   Future<void> run() async {
-    await _verifyTargetsAvailable();
     AndroidAppStateGuard? directStateGuard;
-    if (!statePreparedByParent) {
-      try {
-        directStateGuard = await AndroidAppStateGuard.capture(
-          devices: <String>[a.deviceId, b.deviceId, if (!c.isIos) c.deviceId],
-          packageName: _appPackage,
-          backupLabel: 'intro-accept-direct',
-        );
-      } on AndroidAppStateBlocked catch (error) {
-        throw _CampaignFailure(error.detail);
-      } on AndroidAppStateFailure catch (error) {
-        throw _CampaignFailure(error.detail);
+    await _runPhase('preflight', _preflightBudget, () async {
+      await _verifyTargetsAvailable();
+      if (!statePreparedByParent) {
+        try {
+          directStateGuard = await AndroidAppStateGuard.capture(
+            devices: <String>[a.deviceId, b.deviceId, if (!c.isIos) c.deviceId],
+            packageName: _appPackage,
+            backupLabel: 'intro-accept-direct',
+          );
+        } on AndroidAppStateBlocked catch (error) {
+          throw _CampaignFailure(error.detail);
+        } on AndroidAppStateFailure catch (error) {
+          throw _CampaignFailure(error.detail);
+        }
       }
-    }
+    });
     try {
-      await _installPreparedArtifactIfPresent(directStateGuard);
-      await _launchAll();
-      await _collectIdentities();
-      await _setupContacts();
-      await _sendIntroduction();
+      await _runPhase(
+        'install',
+        _installBudget,
+        () => _installPreparedArtifactIfPresent(directStateGuard),
+      );
+      await _runPhase('bootstrap', _bootstrapBudget, () async {
+        await _launchAll();
+        await _collectIdentities();
+      });
+      await _runPhase('fixture', _fixtureBudget, () async {
+        await _setupContacts();
+        await _sendIntroduction();
+      });
 
       // Leg 1: B accepts while A is terminated.
-      await _acceptanceLeg(
-        responder: b,
-        legLabel: 'b_accept',
-        expectedStatusContext: 'b_accept_recorded',
+      await _runPhase(
+        'b_accept',
+        _acceptanceBudget,
+        () => _acceptanceLeg(
+          responder: b,
+          legLabel: 'b_accept',
+          expectedStatusContext: 'b_accept_recorded',
+        ),
       );
+      await _dismissExactAcceptanceCards();
 
       // Leg 2: C accepts while A is terminated again.
-      await _acceptanceLeg(
-        responder: c,
-        legLabel: 'c_accept',
-        expectedStatusContext: 'bc_connected',
+      await _runPhase(
+        'c_accept',
+        _acceptanceBudget,
+        () => _acceptanceLeg(
+          responder: c,
+          legLabel: 'c_accept',
+          expectedStatusContext: 'bc_connected',
+        ),
       );
 
-      await _assertNoNavigationErrors();
+      await _runPhase(
+        'finalize',
+        _finalizationBudget,
+        _assertNoNavigationErrors,
+      );
     } finally {
+      await _cleanupAfterLateEvents();
       try {
         await directStateGuard?.restoreAll();
       } on AndroidAppStateFailure catch (error) {
@@ -253,6 +439,24 @@ class _Campaign {
       }
     }
     _writeArtifact();
+  }
+
+  Future<T> _runPhase<T>(
+    String name,
+    Duration phaseBudget,
+    Future<T> Function() action,
+  ) {
+    deadline.beginPhase(name, phaseBudget);
+    if (deadline.remaining() <= Duration.zero) {
+      throw _CampaignFailure(
+        'intro campaign deadline expired before phase $name',
+      );
+    }
+    _log(
+      'phase $name started with '
+      '${deadline.remaining().inMilliseconds}ms remaining',
+    );
+    return action();
   }
 
   // ---- Phase 0: discovery -------------------------------------------------
@@ -385,10 +589,7 @@ class _Campaign {
         '-n',
         '$_appPackage/.MainActivity',
       ]);
-      if (!RegExp(
-        r'^Status:[ \t]+ok[ \t]*\r?$',
-        multiLine: true,
-      ).hasMatch(output)) {
+      if (!isAndroidActivityStartAccepted(output)) {
         throw _CampaignFailure(
           'Parent-prepared APK did not launch on ${party.deviceId}.',
         );
@@ -501,6 +702,7 @@ class _Campaign {
       'require_introducer_acceptance_custody': true,
       'introducer_acceptance_custody_timeout_ms': 150000,
     });
+    checks['${legLabel}AcceptanceEventDiscriminated'] = true;
     final custody = response['introDeliveryCustody'];
     if (custody is! Map<String, dynamic> ||
         custody['status'] != 'confirmed' ||
@@ -590,11 +792,23 @@ class _Campaign {
   }
 
   Future<bool> _pidofEmptyWithin(Duration timeout) async {
-    final deadline = DateTime.now().add(timeout);
+    final waitBudget = deadline.remaining(ceiling: timeout);
+    if (waitBudget <= Duration.zero) return false;
+    final requestedDeadline = DateTime.now().add(timeout);
+    final sharedDeadline = DateTime.now().add(waitBudget);
+    final pidDeadline = requestedDeadline.isBefore(sharedDeadline)
+        ? requestedDeadline
+        : sharedDeadline;
     do {
       if ((await _pidofA()).isEmpty) return true;
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    } while (DateTime.now().isBefore(deadline));
+      final remaining = pidDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      await Future<void>.delayed(
+        remaining < const Duration(milliseconds: 250)
+            ? remaining
+            : const Duration(milliseconds: 250),
+      );
+    } while (DateTime.now().isBefore(pidDeadline));
     return false;
   }
 
@@ -721,6 +935,56 @@ class _Campaign {
     await _adbShell(a.deviceId, ['input', 'tap', '$centerX', '$centerY']);
   }
 
+  Future<void> _dismissExactAcceptanceCards() async {
+    final waitBudget = deadline.remaining(ceiling: const Duration(seconds: 20));
+    if (waitBudget <= Duration.zero) {
+      throw _CampaignFailure(
+        'no shared budget remains to clear the first acceptance card',
+      );
+    }
+    final dismissDeadline = DateTime.now().add(waitBudget);
+    await _expandShade();
+    try {
+      for (var attempt = 0; attempt < 8; attempt += 1) {
+        final xml = await _uiautomatorDump();
+        final cards = exactNotificationTitleNodeBounds(xml, _acceptTitle);
+        if (cards.isEmpty) {
+          checks['b_acceptExactCardsDismissed'] = true;
+          return;
+        }
+        final card = cards.first;
+        final centerX = (card.left + card.right) ~/ 2;
+        final centerY = (card.top + card.bottom) ~/ 2;
+        _log(
+          'dismissing proven first-leg acceptance card from '
+          '($centerX,$centerY)',
+        );
+        await _adbShell(a.deviceId, [
+          'input',
+          'swipe',
+          '$centerX',
+          '$centerY',
+          '1',
+          '$centerY',
+          '350',
+        ]);
+        final remaining = dismissDeadline.difference(DateTime.now());
+        if (remaining <= Duration.zero) break;
+        await Future<void>.delayed(
+          remaining < const Duration(milliseconds: 500)
+              ? remaining
+              : const Duration(milliseconds: 500),
+        );
+      }
+      throw _CampaignFailure(
+        'the exact first-leg "$_acceptTitle" card remained after bounded '
+        'targeted dismissal; refusing to attribute the second tap to it',
+      );
+    } finally {
+      await _collapseShade();
+    }
+  }
+
   Future<void> _expandShade() async {
     await _adbShell(a.deviceId, ['cmd', 'statusbar', 'expand-notifications']);
     await Future<void>.delayed(const Duration(seconds: 1));
@@ -746,27 +1010,8 @@ class _Campaign {
     String xml,
     String title,
   ) {
-    // Find the <node .../> whose text equals the exact title, then read its
-    // bounds attribute. UIAutomator dumps are single-line; scan node by node.
-    for (final match in RegExp(r'<node[^>]*/?>').allMatches(xml)) {
-      final node = match.group(0)!;
-      if (!node.contains('text="$title"')) {
-        continue;
-      }
-      final boundsMatch = RegExp(
-        r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-      ).firstMatch(node);
-      if (boundsMatch == null) {
-        continue;
-      }
-      return (
-        left: int.parse(boundsMatch.group(1)!),
-        top: int.parse(boundsMatch.group(2)!),
-        right: int.parse(boundsMatch.group(3)!),
-        bottom: int.parse(boundsMatch.group(4)!),
-      );
-    }
-    return null;
+    final matches = exactNotificationTitleNodeBounds(xml, title);
+    return matches.isEmpty ? null : matches.first;
   }
 
   // ---- Route markers -------------------------------------------------------
@@ -783,8 +1028,14 @@ class _Campaign {
   Future<({String finalPeer, String statusContext})> _waitForRedirectMarker(
     String sinceMark,
   ) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
-    while (DateTime.now().isBefore(deadline)) {
+    final waitBudget = deadline.remaining(ceiling: const Duration(seconds: 60));
+    if (waitBudget <= Duration.zero) {
+      throw _CampaignFailure(
+        'timed out waiting for $_redirectEvent during ${deadline.phaseName}',
+      );
+    }
+    final redirectDeadline = DateTime.now().add(waitBudget);
+    while (DateTime.now().isBefore(redirectDeadline)) {
       final log = await _run('adb', [
         '-s',
         a.deviceId,
@@ -807,7 +1058,13 @@ class _Campaign {
           return (finalPeer: finalPeer, statusContext: statusContext);
         }
       }
-      await Future<void>.delayed(const Duration(seconds: 2));
+      final remaining = redirectDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      await Future<void>.delayed(
+        remaining < const Duration(seconds: 2)
+            ? remaining
+            : const Duration(seconds: 2),
+      );
     }
     throw _CampaignFailure(
       'timed out waiting for $_redirectEvent marker after tap; the tap did '
@@ -830,6 +1087,93 @@ class _Campaign {
     checks['zeroNavigationErrors'] = true;
   }
 
+  // ---- Timeout / late-event cleanup ----------------------------------------
+
+  Future<void> _cleanupAfterLateEvents() {
+    return _lateEventCleanup.run(() async {
+      var clean = true;
+      for (final party in <_Party>[a, b, c]) {
+        try {
+          if (party.isIos) {
+            await _runCleanupCommand('xcrun', <String>[
+              'simctl',
+              'terminate',
+              party.deviceId,
+              _iosBundleId,
+            ]);
+            final container = await _runCleanupCommand('xcrun', <String>[
+              'simctl',
+              'get_app_container',
+              party.deviceId,
+              _iosBundleId,
+              'data',
+            ]);
+            if (container.stdout.trim().isNotEmpty) {
+              for (final name in const <String>[
+                'intro_e2e_config.json',
+                'intro_e2e_result.json',
+              ]) {
+                final file = File('${container.stdout.trim()}/Documents/$name');
+                if (file.existsSync()) file.deleteSync();
+              }
+            }
+            continue;
+          }
+          await _runCleanupCommand('adb', <String>[
+            '-s',
+            party.deviceId,
+            'shell',
+            'cmd',
+            'activity',
+            'stop-app',
+            _appPackage,
+          ]);
+          await _runCleanupCommand('adb', <String>[
+            '-s',
+            party.deviceId,
+            'shell',
+            'run-as',
+            _appPackage,
+            'rm',
+            '-f',
+            'app_flutter/intro_e2e_config.json',
+            'app_flutter/intro_e2e_result.json',
+          ]);
+        } on Object catch (error) {
+          clean = false;
+          _log(
+            'best-effort late-event cleanup failed for ${party.role}: $error',
+          );
+        }
+      }
+      try {
+        await _runCleanupCommand('adb', <String>[
+          '-s',
+          a.deviceId,
+          'shell',
+          'cmd',
+          'statusbar',
+          'collapse',
+        ]);
+      } on Object catch (error) {
+        clean = false;
+        _log('best-effort notification-shade cleanup failed: $error');
+      }
+      if (clean) checks['lateEventCleanup'] = true;
+    });
+  }
+
+  Future<_CommandResult> _runCleanupCommand(
+    String executable,
+    List<String> args,
+  ) {
+    return _runBoundedProcess(
+      executable,
+      args,
+      timeout: const Duration(seconds: 10),
+    );
+  }
+
   // ---- E2E config channel --------------------------------------------------
 
   Future<Map<String, dynamic>> _writeConfigAndAwait(
@@ -837,6 +1181,9 @@ class _Campaign {
     Map<String, dynamic> config,
   ) async {
     final stepId = config['stepId'] as String;
+    final requiresAcceptance =
+        config['introduction_action'] == 'accept_all' &&
+        config['require_introducer_acceptance_custody'] == true;
     _log('writing config $stepId to ${party.role}');
     await _writeAppDocumentsFile(
       party,
@@ -845,7 +1192,7 @@ class _Campaign {
     );
     final raw = await _waitForValue(
       'result for $stepId',
-      const Duration(seconds: 240),
+      deadline.remaining(),
       () async {
         final result = await _readAppDocumentsFile(
           party,
@@ -856,6 +1203,15 @@ class _Campaign {
         }
         final decoded = jsonDecode(result) as Map<String, dynamic>;
         if (decoded['stepId'] != stepId || decoded['status'] == 'running') {
+          return null;
+        }
+        if (decoded['success'] == true &&
+            requiresAcceptance &&
+            !isIntroAcceptanceResult(decoded, stepId: stepId)) {
+          _log(
+            'ignoring non-acceptance completion for $stepId while awaiting '
+            'explicit acceptance custody',
+          );
           return null;
         }
         return result;
@@ -1009,14 +1365,103 @@ class _Campaign {
     bool allowFail = false,
   }) async {
     _log('\$ $executable ${args.join(' ')}');
-    final result = await Process.run(executable, args);
+    final commandBudget = deadline.remaining(
+      ceiling: const Duration(seconds: 45),
+    );
+    if (commandBudget <= Duration.zero) {
+      throw _CampaignFailure(
+        'intro campaign deadline expired during ${deadline.phaseName}',
+      );
+    }
+    final result = await _runBoundedProcess(
+      executable,
+      args,
+      timeout: commandBudget,
+    );
     if (result.exitCode != 0 && !allowFail) {
       throw _CampaignFailure(
         '$executable ${args.join(' ')} failed (${result.exitCode}): '
         '${result.stderr}',
       );
     }
-    return '${result.stdout}';
+    return result.stdout;
+  }
+
+  Future<_CommandResult> _runBoundedProcess(
+    String executable,
+    List<String> args, {
+    required Duration timeout,
+  }) async {
+    if (timeout <= Duration.zero) {
+      throw _CampaignFailure(
+        '$executable ${args.join(' ')} has no remaining execution budget',
+      );
+    }
+    late final Process process;
+    try {
+      process = await Process.start(executable, args);
+    } on ProcessException catch (error) {
+      throw _CampaignFailure(
+        'could not start $executable ${args.join(' ')}: ${error.message}',
+      );
+    }
+    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    late final int code;
+    try {
+      code = await process.exitCode.timeout(timeout);
+    } on TimeoutException {
+      await _terminateStartedProcess(process);
+      final commandStdout = await stdoutFuture.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => '',
+      );
+      final commandStderr = await stderrFuture.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => '',
+      );
+      throw _CampaignFailure(
+        '$executable ${args.join(' ')} exceeded its shared phase deadline '
+        '(stdout=$commandStdout, stderr=$commandStderr)',
+      );
+    }
+    final commandStdout = await stdoutFuture;
+    final commandStderr = await stderrFuture;
+    return _CommandResult(
+      exitCode: code,
+      stdout: commandStdout,
+      stderr: commandStderr,
+    );
+  }
+
+  Future<void> _terminateStartedProcess(Process process) async {
+    final processExit = process.exitCode;
+    if (!process.kill(ProcessSignal.sigterm)) {
+      try {
+        await processExit.timeout(const Duration(seconds: 1));
+        return;
+      } on TimeoutException {
+        process.kill(ProcessSignal.sigkill);
+      }
+      try {
+        await processExit.timeout(const Duration(seconds: 3));
+      } on TimeoutException {
+        _log('command remained alive after SIGKILL');
+      }
+      return;
+    }
+    try {
+      await processExit.timeout(const Duration(seconds: 3));
+      return;
+    } on TimeoutException {
+      _log('command did not stop after SIGTERM; sending SIGKILL');
+    }
+    process.kill(ProcessSignal.sigkill);
+    try {
+      await processExit.timeout(const Duration(seconds: 3));
+    } on TimeoutException {
+      _log('command remained alive after SIGKILL');
+    }
   }
 
   Future<void> _waitFor(
@@ -1025,12 +1470,24 @@ class _Campaign {
     Future<bool> Function() probe, {
     String? onTimeoutHint,
   }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
+    final waitBudget = deadline.remaining(ceiling: timeout);
+    if (waitBudget <= Duration.zero) {
+      throw _CampaignFailure(
+        'timed out waiting for $what during ${deadline.phaseName}',
+      );
+    }
+    final waitDeadline = DateTime.now().add(waitBudget);
+    while (DateTime.now().isBefore(waitDeadline)) {
       if (await probe()) {
         return;
       }
-      await Future<void>.delayed(const Duration(seconds: 2));
+      final remaining = waitDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      await Future<void>.delayed(
+        remaining < const Duration(seconds: 2)
+            ? remaining
+            : const Duration(seconds: 2),
+      );
     }
     throw _CampaignFailure(
       'timed out waiting for $what'
@@ -1043,13 +1500,25 @@ class _Campaign {
     Duration timeout,
     Future<String?> Function() probe,
   ) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
+    final waitBudget = deadline.remaining(ceiling: timeout);
+    if (waitBudget <= Duration.zero) {
+      throw _CampaignFailure(
+        'timed out waiting for $what during ${deadline.phaseName}',
+      );
+    }
+    final waitDeadline = DateTime.now().add(waitBudget);
+    while (DateTime.now().isBefore(waitDeadline)) {
       final value = await probe();
       if (value != null && value.isNotEmpty) {
         return value;
       }
-      await Future<void>.delayed(const Duration(seconds: 2));
+      final remaining = waitDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      await Future<void>.delayed(
+        remaining < const Duration(seconds: 2)
+            ? remaining
+            : const Duration(seconds: 2),
+      );
     }
     throw _CampaignFailure('timed out waiting for $what');
   }

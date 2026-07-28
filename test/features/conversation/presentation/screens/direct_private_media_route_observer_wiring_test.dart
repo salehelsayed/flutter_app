@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('production registers and scopes one stable private-media observer', () {
-    final mainSource = File('lib/main.dart').readAsStringSync();
+    final applicationRootSource = File(
+      'lib/app/application_root.dart',
+    ).readAsStringSync();
     final observerSource = File(
       'lib/features/conversation/presentation/navigation/'
       'direct_private_media_route_observer.dart',
@@ -13,14 +15,14 @@ void main() {
     expect(
       RegExp(
         r'navigatorObservers:\s*\[directPrivateMediaRouteObserver\]',
-      ).allMatches(mainSource),
+      ).allMatches(applicationRootSource),
       hasLength(1),
     );
     expect(
       RegExp(
         r'DirectPrivateMediaRouteObserverScope\(\s*'
         r'observer:\s*directPrivateMediaRouteObserver,',
-      ).allMatches(mainSource),
+      ).allMatches(applicationRootSource),
       hasLength(1),
     );
     expect(
@@ -42,7 +44,7 @@ void main() {
     expect(
       productionCallSites,
       containsAll(<String>[
-        'lib/main.dart',
+        'lib/app/application_root.dart',
         'lib/features/feed/presentation/screens/feed_wired.dart',
         'lib/features/home/presentation/screens/first_time_experience_wired.dart',
         'lib/features/orbit/presentation/screens/orbit_wired.dart',

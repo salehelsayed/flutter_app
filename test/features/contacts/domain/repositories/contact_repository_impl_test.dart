@@ -3,7 +3,7 @@ import 'package:flutter_app/core/debug/ios_sender_projection_fixture_contract.da
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 
 void main() {
   late ContactRepositoryImpl repo;

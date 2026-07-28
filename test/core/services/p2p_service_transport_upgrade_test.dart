@@ -71,7 +71,10 @@ void main() {
 
   setUp(() {
     bridge = _FakeBridge();
-    bridge.whenCommand('inbox:ack', (_) => jsonEncode({'ok': true, 'acked': 1}));
+    bridge.whenCommand(
+      'inbox:ack',
+      (_) => jsonEncode({'ok': true, 'acked': 1}),
+    );
     bridge.whenCommand(
       'node:start',
       (_) => jsonEncode({
@@ -154,35 +157,32 @@ void main() {
     },
   );
 
-  test(
-    'FDC-12 TC-12-09b: transport:downgraded reverts the upgraded badge and '
-    'clears the sticky direct preference',
-    () async {
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-      connectViaCircuit();
+  test('FDC-12 TC-12-09b: transport:downgraded reverts the upgraded badge and '
+      'clears the sticky direct preference', () async {
+    await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+    connectViaCircuit();
 
-      emitTransportDiagnosticEvent('transport:upgraded', {
-        'fromTransport': 'relay',
-        'toTransport': 'direct',
-        'elapsedMs': 25,
-        'remotePeerShort': peerShort,
-      });
-      expect(service.lastKnownGoodTransport(peerId), 'direct');
-      expect(await inboundTransport(), 'upgraded');
+    emitTransportDiagnosticEvent('transport:upgraded', {
+      'fromTransport': 'relay',
+      'toTransport': 'direct',
+      'elapsedMs': 25,
+      'remotePeerShort': peerShort,
+    });
+    expect(service.lastKnownGoodTransport(peerId), 'direct');
+    expect(await inboundTransport(), 'upgraded');
 
-      // The direct leg dies; the circuit survives.
-      emitTransportDiagnosticEvent('transport:downgraded', {
-        'fromTransport': 'direct',
-        'toTransport': 'relay',
-        'remotePeerShort': peerShort,
-      });
+    // The direct leg dies; the circuit survives.
+    emitTransportDiagnosticEvent('transport:downgraded', {
+      'fromTransport': 'direct',
+      'toTransport': 'relay',
+      'remotePeerShort': peerShort,
+    });
 
-      // Sticky cleared → next send re-probes (no dead direct leg trapped).
-      expect(service.lastKnownGoodTransport(peerId), isNot('direct'));
-      // Badge reverted → the live circuit conn now infers 'relay', not 'upgraded'.
-      expect(await inboundTransport(), 'relay');
-    },
-  );
+    // Sticky cleared → next send re-probes (no dead direct leg trapped).
+    expect(service.lastKnownGoodTransport(peerId), isNot('direct'));
+    // Badge reverted → the live circuit conn now infers 'relay', not 'upgraded'.
+    expect(await inboundTransport(), 'relay');
+  });
 
   test(
     'FDC-12 TC-12-09c: a short-id collision (two connected peers sharing the '
@@ -218,6 +218,20 @@ void main() {
       // is primed (fail-safe; the send race still falls back to the full race).
       expect(service.lastKnownGoodTransport(peerA), isNot('direct'));
       expect(service.lastKnownGoodTransport(peerB), isNot('direct'));
+    },
+  );
+
+  test(
+    'DTR-17 preserves branch-local diagnostic parsing for unused fields',
+    () async {
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+      emitTransportDiagnosticEvent('holepunch:failure', {
+        'step': 7,
+        'error': 'timeout',
+        'remotePeerShort': 9,
+      });
+      await Future<void>.delayed(Duration.zero);
     },
   );
 }

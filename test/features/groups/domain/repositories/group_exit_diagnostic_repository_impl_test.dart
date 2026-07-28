@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/core/database/helpers/group_exit_diagnostics_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_exit_diagnostic_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

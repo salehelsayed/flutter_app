@@ -2,7 +2,7 @@ import 'dart:ui' show AppLifecycleState;
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';

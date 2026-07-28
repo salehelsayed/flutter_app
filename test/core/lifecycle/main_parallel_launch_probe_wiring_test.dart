@@ -15,44 +15,50 @@ void main() {
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
 
       // (i) the two probes overlap via Future.wait inside the share-launch-probe
       // window, and neither call is awaited inline before the join.
-      final probeStart = mainSource.indexOf(
+      final probeStart = productionSource.indexOf(
         "StartupTiming.instance.mark('share_launch_probe_begin')",
       );
-      final probeEnd = mainSource.indexOf(
+      final probeEnd = productionSource.indexOf(
         "StartupTiming.instance.mark('share_launch_probe_complete')",
       );
       expect(probeStart, isNonNegative);
       expect(probeEnd, greaterThan(probeStart));
-      final probeBlock = mainSource.substring(probeStart, probeEnd);
+      final probeBlock = productionSource.substring(probeStart, probeEnd);
       expect(
         probeBlock,
         contains('Future.wait'),
         reason: 'the two independent launch probes must overlap',
       );
 
-      final runAppIndex = mainSource.indexOf('runApp(');
-      expect(runAppIndex, isNonNegative);
-      final preRunApp = mainSource.substring(0, runAppIndex);
+      final rootBuildIndex = productionSource.indexOf(
+        'Future<Widget> _buildRootWidget() async {',
+      );
+      expect(rootBuildIndex, isNonNegative);
+      final preRootBuild = productionSource.substring(0, rootBuildIndex);
       expect(
-        preRunApp,
+        preRootBuild,
         isNot(contains('await shareIntentService.captureInitialIntent()')),
         reason: 'the share-intent probe must not be awaited inline before join',
       );
       expect(
-        preRunApp,
+        preRootBuild,
         isNot(contains('await getApplicationDocumentsDirectory()')),
         reason: 'the docs-dir probe must not be awaited inline before join',
       );
 
       // (ii) no eager top-level ensureFirebaseReady() await is re-introduced —
       // the only surviving call site is inside startLiveServices (deferred).
-      final startLiveIndex = mainSource.indexOf('Future<void> startLiveServices()');
+      final startLiveIndex = productionSource.indexOf(
+        'Future<void> startLiveServices()',
+      );
       expect(startLiveIndex, isNonNegative);
-      final preStartLive = mainSource.substring(0, startLiveIndex);
+      final preStartLive = productionSource.substring(0, startLiveIndex);
       expect(
         preStartLive,
         isNot(contains('await ensureFirebaseReady()')),
@@ -63,15 +69,15 @@ void main() {
 
       // (iii) the StartupTiming marks survive.
       expect(
-        mainSource,
+        productionSource,
         contains("StartupTiming.instance.mark('share_launch_probe_begin')"),
       );
       expect(
-        mainSource,
+        productionSource,
         contains("StartupTiming.instance.mark('share_launch_probe_complete')"),
       );
       expect(
-        mainSource,
+        productionSource,
         contains("StartupTiming.instance.mark('documents_dir_ready')"),
       );
     },

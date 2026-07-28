@@ -6,8 +6,8 @@ import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../../core/secure_storage/fake_secure_key_store.dart';
 

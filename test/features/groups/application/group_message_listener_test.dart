@@ -4296,6 +4296,90 @@ void main() {
     await subscription.cancel();
   });
 
+  test(
+    'DTR-16 facade start is idempotent, awaited stop permits one clean restart, and dispose is terminal',
+    () async {
+      listener.dispose();
+
+      var liveMessageGateCalls = 0;
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        accountMigrationNetworkGate:
+            ({String? peerId, required String operation}) async {
+              if (operation == 'group_live_message') {
+                liveMessageGateCalls++;
+              }
+              return true;
+            },
+      );
+
+      final emitted = <GroupMessage>[];
+      final firstEmission = Completer<void>();
+      final restartEmission = Completer<void>();
+      final outputDone = Completer<void>();
+      final subscription = listener.groupMessageStream.listen((message) {
+        emitted.add(message);
+        if (message.id == 'dtr16-first' && !firstEmission.isCompleted) {
+          firstEmission.complete();
+        }
+        if (message.id == 'dtr16-restart' && !restartEmission.isCompleted) {
+          restartEmission.complete();
+        }
+      }, onDone: outputDone.complete);
+      addTearDown(subscription.cancel);
+
+      Map<String, dynamic> event(String id) => {
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': id,
+        'timestamp': DateTime.utc(2026, 7, 28, 12).toIso8601String(),
+        'messageId': id,
+      };
+
+      listener.start(sourceController.stream);
+      listener.start(sourceController.stream);
+      sourceController.add(event('dtr16-first'));
+
+      await firstEmission.future.timeout(const Duration(seconds: 2));
+      await listener.stop().timeout(const Duration(seconds: 2));
+
+      expect(liveMessageGateCalls, 1);
+      expect(emitted.map((message) => message.id), ['dtr16-first']);
+      expect(await msgRepo.getMessage('dtr16-first'), isNotNull);
+
+      listener.start(sourceController.stream);
+      sourceController.add(event('dtr16-restart'));
+
+      await restartEmission.future.timeout(const Duration(seconds: 2));
+      await listener.stop().timeout(const Duration(seconds: 2));
+
+      expect(liveMessageGateCalls, 2);
+      expect(emitted.map((message) => message.id), [
+        'dtr16-first',
+        'dtr16-restart',
+      ]);
+      expect(await msgRepo.getMessage('dtr16-restart'), isNotNull);
+
+      listener.dispose();
+      await outputDone.future.timeout(const Duration(seconds: 2));
+
+      listener.start(sourceController.stream);
+      sourceController.add(event('dtr16-after-dispose'));
+      await sourceController.close();
+
+      expect(liveMessageGateCalls, 2);
+      expect(await msgRepo.getMessage('dtr16-after-dispose'), isNull);
+      expect(emitted.map((message) => message.id), [
+        'dtr16-first',
+        'dtr16-restart',
+      ]);
+    },
+  );
+
   test('disposes correctly', () async {
     listener.start(sourceController.stream);
     listener.dispose();

@@ -11,7 +11,7 @@ import 'package:flutter_app/core/database/helpers/group_exit_diagnostics_db_help
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_exit_diagnostic_repository_impl.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/group_exit_diagnostics_sheet.dart';

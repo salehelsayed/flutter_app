@@ -620,7 +620,9 @@ void main() {
     final feedWired = File(
       'lib/features/feed/presentation/screens/feed_wired.dart',
     ).readAsStringSync();
-    final mainDart = File('lib/main.dart').readAsStringSync();
+    final applicationRoot = File(
+      'lib/app/application_root.dart',
+    ).readAsStringSync();
 
     // Each file constructs exactly one OrbitWired(...). Isolate that arg block
     // and assert nearbyLocationService is threaded into it.
@@ -652,9 +654,10 @@ void main() {
       reason: 'feed_wired.dart OrbitWired must thread nearbyLocationService',
     );
     expect(
-      orbitCtorThreadsNearby(mainDart),
+      orbitCtorThreadsNearby(applicationRoot),
       isTrue,
-      reason: 'main.dart OrbitWired must thread nearbyLocationService',
+      reason:
+          'application_root.dart OrbitWired must thread nearbyLocationService',
     );
   });
 

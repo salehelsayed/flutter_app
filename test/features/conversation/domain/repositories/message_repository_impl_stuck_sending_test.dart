@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 // Helper that constructs a minimal MessageRepositoryImpl wired to an in-memory
 // map, matching the pattern in message_repository_impl_test.dart.

@@ -392,10 +392,7 @@ void main() {
 
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:status'] = _nodeStatusOk();
-      bridge.responses['inbox:retrieve_pending'] = {
-        'ok': true,
-        'messages': [],
-      };
+      bridge.responses['inbox:retrieve_pending'] = {'ok': true, 'messages': []};
 
       final service = _makeService(bridge);
 
@@ -422,14 +419,11 @@ void main() {
   // =========================================================================
 
   group('Bridge callbacks after stop', () {
-    test('bridge callbacks after stopNode are ignored', () async {
+    test('bridge state callbacks after stopNode are ignored', () async {
       final bridge = _ReconnectGateBridge();
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-      bridge.responses['inbox:retrieve_pending'] = {
-        'ok': true,
-        'messages': [],
-      };
+      bridge.responses['inbox:retrieve_pending'] = {'ok': true, 'messages': []};
 
       final service = _makeService(bridge);
 
@@ -442,27 +436,99 @@ void main() {
       expect(stopResult, isTrue);
       expect(service.currentState.isStarted, isFalse);
 
-      // Fire bridge callbacks after stop — they should be ignored.
-      bridge.onPeerConnected?.call(
+      final stateEvents = <Object>[];
+      final stateSub = service.stateStream.listen(stateEvents.add);
+
+      expect(bridge.onPeerConnected, isNotNull);
+      expect(bridge.onPeerDisconnected, isNotNull);
+      expect(bridge.onAddressesUpdated, isNotNull);
+      expect(bridge.onRelayStateChanged, isNotNull);
+
+      // Exercise every state/lifecycle callback with a payload that would
+      // otherwise mutate state and emit.
+      bridge.onPeerConnected!(
         const ConnectionState(
-          peerId: 'peer1',
-          multiaddrs: [],
+          peerId: 'peer-after-stop',
+          multiaddrs: ['/ip4/1.2.3.4/tcp/5678'],
           direction: 'outbound',
           status: 'connected',
         ),
       );
-      bridge.onAddressesUpdated?.call(
+      bridge.onPeerDisconnected!(
+        const ConnectionState(
+          peerId: 'peer-after-stop',
+          multiaddrs: ['/ip4/1.2.3.4/tcp/5678'],
+          direction: 'outbound',
+          status: 'disconnected',
+        ),
+      );
+      bridge.onAddressesUpdated!(
         ['/ip4/1.2.3.4/tcp/5678'],
         ['/p2p-circuit/new'],
       );
+      bridge.onRelayStateChanged!({
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+        'watchdogRestartCount': 1,
+        'needsGroupRecovery': true,
+      });
 
-      // State should remain stopped with no connections or circuits.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(stateEvents, isEmpty);
       expect(service.currentState.isStarted, isFalse);
       expect(service.currentState.connections, isEmpty);
+      expect(service.currentState.listenAddresses, isEmpty);
       expect(service.currentState.circuitAddresses, isEmpty);
+      expect(service.currentState.relayState, isNull);
 
+      await stateSub.cancel();
       service.dispose();
     });
+
+    test(
+      'direct-message callback after stopNode preserves current staging/emission behavior',
+      () async {
+        final bridge = _ReconnectGateBridge();
+        bridge.responses['node:start'] = _nodeStartOk();
+        bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
+
+        final service = _makeService(bridge);
+        await service.startNodeCore(_testBase64Key, _testPeerId);
+        expect(await service.stopNode(), isTrue);
+
+        final received = <ChatMessage>[];
+        final firstMessage = Completer<void>();
+        final messageSub = service.messageStream.listen((message) {
+          received.add(message);
+          if (!firstMessage.isCompleted) firstMessage.complete();
+        });
+        const message = ChatMessage(
+          from: 'peer-after-stop',
+          to: _testPeerId,
+          content: 'current post-stop direct behavior',
+          timestamp: '2026-07-28T12:00:00.000Z',
+          isIncoming: true,
+          transport: 'direct',
+        );
+
+        expect(bridge.onMessageReceived, isNotNull);
+        bridge.onMessageReceived!(message);
+
+        await firstMessage.future.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(received, hasLength(1));
+        expect(received.single, message);
+
+        await messageSub.cancel();
+        service.dispose();
+      },
+    );
   });
 
   // =========================================================================
@@ -618,10 +684,7 @@ void main() {
       bridge.responses['node:status'] = _nodeStatusDegraded();
       bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
       bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve_pending'] = {
-        'ok': true,
-        'messages': [],
-      };
+      bridge.responses['inbox:retrieve_pending'] = {'ok': true, 'messages': []};
 
       final service = _makeService(bridge);
 
@@ -664,10 +727,7 @@ void main() {
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:status'] = _nodeStatusDegraded();
       bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve_pending'] = {
-        'ok': true,
-        'messages': [],
-      };
+      bridge.responses['inbox:retrieve_pending'] = {'ok': true, 'messages': []};
 
       final service = _makeService(bridge);
 

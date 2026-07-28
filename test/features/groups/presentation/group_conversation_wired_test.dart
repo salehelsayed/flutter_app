@@ -538,6 +538,27 @@ class TrackingDurableMediaFileManager extends FakeMediaFileManager {
   }
 }
 
+class _ScopedTrackingDurableMediaFileManager
+    extends TrackingDurableMediaFileManager {
+  _ScopedTrackingDurableMediaFileManager(super.rootDir);
+
+  final List<String> localPathOwnerPeerIds = <String>[];
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) {
+    localPathOwnerPeerIds.add(contactPeerId);
+    return super.localPathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+  }
+}
+
 class ThrowingAfterCopyDurableMediaFileManager
     extends TrackingDurableMediaFileManager {
   ThrowingAfterCopyDurableMediaFileManager(super.rootDir);
@@ -576,6 +597,41 @@ class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
     }
     await Future<void>.delayed(delay);
     return null;
+  }
+}
+
+class _GatedMembersGroupRepository extends InMemoryGroupRepository {
+  String? _heldGroupId;
+  Completer<void>? _membersCaptured;
+  Completer<void>? _membersRelease;
+
+  void holdNextMembersLookup(String groupId) {
+    if (_heldGroupId != null) {
+      throw StateError('a members lookup is already held');
+    }
+    _heldGroupId = groupId;
+    _membersCaptured = Completer<void>();
+    _membersRelease = Completer<void>();
+  }
+
+  bool get membersLookupCaptured => _membersCaptured?.isCompleted ?? false;
+
+  void releaseMembersLookup() {
+    final release = _membersRelease;
+    if (release != null && !release.isCompleted) {
+      release.complete();
+    }
+  }
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    final members = await super.getMembers(groupId);
+    if (_heldGroupId == groupId) {
+      _heldGroupId = null;
+      _membersCaptured!.complete();
+      await _membersRelease!.future;
+    }
+    return members;
   }
 }
 
@@ -820,6 +876,20 @@ class CountingMediaAttachmentRepository
   }) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds, owner: owner);
+  }
+}
+
+class _WriteCountingMediaAttachmentRepository
+    extends CountingMediaAttachmentRepository {
+  int saveAttachmentCalls = 0;
+
+  @override
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) {
+    saveAttachmentCalls++;
+    return super.saveAttachment(attachment, owner: owner);
   }
 }
 
@@ -5065,6 +5135,10 @@ void main() {
         final wiredSource = File(
           'lib/features/groups/presentation/screens/group_conversation_wired.dart',
         ).readAsStringSync();
+        final composerControllerSource = File(
+          'lib/shared/widgets/conversation/'
+          'conversation_composer_controller.dart',
+        ).readAsStringSync();
         final screenAuthoringSlice = screenSource.substring(
           screenSource.indexOf('class GroupConversationScreen '),
           screenSource.indexOf('class _GroupConversationLoadingShell '),
@@ -5075,11 +5149,14 @@ void main() {
         );
         final wiredStateSlice = wiredSource.substring(
           wiredSource.indexOf('class _GroupConversationWiredState '),
-          wiredSource.indexOf('class _GroupComposerSnapshot '),
         );
-        final snapshotSlice = wiredSource.substring(
-          wiredSource.indexOf('class _GroupComposerSnapshot '),
-          wiredSource.indexOf('class _GroupActiveAttachmentUpload '),
+        final snapshotSlice = composerControllerSource.substring(
+          composerControllerSource.indexOf(
+            'class ConversationComposerSnapshot ',
+          ),
+          composerControllerSource.indexOf(
+            'class ConversationComposerController ',
+          ),
         );
 
         expect(
@@ -5762,7 +5839,7 @@ void main() {
           'lib/features/groups/presentation/screens/group_conversation_wired.dart',
         ).readAsStringSync();
         final autoStop = source.substring(
-          source.indexOf('void _onRecorderAutoStopped('),
+          source.indexOf('void _onVoiceCaptureAutoStopOutcome('),
           source.indexOf('void _forceCancelActiveRecording('),
         );
         final dispose = source.substring(
@@ -11258,6 +11335,106 @@ void main() {
     );
 
     testWidgets(
+      'old-group reaction after retarget is ignored while a new-group reaction applies',
+      (tester) async {
+        final groupA = makeChatGroup();
+        final groupB = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        await groupRepo.saveGroup(groupA);
+        await groupRepo.saveGroup(groupB);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-group-a-reaction', text: 'Group A reaction'),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-group-b-reaction',
+            text: 'Group B reaction',
+            groupId: groupB.id,
+          ),
+        );
+        final reactionRepo = FakeReactionRepository();
+        final reactionStreamController =
+            StreamController<ReactionChange>.broadcast();
+        addTearDown(reactionStreamController.close);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupA,
+            reactionRepo: reactionRepo,
+            reactionStreamController: reactionStreamController,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        expect(find.text('Group A reaction'), findsOneWidget);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupB,
+            reactionRepo: reactionRepo,
+            reactionStreamController: reactionStreamController,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.group.id == groupB.id &&
+              screen.messages.any(
+                (message) => message.id == 'msg-group-b-reaction',
+              );
+        });
+
+        reactionStreamController.add(
+          ReactionChange.upsert(
+            MessageReaction(
+              id: 'rxn-late-group-a',
+              messageId: 'msg-group-a-reaction',
+              emoji: '\u{1F44D}',
+              senderPeerId: 'peer-old',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.group.id, groupB.id);
+        expect(screen.reactions.containsKey('msg-group-a-reaction'), isFalse);
+        expect(find.text('\u{1F44D}'), findsNothing);
+
+        reactionStreamController.add(
+          ReactionChange.upsert(
+            MessageReaction(
+              id: 'rxn-current-group-b',
+              messageId: 'msg-group-b-reaction',
+              emoji: '\u{2764}\u{FE0F}',
+              senderPeerId: 'peer-new',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.reactions.containsKey('msg-group-a-reaction'), isFalse);
+        expect(
+          screen.reactions['msg-group-b-reaction']?.single.emoji,
+          '\u{2764}\u{FE0F}',
+        );
+        expect(find.text('\u{2764}\u{FE0F}'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'in-flight old-group listener hydration cannot mutate a reused conversation widget',
       (tester) async {
         final groupA = makeChatGroup();
@@ -12611,6 +12788,450 @@ void main() {
       expect(UploadWakeLockController.debugActiveHolds, 0);
       expect(find.text('Sending automatically…'), findsNothing);
     });
+
+    testWidgets(
+      'switching groups mid-upload quarantines old progress cancel and composer restore until its wake hold terminates',
+      (tester) async {
+        final groupA = makeChatGroup();
+        final groupB = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        await groupRepo.saveGroup(groupA);
+        await groupRepo.saveGroup(groupB);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupB.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-2',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        await saveActiveGroupMembers(groupRepo, groupA);
+        await saveActiveGroupMembers(groupRepo, groupB);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_upload_scope_switch_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final oldAttachment = File('${tempDir.path}/old.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final newAttachment = File('${tempDir.path}/new.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final picker = FakeMediaPicker()
+          ..multipleMediaResult = <XFile>[XFile(newAttachment.path)];
+        final oldUploadGate = Completer<void>();
+        final oldUploadStarted = Completer<void>();
+        final newUploadStarted = Completer<void>();
+        final uploadRecipients = <String>[];
+        String? oldBlobId;
+        Future<MediaAttachment?> uploadForScope({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          uploadRecipients.add(recipientPeerId);
+          if (recipientPeerId == groupA.id) {
+            oldBlobId = blobId;
+            if (!oldUploadStarted.isCompleted) oldUploadStarted.complete();
+            await oldUploadGate.future;
+          } else if (!newUploadStarted.isCompleted) {
+            newUploadStarted.complete();
+          }
+          return successfulGroupUploadFixture(
+            blobId: blobId!,
+            mime: mime,
+            localFilePath: localFilePath,
+          );
+        }
+
+        final createdAt = DateTime.now().toUtc().toIso8601String();
+        const queuedBlobId = 'group-b-progress-blob';
+        const queuedMessageId = 'group-b-progress-message';
+        final queuedAttachment = MediaAttachment(
+          id: queuedBlobId,
+          messageId: queuedMessageId,
+          mime: 'image/jpeg',
+          size: 10,
+          mediaType: 'image',
+          downloadStatus: 'upload_pending',
+          createdAt: createdAt,
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: queuedMessageId,
+            groupId: groupB.id,
+            text: '',
+            status: 'sending',
+            isIncoming: false,
+            media: <MediaAttachment>[queuedAttachment],
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupA,
+            initialAttachments: <File>[oldAttachment],
+            mediaPicker: picker,
+            uploadMediaFn: uploadForScope,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        final oldSend = await startScreenSend(tester, 'Old scope draft');
+        await pumpUntil(
+          tester,
+          () => oldUploadStarted.isCompleted,
+          maxPumps: 120,
+        );
+
+        final oldScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(oldScreen.onCancelUpload, isNotNull);
+        oldScreen.onCancelUpload!.call();
+        await tester.pump();
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        expect(wakeLockDriver.disableCalls, 0);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupB,
+            mediaPicker: picker,
+            uploadMediaFn: uploadForScope,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.group.id == groupB.id &&
+              screen.messages.any((message) => message.id == queuedMessageId);
+        }, maxPumps: 120);
+        await tester.enterText(find.byType(TextField), 'Group B draft');
+        await tester.pump();
+
+        emitMediaUploadProgressEvent({
+          'id': oldBlobId,
+          'sentBytes': 9,
+          'totalBytes': 10,
+          'toPeerId': groupA.id,
+        });
+        emitMediaUploadProgressEvent({
+          'id': queuedBlobId,
+          'sentBytes': 3,
+          'totalBytes': 10,
+          'toPeerId': groupB.id,
+        });
+        await pumpFrames(tester);
+
+        var currentScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(currentScreen.group.id, groupB.id);
+        expect(currentScreen.uploadProgress, isNull);
+        expect(currentScreen.onCancelUpload, isNull);
+        expect(
+          currentScreen.messageUploadProgress.containsKey(queuedMessageId),
+          isTrue,
+        );
+        expect(
+          currentScreen.messageUploadProgress[queuedMessageId]?.sentBytes,
+          3,
+        );
+        expect(
+          currentScreen.messageUploadProgress.values.any(
+            (progress) => progress.attachmentId == oldBlobId,
+          ),
+          isFalse,
+        );
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        expect(wakeLockDriver.disableCalls, 0);
+
+        oldUploadGate.complete();
+        await pumpUntilFuturesComplete(tester, <Future<void>>[oldSend.future]);
+        await pumpUntil(
+          tester,
+          () => UploadWakeLockController.debugActiveHolds == 0,
+          maxPumps: 120,
+        );
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Group B draft',
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsNothing);
+        expect(find.text('Upload cancelled.'), findsNothing);
+        expect(wakeLockDriver.disableCalls, 1);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen
+                  .composerStateListenable
+                  ?.value
+                  .pendingAttachments
+                  .length ==
+              1;
+        }, maxPumps: 120);
+
+        final newSend = await startScreenSend(tester, 'Group B operation');
+        await pumpUntilFuturesComplete(tester, <Future<void>>[newSend.future]);
+        await pumpUntil(
+          tester,
+          () => UploadWakeLockController.debugActiveHolds == 0,
+          maxPumps: 120,
+        );
+
+        currentScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(newUploadStarted.isCompleted, isTrue);
+        expect(
+          uploadRecipients,
+          containsAllInOrder(<String>[groupA.id, groupB.id]),
+        );
+        expect(currentScreen.group.id, groupB.id);
+        expect(wakeLockDriver.enableCalls, 2);
+        expect(wakeLockDriver.disableCalls, 2);
+      },
+    );
+
+    testWidgets(
+      'DTR-15 durable two-leaf upload retarget and ABA unmount never resume the stale lane',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+
+        final groupA = makeChatGroup();
+        final groupB = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        await groupRepo.saveGroup(groupA);
+        await groupRepo.saveGroup(groupB);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupB.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-2',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        await saveActiveGroupMembers(groupRepo, groupA);
+        await saveActiveGroupMembers(groupRepo, groupB);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'dtr15_group_upload_retarget_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final sourceA = File(p.join(tempDir.path, 'leaf-a.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final sourceB = File(p.join(tempDir.path, 'leaf-b.jpg'))
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final groupARoot = Directory(p.join(tempDir.path, 'group-a'));
+        final groupBRoot = Directory(p.join(tempDir.path, 'group-b'));
+        final groupAFileManager = _ScopedTrackingDurableMediaFileManager(
+          groupARoot,
+        );
+        final groupBFileManager = _ScopedTrackingDurableMediaFileManager(
+          groupBRoot,
+        );
+        final groupAMediaRepo = _WriteCountingMediaAttachmentRepository();
+        final groupBMediaRepo = _WriteCountingMediaAttachmentRepository();
+        final firstLeafStarted = Completer<void>();
+        final firstLeafRelease = Completer<void>();
+        var groupAUploadCalls = 0;
+        var groupBUploadCalls = 0;
+        final uploadRecipients = <String>[];
+
+        Future<MediaAttachment?> groupAUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          groupAUploadCalls++;
+          uploadRecipients.add(recipientPeerId);
+          if (!firstLeafStarted.isCompleted) {
+            firstLeafStarted.complete();
+            await firstLeafRelease.future;
+          }
+          return successfulGroupUploadFixture(
+            blobId: blobId!,
+            mime: mime,
+            localFilePath: localFilePath,
+          );
+        }
+
+        Future<MediaAttachment?> groupBUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          groupBUploadCalls++;
+          uploadRecipients.add(recipientPeerId);
+          return successfulGroupUploadFixture(
+            blobId: blobId!,
+            mime: mime,
+            localFilePath: localFilePath,
+          );
+        }
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupA,
+            mediaRepo: groupAMediaRepo,
+            mediaFileManager: groupAFileManager,
+            initialAttachments: <File>[sourceA, sourceB],
+            uploadMediaFn: groupAUpload,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        final staleSend = await startScreenSend(tester, 'Two old-group leaves');
+        await pumpUntil(
+          tester,
+          () => firstLeafStarted.isCompleted,
+          maxPumps: 120,
+        );
+        expect(firstLeafStarted.isCompleted, isTrue);
+        expect(groupAUploadCalls, 1);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupB,
+            mediaRepo: groupBMediaRepo,
+            mediaFileManager: groupBFileManager,
+            uploadMediaFn: groupBUpload,
+          ),
+        );
+        await pumpUntil(tester, () {
+          return tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .group
+                  .id ==
+              groupB.id;
+        }, maxPumps: 120);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupA,
+            mediaRepo: groupAMediaRepo,
+            mediaFileManager: groupAFileManager,
+            uploadMediaFn: groupAUpload,
+          ),
+        );
+        await pumpUntil(tester, () {
+          return tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .group
+                  .id ==
+              groupA.id;
+        }, maxPumps: 120);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        final groupBMediaWritesBeforeRelease =
+            groupBMediaRepo.saveAttachmentCalls;
+        final groupBStorageLookupsBeforeRelease =
+            groupBFileManager.localPathOwnerPeerIds.length;
+        final groupBCopiesBeforeRelease = groupBFileManager.copyCalls;
+        final publishCallsBeforeRelease = bridge.commandLog
+            .where((command) => command == 'group:publish')
+            .length;
+
+        firstLeafRelease.complete();
+        await pumpUntilFuturesComplete(tester, <Future<void>>[
+          staleSend.future,
+        ]);
+        await pumpUntil(
+          tester,
+          () => UploadWakeLockController.debugActiveHolds == 0,
+          maxPumps: 120,
+        );
+
+        expect(
+          <String, Object>{
+            'group A upload calls': groupAUploadCalls,
+            'group B upload calls': groupBUploadCalls,
+            'upload recipients': uploadRecipients,
+            'group B media writes':
+                groupBMediaRepo.saveAttachmentCalls -
+                groupBMediaWritesBeforeRelease,
+            'group B storage lookups':
+                groupBFileManager.localPathOwnerPeerIds.length -
+                groupBStorageLookupsBeforeRelease,
+            'group B durable copies':
+                groupBFileManager.copyCalls - groupBCopiesBeforeRelease,
+            'group B pending-dir deletes':
+                groupBFileManager.deletedPendingUploadDirs,
+            'publish calls':
+                bridge.commandLog
+                    .where((command) => command == 'group:publish')
+                    .length -
+                publishCallsBeforeRelease,
+          },
+          <String, Object>{
+            'group A upload calls': 1,
+            'group B upload calls': 0,
+            'upload recipients': <String>[groupA.id],
+            'group B media writes': 0,
+            'group B storage lookups': 0,
+            'group B durable copies': 0,
+            'group B pending-dir deletes': <String>[],
+            'publish calls': 0,
+          },
+        );
+      },
+    );
 
     testWidgets(
       'cancel between serialized upload leaves restores composer and preserves the completed leaf',
@@ -16971,6 +17592,221 @@ void main() {
       });
 
       testWidgets(
+        'DTR-15 completed voice stop retarget aborts at the gated preflight without crossing lanes',
+        (tester) async {
+          mediaUploadInFlightTracker.clearAll();
+          addTearDown(mediaUploadInFlightTracker.clearAll);
+
+          final gatedGroupRepo = _GatedMembersGroupRepository();
+          groupRepo = gatedGroupRepo;
+          final groupA = makeChatGroup();
+          final groupB = makeChatGroup().copyWith(
+            id: 'group-2',
+            name: 'Second Group',
+            topicName: 'topic-2',
+          );
+          await groupRepo.saveGroup(groupA);
+          await groupRepo.saveGroup(groupB);
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupA.id,
+              keyGeneration: 1,
+              encryptedKey: 'test-group-key-1',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupB.id,
+              keyGeneration: 1,
+              encryptedKey: 'test-group-key-2',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+          await saveActiveGroupMembers(groupRepo, groupA);
+          await saveActiveGroupMembers(groupRepo, groupB);
+
+          final groupAMessageRepo = _WriteCountingGroupMessageRepository();
+          final groupBMessageRepo = _WriteCountingGroupMessageRepository();
+          final groupAMediaRepo = _WriteCountingMediaAttachmentRepository();
+          final groupBMediaRepo = _WriteCountingMediaAttachmentRepository();
+          final groupAFileManager = _ScopedTrackingDurableMediaFileManager(
+            Directory(p.join(tempDir.path, 'group-a')),
+          );
+          final groupBFileManager = _ScopedTrackingDurableMediaFileManager(
+            Directory(p.join(tempDir.path, 'group-b')),
+          );
+          final capture = File(p.join(tempDir.path, 'retarget-capture.m4a'))
+            ..writeAsStringSync('dtr15 voice capture bytes');
+          final captureBytes = capture.readAsBytesSync();
+          recorder
+            ..fakeOutputPath = capture.path
+            ..fakeDurationMs = 1500
+            ..fakeSizeBytes = capture.lengthSync();
+          var groupAUploadCalls = 0;
+          var groupBUploadCalls = 0;
+          final uploadRecipients = <String>[];
+
+          LegacyTestUploadMediaFn successfulVoiceUpload(
+            void Function() recordCall,
+          ) =>
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                recordCall();
+                uploadRecipients.add(recipientPeerId);
+                return successfulGroupUploadFixture(
+                  blobId: blobId!,
+                  mime: mime,
+                  localFilePath: localFilePath,
+                );
+              };
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: groupA,
+              messageRepo: groupAMessageRepo,
+              mediaRepo: groupAMediaRepo,
+              mediaFileManager: groupAFileManager,
+              audioRecorderService: recorder,
+              uploadMediaFn: successfulVoiceUpload(() => groupAUploadCalls++),
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+          final groupAScreen = visibleScreen(tester);
+          await (groupAScreen.onRecordStart! as Future<void> Function())();
+          await pumpUntil(
+            tester,
+            () =>
+                visibleScreen(tester).recordingState ==
+                VoiceRecordingState.recording,
+            maxPumps: 120,
+          );
+          expect(recorder.isRecording, isTrue);
+
+          gatedGroupRepo.holdNextMembersLookup(groupA.id);
+          final recordStop =
+              visibleScreen(tester).onRecordStop! as Future<void> Function();
+          final staleStop = recordStop();
+          await pumpUntil(
+            tester,
+            () => gatedGroupRepo.membersLookupCaptured,
+            maxPumps: 120,
+          );
+          expect(gatedGroupRepo.membersLookupCaptured, isTrue);
+          expect(recorder.isRecording, isFalse);
+          expect(capture.existsSync(), isTrue);
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: groupB,
+              messageRepo: groupBMessageRepo,
+              mediaRepo: groupBMediaRepo,
+              mediaFileManager: groupBFileManager,
+              audioRecorderService: recorder,
+              uploadMediaFn: successfulVoiceUpload(() => groupBUploadCalls++),
+            ),
+          );
+          await pumpUntil(tester, () {
+            return visibleScreen(tester).group.id == groupB.id;
+          }, maxPumps: 120);
+
+          final groupAParentWritesBeforeRelease =
+              groupAMessageRepo.saveMessageCalls;
+          final groupBParentWritesBeforeRelease =
+              groupBMessageRepo.saveMessageCalls;
+          final groupAMediaWritesBeforeRelease =
+              groupAMediaRepo.saveAttachmentCalls;
+          final groupBMediaWritesBeforeRelease =
+              groupBMediaRepo.saveAttachmentCalls;
+          final groupACopiesBeforeRelease = groupAFileManager.copyCalls;
+          final groupBCopiesBeforeRelease = groupBFileManager.copyCalls;
+          final sendCommandsBeforeRelease = bridge.commandLog
+              .where(
+                (command) =>
+                    command == 'group:publish' ||
+                    command == 'group:sendReliable' ||
+                    command == 'group:inboxStore',
+              )
+              .length;
+
+          gatedGroupRepo.releaseMembersLookup();
+          await pumpUntilFuturesComplete(tester, <Future<void>>[staleStop]);
+
+          expect(
+            <String, Object>{
+              'group A parent writes':
+                  groupAMessageRepo.saveMessageCalls -
+                  groupAParentWritesBeforeRelease,
+              'group B parent writes':
+                  groupBMessageRepo.saveMessageCalls -
+                  groupBParentWritesBeforeRelease,
+              'group A media writes':
+                  groupAMediaRepo.saveAttachmentCalls -
+                  groupAMediaWritesBeforeRelease,
+              'group B media writes':
+                  groupBMediaRepo.saveAttachmentCalls -
+                  groupBMediaWritesBeforeRelease,
+              'group A durable copies':
+                  groupAFileManager.copyCalls - groupACopiesBeforeRelease,
+              'group B durable copies':
+                  groupBFileManager.copyCalls - groupBCopiesBeforeRelease,
+              'group A pending-dir deletes':
+                  groupAFileManager.deletedPendingUploadDirs,
+              'group B pending-dir deletes':
+                  groupBFileManager.deletedPendingUploadDirs,
+              'group A upload calls': groupAUploadCalls,
+              'group B upload calls': groupBUploadCalls,
+              'upload recipients': uploadRecipients,
+              'group send commands':
+                  bridge.commandLog
+                      .where(
+                        (command) =>
+                            command == 'group:publish' ||
+                            command == 'group:sendReliable' ||
+                            command == 'group:inboxStore',
+                      )
+                      .length -
+                  sendCommandsBeforeRelease,
+              'capture retained': capture.existsSync(),
+              'capture unchanged':
+                  capture.existsSync() &&
+                  base64Encode(capture.readAsBytesSync()) ==
+                      base64Encode(captureBytes),
+            },
+            <String, Object>{
+              'group A parent writes': 0,
+              'group B parent writes': 0,
+              'group A media writes': 0,
+              'group B media writes': 0,
+              'group A durable copies': 0,
+              'group B durable copies': 0,
+              'group A pending-dir deletes': <String>[],
+              'group B pending-dir deletes': <String>[],
+              'group A upload calls': 0,
+              'group B upload calls': 0,
+              'upload recipients': <String>[],
+              'group send commands': 0,
+              'capture retained': true,
+              'capture unchanged': true,
+            },
+          );
+        },
+      );
+
+      testWidgets(
         'a dissolve arriving mid-recording cancels the active recording',
         (tester) async {
           final group = makeChatGroup();
@@ -17002,21 +17838,54 @@ void main() {
         },
       );
 
-      testWidgets('recorder auto-stop resets the composer recording state', (
-        tester,
-      ) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        await pumpAndStartRecording(tester, group);
+      testWidgets(
+        'group recorder auto-stop preserves the capture file sends nothing and exposes no review controls',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final capture = File('${tempDir.path}/auto-stop-capture.m4a')
+            ..writeAsBytesSync(<int>[1, 2, 3, 4]);
+          recorder
+            ..fakeOutputPath = capture.path
+            ..fakeDurationMs = 300000
+            ..fakeSizeBytes = capture.lengthSync();
+          await pumpAndStartRecording(tester, group);
+          final sendsBeforeAutoStop = bridge.commandLog
+              .where(
+                (command) =>
+                    command == 'group:sendReliable' ||
+                    command == 'group:publish',
+              )
+              .length;
+          expect(sendsBeforeAutoStop, 0);
 
-        await recorder.triggerAutoStop();
-        await pumpFrames(tester, count: 5);
+          await recorder.triggerAutoStop();
+          await pumpFrames(tester, count: 5);
 
-        expect(recorder.isRecording, isFalse);
-        expect(visibleScreen(tester).recordingState, VoiceRecordingState.idle);
-        expect(recorder.onAutoStopped, isNull);
-      });
+          final sendsAfterAutoStop = bridge.commandLog
+              .where(
+                (command) =>
+                    command == 'group:sendReliable' ||
+                    command == 'group:publish',
+              )
+              .length;
+          expect(recorder.isRecording, isFalse);
+          expect(
+            visibleScreen(tester).recordingState,
+            VoiceRecordingState.idle,
+          );
+          expect(recorder.onAutoStopped, isNull);
+          expect(capture.existsSync(), isTrue);
+          expect(sendsAfterAutoStop, sendsBeforeAutoStop);
+          expect(await msgRepo.getMessagesPage(group.id), isEmpty);
+          expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
+          expect(
+            find.byKey(const ValueKey('voice-review-discard')),
+            findsNothing,
+          );
+        },
+      );
 
       testWidgets(
         'losing write access while arming aborts the pending recording',

@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// from the package root) so a refactor that silently drops the root light
 /// wiring or the StartupRouter forwarding fails loudly.
 void main() {
-  test('main root wires AppShellThemeBinding around MaterialApp', () {
-    final source = File('lib/main.dart').readAsStringSync();
+  test('application root wires AppShellThemeBinding around MaterialApp', () {
+    final source = File('lib/app/application_root.dart').readAsStringSync();
 
     expect(
       source.contains('AppShellThemeBinding('),

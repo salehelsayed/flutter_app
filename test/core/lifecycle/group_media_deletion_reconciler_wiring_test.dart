@@ -9,8 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 import '../secure_storage/fake_secure_key_store.dart';
 
 // 235 (TC-235-10): production wiring proof. A directly instantiated
-// reconciler is NOT production wiring — these tests anchor the REAL main.dart
-// call sites (cold start after DB/repo construction, resume before the
+// reconciler is NOT production wiring — these tests anchor the real bootstrap
+// and application-root call sites (cold start after DB/repo construction, resume before the
 // network gate, real coordinator injection) plus the reconciler's own
 // per-invocation error isolation.
 
@@ -19,11 +19,16 @@ void main() {
     'GMA-10 cold start and resume invoke local cleanup with error isolation',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
-      final mainSource = await File('lib/main.dart').readAsString();
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
 
       // ---- Cold start: the unawaited bounded reconcile runs after runApp
       // (DB + repositories are constructed) with an isolating catchError.
-      final coldStart = mainSource.indexOf(
+      final coldStart = productionSource.indexOf(
         'groupMediaDeletionReconciler.runBounded().catchError(',
       );
       expect(
@@ -31,7 +36,7 @@ void main() {
         isNonNegative,
         reason: 'cold start must run one bounded reconciliation pass',
       );
-      final runAppMark = mainSource.indexOf(
+      final runAppMark = productionSource.indexOf(
         "StartupTiming.instance.mark('run_app_called')",
       );
       expect(runAppMark, isNonNegative);
@@ -40,7 +45,10 @@ void main() {
         greaterThan(runAppMark),
         reason: 'the cold-start pass is fired after runApp, unawaited',
       );
-      final coldStartBlock = mainSource.substring(coldStart, coldStart + 600);
+      final coldStartBlock = productionSource.substring(
+        coldStart,
+        coldStart + 600,
+      );
       expect(
         coldStartBlock,
         contains('GROUP_MEDIA_DELETION_STARTUP_RECONCILE_ERROR'),
@@ -49,13 +57,13 @@ void main() {
 
       // ---- The real reconciler is constructed over the identity DB helpers
       // and the real secure key store.
-      final reconcilerCtor = mainSource.indexOf(
+      final reconcilerCtor = productionSource.indexOf(
         'final groupMediaDeletionReconciler = GroupMediaDeletionJournalReconciler(',
       );
       expect(reconcilerCtor, isNonNegative);
-      final reconcilerBlock = mainSource.substring(
+      final reconcilerBlock = productionSource.substring(
         reconcilerCtor,
-        mainSource.indexOf(
+        productionSource.indexOf(
           'final deleteGroupMediaForMeUseCase = DeleteGroupMediaForMeUseCase(',
           reconcilerCtor,
         ),
@@ -70,20 +78,20 @@ void main() {
       // ---- The real coordinator (prepare + cleanup) is injected: as the
       // process-wide default AND into MyApp for the notification route.
       expect(
-        mainSource,
+        productionSource,
         contains(
           'defaultGroupMediaDeleteForMeCoordinator = deleteGroupMediaForMeUseCase;',
         ),
         reason: 'every group-conversation entry path gets the coordinator',
       );
       expect(
-        mainSource,
+        productionSource,
         contains(
           'groupMediaDeleteForMeCoordinator: deleteGroupMediaForMeUseCase,',
         ),
       );
       expect(
-        mainSource,
+        applicationRootSource,
         contains(
           'mediaDeleteForMeCoordinator:\n                  widget.groupMediaDeleteForMeCoordinator,',
         ),
@@ -93,12 +101,19 @@ void main() {
       // ---- Resume: _onResumed passes the cleanup closure into
       // handleAppResumed (ordering vs the gate is proven behaviorally in
       // handle_app_resumed_group_media_cleanup_test.dart).
-      final resumeCall = mainSource.indexOf('await handleAppResumed(');
+      final resumeCall = applicationRootSource.indexOf(
+        'await handleAppResumed(',
+      );
       expect(resumeCall, isNonNegative);
-      final resumeBlock = mainSource.substring(resumeCall, resumeCall + 1200);
+      final resumeBlock = applicationRootSource.substring(
+        resumeCall,
+        resumeCall + 1200,
+      );
       expect(
         resumeBlock,
-        contains('groupMediaDeletionCleanupFn: widget.groupMediaDeletionCleanup'),
+        contains(
+          'groupMediaDeletionCleanupFn: widget.groupMediaDeletionCleanup',
+        ),
       );
 
       // ---- Error isolation inside one pass: a failing item is retained
@@ -110,29 +125,29 @@ void main() {
               String? afterCreatedAt,
               String? afterAttachmentId,
             }) async => afterCreatedAt == null
-                ? [
-                    GroupMediaDeletionJournalEntry(
-                      attachmentId: 'att-throws',
-                      operationId: 'op-1',
-                      messageId: 'msg-1',
-                      groupId: 'group-1',
-                      operationIntent: kGroupMediaDeletionIntentDeleteForMe,
-                      normalizedMime: 'image/jpeg',
-                      canonicalRelativePath: null,
-                      createdAt: '2026-07-10T00:00:00.000Z',
-                    ),
-                    GroupMediaDeletionJournalEntry(
-                      attachmentId: 'att-zz-ok',
-                      operationId: 'op-1',
-                      messageId: 'msg-1',
-                      groupId: 'group-1',
-                      operationIntent: kGroupMediaDeletionIntentDeleteForMe,
-                      normalizedMime: 'image/jpeg',
-                      canonicalRelativePath: null,
-                      createdAt: '2026-07-10T00:00:00.000Z',
-                    ),
-                  ]
-                : <GroupMediaDeletionJournalEntry>[],
+            ? [
+                GroupMediaDeletionJournalEntry(
+                  attachmentId: 'att-throws',
+                  operationId: 'op-1',
+                  messageId: 'msg-1',
+                  groupId: 'group-1',
+                  operationIntent: kGroupMediaDeletionIntentDeleteForMe,
+                  normalizedMime: 'image/jpeg',
+                  canonicalRelativePath: null,
+                  createdAt: '2026-07-10T00:00:00.000Z',
+                ),
+                GroupMediaDeletionJournalEntry(
+                  attachmentId: 'att-zz-ok',
+                  operationId: 'op-1',
+                  messageId: 'msg-1',
+                  groupId: 'group-1',
+                  operationIntent: kGroupMediaDeletionIntentDeleteForMe,
+                  normalizedMime: 'image/jpeg',
+                  canonicalRelativePath: null,
+                  createdAt: '2026-07-10T00:00:00.000Z',
+                ),
+              ]
+            : <GroupMediaDeletionJournalEntry>[],
         loadAttachmentRow: (attachmentId) async => null,
         loadLocalDeletionGroupId: (messageId) async => 'group-1',
         parentExists:

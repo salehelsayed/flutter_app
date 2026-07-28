@@ -4,9 +4,10 @@ Session 1 source of truth for named regression gates.
 
 If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 
-Updated 2026-07-26 for Plan 285: canonical `move-feature` currently contains
-44 dedicated account-migration files / 310 declared tests plus six explicitly
-registered shared paths.
+Updated 2026-07-27 for Plan 288: the architecture admission check is a required
+Sims-major capability. Canonical `move-feature` still contains 44 dedicated
+account-migration files / 310 declared tests plus six explicitly registered
+shared paths.
 
 ## Mobile Target Availability Policy
 
@@ -51,7 +52,7 @@ test file eliminates every possible bug. A new critical feature/default-enabled
 flag without a manifest owner must make the major plan fail closed; support or
 noncritical exclusions require an explicit rationale.
 
-Implementation status on 2026-07-15: the logical unfiltered major plan has 26
+Implementation status on 2026-07-27: the logical unfiltered major plan has 32
 active rows plus two inactive future VC-02 records. All active rows have
 automated drivers. Readiness does not manufacture an unrun live PASS: missing
 provider/signing credentials, relay configuration, disposable-device
@@ -190,6 +191,31 @@ Read-only diagnostic commands:
   acceptance, deletion, or manifest-writing mode.
 - The required major/infra capability is `runtime.roots.advisory`; CI and Sims
   must call the named gate instead of maintaining a second inventory.
+
+## Architecture Boundary Gate
+
+The architecture admission guard rejects new or stale reviewed violations of
+the root application's documented layer direction and feature-domain
+repository-implementation placement policy.
+
+Canonical admission command:
+
+```bash
+./scripts/run_test_gates.sh architecture-boundaries
+```
+
+The no-argument named gate runs
+`test/unit/architecture_boundary_checker_test.dart` first and then the
+fixed-root, real-repository check through
+`scripts/check_architecture_boundaries.sh`. It fails fast and propagates either
+child's status. The wrapper accepts no arguments and resolves both the
+repository and canonical exception manifest from its own checked-in location,
+so callers cannot redirect the release check.
+
+The required Sims major/infra capability is `architecture.boundaries`; release
+orchestration must invoke the named gate so the host unit suite cannot replace
+the real-tree exact exception check. The shell process contract remains
+independently discovered by `sims-contracts`.
 
 ## Session 1 Decisions
 

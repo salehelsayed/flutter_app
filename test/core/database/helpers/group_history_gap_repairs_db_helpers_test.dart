@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

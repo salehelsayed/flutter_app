@@ -186,9 +186,11 @@ void main() {
   test(
     'P269 proof accept supplies the complete device-bound recipient tuple',
     () {
-      final mainSource = File('lib/main.dart').readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final acceptInvocations = _balancedInvocations(
-        mainSource,
+        compositionSource,
         'acceptPendingGroupInvite(',
       ).where((invocation) => invocation.contains('groupId: groupId'));
 
@@ -215,14 +217,31 @@ void main() {
   test(
     'P269 device proof invokes the exact production periodic retry callbacks',
     () {
-      final mainSource = File('lib/main.dart').readAsStringSync();
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final compositionSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
       final actions = _balancedInvocations(
-        mainSource,
+        compositionSource,
         'runGroupMediaReliabilityE2EAction(',
       );
 
       expect(actions, hasLength(1));
-      final action = actions.single;
+      expect(
+        productionSource,
+        contains('if (debugE2EComposition?.startsIntroPoller ?? false) {'),
+        reason:
+            'the bootstrap must avoid constructing poller dependencies for '
+            'an inactive root',
+      );
+      expect(
+        productionSource,
+        contains('debugE2EComposition!.startIntroPollerAfterColdRecovery('),
+        reason: 'the bootstrap must retain the post-recovery phase handoff',
+      );
+      final action = _compactDart(actions.single);
       expect(
         action,
         contains('pendingMessageRetrier.retryIncompleteGroupUploadsPeriodicFn'),
@@ -275,9 +294,11 @@ void main() {
       }
 
       const expectedCoordinatorExpressionsByPath = <String, List<String>>{
-        'lib/main.dart': <String>[
-          'groupMediaDownloadCoordinator',
+        'lib/app/application_root.dart': <String>[
           'widget.groupMediaDownloadCoordinator',
+        ],
+        'lib/debug/debug_e2e_composition_root.dart': <String>[
+          'dependencies.groupMediaDownloadCoordinator',
         ],
         'lib/features/groups/presentation/screens/create_group_picker_wired.dart':
             <String>['widget.groupMediaDownloadCoordinator'],
@@ -292,8 +313,9 @@ void main() {
         discovered.keys.toSet(),
         expectedCoordinatorExpressionsByPath.keys.toSet(),
         reason:
-            'The production baseline has exactly four direct group-conversation '
-            'paths. A new path must be enumerated and wired explicitly.',
+            'The production baseline has four direct paths plus the isolated '
+            'debug/E2E proof path. A new path must be enumerated and wired '
+            'explicitly.',
       );
 
       for (final entry in expectedCoordinatorExpressionsByPath.entries) {
@@ -354,31 +376,33 @@ void main() {
       }
       expect(
         coordinatorConstructions.keys.toSet(),
-        <String>{'lib/main.dart'},
+        <String>{'lib/app/bootstrap/production_application_bootstrap.dart'},
         reason:
             'Production must construct the shared group-media download '
-            'coordinator in main.dart only.',
+            'coordinator in the production bootstrap only.',
       );
       expect(
-        coordinatorConstructions['lib/main.dart'],
+        coordinatorConstructions['lib/app/bootstrap/production_application_bootstrap.dart'],
         hasLength(1),
         reason:
             'Exactly one RetryIncompleteGroupDownloadsUseCase instance may be '
             'constructed for every automatic production trigger.',
       );
 
-      final mainSource = File('lib/main.dart').readAsStringSync();
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
       expect(
         RegExp(
           r'\bfinal\s+groupMediaDownloadCoordinator\s*=\s*'
           r'RetryIncompleteGroupDownloadsUseCase\s*\(',
-        ).allMatches(mainSource),
+        ).allMatches(productionSource),
         hasLength(1),
         reason:
             'The singleton concrete coordinator must be bound to the exact '
             'root expression threaded through production.',
       );
-      final myAppInvocations = _balancedInvocations(mainSource, 'MyApp(')
+      final myAppInvocations = _balancedInvocations(productionSource, 'MyApp(')
         ..removeWhere(
           (invocation) => _compactDart(invocation).startsWith('MyApp({'),
         );

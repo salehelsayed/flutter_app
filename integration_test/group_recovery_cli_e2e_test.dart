@@ -96,14 +96,14 @@ import 'package:flutter_app/core/database/migrations/100_direct_private_media_li
 import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_invite_delivery_attempt_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';

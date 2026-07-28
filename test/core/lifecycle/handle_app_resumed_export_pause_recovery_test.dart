@@ -1,4 +1,4 @@
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';

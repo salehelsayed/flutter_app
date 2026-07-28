@@ -53,6 +53,25 @@ class _FakeBridge extends Bridge {
   }
 }
 
+class _DelayedStartLocalP2PService extends FakeLocalP2PService {
+  final Completer<void> startEntered = Completer<void>();
+  final Completer<void> releaseStart = Completer<void>();
+  int stopCallCount = 0;
+
+  @override
+  Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
+    if (!startEntered.isCompleted) startEntered.complete();
+    await releaseStart.future;
+    await super.start(peerId, quicPort: quicPort, tcpPort: tcpPort);
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCallCount++;
+    await super.stop();
+  }
+}
+
 _FakeBridge _bridge() {
   final bridge = _FakeBridge();
   bridge.whenCommand(
@@ -82,12 +101,16 @@ _FakeBridge _bridge() {
 P2PServiceImpl _service({
   required TransportMetrics metrics,
   required FakeLocalP2PService localP2P,
+  Stream<void>? networkChangeSignal,
+  String? Function()? activePeerId,
 }) {
   return P2PServiceImpl(
     bridge: _bridge(),
     localP2PService: localP2P,
     inboxStagingRepository: InMemoryInboxStagingRepository(),
     transportMetrics: metrics,
+    networkChangeSignal: networkChangeSignal,
+    activePeerId: activePeerId,
   );
 }
 
@@ -169,38 +192,110 @@ void main() {
     expectLan(metrics, active: false, peers: 0);
   });
 
+  test(
+    'TC-295-07 late local start completion stays inert after dispose',
+    () async {
+      final metrics = TransportMetrics();
+      final localP2P = _DelayedStartLocalP2PService();
+      final service = _service(metrics: metrics, localP2P: localP2P);
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      final start = service.startEarlyLocalDiscovery();
+      await localP2P.startEntered.future;
+
+      service.dispose();
+      localP2P.releaseStart.complete();
+      await start;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(localP2P.started, isFalse);
+      expect(localP2P.stopCallCount, 1);
+      expectLan(metrics, active: false, peers: 0);
+    },
+  );
+
+  test('TC-295-07 dispose cancels facade inputs and coordinator LAN timer', () {
+    fakeAsync((async) {
+      final metrics = TransportMetrics();
+      final localP2P = FakeLocalP2PService();
+      final networkChanges = StreamController<void>.broadcast(sync: true);
+      var activePeerReads = 0;
+      final service = _service(
+        metrics: metrics,
+        localP2P: localP2P,
+        networkChangeSignal: networkChanges.stream,
+        activePeerId: () {
+          activePeerReads++;
+          return null;
+        },
+      );
+
+      expect(networkChanges.hasListener, isTrue);
+
+      service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      async.flushMicrotasks();
+
+      final lanProbeTimersBeforeDispose = async.pendingTimers.where(
+        (timer) =>
+            !timer.isPeriodic && timer.duration == const Duration(seconds: 12),
+      );
+      expect(lanProbeTimersBeforeDispose, hasLength(1));
+
+      service.dispose();
+      async.flushMicrotasks();
+
+      expect(networkChanges.hasListener, isFalse);
+      expect(
+        async.pendingTimers.where(
+          (timer) =>
+              !timer.isPeriodic &&
+              timer.duration == const Duration(seconds: 12),
+        ),
+        isEmpty,
+      );
+
+      networkChanges.add(null);
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 13));
+
+      expect(activePeerReads, 0);
+      expectLan(metrics, active: false, peers: 0);
+      expect(metrics.lanAvailability.suspectedPermissionDenied, isFalse);
+
+      networkChanges.close();
+      async.flushMicrotasks();
+    });
+  });
+
   group('P4 suspected-permission-denied heuristic', () {
-    test(
-      'flips suspectedPermissionDenied true after 12s with zero peers',
-      () {
-        fakeAsync((async) {
-          final metrics = TransportMetrics();
-          final localP2P = FakeLocalP2PService();
-          final service = _service(metrics: metrics, localP2P: localP2P);
-          addTearDown(service.dispose);
+    test('flips suspectedPermissionDenied true after 12s with zero peers', () {
+      fakeAsync((async) {
+        final metrics = TransportMetrics();
+        final localP2P = FakeLocalP2PService();
+        final service = _service(metrics: metrics, localP2P: localP2P);
+        addTearDown(service.dispose);
 
-          service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-          async.flushMicrotasks();
+        service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        async.flushMicrotasks();
 
-          // Discovery active, zero peers — heuristic not yet armed past timeout.
-          expectLan(metrics, active: true, peers: 0);
-          expect(metrics.lanAvailability.suspectedPermissionDenied, isFalse);
+        // Discovery active, zero peers — heuristic not yet armed past timeout.
+        expectLan(metrics, active: true, peers: 0);
+        expect(metrics.lanAvailability.suspectedPermissionDenied, isFalse);
 
-          // Just before the 12s threshold: still not flagged.
-          async.elapse(const Duration(seconds: 11));
-          expect(metrics.lanAvailability.suspectedPermissionDenied, isFalse);
+        // Just before the 12s threshold: still not flagged.
+        async.elapse(const Duration(seconds: 11));
+        expect(metrics.lanAvailability.suspectedPermissionDenied, isFalse);
 
-          // Crossing the threshold with zero peers → suspected.
-          async.elapse(const Duration(seconds: 2));
-          expect(metrics.lanAvailability.suspectedPermissionDenied, isTrue);
-          // Distinct from discoveryActive, which only means start() returned.
-          expect(metrics.lanAvailability.discoveryActive, isTrue);
-          expect(metrics.lanAvailability.discoveredPeerCount, 0);
+        // Crossing the threshold with zero peers → suspected.
+        async.elapse(const Duration(seconds: 2));
+        expect(metrics.lanAvailability.suspectedPermissionDenied, isTrue);
+        // Distinct from discoveryActive, which only means start() returned.
+        expect(metrics.lanAvailability.discoveryActive, isTrue);
+        expect(metrics.lanAvailability.discoveredPeerCount, 0);
 
-          service.dispose();
-        });
-      },
-    );
+        service.dispose();
+      });
+    });
 
     test('does not flag when a peer appears before the 12s timeout', () {
       fakeAsync((async) {

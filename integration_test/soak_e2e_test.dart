@@ -84,14 +84,14 @@ import 'package:flutter_app/core/database/migrations/053_groups_backlog_retentio
 import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '_support/signal_files.dart';

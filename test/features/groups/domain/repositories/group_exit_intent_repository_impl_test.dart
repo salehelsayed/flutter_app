@@ -2,7 +2,7 @@ import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _createdAt = DateTime.utc(2026, 7, 21, 8);

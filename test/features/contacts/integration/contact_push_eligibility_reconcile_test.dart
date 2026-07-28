@@ -1,7 +1,7 @@
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/push/application/issue_wake_tokens_use_case.dart';
 import 'package:flutter_app/features/push/domain/wake_token_store.dart';
 import 'package:flutter_test/flutter_test.dart';

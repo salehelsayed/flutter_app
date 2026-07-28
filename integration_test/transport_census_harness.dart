@@ -53,12 +53,12 @@ import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '_support/fake_secure_key_store.dart' show FakeSecureKeyStore;

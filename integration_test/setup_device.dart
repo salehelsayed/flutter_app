@@ -71,7 +71,7 @@ import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 
 const _username = String.fromEnvironment('USERNAME', defaultValue: 'test');
 

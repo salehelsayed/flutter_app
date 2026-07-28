@@ -37,7 +37,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';

@@ -195,7 +195,8 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
     │       Sets secrets_migrated sentinel in secure storage
     │       Nullifies DB secret columns after successful migration
     │
-    ├─► Repository instantiation (8 repositories)
+    ├─► Feature data-repository adapter instantiation (8 repositories)
+    │       Concrete adapters: lib/features/*/data/repositories/
     │       │
     │       ├─► IdentityRepositoryImpl (dbLoad, dbUpsert, secureKeyStore)
     │       │
@@ -402,7 +403,7 @@ The application initialization sequence is defined in `lib/main.dart`. Understan
 | `lib/core/database/migrations/018_group_messages_tables.dart` | Schema v18 migration (group_keys, group_messages tables) |
 | `lib/core/services/incoming_message_router.dart` | P2P message routing by type (6 typed streams) |
 | `lib/core/services/pending_message_retrier.dart` | Retries failed outgoing messages on P2P reconnect (5s debounce) |
-| `lib/core/lifecycle/handle_app_resumed.dart` | App resume recovery: bridge health → P2P health → inbox drain → key exchange retry |
+| `lib/app/lifecycle/handle_app_resumed.dart` | App resume recovery: bridge health → P2P health → inbox drain → key exchange retry |
 | `lib/core/bridge/go_bridge_client.dart` | Go native bridge initialization + event handlers (MethodChannel/EventChannel) |
 | `lib/core/bridge/bridge_group_helpers.dart` | Group bridge helper functions (create, join, leave, publish, keygen, encrypt, decrypt, etc.) |
 | `lib/core/services/p2p_service_impl.dart` | P2P service initialization |

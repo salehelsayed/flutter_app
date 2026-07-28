@@ -46,6 +46,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/verify_inbox_custody_use_case_test.dart"
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
+  # 295 DTR-17: exact P2P facade/component ownership and callback boundaries.
+  "test/core/services/p2p_service_impl_composition_contract_test.dart"
   "test/features/conversation/application/download_media_use_case_test.dart"
   "test/features/conversation/application/upload_media_use_case_test.dart"
   "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
@@ -82,6 +84,13 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/received_media_action_controller_test.dart"
   "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  # 294 DTR-15: shared compositional conversation-controller ownership,
+  # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
+  "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_composer_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_upload_activity_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart"
+  "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   # 232: direct received-media forwarding draft, picker launch, retry/provenance,
   # migration, and frozen Dart transport boundary.
   "test/features/conversation/application/build_received_media_forward_test.dart"

@@ -121,20 +121,34 @@ void main() {
     await sub.cancel();
   });
 
-  test('addresses:updated with empty circuit does not trigger FCM re-registration', () async {
-    await service.startNodeCore('AAAA', 'test-peer-id');
+  test(
+    'addresses:updated with empty circuit does not trigger FCM re-registration',
+    () async {
+      await service.startNodeCore('AAAA', 'test-peer-id');
 
-    // With empty circuit addresses and no prior FCM token, nothing should happen.
-    fakeBridge.onAddressesUpdated!([], []);
+      // With empty circuit addresses and no prior FCM token, nothing should happen.
+      fakeBridge.onAddressesUpdated!([], []);
 
-    await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
 
-    // Current state should have empty circuit addresses.
-    expect(service.currentState.circuitAddresses, isEmpty);
-  });
+      // Current state should have empty circuit addresses.
+      expect(service.currentState.circuitAddresses, isEmpty);
+    },
+  );
 
-  test('dispose clears onAddressesUpdated callback', () {
+  test('dispose clears all five P2P bridge callback slots', () {
+    expect(fakeBridge.onMessageReceived, isNotNull);
+    expect(fakeBridge.onPeerConnected, isNotNull);
+    expect(fakeBridge.onPeerDisconnected, isNotNull);
+    expect(fakeBridge.onAddressesUpdated, isNotNull);
+    expect(fakeBridge.onRelayStateChanged, isNotNull);
+
     service.dispose();
+
+    expect(fakeBridge.onMessageReceived, isNull);
+    expect(fakeBridge.onPeerConnected, isNull);
+    expect(fakeBridge.onPeerDisconnected, isNull);
     expect(fakeBridge.onAddressesUpdated, isNull);
+    expect(fakeBridge.onRelayStateChanged, isNull);
   });
 }

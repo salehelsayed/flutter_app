@@ -16,7 +16,7 @@ import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'dart:io' show Platform;

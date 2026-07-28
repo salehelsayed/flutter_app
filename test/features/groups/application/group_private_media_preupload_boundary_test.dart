@@ -189,7 +189,13 @@ void main() {
         voicePending,
       );
       final voicePrepBody = source.substring(voicePending, voiceLeaf);
-      expect(voicePrepBody, contains('widget.msgRepo.saveMessage'));
+      expect(
+        voicePrepBody,
+        contains('voiceLane.messageRepository.saveMessage'),
+        reason:
+            'the exact parent must use the immutable lane captured before '
+            'async voice work',
+      );
       expect(
         voicePrepBody,
         isNot(contains('mediaAttachmentRepo.saveAttachment')),

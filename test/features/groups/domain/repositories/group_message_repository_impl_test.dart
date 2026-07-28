@@ -17,7 +17,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 

@@ -7,7 +7,7 @@ import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
-import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -33,8 +33,10 @@ void main() {
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
       dbLoadPostsFeed: () => dbLoadPostsFeed(db),
-      dbUpsertRecipientDelivery: (row) => dbUpsertPostRecipientDelivery(db, row),
-      dbLoadRecipientDeliveries: (postId) => dbLoadPostRecipientDeliveries(db, postId),
+      dbUpsertRecipientDelivery: (row) =>
+          dbUpsertPostRecipientDelivery(db, row),
+      dbLoadRecipientDeliveries: (postId) =>
+          dbLoadPostRecipientDeliveries(db, postId),
       dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
       dbUpsertFollowOnOutboxEvent: (row) =>
           dbUpsertPostFollowOnOutboxEvent(db, row),
@@ -115,7 +117,8 @@ void main() {
       );
       final loadedDeliveries = await secondRepository
           .loadFollowOnOutboxRecipientDeliveries(event.eventId);
-      final retryableJobs = await secondRepository.loadRetryableFollowOnOutboxJobs();
+      final retryableJobs = await secondRepository
+          .loadRetryableFollowOnOutboxJobs();
 
       expect(loadedEvent, isNotNull);
       expect(loadedEvent!.eventId, event.eventId);

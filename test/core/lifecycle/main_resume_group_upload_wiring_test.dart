@@ -5,19 +5,21 @@ import 'package:flutter_app/main.dart' as app;
 
 void main() {
   test(
-    'GPL-09B main wires atomic current-ordinary group bookmark qualification',
+    'GPL-09B production wires atomic current-ordinary bookmark qualification',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.indexOf(
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final start = productionSource.indexOf(
         'final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(',
       );
       expect(start, isNonNegative);
-      final end = mainSource.indexOf(');', start);
+      final end = productionSource.indexOf(');', start);
       expect(end, greaterThan(start));
 
-      final repositoryBlock = mainSource.substring(start, end);
+      final repositoryBlock = productionSource.substring(start, end);
       expect(repositoryBlock, contains('dbSetGroupMediaBookmarkedIfOrdinary:'));
       expect(
         repositoryBlock,
@@ -28,59 +30,63 @@ void main() {
     },
   );
 
+  test('GPL-03B production and root supply retry authority', () async {
+    expect(app.MyApp.navigatorKey, isNotNull);
+
+    final productionSource = await File(
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsString();
+    final applicationRootSource = await File(
+      'lib/app/application_root.dart',
+    ).readAsString();
+    final backgroundStart = productionSource.indexOf(
+      'retryFailedGroupInboxStoresFn: () => runAccountRuntimeNetworkAction(',
+    );
+    final backgroundEnd = productionSource.indexOf(
+      'clearGroupRetryBackoffFn:',
+      backgroundStart,
+    );
+    expect(backgroundStart, isNonNegative);
+    expect(backgroundEnd, greaterThan(backgroundStart));
+    final backgroundBlock = productionSource.substring(
+      backgroundStart,
+      backgroundEnd,
+    );
+    expect(backgroundBlock, contains('groupRepo: groupRepository'));
+    expect(backgroundBlock, contains('identityRepo: repository'));
+
+    final resumeStart = applicationRootSource.lastIndexOf(
+      'retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(',
+    );
+    final resumeEnd = applicationRootSource.indexOf('      );', resumeStart);
+    expect(resumeStart, isNonNegative);
+    expect(resumeEnd, greaterThan(resumeStart));
+    final resumeBlock = applicationRootSource.substring(resumeStart, resumeEnd);
+    expect(resumeBlock, contains('groupRepo: widget.groupRepository'));
+    expect(resumeBlock, contains('identityRepo: widget.repository'));
+  });
+
   test(
-    'GPL-03B main supplies current group and identity authority to failed inbox retries',
+    'production passes mediaFileManager into background direct upload retries',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final backgroundStart = mainSource.indexOf(
-        'retryFailedGroupInboxStoresFn: () => runAccountRuntimeNetworkAction(',
-      );
-      final backgroundEnd = mainSource.indexOf(
-        'clearGroupRetryBackoffFn:',
-        backgroundStart,
-      );
-      expect(backgroundStart, isNonNegative);
-      expect(backgroundEnd, greaterThan(backgroundStart));
-      final backgroundBlock = mainSource.substring(
-        backgroundStart,
-        backgroundEnd,
-      );
-      expect(backgroundBlock, contains('groupRepo: groupRepository'));
-      expect(backgroundBlock, contains('identityRepo: repository'));
-
-      final resumeStart = mainSource.lastIndexOf(
-        'retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(',
-      );
-      final resumeEnd = mainSource.indexOf('      );', resumeStart);
-      expect(resumeStart, isNonNegative);
-      expect(resumeEnd, greaterThan(resumeStart));
-      final resumeBlock = mainSource.substring(resumeStart, resumeEnd);
-      expect(resumeBlock, contains('groupRepo: widget.groupRepository'));
-      expect(resumeBlock, contains('identityRepo: widget.repository'));
-    },
-  );
-
-  test(
-    'main.dart passes mediaFileManager into direct retryIncompleteUploads on resume',
-    () async {
-      expect(app.MyApp.navigatorKey, isNotNull);
-
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.indexOf(
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final start = productionSource.indexOf(
         'retryIncompleteUploadsFn: () => runAccountRuntimeNetworkAction(',
       );
 
       expect(start, isNonNegative);
 
-      final end = mainSource.indexOf(
+      final end = productionSource.indexOf(
         'final pendingPostMediaUploadRetrier = PendingPostMediaUploadRetrier(',
         start,
       );
       expect(end, greaterThan(start));
 
-      final retryBlock = mainSource.substring(start, end);
+      final retryBlock = productionSource.substring(start, end);
       expect(
         retryBlock,
         contains('mediaFileManager: mediaFileManager'),
@@ -91,21 +97,26 @@ void main() {
   );
 
   test(
-    'main.dart passes widget mediaFileManager into retryIncompleteUploads on app resume',
+    'application root passes mediaFileManager into direct uploads on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.lastIndexOf(
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
+      final start = applicationRootSource.lastIndexOf(
         'retryIncompleteUploadsFn: () => retryIncompleteUploads(',
       );
 
       expect(start, isNonNegative);
 
-      final end = mainSource.indexOf('retryFailedMessagesFn:', start);
+      final end = applicationRootSource.indexOf(
+        'retryFailedMessagesFn:',
+        start,
+      );
       expect(end, greaterThan(start));
 
-      final retryBlock = mainSource.substring(start, end);
+      final retryBlock = applicationRootSource.substring(start, end);
       expect(
         retryBlock,
         contains('mediaFileManager: widget.mediaFileManager'),
@@ -116,38 +127,43 @@ void main() {
   );
 
   test(
-    'TC-17 main wires mediaFileManager through background and app-resume failed-message retry paths',
+    'TC-17 production and root wire mediaFileManager through retry paths',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final retrierStart = mainSource.indexOf(
+      final productionSource = await File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsString();
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
+      final retrierStart = productionSource.indexOf(
         'final pendingMessageRetrier = PendingMessageRetrier(',
       );
-      final retrierEnd = mainSource.indexOf(
+      final retrierEnd = productionSource.indexOf(
         'rejoinGroupTopicsWithRecoveryAckEligibilityFn:',
         retrierStart,
       );
       expect(retrierStart, isNonNegative);
       expect(retrierEnd, greaterThan(retrierStart));
       expect(
-        mainSource.substring(retrierStart, retrierEnd),
+        productionSource.substring(retrierStart, retrierEnd),
         contains('mediaFileManager: mediaFileManager'),
         reason:
             'the default PendingMessageRetrier failed-message path must receive the resolver',
       );
 
-      final resumeStart = mainSource.lastIndexOf(
+      final resumeStart = applicationRootSource.lastIndexOf(
         'retryFailedMessagesFn: () => retryFailedMessages(',
       );
-      final resumeEnd = mainSource.indexOf(
+      final resumeEnd = applicationRootSource.indexOf(
         'retryUnackedMessagesFn:',
         resumeStart,
       );
       expect(resumeStart, isNonNegative);
       expect(resumeEnd, greaterThan(resumeStart));
       expect(
-        mainSource.substring(resumeStart, resumeEnd),
+        applicationRootSource.substring(resumeStart, resumeEnd),
         contains('mediaFileManager: widget.mediaFileManager'),
         reason:
             'the explicit app-resume failed-message path must receive the resolver',
@@ -160,18 +176,20 @@ void main() {
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final resumeStart = mainSource.lastIndexOf(
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
+      final resumeStart = applicationRootSource.lastIndexOf(
         'retryUnackedMessagesFn: () => retryUnackedMessages(',
       );
-      final resumeEnd = mainSource.indexOf(
+      final resumeEnd = applicationRootSource.indexOf(
         'verifyInboxCustodyFn:',
         resumeStart,
       );
       expect(resumeStart, isNonNegative);
       expect(resumeEnd, greaterThan(resumeStart));
       expect(
-        mainSource.substring(resumeStart, resumeEnd),
+        applicationRootSource.substring(resumeStart, resumeEnd),
         contains('mediaAttachmentRepo: widget.mediaAttachmentRepository'),
         reason:
             'app-resume unacked replay must receive the private mutation coordinator',
@@ -196,21 +214,26 @@ void main() {
   );
 
   test(
-    'main.dart passes mediaFileManager into retryIncompleteGroupUploads on resume',
+    'application root passes mediaFileManager into group uploads on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.indexOf(
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
+      final start = applicationRootSource.indexOf(
         'retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(',
       );
 
       expect(start, isNonNegative);
 
-      final end = mainSource.indexOf('retryFailedGroupMessagesFn:', start);
+      final end = applicationRootSource.indexOf(
+        'retryFailedGroupMessagesFn:',
+        start,
+      );
       expect(end, greaterThan(start));
 
-      final retryBlock = mainSource.substring(start, end);
+      final retryBlock = applicationRootSource.substring(start, end);
       expect(
         retryBlock,
         contains('mediaFileManager: widget.mediaFileManager'),
@@ -221,21 +244,26 @@ void main() {
   );
 
   test(
-    'main.dart passes mediaAttachmentRepository into retryFailedGroupMessages on resume',
+    'application root passes media repository into failed groups on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
-      final start = mainSource.indexOf(
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
+      final start = applicationRootSource.indexOf(
         'retryFailedGroupMessagesFn: () => retryFailedGroupMessages(',
       );
 
       expect(start, isNonNegative);
 
-      final end = mainSource.indexOf('retryIncompleteUploadsFn:', start);
+      final end = applicationRootSource.indexOf(
+        'retryIncompleteUploadsFn:',
+        start,
+      );
       expect(end, greaterThan(start));
 
-      final retryBlock = mainSource.substring(start, end);
+      final retryBlock = applicationRootSource.substring(start, end);
       expect(
         retryBlock,
         contains('mediaAttachmentRepo: widget.mediaAttachmentRepository'),
@@ -245,20 +273,25 @@ void main() {
     },
   );
 
-  test('main.dart wires group retry callbacks into PendingMessageRetrier', () async {
+  test('production wires group retry callbacks into PendingMessageRetrier', () async {
     expect(app.MyApp.navigatorKey, isNotNull);
 
-    final mainSource = await File('lib/main.dart').readAsString();
-    final start = mainSource.indexOf(
+    final productionSource = await File(
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsString();
+    final start = productionSource.indexOf(
       'final pendingMessageRetrier = PendingMessageRetrier(',
     );
 
     expect(start, isNonNegative);
 
-    final end = mainSource.indexOf('recoverStuckSendingMessagesFn:', start);
+    final end = productionSource.indexOf(
+      'recoverStuckSendingMessagesFn:',
+      start,
+    );
     expect(end, greaterThan(start));
 
-    final retrierBlock = mainSource.substring(start, end);
+    final retrierBlock = productionSource.substring(start, end);
     expect(
       retrierBlock,
       contains('rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {'),
@@ -321,13 +354,15 @@ void main() {
   });
 
   test(
-    'main.dart binds the pending retrier overlap guard to _isResuming and the group recovery gate',
+    'application root binds retrier overlap to resume and group recovery',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
-      final mainSource = await File('lib/main.dart').readAsString();
+      final applicationRootSource = await File(
+        'lib/app/application_root.dart',
+      ).readAsString();
       expect(
-        mainSource,
+        applicationRootSource,
         contains(
           'widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(\n      () => _isResuming || isGroupRecoveryInProgress(),\n    );',
         ),

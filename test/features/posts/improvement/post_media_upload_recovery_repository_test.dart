@@ -9,7 +9,7 @@ import 'package:flutter_app/core/database/migrations/034_posts_media_upload_reco
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
-import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {

@@ -4,7 +4,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_pending_broadcast_repository_impl.dart';
 
 void main() {
   sqfliteFfiInit();

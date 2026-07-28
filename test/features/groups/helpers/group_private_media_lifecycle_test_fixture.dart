@@ -11,7 +11,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
