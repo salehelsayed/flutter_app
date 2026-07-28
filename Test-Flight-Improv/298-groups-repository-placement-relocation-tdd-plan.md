@@ -1,22 +1,27 @@
 # 298 - Groups Repository Adapter Placement Closure
 
-Status: Implementation applied / focused proof green / closure gates pending
+Status: Plan-green / implementation-complete / Wave-accepted (2026-07-28)
 Type: Modification
 Spec: `Test-Flight-Improv/dead-code-and-technical-debt-removal-roadmap.md`
 (`DTR-18`)
-Classification: terminal-increment execution record
+Authorization: `DTR18-AUTH-02`
+Authorization owner: Current authenticated project owner
+Classification: implemented-and-verified terminal-increment execution record
 Closure tier: host structural + Groups repository preservation
 
 ## Outcome And Scope
 
-This record owns the Groups slice of DTR-18's terminal placement increment:
-move all 13 concrete repository adapters from
+This record owns the Groups slice of DTR-18's terminal placement increment. It
+moved all 13 concrete repository adapters from
 `lib/features/groups/domain/repositories/` to
-`lib/features/groups/data/repositories/`, update their consumers, and leave no
+`lib/features/groups/data/repositories/`, updated their consumers, and left no
 old-path shim. It owns 13 of the 22 placement identities present after Plan
 297. The integrated terminal batch, not an independently captured intermediate
-manifest, is required to move the canonical architecture inventory from
+manifest, moved the canonical architecture inventory from
 165 dependency / 22 placement exceptions to 165 / 0.
+
+Plan 297 remains DTR-18's separately closed first increment. Plan 298 is one
+of the three later placement slices that made DTR-18 terminal.
 
 No repository behavior, API, schema, migration, queue ordering, retry policy,
 wire/native/Go code, or dependency exception is in scope.
@@ -51,7 +56,7 @@ relative-import rewrites do not weaken preservation proof.
 | TC-298-01 | Every reviewed adapter exists only at its exact data-layer destination, retains its reviewed body hash, and has no stale package-URI consumer. | `test/unit/dtr18_placement_closure_contract_test.dart`, named Groups case: GREEN as part of the four-test closure contract. |
 | TC-298-02 | Groups persistence, outbox, replay, pending-message, invite, and repair behavior remain unchanged. | Nine focused Groups repository proof files: exit 0, 150 tests passed. |
 | TC-298-03 | No compatibility shim or duplicate implementation remains below the old domain prefix. | TC-298-01 exact old-path absence and live-consumer scan: GREEN. |
-| TC-298-04 | The full placement family closes without changing any of the 165 dependency identities. | Combined old/new DTR-18 contracts: exit 0, seven tests passed. Canonical architecture lane: pending. |
+| TC-298-04 | The full placement family closes without changing any of the 165 dependency identities. | Combined old/new DTR-18 contracts: exit 0, seven tests passed. The canonical architecture lane passed 6/6 at 165 dependency / 0 placement / 0 issues; the dependency identity SHA-256 is `d4f42f151ae18feaf922ad90f172401917a3b7b4ca104d4574e6f9c12a6afb40`. |
 
 The causal contract was added before the integrated relocation batch. Its
 initial command exited 1 for the intended state: the old Groups paths were
@@ -70,25 +75,40 @@ contract passed all four cases. No compile failure was accepted as causal RED.
   record; Plans 299 and 300 own those proof families.
 - Do not claim Wave 4C acceptance from focused proof.
 
-## Acceptance And Pending Closure
+## Acceptance And Closure
 
 - [x] Thirteen exact source/destination pairs are recorded.
 - [x] Body-preservation hashes and no-old-path assertions are green.
 - [x] Nine focused repository proof files pass 150 tests.
 - [x] The all-placement contract passes four tests; the combined DTR-18
       contracts pass seven.
-- [ ] Affected curated Groups lane is green on the integrated tree.
-- [ ] Justified affected family sweep is green.
-- [ ] Architecture lane proves trustworthy 165 / 0 with zero new or stale
-      issue.
-- [ ] Runtime-root and completeness gates are green.
-- [ ] Repository-wide `flutter analyze` and `git diff --check` are clean.
-- [ ] Incremental Graphify refresh and affected query are recorded.
-- [ ] Wave 4C aggregate `host-all` and justified `performance-host` are green.
+- [x] The affected Groups lane passes 3,265 Flutter tests plus all Go tails.
+- [x] Integrated `feature-host-all` passes 8,441 tests with one declared skip
+      across 811 paths; `core-host-all` passes 2,847 tests across 367 paths
+      plus the Android renderer contract.
+- [x] The architecture lane is trustworthy at 165 dependencies, zero
+      placements, and zero issues.
+- [x] Runtime roots pass 20/20 with trustworthy/no-drift output; completeness
+      passes 1,359/1,359.
+- [x] Repository-wide `flutter analyze` reports zero issues and
+      `git diff --check` is clean.
+- [x] Graphify was refreshed incrementally, then rebuilt to remove source-less
+      old-path orphans; the final current graph fingerprint is
+      `c148591f22c0989a`, with 63,016 nodes / 96,398 edges and no old
+      implementation URI.
+- [x] Wave 4C `performance-host` passes 106 tests across 21 paths in 17
+      seconds; the following full `host-all` passes 12,845 tests with one
+      declared skip across 1,269 Flutter paths plus all eight Go tails in 785
+      seconds, exit 0.
+- [x] Stable acceptance evidence is archived in
+      [evidence/dtr-wave4c/README.md](evidence/dtr-wave4c/README.md).
 
-Full `host-all` is a Wave 4C batch gate, not a Plan 298 per-plan gate.
+Full `host-all` was the Wave 4C batch gate, not a Plan 298 per-plan gate.
 Unavailable device/version bands are N/A under project policy; this
 path-and-host preservation slice makes no new mobile OS or relay claim.
+Final release-closure `host-all` and `performance-host` remain later
+obligations. The Wave 5 supported-platform Product + Release decision remains
+separate and open.
 
 ## Execution Progress
 
@@ -97,3 +117,5 @@ path-and-host preservation slice makes no new mobile OS or relay claim.
 | 2026-07-28 | Causal RED | Closure contract exited 1 at the intended Groups old-path assertion. | Apply exact relocations and consumer rewrites. |
 | 2026-07-28 | Implementation | Thirteen adapters moved to `data/repositories`; old paths removed; no shim added. | Run structural and repository preservation proof. |
 | 2026-07-28 | Focused GREEN | Groups closure case green; nine repository proof files passed 150 tests; integrated closure contract +4 and combined DTR-18 contracts +7. | Complete affected policy/family gates, then the Wave 4C aggregate. |
+| 2026-07-28 | Plan-green closure | Groups +3,265 and Go tails; feature 811 paths / 8,441 pass / 1 skip; core 367 paths / 2,847 pass plus renderer; architecture 165/0/0; runtime roots 20/20; completeness 1,359/1,359; analyzer and diff clean; Graphify current at `c148591f22c0989a`. | Every Plan 298 obligation is green; run the separate Wave 4C aggregate. |
+| 2026-07-28 | Wave 4C acceptance | `performance-host` 21 paths / 106 pass in 17 seconds, then `host-all` 1,269 Flutter paths / 12,845 pass / 1 skip plus eight Go tails in 785 seconds; exit 0; stable evidence archived. | Complete; final release closure remains later. |
