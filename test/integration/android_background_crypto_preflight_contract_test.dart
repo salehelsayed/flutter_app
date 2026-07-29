@@ -3183,8 +3183,13 @@ Packages:
   test(
     'provider probe injected response matrix passes without network',
     () async {
+      // The reporter is pinned because this assertion reads TAP output. Node's
+      // default `--test` reporter is version-dependent: Node 22 emits TAP when
+      // stdout is piped, but Node 24 emits `spec` ('✔ …', 'ℹ pass 5'), which
+      // contains no '# pass 5' and fails here for no code-related reason.
       final result = await Process.run('node', <String>[
         '--test',
+        '--test-reporter=tap',
         'scripts/test/send_fcm_provider_probe_contract_test.js',
       ]);
       expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
