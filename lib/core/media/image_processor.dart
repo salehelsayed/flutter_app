@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
@@ -26,6 +27,22 @@ typedef CompressVideoFn = Future<VideoProcessResult?> Function({
   required bool compress,
   void Function(double progress)? onProgress,
 });
+
+/// Wire key for the protected-photo inline thumbnail rides inside the
+/// already-E2E-encrypted direct-lane attachment JSON (plan 301). Producers and
+/// consumers live only in the send/receive use cases.
+const kProtectedPhotoInlineThumbnailKey = 'thumbnailInlineBase64';
+
+/// Hard cap on the RAW (pre-base64) inline thumbnail bytes. Bounded by the
+/// 128 KB transport frame cap on both durable legs (relay inbox and the
+/// go-mknoon direct stream): 49,152 raw → ~91 KB worst-case frame after the
+/// double base64 + AEAD envelope. NEVER raise this without recomputing
+/// against maxFrameLen — an oversized message is permanently undeliverable.
+const kProtectedPhotoInlineThumbnailMaxRawBytes = 49152;
+
+/// Longest-side bound and JPEG quality for generated inline thumbnails.
+const kProtectedPhotoInlineThumbnailMaxSidePx = 320;
+const kProtectedPhotoInlineThumbnailJpegQuality = 60;
 
 /// Processes images and videos before sending: strips metadata and applies quality.
 ///
@@ -107,6 +124,50 @@ class ImageProcessor {
     );
 
     return result ?? VideoProcessResult(path: inputPath);
+  }
+
+  /// Generates the bounded protected-photo inline thumbnail (plan 301).
+  ///
+  /// Pure Dart via package:image — exact longest-side bound, no platform
+  /// channel, no hang risk. Returns null on any read/decode failure or when
+  /// the encoded result exceeds [kProtectedPhotoInlineThumbnailMaxRawBytes];
+  /// callers treat null as "omit the field" (best-effort, never fails a send).
+  static Future<Uint8List?> generateInlineThumbnailBytes({
+    required String inputPath,
+  }) async {
+    try {
+      final file = File(inputPath);
+      if (!await file.exists()) return null;
+      final decoded = img.decodeImage(await file.readAsBytes());
+      if (decoded == null) return null;
+      final longestSide = decoded.width > decoded.height
+          ? decoded.width
+          : decoded.height;
+      final resized = longestSide <= kProtectedPhotoInlineThumbnailMaxSidePx
+          ? decoded
+          : (decoded.width >= decoded.height
+                ? img.copyResize(
+                    decoded,
+                    width: kProtectedPhotoInlineThumbnailMaxSidePx,
+                  )
+                : img.copyResize(
+                    decoded,
+                    height: kProtectedPhotoInlineThumbnailMaxSidePx,
+                  ));
+      final encoded = Uint8List.fromList(
+        img.encodeJpg(
+          resized,
+          quality: kProtectedPhotoInlineThumbnailJpegQuality,
+        ),
+      );
+      if (encoded.isEmpty ||
+          encoded.length > kProtectedPhotoInlineThumbnailMaxRawBytes) {
+        return null;
+      }
+      return encoded;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Returns true for image extensions that can be processed.

@@ -470,6 +470,23 @@ void main() {
       find.textContaining('You can reopen it once here after sending.'),
       findsOneWidget,
     );
+
+    // 302: when the reopen disclosure is enabled it must fork by mode —
+    // protected promises unlimited re-opens, view-once keeps its one more
+    // look. (The flag is production-dead today; forking it here means
+    // enabling it later cannot resurrect the once-promise for protected.)
+    await tester.tap(
+      find.byKey(const ValueKey('private-media-option-protected')),
+    );
+    await tester.pump();
+    expect(
+      find.textContaining('You can reopen it here anytime.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('You can reopen it once here after sending.'),
+      findsNothing,
+    );
   });
 
   testWidgets('typing text resets a selected private policy', (tester) async {

@@ -185,9 +185,12 @@ void main() {
           requestCancellation: false,
           terminalBeforeHandoff: false,
         ),
+        // Cancellation is a non-completion mutation. Keep this refusal race on
+        // the mode whose active viewer still owns an opening lease; a
+        // lease-free protected viewer intentionally no longer blocks it.
         (
-          name: 'protected active-viewer cancellation race',
-          policy: const PrivateMediaPolicy.protected(),
+          name: 'view-once active-viewer cancellation race',
+          policy: const PrivateMediaPolicy.viewOnce(),
           expectsPrivateCustody: true,
           requestCancellation: true,
           terminalBeforeHandoff: false,
@@ -195,6 +198,16 @@ void main() {
         (
           name: 'protected FIRST-FRAME before envelope handoff',
           policy: const PrivateMediaPolicy.protected(),
+          expectsPrivateCustody: true,
+          requestCancellation: false,
+          terminalBeforeHandoff: true,
+        ),
+        // 302: protected no longer terminalizes on close, so the
+        // terminalize-before-handoff custody choreography needs a home on the
+        // mode that still leases.
+        (
+          name: 'view-once FIRST-FRAME before envelope handoff',
+          policy: const PrivateMediaPolicy.viewOnce(),
           expectsPrivateCustody: true,
           requestCancellation: false,
           terminalBeforeHandoff: true,
@@ -210,6 +223,10 @@ void main() {
     testWidgets(
       '${testCase.name} foreground upload owns transfer through durable envelope and exact pending cleanup',
       (tester) async {
+        // 302: only outgoing view-once still claims the one-shot lease. A
+        // protected sender open is lease-free, so it never latches the parent
+        // to 'opening' and its close never terminalizes.
+        final leases = testCase.policy.mode == PrivateMediaMode.viewOnce;
         final fixture = (await tester.runAsync(
           MediaRepositoryRealDbFixture.create,
         ))!;
@@ -592,7 +609,9 @@ void main() {
             );
             expect(
               terminalSettlement?.disposition,
-              DirectPrivateMediaSettleDisposition.terminalized,
+              leases
+                  ? DirectPrivateMediaSettleDisposition.terminalized
+                  : DirectPrivateMediaSettleDisposition.noLease,
             );
             expect(
               (await tester.runAsync(
@@ -600,16 +619,27 @@ void main() {
                   preparedMessageId!,
                 ),
               ))?.privateMediaState,
-              PrivateMediaLifecycleState.consumed,
+              leases
+                  ? PrivateMediaLifecycleState.consumed
+                  : PrivateMediaLifecycleState.available,
             );
+            final preHandoffRows = (await tester.runAsync(
+              () => fixture.repo.getAttachmentsForMessage(
+                preparedMessageId!,
+                owner: MediaOwnerLane.direct,
+              ),
+            ))!;
             expect(
-              (await tester.runAsync(
-                () => fixture.repo.getAttachmentsForMessage(
-                  preparedMessageId!,
-                  owner: MediaOwnerLane.direct,
-                ),
-              ))?.single.downloadStatus,
-              'upload_pending',
+              (
+                preHandoffRows.single.downloadStatus,
+                preHandoffRows.single.localPath,
+              ),
+              (
+                leases ? 'upload_pending' : 'done',
+                leases
+                    ? pendingUploadPath!.substring(root.path.length + 1)
+                    : canonicalRelativePath,
+              ),
             );
             expect(File(pendingUploadPath!).existsSync(), isTrue);
             allowEnvelopeHandoff.complete();
@@ -667,7 +697,8 @@ void main() {
             owner: MediaOwnerLane.direct,
           ),
         ))!;
-        expect(rows, testCase.terminalBeforeHandoff ? isEmpty : hasLength(1));
+        final terminalized = testCase.terminalBeforeHandoff && leases;
+        expect(rows, terminalized ? isEmpty : hasLength(1));
         expect(sentPrivateMediaPolicy, testCase.policy);
         expect(
           registryOwnedBeforePlaintextCopy,
@@ -688,11 +719,15 @@ void main() {
               envelopeHandoffAttachmentPath,
             ),
             (
-              testCase.terminalBeforeHandoff
-                  ? PrivateMediaLifecycleState.consumed
-                  : PrivateMediaLifecycleState.opening,
-              'upload_pending',
-              pendingUploadPath!.substring(root.path.length + 1),
+              leases
+                  ? (testCase.terminalBeforeHandoff
+                        ? PrivateMediaLifecycleState.consumed
+                        : PrivateMediaLifecycleState.opening)
+                  : PrivateMediaLifecycleState.available,
+              leases ? 'upload_pending' : 'done',
+              leases
+                  ? pendingUploadPath!.substring(root.path.length + 1)
+                  : canonicalRelativePath,
             ),
           );
         }
@@ -703,7 +738,7 @@ void main() {
         expect(deleteSourceWhenDoneValue, !testCase.expectsPrivateCustody);
         expect(uploadMediaFileManager, same(manager));
         expect(File(pendingUploadPath!).existsSync(), isFalse);
-        if (testCase.terminalBeforeHandoff) {
+        if (terminalized) {
           expect(File(canonicalAbsolutePath!).existsSync(), isFalse);
         } else {
           final persisted = rows.single;
@@ -1377,6 +1412,7 @@ void main() {
       in <
         ({
           String name,
+          PrivateMediaPolicy policy,
           bool activeViewer,
           bool activeTransfer,
           bool fileDeleteFails,
@@ -1384,8 +1420,23 @@ void main() {
           bool expectsDeletion,
         })
       >[
+        // 302 (AD-4): the delete refusal is keyed on the 'opening'/'viewing'
+        // lease states. A protected sender open no longer produces either, so
+        // deleting one's own failed protected message now PROCEEDS. View-once
+        // still leases, so its refusal is retained below — that case is what
+        // keeps the whole refusal behavior class under test.
         (
           name: 'active protected viewer',
+          policy: const PrivateMediaPolicy.protected(),
+          activeViewer: true,
+          activeTransfer: false,
+          fileDeleteFails: false,
+          reinsertRace: false,
+          expectsDeletion: true,
+        ),
+        (
+          name: 'active view-once viewer',
+          policy: const PrivateMediaPolicy.viewOnce(),
           activeViewer: true,
           activeTransfer: false,
           fileDeleteFails: false,
@@ -1394,6 +1445,7 @@ void main() {
         ),
         (
           name: 'active protected upload custody',
+          policy: const PrivateMediaPolicy.protected(),
           activeViewer: false,
           activeTransfer: true,
           fileDeleteFails: false,
@@ -1402,6 +1454,7 @@ void main() {
         ),
         (
           name: 'available protected file-delete failure',
+          policy: const PrivateMediaPolicy.protected(),
           activeViewer: false,
           activeTransfer: false,
           fileDeleteFails: true,
@@ -1410,6 +1463,7 @@ void main() {
         ),
         (
           name: 'available protected failed-media intent',
+          policy: const PrivateMediaPolicy.protected(),
           activeViewer: false,
           activeTransfer: false,
           fileDeleteFails: false,
@@ -1477,7 +1531,7 @@ void main() {
           isIncoming: false,
           createdAt: '2026-07-20T10:00:00.000Z',
           wireEnvelope: '{"stale":true}',
-          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          privateMediaPolicy: deleteCase.policy,
           privateMediaState: PrivateMediaLifecycleState.available,
         );
         final pendingAttachment = MediaAttachment(
@@ -1612,6 +1666,19 @@ void main() {
           );
           expect(prepared!.isGranted, isTrue);
           viewerGrant = prepared.grant;
+          expect(
+            (await tester.runAsync(
+              () => fixture.messageRepo.loadPrivateMediaLifecycleMessage(
+                messageId,
+              ),
+            ))?.privateMediaState,
+            deleteCase.policy.mode == PrivateMediaMode.viewOnce
+                ? PrivateMediaLifecycleState.opening
+                : PrivateMediaLifecycleState.available,
+            reason:
+                'the active-viewer delete gate must distinguish a retained '
+                'view-once lease from a lease-free protected grant',
+          );
         }
         if (deleteCase.activeTransfer) {
           transferToken = await tester.runAsync(
@@ -1727,6 +1794,8 @@ void main() {
           expect(durableMessage, isNull);
           expect(durableRows, isEmpty);
           expect(pendingFile.existsSync(), isFalse);
+          // Key custody must go with the row; an implementation that deletes
+          // the attachment but orphans the secure key fails here.
           expect(secureKeyPresent, isFalse);
           expect(
             find.byKey(const ValueKey('failed-media-delete-$messageId')),
@@ -1734,6 +1803,8 @@ void main() {
           );
         } else {
           expect(durableMessage, isNotNull);
+          // Only a real lease can hold the parent at 'opening' — that is the
+          // exact state the delete refusal keys on.
           expect(
             durableMessage!.privateMediaState,
             deleteCase.activeViewer
@@ -1752,13 +1823,21 @@ void main() {
         }
 
         if (viewerGrant != null) {
-          await tester.runAsync(
+          final settlement = await tester.runAsync(
             () => viewerController!
                 .settle(
                   viewerGrant!,
                   DirectPrivateMediaExitReason.preFrameDecodeFailure,
                 )
                 .timeout(const Duration(seconds: 5)),
+          );
+          // Settling a lease-free grant whose row was deleted underneath it is
+          // a no-op, not a fail-closed error.
+          expect(
+            settlement?.disposition,
+            deleteCase.expectsDeletion
+                ? DirectPrivateMediaSettleDisposition.noLease
+                : DirectPrivateMediaSettleDisposition.rolledBackAvailable,
           );
         }
         final token = transferToken;

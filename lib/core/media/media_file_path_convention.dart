@@ -12,6 +12,17 @@ class MediaFilePathConvention {
     return p.posix.join('media', contactPeerId, '$blobId$ext');
   }
 
+  /// Receiver-side protected-photo inline thumbnail sibling (plan 301).
+  ///
+  /// Deliberately extension-fixed: the inline payload is always a sender-side
+  /// JPEG regardless of the source attachment's mime.
+  static String relativeThumbnailPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+  }) {
+    return p.posix.join('media', contactPeerId, '$blobId.thumb.jpg');
+  }
+
   static String relativePathForPostAttachment({
     required String postId,
     required String blobId,

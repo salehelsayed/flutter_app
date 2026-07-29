@@ -234,9 +234,22 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/screens/direct_private_media_tile_tap_test.dart"
   # 259: receiver/sender reassurance copy, name substitution, and RTL safety.
   "test/features/conversation/presentation/screens/direct_private_media_placeholder_body_test.dart"
+  # 302: sender-protected reopen copy forks are pinned at both the picker
+  # surface and the source ARB/localization contract.
+  "test/features/conversation/presentation/screens/conversation_private_media_composer_test.dart"
+  "test/l10n/private_media_ux_strings_test.dart"
   # 260 S1: private media is one keyed, no-pixel LetterCard body in both the
   # live row and lifted context-overlay snapshot.
   "test/features/conversation/presentation/screens/direct_private_media_card_test.dart"
+  # 301: protected-photo restricted thumbnail bubbles — bounded inline wire
+  # field, guarded sibling persist, tile render/tap/menu, Android-only route
+  # FLAG_SECURE wiring, and thumbnail wipe on all three destructive paths.
+  "test/features/conversation/presentation/screens/conversation_protected_photo_thumbnail_test.dart"
+  "test/features/conversation/presentation/widgets/protected_photo_thumbnail_tile_test.dart"
+  "test/features/conversation/application/send_protected_photo_thumbnail_test.dart"
+  "test/features/conversation/application/receive_protected_photo_thumbnail_test.dart"
+  "test/features/conversation/application/private_media_thumbnail_wipe_test.dart"
+  "test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart"
   # 260 S3/S4: durable queued media, typed upload/retry ownership, owner-aware
   # pause/stuck recovery, background-task release, and the one stable direct
   # private-media route/lifecycle observer.

@@ -52,8 +52,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as img;
 
 import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/device_criteria.dart';
@@ -70,6 +72,10 @@ const _criticalPerformanceScenarioId = simsAndroidCriticalPerformanceScenarioId;
 const _keepaliveDropScenarioId = 'android.keepalive_drop_skip_direct';
 const _voiceMessageScenarioId = simsAndroidVoiceMessageScenarioId;
 const _wakeTokenDirectionalityScenarioId = 'android.wake_token_directionality';
+const _protectedThumbnailSecureWindowScenarioId =
+    'protected-thumbnail-secure-window';
+const _protectedThumbnailProofTestPath =
+    'integration_test/protected_photo_thumbnail_secure_window_proof_test.dart';
 const _voiceRecorderPermission = 'android.permission.RECORD_AUDIO';
 const _runtimeDispatcherTarget = 'integration_test/sims_dispatcher.dart';
 const _integrationTestDriver = 'test_driver/integration_test.dart';
@@ -248,6 +254,17 @@ const List<_Scenario> _scenarios = <_Scenario>[
     'automated-physical-android-plus-emulator',
     'physical Android records and sends voice through production custody; '
         'an Android emulator receives, downloads, and plays the exact bytes',
+  ),
+  _Scenario(
+    _protectedThumbnailSecureWindowScenarioId,
+    'Plan 301',
+    'TC-14',
+    'automated-physical-android',
+    'protected-photo thumbnail bubble holds real window FLAG_SECURE '
+        '(dumpsys SECURE + black screencap) while visible and releases on pop; '
+        'the real-transport wire leg rides the registered '
+        'android.connectivity_restore_media_outbox campaign (phase 1 sends a '
+        'protected photo through the production composer path)',
   ),
   _Scenario(
     'vc02.dcutr_upgrade',
@@ -454,6 +471,14 @@ Future<void> main(List<String> args) async {
   }
 
   if (toRun.length == 1 &&
+      toRun.single.id == _protectedThumbnailSecureWindowScenarioId) {
+    final result = await _runProtectedThumbnailSecureWindow(devices: devices);
+    _emitResult(result);
+    exitCode = result.processExitCode;
+    return;
+  }
+
+  if (toRun.length == 1 &&
       toRun.single.id == _wakeTokenDirectionalityScenarioId) {
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
@@ -498,6 +523,353 @@ Future<void> main(List<String> args) async {
     ),
   );
   exitCode = 78;
+}
+
+/// Plan 301 TC-14 — protected-thumbnail secure-window proof on one pinned
+/// PHYSICAL Android receiver. Launches the in-app proof
+/// ([_protectedThumbnailProofTestPath], built from the current tree, so build
+/// provenance is inherent) and, during its marker-framed hold windows, runs
+/// the OS-EXTERNAL observations:
+///   (b) `dumpsys window` shows the symbolic SECURE token in the app
+///       WindowState attrs (modern Android emits no `isSecure=` line);
+///   (c) `screencap` EXITS 0 and the captured app region is black — the
+///       assertion is pixel-based, never exit-code-based;
+///   (d) after the conversation content pops, SECURE is absent again.
+/// The in-app leg asserts (a): the thumbnail tile — keyed on the tile widget
+/// key — is visible without any Open interaction. The real-transport wire leg
+/// is owned by the registered android.connectivity_restore_media_outbox
+/// campaign (its phase 1 drives a protected-photo send through the production
+/// composer path device-to-device).
+Future<_RunnerResult> _runProtectedThumbnailSecureWindow({
+  required List<String> devices,
+}) async {
+  if (devices.isEmpty) {
+    return _RunnerResult.blocked(
+      blocker: 'targetUnavailable',
+      detail:
+          'An explicit physical Android --device (receiver first) or '
+          'ANDROID_SERIAL is required.',
+      artifactPresent: true,
+    );
+  }
+  final device = devices.first;
+  ProcessResult adbVersion;
+  try {
+    adbVersion = await Process.run('adb', const <String>['version']);
+  } on ProcessException catch (error) {
+    return _RunnerResult.blocked(
+      blocker: 'missingDriver',
+      detail: 'adb is unavailable: ${error.message}',
+      artifactPresent: true,
+    );
+  }
+  if (adbVersion.exitCode != 0) {
+    return _RunnerResult.blocked(
+      blocker: 'missingDriver',
+      detail: 'adb version exited ${adbVersion.exitCode}.',
+      artifactPresent: true,
+    );
+  }
+  final targetCheck = await _verifyPhysicalAndroid(device);
+  if (targetCheck != null) return targetCheck;
+
+  late final String packageName;
+  try {
+    packageName = resolveAndroidAppPackage();
+  } on Object catch (error) {
+    return _RunnerResult.blocked(
+      blocker: 'environment',
+      detail: 'Unable to resolve the Android application ID: $error',
+      artifactPresent: true,
+    );
+  }
+
+  late final AndroidAppStateGuard stateGuard;
+  try {
+    stateGuard = await AndroidAppStateGuard.capture(
+      devices: <String>[device],
+      packageName: packageName,
+      backupLabel: 'protected-thumbnail-secure-window',
+    );
+  } on AndroidAppStateBlocked catch (error) {
+    return _RunnerResult.blocked(
+      blocker: 'environment',
+      detail: error.detail,
+      artifactPresent: true,
+    );
+  } on AndroidAppStateFailure catch (error) {
+    return _RunnerResult.fail(
+      blocker: 'restoration',
+      detail: error.detail,
+      processExitCode: 1,
+      artifactPresent: false,
+      assertionsAttempted: 0,
+    );
+  }
+
+  _RunnerResult? outcome;
+  try {
+    outcome = await _executeProtectedThumbnailSecureWindowProof(
+      device: device,
+      packageName: packageName,
+    );
+  } on ProcessException catch (error) {
+    outcome = _RunnerResult.blocked(
+      blocker: 'missingDriver',
+      detail: 'Device command could not start: ${error.message}',
+      artifactPresent: true,
+    );
+  } on Object catch (error) {
+    outcome = _RunnerResult.fail(
+      blocker: 'harness',
+      detail: 'Secure-window proof failed unexpectedly: $error',
+      processExitCode: 1,
+      artifactPresent: true,
+      assertionsAttempted: 0,
+    );
+  } finally {
+    try {
+      await stateGuard.restoreAll();
+    } on AndroidAppStateFailure catch (error) {
+      _deleteResultEvidence(outcome);
+      outcome = _RunnerResult.fail(
+        blocker: 'restoration',
+        detail: error.detail,
+        processExitCode: 1,
+        artifactPresent: false,
+        assertionsAttempted: 0,
+      );
+    }
+  }
+  return outcome ??
+      _RunnerResult.fail(
+        blocker: 'harness',
+        detail: 'Secure-window harness produced no terminal result.',
+        processExitCode: 1,
+        artifactPresent: false,
+        assertionsAttempted: 0,
+      );
+}
+
+Future<_RunnerResult> _executeProtectedThumbnailSecureWindowProof({
+  required String device,
+  required String packageName,
+}) async {
+  final process = await Process.start('flutter', <String>[
+    'test',
+    _protectedThumbnailProofTestPath,
+    '-d',
+    device,
+  ]);
+
+  var secureDuringHold = false;
+  var screencapExitZero = false;
+  var screencapBlackFraction = -1.0;
+  var secureAfterPop = true; // must be observed false in the released hold
+  var observedSecureHold = false;
+  var observedReleasedHold = false;
+  Map<String, Object?>? inAppResult;
+  final observationErrors = <String>[];
+  final pendingObservations = <Future<void>>[];
+
+  Future<void> observeSecureHold() async {
+    try {
+      secureDuringHold = await _windowHasSecureFlag(device, packageName);
+      final capture = await _captureScreen(device);
+      screencapExitZero = capture.exitZero;
+      screencapBlackFraction = capture.blackFraction;
+    } on Object catch (error) {
+      observationErrors.add('secure-hold observation failed: $error');
+    }
+  }
+
+  Future<void> observeReleasedHold() async {
+    try {
+      secureAfterPop = await _windowHasSecureFlag(device, packageName);
+    } on Object catch (error) {
+      observationErrors.add('released-hold observation failed: $error');
+    }
+  }
+
+  void onLine(String line) {
+    if (line.contains('P301_MARKER SECURE_HOLD_START') &&
+        !observedSecureHold) {
+      observedSecureHold = true;
+      pendingObservations.add(observeSecureHold());
+      return;
+    }
+    if (line.contains('P301_MARKER RELEASED_HOLD_START') &&
+        !observedReleasedHold) {
+      observedReleasedHold = true;
+      pendingObservations.add(observeReleasedHold());
+      return;
+    }
+    final resultIndex = line.indexOf('P301_RESULT ');
+    if (resultIndex >= 0 && inAppResult == null) {
+      try {
+        inAppResult =
+            (jsonDecode(line.substring(resultIndex + 'P301_RESULT '.length))
+                    as Map)
+                .map((key, value) => MapEntry('$key', value));
+      } on Object {
+        observationErrors.add('in-app result marker was malformed');
+      }
+    }
+  }
+
+  final stdoutDone = process.stdout
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .listen((line) {
+        stdout.writeln('[proof] $line');
+        onLine(line);
+      })
+      .asFuture<void>();
+  final stderrDone = process.stderr
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .listen((line) => stderr.writeln('[proof] $line'))
+      .asFuture<void>();
+
+  final testExit = await process.exitCode.timeout(
+    const Duration(minutes: 20),
+    onTimeout: () {
+      process.kill();
+      return -1;
+    },
+  );
+  await stdoutDone;
+  await stderrDone;
+  await Future.wait(pendingObservations);
+
+  if (testExit != 0) {
+    return _RunnerResult.fail(
+      blocker: 'harness',
+      detail:
+          'In-app secure-window proof exited $testExit '
+          '(${observationErrors.isEmpty ? 'see [proof] output' : observationErrors.join('; ')}).',
+      processExitCode: 1,
+      artifactPresent: true,
+      assertionsAttempted: 0,
+    );
+  }
+
+  final failures = <String>[
+    if (inAppResult == null)
+      'the in-app P301_RESULT marker was never observed',
+    if (inAppResult?['tileVisibleBeforeOpen'] != true)
+      '(a) the thumbnail tile was not visible before any Open interaction',
+    if (!observedSecureHold)
+      '(b) the secure hold window never opened',
+    if (!secureDuringHold)
+      '(b) dumpsys window showed no symbolic SECURE flag for $packageName '
+          'while the thumbnail was visible',
+    if (!screencapExitZero)
+      '(c) screencap did not exit 0 during the secure hold',
+    if (screencapExitZero && screencapBlackFraction < 0.80)
+      '(c) the captured app region was not black '
+          '(black fraction $screencapBlackFraction) — the window leaked pixels',
+    if (!observedReleasedHold)
+      '(d) the released hold window never opened',
+    if (secureAfterPop)
+      '(d) SECURE was still present after popping the conversation route',
+    ...observationErrors,
+  ];
+  if (failures.isNotEmpty) {
+    return _RunnerResult.fail(
+      blocker: 'assertion',
+      detail: failures.join(' | '),
+      processExitCode: 1,
+      artifactPresent: true,
+      assertionsAttempted: 4,
+    );
+  }
+
+  final artifactJson = <String, Object?>{
+    'schema': 'mknoon.p301.secure-window-proof-artifact.v1',
+    'scenario': _protectedThumbnailSecureWindowScenarioId,
+    'status': 'passed',
+    'deviceId': device,
+    'assertions': <String, Object?>{
+      'tileVisibleBeforeOpen': true,
+      'dumpsysSecureDuringHold': true,
+      'screencapExitZero': true,
+      'screencapBlackFraction': screencapBlackFraction,
+      'dumpsysSecureAfterPop': false,
+      'inApp': inAppResult,
+    },
+    'wireLeg':
+        'delegated:android.connectivity_restore_media_outbox (phase 1 sends a '
+        'protected photo through the production composer path device-to-device)',
+  };
+  final evidence = writeSimsArtifactEvidenceSync(
+    directory: _proofDirectory(_protectedThumbnailSecureWindowScenarioId),
+    capabilityId: _protectedThumbnailSecureWindowScenarioId,
+    validatorIds: const <String>['validateProtectedThumbnailSecureWindowProof'],
+    payload: artifactJson,
+  );
+  return _RunnerResult.pass(
+    assertionsAttempted: 4,
+    detail:
+        'Protected-thumbnail secure window held on $device: tile visible '
+        'without Open, symbolic SECURE present in dumpsys, screencap black '
+        '(fraction $screencapBlackFraction), and SECURE released after pop.',
+    artifactEvidence: evidence,
+  );
+}
+
+/// True when the app's WindowState attrs carry the symbolic SECURE token.
+/// Modern Android emits `mAttrs={... fl=... SECURE ...}` — never `isSecure=`.
+Future<bool> _windowHasSecureFlag(String device, String packageName) async {
+  final result = await Process.run('adb', <String>[
+    '-s',
+    device,
+    'shell',
+    'dumpsys',
+    'window',
+    'windows',
+  ]);
+  if (result.exitCode != 0) {
+    throw StateError('dumpsys window exited ${result.exitCode}');
+  }
+  final sections = '${result.stdout}'.split(RegExp(r'Window #\d+'));
+  return sections
+      .where((section) => section.contains(packageName))
+      .any((section) => RegExp(r'\bSECURE\b').hasMatch(section));
+}
+
+Future<({bool exitZero, double blackFraction})> _captureScreen(
+  String device,
+) async {
+  final result = await Process.run(
+    'adb',
+    <String>['-s', device, 'exec-out', 'screencap', '-p'],
+    stdoutEncoding: null,
+  );
+  if (result.exitCode != 0) {
+    return (exitZero: false, blackFraction: -1.0);
+  }
+  final bytes = result.stdout as List<int>;
+  final decoded = img.decodePng(Uint8List.fromList(bytes));
+  if (decoded == null) {
+    return (exitZero: true, blackFraction: -1.0);
+  }
+  // Central app region: exclude status/navigation bars, sample the middle.
+  final left = (decoded.width * 0.10).round();
+  final right = (decoded.width * 0.90).round();
+  final top = (decoded.height * 0.15).round();
+  final bottom = (decoded.height * 0.85).round();
+  var black = 0;
+  var total = 0;
+  for (var y = top; y < bottom; y += 4) {
+    for (var x = left; x < right; x += 4) {
+      final pixel = decoded.getPixel(x, y);
+      total++;
+      if (pixel.r < 24 && pixel.g < 24 && pixel.b < 24) black++;
+    }
+  }
+  if (total == 0) return (exitZero: true, blackFraction: -1.0);
+  return (exitZero: true, blackFraction: black / total);
 }
 
 /// Delegates to the build-free main-app keepalive campaign. Its controller

@@ -5678,6 +5678,12 @@ abstract class AppLocalizations {
   /// **'You can reopen it once here after sending.'**
   String get private_media_disclosure_reopen;
 
+  /// No description provided for @private_media_disclosure_reopen_protected.
+  ///
+  /// In en, this message translates to:
+  /// **'You can reopen it here anytime.'**
+  String get private_media_disclosure_reopen_protected;
+
   /// No description provided for @private_media_card_title_protected_photo.
   ///
   /// In en, this message translates to:

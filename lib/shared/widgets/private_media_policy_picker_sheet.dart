@@ -434,12 +434,13 @@ String _disclosure(
     TargetPlatform.android => l10n.private_media_android_capture_limit,
     _ => l10n.private_media_general_capture_limit,
   };
-  final reopen =
-      senderReopenEnabled &&
-          (selection.mode == PrivateMediaPickerMode.protected ||
-              selection.mode == PrivateMediaPickerMode.viewOnce)
-      ? ' ${l10n.private_media_disclosure_reopen}'
-      : '';
+  final reopen = switch (selection.mode) {
+    PrivateMediaPickerMode.protected when senderReopenEnabled =>
+      ' ${l10n.private_media_disclosure_reopen_protected}',
+    PrivateMediaPickerMode.viewOnce when senderReopenEnabled =>
+      ' ${l10n.private_media_disclosure_reopen}',
+    _ => '',
+  };
   return '$base $platformNote.$reopen';
 }
 

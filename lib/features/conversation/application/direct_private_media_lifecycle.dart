@@ -1151,10 +1151,22 @@ class DirectPrivateMediaLifecycle
     final pendingPath = await mediaFileManager.resolveStoredPath(
       pendingRelative,
     );
+    // 301: the receiver-side inline-thumbnail sibling is an app-owned derived
+    // artifact of this exact attachment — it dies with the media bytes on
+    // every caller of this wipe (terminal cleanup, delete-for-me, interrupted
+    // -download recovery). The sender never writes one.
+    final thumbnailPath = await mediaFileManager.resolveStoredPath(
+      MediaFilePathConvention.relativeThumbnailPathForAttachment(
+        contactPeerId: contactPeerId,
+        blobId: attachment.id,
+      ),
+    );
     final canonicalRoot = p.dirname(p.dirname(canonicalPath));
     final pendingRoot = p.dirname(p.dirname(pendingPath));
 
-    final expanded = <({String path, String root})>[];
+    final expanded = <({String path, String root})>[
+      (path: thumbnailPath, root: canonicalRoot),
+    ];
     for (final target in [
       (path: canonicalPath, root: canonicalRoot),
       (path: pendingPath, root: pendingRoot),

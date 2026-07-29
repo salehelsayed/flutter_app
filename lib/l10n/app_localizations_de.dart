@@ -3488,6 +3488,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Du kannst sie nach dem Senden hier noch einmal öffnen.';
 
   @override
+  String get private_media_disclosure_reopen_protected =>
+      'Du kannst sie hier jederzeit erneut öffnen.';
+
+  @override
   String get private_media_card_title_protected_photo => 'Geschütztes Foto';
 
   @override

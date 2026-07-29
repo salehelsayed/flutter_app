@@ -63,6 +63,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
         wireEnvelope: '{"stale":"manual"}',
       );
       final controller = _controller(fixture);
@@ -218,6 +219,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final controller = _controller(fixture);
       final completed = _completedAttachment(
@@ -318,6 +320,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final controller = _controller(fixture);
       final completed = _completedAttachment(
@@ -450,6 +453,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final controller = _controller(fixture);
       final firstCompleted = _completedAttachment(
@@ -764,6 +768,97 @@ void main() {
       );
     },
   );
+
+  // 302 (AD-3): the active-lease refusal is keyed on the 'opening'/'viewing'
+  // states. A protected sender open no longer produces either, so a manual
+  // retry driven while the viewer is open must APPLY rather than return
+  // notAppliedActiveLease.
+  //
+  // The commit is asserted BEFORE settle on purpose: a refused projection
+  // commits during settlement, so a post-settle assertion would pass on the
+  // old behavior too and prove nothing.
+  test(
+    'protected manual retry applies under an open lease-free viewer and reopen uses canonical',
+    () async {
+      const messageId = 'p302-manual-lease-free';
+      const attachmentId = 'p302-manual-lease-free-att';
+      const identity = DirectPrivateMediaViewerIdentity(
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+      final seeded = await _seedFailedPending(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        privateMode: 'protected',
+        wireEnvelope: '{"stale":"manual"}',
+      );
+      final completed = _completedAttachment(
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+      final canonicalAbsolute = p.join(
+        FakeMediaFileManager.testRootPath,
+        completed.localPath!,
+      );
+      final controller = _controller(fixture);
+
+      final prepared = await controller.prepareResult(
+        identity,
+        const DirectPrivateMediaAlwaysValidContinuityGuard(),
+      );
+      expect(prepared.isGranted, isTrue);
+      expect(prepared.grant!.localPath, seeded.pendingAbsolute);
+
+      final retried = await _runManualRetry(
+        fixture,
+        messageId: messageId,
+        mediaAttachmentRepository: fixture.repo,
+        mediaFileManager: FakeMediaFileManager(),
+        uploadMediaFn: _successfulUpload(completed),
+      );
+
+      // Asserted WHILE the grant is still open.
+      expect(retried, 1);
+      _expectCompletedFingerprint(
+        (await fixture.rawAttachmentRow(attachmentId))!,
+        completed,
+      );
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        _newKey,
+      );
+      expect(await _privateState(fixture, messageId), 'available');
+
+      final settlement = await controller.settle(
+        prepared.grant!,
+        DirectPrivateMediaExitReason.close,
+      );
+      expect(
+        settlement.disposition,
+        DirectPrivateMediaSettleDisposition.noLease,
+      );
+      expect(await _privateState(fixture, messageId), 'available');
+
+      final reopened = await controller.prepareResult(
+        identity,
+        const DirectPrivateMediaAlwaysValidContinuityGuard(),
+      );
+      expect(reopened.isGranted, isTrue);
+      expect(reopened.grant!.localPath, canonicalAbsolute);
+      final reopenedSettlement = await controller.settle(
+        reopened.grant!,
+        DirectPrivateMediaExitReason.close,
+      );
+      expect(
+        reopenedSettlement.disposition,
+        DirectPrivateMediaSettleDisposition.noLease,
+      );
+      expect(await _privateState(fixture, messageId), 'available');
+    },
+  );
 }
 
 Future<({String pendingRelative, String pendingAbsolute})> _seedFailedPending(
@@ -773,6 +868,10 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedFailedPending(
   bool isPrivate = true,
   String privateState = 'available',
   String? wireEnvelope,
+  // 302: an open viewer only blocks a manual retry where a lease still
+  // exists — outgoing view-once. Protected opens lease-free and is covered by
+  // the immediate-apply case instead.
+  String privateMode = 'protected',
 }) async {
   await fixture.seedDirectParent(messageId, contactPeerId: _contactPeerId);
   await fixture.db.update(
@@ -784,7 +883,7 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedFailedPending(
       'is_incoming': 0,
       'wire_envelope': wireEnvelope,
       'private_media_policy_version': isPrivate ? 1 : 0,
-      'private_media_mode': isPrivate ? 'protected' : 'ordinary',
+      'private_media_mode': isPrivate ? privateMode : 'ordinary',
       'private_media_state': isPrivate ? privateState : 'none',
       'private_media_received_at_ms': isPrivate ? 1000 : null,
       'private_media_clock_high_water_ms': isPrivate ? 1000 : null,
@@ -1046,6 +1145,27 @@ Future<String> _privateState(
     whereArgs: <Object?>[messageId],
   );
   return rows.single['private_media_state']! as String;
+}
+
+void _expectCompletedFingerprint(
+  Map<String, Object?> row,
+  MediaAttachment expected,
+) {
+  expect(row['id'], expected.id);
+  expect(row['message_id'], expected.messageId);
+  expect(row['owner_lane'], MediaOwnerLane.direct.dbValue);
+  expect(row['local_path'], expected.localPath);
+  expect(
+    row['download_status'],
+    'done',
+    reason: 'the retry must not be refused as notAppliedActiveLease',
+  );
+  expect(row['mime'], expected.mime);
+  expect(row['size'], expected.size);
+  expect(row['content_hash'], expected.contentHash);
+  expect(row['encryption_nonce'], expected.encryptionNonce);
+  expect(row['encryption_scheme'], expected.encryptionScheme);
+  expect(row['upload_retry_count'], expected.uploadRetryCount);
 }
 
 void _writeBytes(String path, List<int> bytes) {

@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -579,6 +583,8 @@ handleIncomingChatMessage({
         repository: mediaAttachmentRepo,
         attachment: attachment,
         parent: conversationMessage,
+        rawMediaJson: mediaJson,
+        mediaFileManager: mediaFileManager,
       );
       if (saved) parsedAttachments.add(attachment);
     }
@@ -827,6 +833,8 @@ Future<void> _repairDuplicateReplayMedia({
         repository: mediaAttachmentRepo,
         attachment: incoming,
         parent: existingParent,
+        rawMediaJson: mediaJson,
+        mediaFileManager: mediaFileManager,
       );
       if (saved) repairedCount++;
     }
@@ -845,6 +853,8 @@ Future<bool> _saveIncomingDirectAttachment({
   required MediaAttachmentRepository repository,
   required MediaAttachment attachment,
   required ConversationMessage parent,
+  Map<String, dynamic>? rawMediaJson,
+  MediaFileManager? mediaFileManager,
 }) async {
   if (!parent.privateMediaPolicy.requiresRedaction) {
     await repository.saveAttachment(attachment, owner: MediaOwnerLane.direct);
@@ -853,12 +863,82 @@ Future<bool> _saveIncomingDirectAttachment({
   if (repository is! DirectPrivateMediaAttachmentSaveRepository) {
     return false;
   }
-  return (repository as DirectPrivateMediaAttachmentSaveRepository)
+  final saved = await (repository as DirectPrivateMediaAttachmentSaveRepository)
       .saveDirectPrivateAttachmentGuarded(
         attachment,
         messageId: parent.id,
         nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
       );
+  // 301: only a row the guarded save accepted may own a thumbnail sibling.
+  // Both callers sit behind the dedup/deleted-row/replay guards, so a replay
+  // of a deleted message can never reach this write.
+  if (saved && rawMediaJson != null && mediaFileManager != null) {
+    await _persistIncomingProtectedPhotoThumbnail(
+      rawMediaJson: rawMediaJson,
+      attachment: attachment,
+      parent: parent,
+      mediaFileManager: mediaFileManager,
+    );
+  }
+  return saved;
+}
+
+/// 301: validates and persists the optional inline thumbnail write-once to the
+/// guarded sibling path `media/<peer>/<blobId>.thumb.jpg`. The base64 is read
+/// from the RAW attachment map (the model never carries it), validated
+/// fail-closed (protected mode, image-and-not-gif via the dual check, decode,
+/// raw cap), authorized per-callsite through [DirectPrivateMediaPathGuard],
+/// and dropped after the file write — never persisted to the database.
+Future<void> _persistIncomingProtectedPhotoThumbnail({
+  required Map<String, dynamic> rawMediaJson,
+  required MediaAttachment attachment,
+  required ConversationMessage parent,
+  required MediaFileManager mediaFileManager,
+}) async {
+  if (parent.privateMediaPolicy.mode != PrivateMediaMode.protected) return;
+  final mime = attachment.mime.toLowerCase();
+  final mediaType = attachment.mediaType.toLowerCase();
+  if (mime == 'image/gif' || mediaType == 'gif') return;
+  if (!(mime.startsWith('image/') || mediaType == 'image')) return;
+  final raw = rawMediaJson[kProtectedPhotoInlineThumbnailKey];
+  if (raw is! String || raw.isEmpty) return;
+  final Uint8List bytes;
+  try {
+    bytes = base64Decode(raw);
+  } catch (_) {
+    return;
+  }
+  if (bytes.isEmpty ||
+      bytes.length > kProtectedPhotoInlineThumbnailMaxRawBytes) {
+    return;
+  }
+  if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
+    contactPeerId: parent.contactPeerId,
+    messageId: attachment.messageId,
+    attachmentId: attachment.id,
+  )) {
+    return;
+  }
+  try {
+    final relative = MediaFilePathConvention.relativeThumbnailPathForAttachment(
+      contactPeerId: parent.contactPeerId,
+      blobId: attachment.id,
+    );
+    final absolutePath = await mediaFileManager.resolveStoredPath(relative);
+    final authorityRoot = p.dirname(p.dirname(absolutePath));
+    if (!await DirectPrivateMediaPathGuard.authorizeTarget(
+      targetPath: absolutePath,
+      authorityRoot: authorityRoot,
+    )) {
+      return;
+    }
+    final file = File(absolutePath);
+    if (await file.exists()) return; // write-once; replay stays idempotent
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes, flush: true);
+  } catch (_) {
+    // Best-effort: a failed thumbnail write never blocks the message.
+  }
 }
 
 ConversationMessage _seedIncomingPrivateMediaLifecycle(

@@ -51,7 +51,10 @@ const _controllerTestPaths = <String>[
 // remains GREEN when TC-294-01 transfers those expressions to controllers.
 const _expectedDirectApiFingerprint = 'ba5c006c';
 const _expectedGroupApiFingerprint = '2d8f881b';
-const _expectedDirectHandoffFingerprint = '26d82ad2';
+// 301: the direct handoff gained the reviewed `protectionCoordinator`
+// pass-through (the Session-05-qualified shared screenshot-protection
+// coordinator for protected thumbnail bubbles).
+const _expectedDirectHandoffFingerprint = '81a18170';
 const _expectedGroupHandoffFingerprint = '74b2fe80';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();

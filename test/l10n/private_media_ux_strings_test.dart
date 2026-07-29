@@ -31,8 +31,15 @@ void main() {
         "{name} can open it once, then it's gone. Saving and sharing are disabled.",
     'private_media_disclosure_expiry':
         'Only {name} can open it until it expires. Saving and sharing are disabled.',
+    // 302: the sender budget forks by mode. View-once keeps the once-promise
+    // below; protected gets the unlimited-reopen promise.
     'private_media_disclosure_reopen':
         'You can reopen it once here after sending.',
+    'private_media_disclosure_reopen_protected':
+        'You can reopen it here anytime.',
+    // Pinned here because 12 production surfaces (push, quote, info, the
+    // generic open-failure body) render it and nothing else fixes its text.
+    'private_media_notification_body': 'Private media',
     'private_media_card_title_protected_photo': 'Protected photo',
     'private_media_card_title_protected_video': 'Protected video',
     'private_media_card_title_view_once_photo': 'View-once photo',
@@ -201,6 +208,8 @@ void main() {
         bundle['private_media_disclosure_protected'],
         bundle['private_media_disclosure_view_once'],
         bundle['private_media_disclosure_expiry'],
+        bundle['private_media_disclosure_reopen'],
+        bundle['private_media_disclosure_reopen_protected'],
       ].join(' ').toLowerCase();
 
       expect(disclosures, isNot(contains('screenshot')));

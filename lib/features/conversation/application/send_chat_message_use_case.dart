@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
@@ -211,6 +215,25 @@ String? _sanitizeDirectMediaAttachments(List<MediaAttachment>? attachments) {
     }
   }
   return null;
+}
+
+/// 301: best-effort inline thumbnail for a protected PHOTO. Photo means the
+/// dual check excludes gif (mirror of the eligibility kind fork below — a bare
+/// image-mime predicate would wrongly embed thumbs for protected GIFs, which
+/// are representable at this seam). Any failure returns null and the send
+/// proceeds without the field.
+Future<Uint8List?> _generateProtectedPhotoInlineThumbnail(
+  MediaAttachment attachment,
+) async {
+  final mime = attachment.mime.toLowerCase();
+  final mediaType = attachment.mediaType.toLowerCase();
+  if (mime == 'image/gif' || mediaType == 'gif') return null;
+  if (!(mime.startsWith('image/') || mediaType == 'image')) return null;
+  final localPath = attachment.localPath;
+  if (localPath == null || localPath.isEmpty) return null;
+  return ImageProcessor.generateInlineThumbnailBytes(
+    inputPath: MediaFileManager.resolveStoredPathSync(localPath),
+  );
 }
 
 PrivateMediaEligibility _privateMediaEligibilityForSend({
@@ -498,6 +521,28 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       )
       .toList();
 
+  // 301: a protected PHOTO send embeds one bounded inline thumbnail into the
+  // serialized attachment map (the encrypted inner JSON), so the receiver can
+  // render a restricted bubble thumbnail without any pre-open blob download.
+  // The MediaAttachment model never carries the key; edits never touch it.
+  final mediaJson = normalizedAttachments
+      ?.map((attachment) => attachment.toJson())
+      .toList();
+  if (mediaJson != null &&
+      effectivePrivateMediaPolicy.mode == PrivateMediaMode.protected &&
+      action != MessagePayload.actionEdit &&
+      normalizedAttachments!.length == 1) {
+    final inlineThumbnail = await _generateProtectedPhotoInlineThumbnail(
+      normalizedAttachments.single,
+    );
+    if (inlineThumbnail != null) {
+      mediaJson[0] = {
+        ...mediaJson[0],
+        kProtectedPhotoInlineThumbnailKey: base64Encode(inlineThumbnail),
+      };
+    }
+  }
+
   final payload = MessagePayload(
     id: resolvedMessageId,
     text: sanitizedText,
@@ -507,9 +552,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     action: action,
     editedAt: resolvedEditedAt,
     quotedMessageId: quotedMessageId,
-    media: normalizedAttachments
-        ?.map((attachment) => attachment.toJson())
-        .toList(),
+    media: mediaJson,
     dedupKey: resolvedDedupKey,
     isForwarded: isForwarded,
     privateMediaPolicy: effectivePrivateMediaPolicy,

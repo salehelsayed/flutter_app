@@ -29,9 +29,11 @@ void main() {
     'lib/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart',
     'lib/features/conversation/presentation/widgets/message_context_overlay.dart',
     'lib/features/conversation/presentation/widgets/letter_card.dart',
+    'lib/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart',
     'lib/shared/widgets/media/media_grid.dart',
     'lib/shared/widgets/media/media_grid_cell.dart',
     'lib/shared/widgets/media/full_screen_typed_media_viewer.dart',
+    'lib/shared/widgets/media/ios_capture_protected_image.dart',
   ];
 
   int count(String source, String needle) => needle.allMatches(source).length;
@@ -122,13 +124,14 @@ void main() {
         );
       }
 
-      // The full-screen viewer owns one reviewed native channel for the iOS
-      // capture-protected image view. It is a render-control boundary
-      // (`prepare`/`reveal`), not a received-media egress route. Keep that
-      // exception exact while every other media-action UI file remains at
-      // zero raw MethodChannel construction.
+      // The promoted iOS capture-protected image view (plan 301 moved it out
+      // of the full-screen viewer so the protected-thumbnail tile can reuse
+      // it) owns the ONE reviewed native channel. It is a render-control
+      // boundary (`prepare`/`reveal`), not a received-media egress route.
+      // Keep that exception exact while every other media-action UI file
+      // remains at zero raw MethodChannel construction.
       final allowedMethodChannelCalls =
-          path == 'lib/shared/widgets/media/full_screen_typed_media_viewer.dart'
+          path == 'lib/shared/widgets/media/ios_capture_protected_image.dart'
           ? 1
           : 0;
       expect(

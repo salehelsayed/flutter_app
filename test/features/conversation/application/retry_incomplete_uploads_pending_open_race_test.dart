@@ -55,6 +55,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final startupAdapter = _adapter(fixture);
       final conversationAdapter = _adapter(fixture);
@@ -147,6 +148,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final harness = _controller(fixture);
       const identity = DirectPrivateMediaViewerIdentity(
@@ -210,6 +212,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       await fixture.db.update(
         'messages',
@@ -268,6 +271,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final completed = _completedAttachment(
         messageId: messageId,
@@ -357,6 +361,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final harness = _controller(fixture);
       final prepared = await harness.controller.prepareResult(
@@ -419,6 +424,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final harness = _controller(fixture);
       final prepared = await harness.controller.prepareResult(
@@ -498,6 +504,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
       );
       final harness = _controller(fixture);
       final prepared = await harness.controller.prepareResult(
@@ -578,6 +585,7 @@ void main() {
         fixture,
         messageId: messageId,
         attachmentId: attachmentId,
+        privateMode: 'view_once',
         wireEnvelope: staleEnvelope,
       );
       final completed = _completedAttachment(
@@ -920,6 +928,97 @@ void main() {
       );
     },
   );
+
+  // 302 (AD-3): without the 'opening' latch an upload completion arriving
+  // while the sender views their protected photo has nothing to defer behind,
+  // so it must commit IMMEDIATELY rather than qualify as activeLeasePending.
+  //
+  // The choreography is the discriminator: the retry is driven BETWEEN
+  // prepareResult and settle, and the commit is asserted while the grant is
+  // still open. Asserting only after settle would pass on the old behavior
+  // too, because deferred completions commit during settlement.
+  test(
+    'protected completion commits immediately under an open lease-free viewer and reopen uses canonical',
+    () async {
+      const messageId = 'p302-protected-immediate-commit';
+      const attachmentId = 'p302-protected-immediate-commit-att';
+      const identity = DirectPrivateMediaViewerIdentity(
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+      final seeded = await _seedPending(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        privateMode: 'protected',
+      );
+      final canonicalAbsolute = p.join(
+        FakeMediaFileManager.testRootPath,
+        'media/$_contactPeerId/$attachmentId.jpg',
+      );
+      final harness = _controller(fixture);
+      final prepared = await harness.controller.prepareResult(
+        identity,
+        const DirectPrivateMediaAlwaysValidContinuityGuard(),
+      );
+
+      expect(prepared.isGranted, isTrue);
+      expect(prepared.grant!.localPath, seeded.pendingAbsolute);
+      expect(await harness.controller.markFirstFrame(prepared.grant!), isTrue);
+
+      final completed = _completedAttachment(
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+      final retried = await _runRealIncompleteRetry(fixture, completed);
+
+      // Asserted WHILE the grant is still open — this is the whole point.
+      expect(retried, 1);
+      _expectCompletedFingerprint(
+        (await fixture.rawAttachmentRow(attachmentId))!,
+        completed,
+      );
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        _newKey,
+      );
+      expect(
+        await _privateState(fixture, messageId),
+        'available',
+        reason: 'the completion must not move a lease-free protected row',
+      );
+
+      final settlement = await harness.controller.settle(
+        prepared.grant!,
+        DirectPrivateMediaExitReason.close,
+      );
+      expect(
+        settlement.disposition,
+        DirectPrivateMediaSettleDisposition.noLease,
+      );
+      expect(await _privateState(fixture, messageId), 'available');
+
+      // The reopen resolves the canonical row the completion committed, not
+      // the pending source it reclaimed.
+      final reopened = await harness.controller.prepareResult(
+        identity,
+        const DirectPrivateMediaAlwaysValidContinuityGuard(),
+      );
+      expect(reopened.isGranted, isTrue);
+      expect(reopened.grant!.localPath, canonicalAbsolute);
+      final reopenedSettlement = await harness.controller.settle(
+        reopened.grant!,
+        DirectPrivateMediaExitReason.close,
+      );
+      expect(
+        reopenedSettlement.disposition,
+        DirectPrivateMediaSettleDisposition.noLease,
+      );
+      expect(await _privateState(fixture, messageId), 'available');
+    },
+  );
 }
 
 Future<({String pendingRelative, String pendingAbsolute})> _seedPending(
@@ -928,6 +1027,11 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedPending(
   required String attachmentId,
   bool isPrivate = true,
   String? wireEnvelope,
+  // 302: the lease-race contracts below (an open viewer blocks completion,
+  // deletion, and failure projection via the 'opening' latch) hold only where
+  // a lease still exists — outgoing view-once. Protected now opens lease-free
+  // and is covered by the immediate-commit case instead.
+  String privateMode = 'protected',
 }) async {
   await fixture.seedDirectParent(messageId, contactPeerId: _contactPeerId);
   await fixture.db.update(
@@ -939,7 +1043,7 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedPending(
       'is_incoming': 0,
       'wire_envelope': wireEnvelope,
       'private_media_policy_version': isPrivate ? 1 : 0,
-      'private_media_mode': isPrivate ? 'protected' : 'ordinary',
+      'private_media_mode': isPrivate ? privateMode : 'ordinary',
       'private_media_state': isPrivate ? 'available' : 'none',
       'private_media_received_at_ms': isPrivate ? 1000 : null,
       'private_media_clock_high_water_ms': isPrivate ? 1000 : null,

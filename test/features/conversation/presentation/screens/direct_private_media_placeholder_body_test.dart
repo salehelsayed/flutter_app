@@ -78,14 +78,30 @@ void main() {
         ),
       );
 
+      // 302: protected senders re-open without limit, so the disclosure drops
+      // the once-promise. View-once keeps it (asserted below).
       expect(
         find.text(
           "Only Layla can view it. They can't save or share it.\n"
-          'You can reopen it once here after sending.',
+          'You can reopen it here anytime.',
         ),
         findsOneWidget,
       );
       expect(find.textContaining('screenshot'), findsNothing);
+
+      await pumpPlaceholder(
+        tester,
+        const DirectPrivateMediaOutgoingPlaceholder(
+          policy: PrivateMediaPolicy.viewOnce(),
+          contactDisplayName: 'Layla',
+        ),
+      );
+
+      expect(
+        find.textContaining('You can reopen it once here after sending.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('anytime'), findsNothing);
     },
   );
 

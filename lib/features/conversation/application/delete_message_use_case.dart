@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -697,6 +699,26 @@ Future<void> cleanupDeletedMessageArtifacts({
     }
     final resolvedPath = await mediaFileManager.resolveStoredPath(storedPath);
     await mediaFileManager.deleteFile(resolvedPath);
+  }
+  // 301: incoming protected rows may own an inline-thumbnail sibling even
+  // though localPath is still null (pre-open). This function is the DISTINCT
+  // third destructive path (incoming delete-for-everyone) — remove the
+  // sibling with the row so no decrypted pixels outlive the message.
+  for (final attachment in attachments) {
+    if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
+      contactPeerId: message.contactPeerId,
+      messageId: message.id,
+      attachmentId: attachment.id,
+    )) {
+      continue;
+    }
+    final thumbnailPath = await mediaFileManager.resolveStoredPath(
+      MediaFilePathConvention.relativeThumbnailPathForAttachment(
+        contactPeerId: message.contactPeerId,
+        blobId: attachment.id,
+      ),
+    );
+    await mediaFileManager.deleteFile(thumbnailPath);
   }
 }
 

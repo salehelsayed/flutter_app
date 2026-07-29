@@ -8,9 +8,11 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -33,6 +35,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/undelivered_messages_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
@@ -352,6 +355,12 @@ class ConversationScreen extends StatefulWidget {
   /// layer labels the confirmation as message+attachments removal.
   final ValueChanged<String>? onDeleteMediaMessage;
 
+  /// 301: shared screenshot-protection coordinator for the ANDROID-only
+  /// route-scoped FLAG_SECURE grant while a protected thumbnail is rendered.
+  /// Never entered on iOS (the critical-event latch would block protected
+  /// opens); iOS pixels are protected per-view inside the tile instead.
+  final PrivateMediaProtectionCoordinator? protectionCoordinator;
+
   const ConversationScreen({
     super.key,
     required this.contactPeerId,
@@ -435,6 +444,7 @@ class ConversationScreen extends StatefulWidget {
     this.loadPictureInPictureAuthorization,
     this.mediaViewerResumeStore,
     this.onDeleteMediaMessage,
+    this.protectionCoordinator,
   });
 
   @override
@@ -451,6 +461,15 @@ class _ConversationScreenState extends State<ConversationScreen>
   RouteObserver<ModalRoute<void>>? _privateMediaRouteObserver;
   ModalRoute<void>? _privateMediaRoute;
   int _privateMediaRouteGeneration = 0;
+
+  // 301: ANDROID-only route-scoped screenshot protection while >= 1 protected
+  // thumbnail is rendered. The owner handle and the coordinator it was entered
+  // on live here; enter-failure latches fail-closed for the session (the
+  // coordinator's channel-failure state is permanent anyway).
+  PrivateMediaProtectionOwner? _protectionOwner;
+  PrivateMediaProtectionCoordinator? _enteredProtectionCoordinator;
+  bool _protectionEnterInFlight = false;
+  bool _protectionEnterFailed = false;
 
   // 159 (main-isolate-blocking-1): memoize the O(N) two-pass run-grouping so an
   // identical-input rebuild (a status flip elsewhere, a banner toggle, an
@@ -486,10 +505,144 @@ class _ConversationScreenState extends State<ConversationScreen>
       );
 
   @override
+  void initState() {
+    super.initState();
+    _syncProtectedThumbnailProtection();
+  }
+
+  @override
   void didUpdateWidget(ConversationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.messages.isEmpty && widget.messages.isNotEmpty) {
       _wasEmpty = true;
+    }
+    if (!identical(
+      oldWidget.protectionCoordinator,
+      widget.protectionCoordinator,
+    )) {
+      _releaseProtectedThumbnailProtection();
+      _protectionEnterFailed = false;
+    }
+    _syncProtectedThumbnailProtection();
+  }
+
+  /// 301: the single eligible protected-PHOTO attachment of [message], or
+  /// null. Photo means the dual check excludes gif; videos keep their current
+  /// no-pixel presentation; terminal/deleted rows never qualify.
+  MediaAttachment? _protectedPhotoAttachment(ConversationMessage message) {
+    if (message.isDeleted) return null;
+    if (message.privateMediaPolicy.mode != PrivateMediaMode.protected) {
+      return null;
+    }
+    if (message.privateMediaState.isTerminal) return null;
+    final visual = message.media
+        .where(
+          (attachment) =>
+              attachment.mediaType == 'image' ||
+              attachment.mediaType == 'gif' ||
+              attachment.mediaType == 'video',
+        )
+        .toList(growable: false);
+    if (visual.length != 1) return null;
+    final attachment = visual.single;
+    final mime = attachment.mime.toLowerCase();
+    final mediaType = attachment.mediaType.toLowerCase();
+    if (mime == 'image/gif' || mediaType == 'gif') return null;
+    if (!(mime.startsWith('image/') || mediaType == 'image')) return null;
+    return attachment;
+  }
+
+  /// 301: pixel source for the protected thumbnail tile — receiver: the
+  /// persisted inline-thumbnail sibling; sender: the existing local bytes.
+  /// Null (missing file / old-sender build) keeps today's presentations.
+  String? _protectedPhotoThumbnailPath(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) {
+    if (message.isIncoming) {
+      final relative =
+          MediaFilePathConvention.relativeThumbnailPathForAttachment(
+            contactPeerId: widget.contactPeerId,
+            blobId: attachment.id,
+          );
+      final resolved = MediaFileManager.resolveStoredPathSync(relative);
+      return File(resolved).existsSync() ? resolved : null;
+    }
+    final senderOpenableStatus =
+        attachment.downloadStatus == kMediaDownloadStatusDone ||
+        (attachment.downloadStatus == 'upload_pending' &&
+            attachment.ownerLane == MediaOwnerLane.direct &&
+            attachment.messageId == message.id);
+    if (!senderOpenableStatus) return null;
+    return _existingDirectMediaPath(attachment);
+  }
+
+  /// Whether protected pixels may render in this window: iOS protects
+  /// per-view inside the tile; Android requires the held FLAG_SECURE owner —
+  /// pixels never render in an unprotected Android window (fail closed, incl.
+  /// enter failure and a missing coordinator).
+  bool get _protectedThumbnailPixelsAllowed =>
+      defaultTargetPlatform != TargetPlatform.android ||
+      _protectionOwner != null;
+
+  bool _protectedThumbnailRowPresent() {
+    for (final message in widget.messages) {
+      final attachment = _protectedPhotoAttachment(message);
+      if (attachment == null) continue;
+      if (_protectedPhotoThumbnailPath(message, attachment) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _releaseProtectedThumbnailProtection() {
+    final coordinator = _enteredProtectionCoordinator;
+    final owner = _protectionOwner;
+    _protectionOwner = null;
+    _enteredProtectionCoordinator = null;
+    if (coordinator != null && owner != null) {
+      unawaited(coordinator.exit(owner));
+    }
+  }
+
+  /// 301: Android-only. Enters once when the rendered list first contains a
+  /// protected-thumbnail row, releases as soon as none remain (or on
+  /// dispose). NEVER runs on iOS: the coordinator's critical-event latch
+  /// would make protected media unopenable after a single app switch.
+  void _syncProtectedThumbnailProtection() {
+    final protectionCoordinator = widget.protectionCoordinator;
+    if (protectionCoordinator == null) return;
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    if (_protectedThumbnailRowPresent()) {
+      if (_protectionOwner != null ||
+          _protectionEnterInFlight ||
+          _protectionEnterFailed) {
+        return;
+      }
+      _protectionEnterInFlight = true;
+      unawaited(
+        protectionCoordinator.enter().then((owner) {
+          _protectionEnterInFlight = false;
+          if (!mounted) {
+            if (owner != null) unawaited(protectionCoordinator.exit(owner));
+            return;
+          }
+          setState(() {
+            if (owner == null) {
+              _protectionEnterFailed = true;
+            } else if (!_protectedThumbnailRowPresent()) {
+              // Rows changed while entering — balance immediately.
+              unawaited(protectionCoordinator.exit(owner));
+            } else {
+              _protectionOwner = owner;
+              _enteredProtectionCoordinator = protectionCoordinator;
+            }
+          });
+        }),
+      );
+    } else {
+      _releaseProtectedThumbnailProtection();
     }
   }
 
@@ -550,6 +703,7 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   void dispose() {
+    _releaseProtectedThumbnailProtection();
     _privateMediaRouteObserver?.unsubscribe(this);
     _privateMediaRouteObserver = null;
     _privateMediaRoute = null;
@@ -1028,6 +1182,37 @@ class _ConversationScreenState extends State<ConversationScreen>
                       privateVisualDecision.allows(
                         DirectPrivateMediaAction.openInApp,
                       );
+                  // 301: outgoing protected PHOTO with local bytes renders the
+                  // restricted thumbnail tile (sender-side presentation only —
+                  // no artifact, no lifecycle call). Bytes absent falls back
+                  // to the exact current card.
+                  if (_protectedThumbnailPixelsAllowed &&
+                      attachment != null &&
+                      localMediaAvailable &&
+                      _protectedPhotoAttachment(message) != null) {
+                    final pixelPath = _existingDirectMediaPath(attachment);
+                    if (pixelPath != null) {
+                      return ProtectedPhotoThumbnailTile(
+                        imagePath: pixelPath,
+                        semanticsLabel: privateMediaCardTitle(
+                          l10n,
+                          message.privateMediaPolicy,
+                          privateKind,
+                        ),
+                        semanticsValue:
+                            l10n.private_media_disclosure_reopen_protected,
+                        onOpen: canReopen
+                            ? () => unawaited(
+                                _openPrivateMediaFromConversation(
+                                  message,
+                                  attachment,
+                                  privateVisualDecision,
+                                ),
+                              )
+                            : null,
+                      );
+                    }
+                  }
                   return DirectPrivateMediaOutgoingPlaceholder(
                     policy: message.privateMediaPolicy,
                     contactDisplayName: widget.contactUsername,
@@ -1044,6 +1229,39 @@ class _ConversationScreenState extends State<ConversationScreen>
                           )
                         : null,
                   );
+                }
+                // 301: incoming protected PHOTO whose inline-thumbnail sibling
+                // exists renders the restricted thumbnail tile. Missing file
+                // (old-sender build) keeps the exact no-pixel open tile below.
+                if (_protectedThumbnailPixelsAllowed && attachment != null) {
+                  final protectedPhoto = _protectedPhotoAttachment(message);
+                  final thumbnailPath = protectedPhoto == null
+                      ? null
+                      : _protectedPhotoThumbnailPath(message, protectedPhoto);
+                  if (thumbnailPath != null) {
+                    final canOpen =
+                        privateVisualDecision != null &&
+                        privateVisualDecision.allows(
+                          DirectPrivateMediaAction.openInApp,
+                        );
+                    return ProtectedPhotoThumbnailTile(
+                      imagePath: thumbnailPath,
+                      semanticsLabel: privateMediaCardTitle(
+                        l10n,
+                        message.privateMediaPolicy,
+                        privateKind,
+                      ),
+                      onOpen: canOpen
+                          ? () => unawaited(
+                              _openPrivateMediaFromConversation(
+                                message,
+                                attachment,
+                                privateVisualDecision,
+                              ),
+                            )
+                          : null,
+                    );
+                  }
                 }
                 return DirectPrivateMediaOpenPlaceholder(
                   opening: opening,

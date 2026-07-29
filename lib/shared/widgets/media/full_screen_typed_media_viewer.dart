@@ -3,12 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import 'ios_capture_protected_image.dart';
 import 'media_picture_in_picture_controller.dart';
 import 'media_playback_adapter.dart';
 import 'media_video_controls.dart';
@@ -743,7 +742,7 @@ class _TypedImagePageState extends State<_TypedImagePage> {
     if (widget.captureProtected) {
       return InteractiveViewer(
         child: SizedBox.expand(
-          child: _IosCaptureProtectedImage(
+          child: IosCaptureProtectedImage(
             key: ValueKey(
               'ios-private-image:${widget.item.owner?.dbValue ?? 'none'}:'
               '${widget.item.messageId}:${widget.item.attachmentId}',
@@ -781,156 +780,6 @@ class _TypedImagePageState extends State<_TypedImagePage> {
           },
         ),
       ),
-    );
-  }
-}
-
-class _IosCaptureProtectedImage extends StatefulWidget {
-  const _IosCaptureProtectedImage({
-    super.key,
-    required this.path,
-    required this.onFirstRenderedFrame,
-    required this.onPreFrameFailure,
-    required this.onPostFrameFailure,
-  });
-
-  final String path;
-  final Future<bool> Function()? onFirstRenderedFrame;
-  final VoidCallback onPreFrameFailure;
-  final VoidCallback onPostFrameFailure;
-
-  @override
-  State<_IosCaptureProtectedImage> createState() =>
-      _IosCaptureProtectedImageState();
-}
-
-class _IosCaptureProtectedImageState extends State<_IosCaptureProtectedImage> {
-  static const _viewType = 'mknoon/private_capture_protected_image';
-  static const _operationTimeout = Duration(seconds: 15);
-
-  bool _started = false;
-  bool _revealed = false;
-  bool _failed = false;
-  bool _authorizationAccepted = false;
-  MethodChannel? _channel;
-  Timer? _creationWatchdog;
-
-  @override
-  void initState() {
-    super.initState();
-    _creationWatchdog = Timer(_operationTimeout, () {
-      if (mounted && !_started) {
-        _started = true;
-        _failClosed();
-      }
-    });
-  }
-
-  Future<void> _onPlatformViewCreated(int viewId) async {
-    if (_started || _failed || !mounted) return;
-    _started = true;
-    _creationWatchdog?.cancel();
-    _creationWatchdog = null;
-    final channel = MethodChannel('$_viewType/$viewId');
-    _channel = channel;
-    channel.setMethodCallHandler(_handleNativeCall);
-    try {
-      final prepared = await channel
-          .invokeMapMethod<Object?, Object?>('prepare')
-          .timeout(_operationTimeout);
-      if (!mounted || _failed) return;
-      if (!_isExactSuccess(prepared)) {
-        _failClosed();
-        return;
-      }
-
-      final accepted =
-          await (widget.onFirstRenderedFrame?.call() ??
-              Future<bool>.value(true));
-      if (!mounted || _failed || !accepted) return;
-      _authorizationAccepted = true;
-
-      final revealed = await channel
-          .invokeMapMethod<Object?, Object?>('reveal')
-          .timeout(_operationTimeout);
-      if (!mounted || _failed) return;
-      if (!_isExactSuccess(revealed)) {
-        _failClosed();
-        return;
-      }
-      if (_failed) return;
-      setState(() => _revealed = true);
-    } catch (_) {
-      if (mounted) _failClosed();
-    }
-  }
-
-  Future<Object?> _handleNativeCall(MethodCall call) async {
-    if (call.method != 'renderFailure' || call.arguments != null) {
-      throw MissingPluginException('Unsupported protected image callback');
-    }
-    if (!mounted) return const <String, Object?>{'ok': false};
-    _failClosed();
-    return const <String, Object?>{'ok': true};
-  }
-
-  void _failClosed() {
-    if (_failed) return;
-    _failed = true;
-    _creationWatchdog?.cancel();
-    _creationWatchdog = null;
-    if (_authorizationAccepted) {
-      widget.onPostFrameFailure();
-    } else {
-      widget.onPreFrameFailure();
-    }
-    if (mounted) setState(() {});
-  }
-
-  bool _isExactSuccess(Map<Object?, Object?>? envelope) =>
-      envelope?.length == 1 && envelope?['ok'] == true;
-
-  @override
-  void dispose() {
-    _channel?.setMethodCallHandler(null);
-    _channel = null;
-    _creationWatchdog?.cancel();
-    _creationWatchdog = null;
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_failed) {
-      return const Center(
-        child: Icon(
-          Icons.broken_image_outlined,
-          size: 48,
-          color: Color.fromRGBO(255, 255, 255, 0.25),
-        ),
-      );
-    }
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        UiKitView(
-          viewType: _viewType,
-          creationParams: <String, Object?>{'path': widget.path},
-          creationParamsCodec: const StandardMessageCodec(),
-          hitTestBehavior: PlatformViewHitTestBehavior.transparent,
-          onPlatformViewCreated: _onPlatformViewCreated,
-        ),
-        if (_revealed)
-          const IgnorePointer(
-            key: ValueKey('ios-capture-protected-image-revealed'),
-            child: SizedBox.shrink(),
-          ),
-        if (!_revealed)
-          const ColoredBox(
-            key: ValueKey('ios-capture-protected-image-prereveal-cover'),
-            color: Colors.black,
-          ),
-      ],
     );
   }
 }

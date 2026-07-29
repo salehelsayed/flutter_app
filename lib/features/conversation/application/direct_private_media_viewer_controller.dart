@@ -411,9 +411,20 @@ class DirectPrivateMediaViewerController {
         }
         authorizedPath = openingLease.localPath;
       } else {
-        if (initialTarget.direction != PrivateMediaDirection.incoming ||
-            (initialTarget.mode != PrivateMediaMode.protected &&
-                initialTarget.mode != PrivateMediaMode.disappearing)) {
+        // Lease-free opens are authorized for exactly three shapes: incoming
+        // protected, incoming disappearing, and outgoing protected. Outgoing
+        // disappearing must NEVER reach this branch — it keeps its generic
+        // upload persistence/retry behavior and must not inherit the
+        // sender-open CAS (see media_attachments_db_helpers.dart's
+        // outgoing-disappearing boundary).
+        final leaseFreeAuthorized = switch (initialTarget.direction) {
+          PrivateMediaDirection.incoming =>
+            initialTarget.mode == PrivateMediaMode.protected ||
+                initialTarget.mode == PrivateMediaMode.disappearing,
+          PrivateMediaDirection.outgoing =>
+            initialTarget.mode == PrivateMediaMode.protected,
+        };
+        if (!leaseFreeAuthorized) {
           return await failed(
             DirectPrivateMediaPrepareFailureReason.notEligible,
           );
@@ -999,13 +1010,18 @@ class DirectPrivateMediaViewerController {
     };
   }
 
+  /// Only budgeted opens claim the one-shot lease. Outgoing PROTECTED is
+  /// deliberately absent: the sender re-opens their own protected media
+  /// without limit, exactly as the recipient does, so requesting a lease would
+  /// terminalize the row and wipe the sender's bytes after one look. The
+  /// engine, adapter, and CAS surface still implement the outgoing-protected
+  /// lease lane for legacy rows; this controller simply never asks for it.
   bool _requiresOpeningLease(PrivateMediaLifecycleTarget target) {
     return switch (target.direction) {
       PrivateMediaDirection.incoming =>
         target.mode == PrivateMediaMode.viewOnce,
       PrivateMediaDirection.outgoing =>
-        target.mode == PrivateMediaMode.protected ||
-            target.mode == PrivateMediaMode.viewOnce,
+        target.mode == PrivateMediaMode.viewOnce,
     };
   }
 

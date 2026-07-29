@@ -172,9 +172,17 @@ void main() {
       );
       expect(await _privateState(fixture, messageId), 'available');
     });
+  }
 
+  // Keep the adapter/SQL legacy loop above on both modes verbatim. Only these
+  // controller-tier cases fork by mode under 302.
+  for (final mode in _modes) {
+    // 302: view-once still claims the one-shot lease (state 'opening') and
+    // rolls it back on a pre-first-frame exit. Protected never leases, so the
+    // row is 'available' throughout and settlement is 'noLease'.
+    final leases = mode == 'view_once';
     test(
-      'outgoing upload_pending grant rolls back before first frame ($mode)',
+      'outgoing upload_pending pre-first-frame exit leaves the row available ($mode)',
       () async {
         final messageId = 'sender-pending-rollback-$mode';
         final attachmentId = 'sender-pending-rollback-blob-$mode';
@@ -204,10 +212,13 @@ void main() {
           expect(
             result.isGranted,
             isTrue,
-            reason: 'pending plaintext is sender-local one-more-look authority',
+            reason: 'pending plaintext is sender-local open authority',
           );
           expect(result.grant!.localPath, pendingAbsolute);
-          expect(await _privateState(fixture, messageId), 'opening');
+          expect(
+            await _privateState(fixture, messageId),
+            leases ? 'opening' : 'available',
+          );
           final settlement = await harness.controller.settle(
             result.grant!,
             DirectPrivateMediaExitReason.preFrameDecodeFailure,
@@ -215,10 +226,13 @@ void main() {
           settled = true;
           expect(
             settlement.disposition,
-            DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+            leases
+                ? DirectPrivateMediaSettleDisposition.rolledBackAvailable
+                : DirectPrivateMediaSettleDisposition.noLease,
           );
           expect(settlement.firstFrameRecorded, isFalse);
           expect(await _privateState(fixture, messageId), 'available');
+          expect(File(pendingAbsolute).existsSync(), isTrue);
         } finally {
           if (!settled && result.grant != null && !result.grant!.settled) {
             await harness.controller.settle(
@@ -231,10 +245,14 @@ void main() {
     );
 
     test(
-      'outgoing upload_pending first frame terminalizes the lease ($mode)',
+      'outgoing upload_pending first frame settles by mode budget ($mode)',
       () async {
         final messageId = 'sender-pending-terminal-$mode';
         final attachmentId = 'sender-pending-terminal-blob-$mode';
+        final pendingAbsolute = p.join(
+          FakeMediaFileManager.testRootPath,
+          'pending_uploads/$messageId/$attachmentId.jpg',
+        );
         await _seedPendingTarget(
           fixture,
           messageId: messageId,
@@ -258,7 +276,12 @@ void main() {
             await harness.controller.markFirstFrame(result.grant!),
             isTrue,
           );
-          expect(await _privateState(fixture, messageId), 'viewing');
+          // Protected records the first frame in-process only: 'viewing' is a
+          // lease state and the sender no longer takes a lease.
+          expect(
+            await _privateState(fixture, messageId),
+            leases ? 'viewing' : 'available',
+          );
           final settlement = await harness.controller.settle(
             result.grant!,
             DirectPrivateMediaExitReason.close,
@@ -266,10 +289,18 @@ void main() {
           settled = true;
           expect(
             settlement.disposition,
-            DirectPrivateMediaSettleDisposition.terminalized,
+            leases
+                ? DirectPrivateMediaSettleDisposition.terminalized
+                : DirectPrivateMediaSettleDisposition.noLease,
           );
           expect(settlement.firstFrameRecorded, isTrue);
-          expect(await _privateState(fixture, messageId), 'consumed');
+          expect(
+            await _privateState(fixture, messageId),
+            leases ? 'consumed' : 'available',
+          );
+          // The view-once budget still wipes the sender's local bytes on
+          // close; protected keeps them so the next open has authority.
+          expect(File(pendingAbsolute).existsSync(), !leases);
         } finally {
           if (!settled && result.grant != null && !result.grant!.settled) {
             await harness.controller.settle(
@@ -281,6 +312,90 @@ void main() {
       },
     );
   }
+
+  // 302 (reported bug, real-DB tier): the sender re-opens their own protected
+  // photo without limit. The reopen leg runs on a FRESH engine/controller pair
+  // over the same database, so the no-latch claim is restart-shaped rather
+  // than an artifact of in-memory carryover.
+  test(
+    'outgoing protected pending row reopens repeatedly without lease',
+    () async {
+      const messageId = 'sender-pending-reopen-protected';
+      const attachmentId = 'sender-pending-reopen-protected-blob';
+      const pendingRelative = 'pending_uploads/$messageId/$attachmentId.jpg';
+      final pendingAbsolute = p.join(
+        FakeMediaFileManager.testRootPath,
+        pendingRelative,
+      );
+      await _seedPendingTarget(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mode: 'protected',
+        bytes: const <int>[1, 2, 3, 4],
+      );
+      const identity = DirectPrivateMediaViewerIdentity(
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+
+      for (final cycle in <int>[1, 2, 3]) {
+        final harness = _buildHarness(fixture);
+        final result = await harness.controller.prepareResult(
+          identity,
+          const DirectPrivateMediaAlwaysValidContinuityGuard(),
+        );
+
+        expect(result.isGranted, isTrue, reason: 'cycle $cycle');
+        expect(
+          result.grant!.localPath,
+          pendingAbsolute,
+          reason: 'cycle $cycle',
+        );
+        expect(
+          await _privateState(fixture, messageId),
+          'available',
+          reason: 'cycle $cycle latched the row on open',
+        );
+        expect(
+          await harness.controller.markFirstFrame(result.grant!),
+          isTrue,
+          reason: 'cycle $cycle',
+        );
+        expect(
+          await _privateState(fixture, messageId),
+          'available',
+          reason: 'cycle $cycle latched the row on first frame',
+        );
+
+        final settlement = await harness.controller.settle(
+          result.grant!,
+          DirectPrivateMediaExitReason.close,
+        );
+        expect(
+          settlement.disposition,
+          DirectPrivateMediaSettleDisposition.noLease,
+          reason: 'cycle $cycle',
+        );
+        expect(
+          await _privateState(fixture, messageId),
+          'available',
+          reason: 'cycle $cycle terminalized the sender row on close',
+        );
+        expect(
+          File(pendingAbsolute).existsSync(),
+          isTrue,
+          reason: 'cycle $cycle wiped the sender bytes on close',
+        );
+        expect(
+          await fixture.rawAttachmentRow(attachmentId),
+          isNotNull,
+          reason: 'cycle $cycle deleted the attachment row on close',
+        );
+        expect(harness.nativeCalls, <String>['enter', 'exit']);
+      }
+    },
+  );
 
   test('post-rollback retry requalifies the pending shape', () async {
     for (final mode in _modes) {
@@ -319,9 +434,13 @@ void main() {
         prepared.grant!,
         DirectPrivateMediaExitReason.preFrameDecodeFailure,
       );
+      // 302: both dispositions are retry-eligible; only view-once had a lease
+      // to roll back.
       expect(
         settlement.disposition,
-        DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+        mode == 'view_once'
+            ? DirectPrivateMediaSettleDisposition.rolledBackAvailable
+            : DirectPrivateMediaSettleDisposition.noLease,
         reason: mode,
       );
       expect(await _privateState(fixture, messageId), 'available');
@@ -1012,7 +1131,9 @@ void main() {
           settled = true;
           expect(
             settlement.disposition,
-            DirectPrivateMediaSettleDisposition.rolledBackAvailable,
+            mode == 'view_once'
+                ? DirectPrivateMediaSettleDisposition.rolledBackAvailable
+                : DirectPrivateMediaSettleDisposition.noLease,
           );
 
           final replay = await harness.controller.prepareResult(

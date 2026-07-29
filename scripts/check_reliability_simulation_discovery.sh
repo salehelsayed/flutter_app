@@ -515,6 +515,10 @@ classify_path() {
       record "1to1" "$path" "test" "234 TC-234-11 direct private-media platform-protection device proof"
       return
       ;;
+    integration_test/protected_photo_thumbnail_secure_window_proof_test.dart)
+      record "1to1" "$path" "test" "protected thumbnail secure-window device proof"
+      return
+      ;;
     integration_test/group_private_media_lifecycle_db_proof_test.dart)
       record "group" "$path" "test" "238 GPL-01D group private-media v101 SQLCipher lifecycle migration device proof"
       return

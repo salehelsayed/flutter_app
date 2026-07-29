@@ -1803,6 +1803,7 @@
   "private_media_disclosure_expiry": "Only {name} can open it until it expires. Saving and sharing are disabled.",
   "@private_media_disclosure_expiry": {"placeholders": {"name": {"type": "String"}}},
   "private_media_disclosure_reopen": "You can reopen it once here after sending.",
+  "private_media_disclosure_reopen_protected": "You can reopen it here anytime.",
   "private_media_card_title_protected_photo": "Protected photo",
   "private_media_card_title_protected_video": "Protected video",
   "private_media_card_title_view_once_photo": "View-once photo",

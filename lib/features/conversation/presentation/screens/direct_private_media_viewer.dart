@@ -818,10 +818,10 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
   }
 }
 
-/// Sender-side bubble content for an outgoing private message: the mode is
-/// shown instead of an open affordance — the eligibility engine denies
-/// outgoing parents (requireIncoming), so an open button here could only ever
-/// no-op silently.
+/// Sender-side bubble content for an outgoing private message. Protected and
+/// view-once senders keep an Open affordance; the promise beside it forks by
+/// mode — protected re-opens without limit, view-once keeps its one more look.
+/// Disappearing shows the mode alone.
 class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
   const DirectPrivateMediaOutgoingPlaceholder({
     super.key,
@@ -844,16 +844,19 @@ class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final label = privateMediaCardTitle(l10n, policy, kind);
-    final supportsOneMoreLook =
+    final supportsSenderReopen =
         policy.mode == PrivateMediaMode.protected ||
         policy.mode == PrivateMediaMode.viewOnce;
+    final reopenPromise = policy.mode == PrivateMediaMode.protected
+        ? l10n.private_media_disclosure_reopen_protected
+        : l10n.private_media_disclosure_reopen;
     final body = !localMediaAvailable
         ? l10n.private_media_sender_local_missing_body
-        : supportsOneMoreLook
+        : supportsSenderReopen
         ? '${l10n.private_media_outgoing_body(contactDisplayName)}\n'
-              '${l10n.private_media_disclosure_reopen}'
+              '$reopenPromise'
         : l10n.private_media_outgoing_body(contactDisplayName);
-    final action = supportsOneMoreLook && localMediaAvailable && onOpen != null
+    final action = supportsSenderReopen && localMediaAvailable && onOpen != null
         ? FilledButton.tonalIcon(
             key: const ValueKey('private-media-open'),
             onPressed: opening ? null : onOpen,

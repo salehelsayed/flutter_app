@@ -322,4 +322,48 @@ void main() {
       }
     }
   });
+
+  test('protected rows with local bytes still deny every egress surface', () {
+    // Plan 301 renders protected photo pixels in the bubble; the matrix keys
+    // on mode/state — never on byte presence — so a downloaded thumbnail or
+    // full local file must change NOTHING about egress.
+    final withBytes = attachment(status: 'done');
+    expect(withBytes.localPath, isNotNull);
+
+    for (final direction in const [true, false]) {
+      final message = ConversationMessage(
+        id: 'message-1',
+        contactPeerId: 'peer-contact',
+        senderPeerId: direction ? 'peer-contact' : 'peer-own',
+        text: '',
+        timestamp: '2026-07-11T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: direction,
+        createdAt: '2026-07-11T10:00:00.000Z',
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        privateMediaState: PrivateMediaLifecycleState.available,
+      );
+      final decision = DirectPrivateMediaActionEligibility.evaluate(
+        parent: message,
+        attachment: withBytes,
+        expectedMessageId: 'message-1',
+        expectedAttachmentId: 'attachment-1',
+        requiredDirection: null,
+      );
+      expect(
+        decision.reason,
+        DirectPrivateMediaEligibilityReason.privateAvailable,
+        reason: 'incoming=$direction',
+      );
+      for (final action in irreversible) {
+        expect(
+          decision.allows(action),
+          isFalse,
+          reason: 'incoming=$direction/${action.name} must stay denied with '
+              'local bytes present',
+        );
+      }
+      expect(decision.allows(DirectPrivateMediaAction.openInApp), isTrue);
+    }
+  });
 }

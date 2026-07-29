@@ -3466,6 +3466,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'يمكنك فتحها هنا مرة أخرى بعد الإرسال.';
 
   @override
+  String get private_media_disclosure_reopen_protected =>
+      'يمكنك فتحها هنا في أي وقت.';
+
+  @override
   String get private_media_card_title_protected_photo => 'صورة محمية';
 
   @override

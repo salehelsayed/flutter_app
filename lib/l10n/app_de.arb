@@ -1688,6 +1688,7 @@
   "private_media_disclosure_expiry": "Nur {name} kann die Datei bis zum Ablauf öffnen. Speichern und Teilen sind deaktiviert.",
   "@private_media_disclosure_expiry": {"placeholders": {"name": {"type": "String"}}},
   "private_media_disclosure_reopen": "Du kannst sie nach dem Senden hier noch einmal öffnen.",
+  "private_media_disclosure_reopen_protected": "Du kannst sie hier jederzeit erneut öffnen.",
   "private_media_card_title_protected_photo": "Geschütztes Foto",
   "private_media_card_title_protected_video": "Geschütztes Video",
   "private_media_card_title_view_once_photo": "Einmal-Foto",

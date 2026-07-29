@@ -632,20 +632,45 @@ void main() {
   test(
     'direction mode and GIF qualification are exact before path publication',
     () async {
-      for (final mode in <PrivateMediaMode>[
-        PrivateMediaMode.protected,
-        PrivateMediaMode.viewOnce,
-      ]) {
+      // 302: the outgoing sender budget is mode-forked. View-once still claims
+      // the one-shot lease and terminalizes on close; protected opens
+      // lease-free and stays available for unlimited re-opens.
+      for (final expectation
+          in <
+            ({
+              PrivateMediaMode mode,
+              int claimCount,
+              DirectPrivateMediaSettleDisposition disposition,
+              PrivateMediaLifecycleState endState,
+            })
+          >[
+            (
+              mode: PrivateMediaMode.protected,
+              claimCount: 0,
+              disposition: DirectPrivateMediaSettleDisposition.noLease,
+              endState: PrivateMediaLifecycleState.available,
+            ),
+            (
+              mode: PrivateMediaMode.viewOnce,
+              claimCount: 1,
+              disposition: DirectPrivateMediaSettleDisposition.terminalized,
+              endState: PrivateMediaLifecycleState.consumed,
+            ),
+          ]) {
         final outgoing = _fixture(
           direction: PrivateMediaDirection.outgoing,
-          mode: mode,
+          mode: expectation.mode,
         );
         final prepared = await outgoing.controller.prepareResult(
           identity,
           _MutableContinuityGuard(),
         );
-        expect(prepared.isGranted, isTrue, reason: mode.name);
-        expect(outgoing.lane.claimCount, 1, reason: mode.name);
+        expect(prepared.isGranted, isTrue, reason: expectation.mode.name);
+        expect(
+          outgoing.lane.claimCount,
+          expectation.claimCount,
+          reason: expectation.mode.name,
+        );
         expect(
           await outgoing.controller.markFirstFrame(prepared.grant!),
           isTrue,
@@ -656,7 +681,13 @@ void main() {
         );
         expect(
           settled.disposition,
-          DirectPrivateMediaSettleDisposition.terminalized,
+          expectation.disposition,
+          reason: expectation.mode.name,
+        );
+        expect(
+          outgoing.lane.target.state,
+          expectation.endState,
+          reason: expectation.mode.name,
         );
       }
 
@@ -847,6 +878,105 @@ void main() {
       expect(expired.nativeCalls, ['enter', 'exit']);
     },
   );
+
+  // 302: the sender of a protected photo re-opens it in-app without limit —
+  // the same no-lease lane the recipient already uses. The fake lane stays
+  // permissive (it would happily grant an outgoing-protected claim, mirroring
+  // the untouched adapter/SQL), which is what makes the zero-claim assertions
+  // causal: the controller must refuse a lease that is on offer.
+  test(
+    'outgoing protected grants without lease and reopens after close',
+    () async {
+      final fixture = _fixture(
+        direction: PrivateMediaDirection.outgoing,
+        mode: PrivateMediaMode.protected,
+      );
+
+      for (final cycle in <int>[1, 2]) {
+        final prepared = await fixture.controller.prepareResult(
+          identity,
+          _MutableContinuityGuard(),
+        );
+        expect(prepared.isGranted, isTrue, reason: 'cycle $cycle');
+        expect(
+          fixture.lane.claimCount,
+          0,
+          reason: 'cycle $cycle claimed a one-shot lease',
+        );
+        expect(
+          await fixture.controller.markFirstFrame(prepared.grant!),
+          isTrue,
+          reason: 'cycle $cycle',
+        );
+        expect(
+          fixture.lane.markCount,
+          0,
+          reason: 'cycle $cycle marked viewing without a lease',
+        );
+
+        final settled = await fixture.controller.settle(
+          prepared.grant!,
+          DirectPrivateMediaExitReason.close,
+        );
+        expect(
+          settled.disposition,
+          DirectPrivateMediaSettleDisposition.noLease,
+          reason: 'cycle $cycle',
+        );
+        expect(settled.firstFrameRecorded, isTrue, reason: 'cycle $cycle');
+        expect(
+          fixture.lane.consumeCount,
+          0,
+          reason: 'cycle $cycle consumed the sender row',
+        );
+        expect(
+          fixture.lane.rollbackCount,
+          0,
+          reason: 'cycle $cycle rolled back a lease it never took',
+        );
+        expect(
+          fixture.lane.cleanupCount,
+          0,
+          reason: 'cycle $cycle ran terminal cleanup on a live row',
+        );
+        expect(
+          fixture.lane.target.state,
+          PrivateMediaLifecycleState.available,
+          reason: 'cycle $cycle left the row latched',
+        );
+        expect(
+          fixture.lane.target.attachments,
+          isNotEmpty,
+          reason: 'cycle $cycle wiped the sender bytes',
+        );
+      }
+
+      expect(fixture.nativeCalls, <String>['enter', 'exit', 'enter', 'exit']);
+    },
+  );
+
+  // 302 boundary: the no-lease authorization widens to outgoing PROTECTED
+  // only. Outgoing disappearing must never inherit the sender-open lane (see
+  // media_attachments_db_helpers.dart's outgoing-disappearing CAS boundary).
+  test('outgoing disappearing stays not eligible to open', () async {
+    final fixture = _fixture(
+      direction: PrivateMediaDirection.outgoing,
+      mode: PrivateMediaMode.disappearing,
+      expiresAtMs: 100000,
+    );
+    final prepared = await fixture.controller.prepareResult(
+      identity,
+      _MutableContinuityGuard(),
+    );
+    expect(prepared.isGranted, isFalse);
+    expect(
+      prepared.failureReason,
+      DirectPrivateMediaPrepareFailureReason.notEligible,
+    );
+    expect(fixture.lane.claimCount, 0);
+    expect(fixture.nativeCalls, isEmpty);
+    expect(fixture.lane.target.state, PrivateMediaLifecycleState.available);
+  });
 
   testWidgets(
     'foreground disappearing route expires at its live deadline and dismisses fail closed',
@@ -1437,7 +1567,7 @@ void main() {
   });
 
   testWidgets(
-    'sender protected and view-once expose one-more-look while disappearing and missing local media do not',
+    'sender protected and view-once expose reopen affordance while disappearing and missing local media do not',
     (tester) async {
       var opens = 0;
       Future<void> pump(
@@ -1459,18 +1589,30 @@ void main() {
         ),
       );
 
-      for (final (policy, expectedOpens) in <(PrivateMediaPolicy, int)>[
-        (const PrivateMediaPolicy.protected(), 1),
-        (const PrivateMediaPolicy.viewOnce(), 2),
-      ]) {
+      // 302: both modes keep the Open affordance; only the promise forks —
+      // protected re-opens anytime, view-once keeps its one more look.
+      for (final (policy, expectedOpens, reopenLine)
+          in <(PrivateMediaPolicy, int, String)>[
+            (
+              const PrivateMediaPolicy.protected(),
+              1,
+              'You can reopen it here anytime.',
+            ),
+            (
+              const PrivateMediaPolicy.viewOnce(),
+              2,
+              'You can reopen it once here after sending.',
+            ),
+          ]) {
         await pump(policy);
         expect(
           find.byKey(const ValueKey('private-media-open')),
           findsOneWidget,
         );
         expect(
-          find.textContaining('You can reopen it once here after sending.'),
+          find.textContaining(reopenLine),
           findsOneWidget,
+          reason: policy.mode.name,
         );
         await tester.tap(find.byKey(const ValueKey('private-media-open')));
         expect(opens, expectedOpens);

@@ -6537,6 +6537,14 @@ class _ConversationWiredState extends State<ConversationWired>
               ? _openDirectPrivateMedia
               : null,
           onLoadPrivateParentDecision: _loadPrivateParentDecision,
+          // 301: Android-only route-scoped FLAG_SECURE while a protected
+          // thumbnail is rendered; the EXACT process-shared coordinator the
+          // viewer controller holds (owner-refcounted, so both grants
+          // coexist). Rides the same Session-05 capability qualification —
+          // a route without private-media deps stays coordinator-less and
+          // the screen keeps its fail-closed no-pixel presentations.
+          protectionCoordinator:
+              _privateMediaViewerController?.protectionCoordinator,
           appLifecycleState: _appLifecycleState,
           appLifecycleGeneration: _appLifecycleGeneration,
           appLifecycleSnapshotProvider: () =>
