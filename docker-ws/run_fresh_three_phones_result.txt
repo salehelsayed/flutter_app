@@ -1,4 +1,4 @@
-PROVENANCE tree=current-working-tree sha=63e0a3be9 branch=cleaning dirty_files=1 build_name=1.0.0-63e0a3be9.d1.t260729170506 ios_bundle_version=260729170506 date=2026-07-29 17:05:06
-00008030-001A6D2801BB802E OK 1.0.0-63e0a3be9.d1.t260729170506 bundleVersion=260729170506 (verified)
-00008110-00184D622289801E OK 1.0.0-63e0a3be9.d1.t260729170506 bundleVersion=260729170506 (verified)
-21071FDF600CSC OK 1.0.0-63e0a3be9.d1.t260729170506 (verified)
+PROVENANCE tree=current-working-tree sha=d905bb3c4 branch=protected-view dirty_files=2 build_name=1.0.0-d905bb3c4.d2.t260729235834 ios_bundle_version=260729235834 date=2026-07-29 23:58:34
+00008030-001A6D2801BB802E OK 1.0.0-d905bb3c4.d2.t260729235834 bundleVersion=260729235834 (verified)
+00008110-00184D622289801E OK 1.0.0-d905bb3c4.d2.t260729235834 bundleVersion=260729235834 (verified)
+21071FDF600CSC OK 1.0.0-d905bb3c4.d2.t260729235834 (verified)
