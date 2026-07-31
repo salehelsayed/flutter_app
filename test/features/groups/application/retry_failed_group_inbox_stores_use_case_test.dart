@@ -820,6 +820,72 @@ void main() {
   });
 
   test(
+    'legacy empty-recipient reaction row is retired without a bridge call',
+    () async {
+      final legacy = _makeReactionRetryEntry('rx-empty-recipients').copyWith(
+        inboxRetryPayload: jsonEncode({
+          'groupId': 'group-1',
+          'message': jsonEncode({
+            'kind': 'group_offline_replay',
+            'version': 1,
+            'payloadType': 'group_reaction',
+            'messageId': 'rx-empty-recipients',
+            'ciphertext': 'opaque-ciphertext',
+            'nonce': 'opaque-nonce',
+          }),
+        }),
+      );
+      await reactionReplayOutboxRepo.saveEntry(legacy);
+
+      late int retried;
+      final firstPassEvents = await captureFlowEvents(() async {
+        retried = await retryFailedGroupInboxStores(
+          bridge: bridge,
+          msgRepo: msgRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        );
+      });
+
+      expect(retried, 0);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:inboxStore'),
+        isEmpty,
+      );
+      expect(reactionReplayOutboxRepo.deleteEntryCallCount, 1);
+      expect(
+        await reactionReplayOutboxRepo.getEntry('rx-empty-recipients'),
+        isNull,
+      );
+      expect(
+        await reactionReplayOutboxRepo.loadRetryableEntries(limit: 10),
+        isEmpty,
+      );
+      expect(
+        firstPassEvents.where(
+          (event) => event['event'] == 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+        ),
+        hasLength(1),
+      );
+      expect(
+        firstPassEvents.where(
+          (event) => event['event'] == 'GROUP_FL_BRIDGE_INBOX_STORE_REQUEST',
+        ),
+        isEmpty,
+      );
+
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: bridge,
+          msgRepo: msgRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        ),
+        0,
+      );
+      expect(reactionReplayOutboxRepo.deleteEntryCallCount, 1);
+    },
+  );
+
+  test(
     'reaction replay completion cannot settle a replacement with the same id',
     () async {
       final loaded = _makeReactionRetryEntry('rx-replaced');

@@ -35,6 +35,15 @@ Map<String, dynamic> _replayEnvelopeFromRetryPayload(String retryPayload) {
   return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
 }
 
+List<Map<String, dynamic>> _inboxStoreCommands(FakeBridge bridge) => bridge
+    .sentMessages
+    .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+    .where((message) => message['cmd'] == 'group:inboxStore')
+    .toList(growable: false);
+
+List<String> _stringList(Object? value) =>
+    (value as List<dynamic>).cast<String>();
+
 void _expectSignedReactionReplayEnvelope(Map<String, dynamic> envelope) {
   expect(envelope['kind'], 'group_offline_replay');
   expect(envelope['payloadType'], 'group_reaction');
@@ -911,6 +920,17 @@ void main() {
   test(
     'EK004 stores signed offline replay envelope for group_reaction add',
     () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+
       final (result, reaction) = await sendGroupReaction(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -939,8 +959,370 @@ void main() {
       expect(entry.action, 'add');
       expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
       expect(bridge.commandLog, contains('group:inboxStore'));
-      _expectSignedReactionReplayEnvelope(
-        _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
+      final envelope = _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload);
+      _expectSignedReactionReplayEnvelope(envelope);
+      expect(envelope['recipientPeerIds'], <String>['peer-2']);
+      final extension =
+          envelope['notificationExtension'] as Map<String, dynamic>;
+      expect(extension['notificationRecipientTransportPeerIds'], <String>[
+        'peer-2',
+      ]);
+    },
+  );
+
+  test('cross-phone reaction nominates the target author transport', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-2',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-2',
+        joinedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+
+    final result = await sendGroupReaction(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      emoji: '👍',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      transitionIdFactory: () => 'transition-cross-phone-author',
+    );
+    await pumpEventQueue();
+
+    expect(result.$1, SendGroupReactionResult.success);
+    final envelope = _replayEnvelopeFromRetryPayload(
+      reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+    );
+    final replayRecipients = _stringList(envelope['recipientPeerIds']);
+    final extension = envelope['notificationExtension'] as Map<String, dynamic>;
+    final notificationRecipients = _stringList(
+      extension['notificationRecipientTransportPeerIds'],
+    );
+    expect(notificationRecipients, <String>['peer-2']);
+    expect(replayRecipients, containsAll(notificationRecipients));
+  });
+
+  test(
+    'reaction to an author absent from the roster still nominates the author for wake',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bystander',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-bystander',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      final events = <Map<String, dynamic>>[];
+
+      late (SendGroupReactionResult, dynamic) result;
+      await _captureFlowEvents(events, () async {
+        result = await sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          transitionIdFactory: () => 'transition-missing-author',
+        );
+        await pumpEventQueue();
+      });
+
+      expect(result.$1, SendGroupReactionResult.success);
+      final envelope = _replayEnvelopeFromRetryPayload(
+        reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+      );
+      final replayRecipients = _stringList(envelope['recipientPeerIds']);
+      final extension =
+          envelope['notificationExtension'] as Map<String, dynamic>;
+      final notificationRecipients = _stringList(
+        extension['notificationRecipientTransportPeerIds'],
+      );
+      expect(replayRecipients, <String>['peer-2', 'peer-bystander']);
+      expect(notificationRecipients, <String>['peer-2']);
+      expect(replayRecipients, containsAll(notificationRecipients));
+      expect(_inboxStoreCommands(bridge), hasLength(1));
+      expect(
+        events.where(
+          (event) =>
+              event['event'] == 'GROUP_REACTION_NOMINATION_AUTHOR_FALLBACK',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'reaction to a removed author\'s message does not nominate or re-custody the removed member',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bystander',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-bystander',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await groupRepo.saveRemovedMemberSnapshot(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-removed-author',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+        removedAt: DateTime.utc(2026, 7, 30),
+      );
+      final events = <Map<String, dynamic>>[];
+
+      await _captureFlowEvents(events, () async {
+        await sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          transitionIdFactory: () => 'transition-removed-author',
+        );
+        await pumpEventQueue();
+      });
+
+      final envelope = _replayEnvelopeFromRetryPayload(
+        reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+      );
+      expect(envelope['recipientPeerIds'], <String>['peer-bystander']);
+      final extension =
+          envelope['notificationExtension'] as Map<String, dynamic>;
+      expect(extension['notificationRecipientTransportPeerIds'], isEmpty);
+      expect(jsonEncode(envelope), isNot(contains('peer-2')));
+      expect(
+        events.where(
+          (event) =>
+              event['event'] == 'GROUP_REACTION_NOMINATION_AUTHOR_FALLBACK',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test('self-reaction nominates no wake recipients', () async {
+    await msgRepo.saveMessage(
+      testMessage.copyWith(senderPeerId: 'peer-1', senderUsername: 'Alice'),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-1',
+        username: 'Alice',
+        role: MemberRole.admin,
+        devices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'reactor-primary',
+            transportPeerId: 'transport-reactor-primary',
+            deviceSigningPublicKey: 'pk-1',
+          ),
+          GroupMemberDeviceIdentity(
+            deviceId: 'reactor-sibling',
+            transportPeerId: 'transport-reactor-sibling',
+            deviceSigningPublicKey: 'pk-1-sibling',
+          ),
+        ],
+        joinedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-bystander',
+        username: 'Charlie',
+        role: MemberRole.writer,
+        publicKey: 'pk-bystander',
+        joinedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+
+    await sendGroupReaction(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      emoji: '👍',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      transitionIdFactory: () => 'transition-self-reaction',
+    );
+    await pumpEventQueue();
+
+    final envelope = _replayEnvelopeFromRetryPayload(
+      reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+    );
+    expect(envelope['recipientPeerIds'], <String>[
+      'peer-bystander',
+      'transport-reactor-sibling',
+    ]);
+    final extension = envelope['notificationExtension'] as Map<String, dynamic>;
+    expect(extension['notificationRecipientTransportPeerIds'], isEmpty);
+  });
+
+  test(
+    'empty replay recipient set marks the outbox row failed and never reports stored',
+    () async {
+      await msgRepo.saveMessage(
+        testMessage.copyWith(senderPeerId: 'peer-1', senderUsername: 'Alice'),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-keyless',
+          username: 'Keyless',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      final events = <Map<String, dynamic>>[];
+
+      await _captureFlowEvents(events, () async {
+        await sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          transitionIdFactory: () => 'transition-empty-recipients',
+        );
+        await pumpEventQueue();
+      });
+
+      final entry = reactionReplayOutboxRepo.entries.single;
+      expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.failed);
+      expect(entry.lastError, 'custody_unroutable_empty_recipients');
+      expect(_inboxStoreCommands(bridge), isEmpty);
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_FL_BRIDGE_INBOX_STORE_REQUEST',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'exactRetry re-send of an unroutable row stays failed with zero bridge calls',
+    () async {
+      await msgRepo.saveMessage(
+        testMessage.copyWith(senderPeerId: 'peer-1', senderUsername: 'Alice'),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-keyless',
+          username: 'Keyless',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-unroutable-exact-retry',
+      );
+      await pumpEventQueue();
+      bridge.sentMessages.clear();
+      bridge.commandLog.clear();
+      final events = <Map<String, dynamic>>[];
+
+      await _captureFlowEvents(events, () async {
+        await sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          transitionIdFactory: () => throw StateError(
+            'exact retry must reuse the persisted transition id',
+          ),
+        );
+        await pumpEventQueue();
+      });
+
+      final entry = reactionReplayOutboxRepo.entries.single;
+      expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.failed);
+      expect(entry.lastError, 'custody_unroutable_empty_recipients');
+      expect(_inboxStoreCommands(bridge), isEmpty);
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_FL_BRIDGE_INBOX_STORE_REQUEST',
+        ),
+        isEmpty,
       );
     },
   );

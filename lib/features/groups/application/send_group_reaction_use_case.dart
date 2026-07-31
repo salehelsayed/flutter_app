@@ -41,7 +41,7 @@ enum SendGroupReactionResult {
 /// 1. Validates group exists and sender is a member
 /// 2. Validates the target message exists
 /// 3. Builds reaction payload and publishes via bridge
-/// 4. Stages replay for offline members
+/// 4. Stages roster-wide replay custody
 /// 5. Persists locally (optimistic)
 ///
 /// Returns (result, MessageReaction?) — reaction is non-null when the local
@@ -401,6 +401,7 @@ _reactionRecipientsFromMembers({
   required String senderTransportPeerId,
   required String reactorPeerId,
   required String targetAuthorPeerId,
+  required bool allowAuthorFallback,
 }) {
   final replayRecipients = <String>{};
   for (final member in members) {
@@ -413,8 +414,6 @@ _reactionRecipientsFromMembers({
       replayRecipients.add(transportPeerId);
     }
   }
-  final sortedReplay = replayRecipients.toList()..sort();
-
   final notificationRecipients = <String>{};
   if (reactorPeerId != targetAuthorPeerId) {
     for (final member in members) {
@@ -426,7 +425,16 @@ _reactionRecipientsFromMembers({
         }
       }
     }
+    if (allowAuthorFallback) {
+      final authorTransportPeerId = targetAuthorPeerId.trim();
+      if (authorTransportPeerId.isNotEmpty &&
+          authorTransportPeerId != senderTransportPeerId.trim()) {
+        replayRecipients.add(authorTransportPeerId);
+        notificationRecipients.add(authorTransportPeerId);
+      }
+    }
   }
+  final sortedReplay = replayRecipients.toList()..sort();
   final sortedNotification = notificationRecipients.toList()..sort();
   return (
     replayRecipientTransportPeerIds: sortedReplay,
@@ -447,12 +455,55 @@ _resolveReactionRecipients({
   required String reactorPeerId,
   required String targetAuthorPeerId,
 }) async {
+  final members = await groupRepo.getMembers(groupId);
+  var allowAuthorFallback = false;
+  if (reactorPeerId != targetAuthorPeerId &&
+      !members.any((member) => member.peerId == targetAuthorPeerId)) {
+    final removedSnapshotRepo =
+        groupRepo is RemovedGroupMemberSnapshotRepository
+        ? groupRepo as RemovedGroupMemberSnapshotRepository
+        : null;
+    final removedAuthor =
+        removedSnapshotRepo != null &&
+        await removedSnapshotRepo.getRemovedMemberSnapshot(
+              groupId,
+              targetAuthorPeerId,
+            ) !=
+            null;
+    final authorTransportPeerId = targetAuthorPeerId.trim();
+    allowAuthorFallback =
+        !removedAuthor &&
+        authorTransportPeerId.isNotEmpty &&
+        authorTransportPeerId != senderTransportPeerId.trim();
+  }
+  if (allowAuthorFallback) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_NOMINATION_AUTHOR_FALLBACK',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+  }
   return _reactionRecipientsFromMembers(
-    members: await groupRepo.getMembers(groupId),
+    members: members,
     senderTransportPeerId: senderTransportPeerId,
     reactorPeerId: reactorPeerId,
     targetAuthorPeerId: targetAuthorPeerId,
+    allowAuthorFallback: allowAuthorFallback,
   );
+}
+
+bool _hasNoReactionInboxStoreRecipients(String inboxRetryPayload) {
+  try {
+    final decoded = jsonDecode(inboxRetryPayload);
+    if (decoded is! Map) return false;
+    if (!decoded.containsKey('recipientPeerIds')) return true;
+    final recipients = decoded['recipientPeerIds'];
+    return recipients == null || (recipients is List && recipients.isEmpty);
+  } catch (_) {
+    return false;
+  }
 }
 
 Future<void> _attemptReactionInboxStore({
@@ -462,6 +513,26 @@ Future<void> _attemptReactionInboxStore({
   required String inboxRetryPayload,
   required bool staged,
 }) async {
+  if (_hasNoReactionInboxStoreRecipients(inboxRetryPayload)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+      details: {
+        'reactionId': reactionId.length > 8
+            ? reactionId.substring(0, 8)
+            : reactionId,
+        'reason': 'empty_recipients',
+      },
+    );
+    if (staged) {
+      await reactionReplayOutboxRepo.updateEntryStatus(
+        reactionId,
+        deliveryStatus: GroupReactionReplayOutboxStatus.failed,
+        lastError: 'custody_unroutable_empty_recipients',
+      );
+    }
+    return;
+  }
   try {
     await storeGroupOfflineReplayFromRetryPayload(
       bridge: bridge,

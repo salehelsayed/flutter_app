@@ -1499,6 +1499,14 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 		return err
 	}
 	if result == GroupInboxStoreResultDuplicate {
+		if recognizedReaction && validReaction {
+			groupReactionWakeCounter.WithLabelValues("duplicate_suppressed").Inc()
+			log.Printf(
+				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=%s from=%s",
+				groupId[:min(20, len(groupId))],
+				from[:min(20, len(from))],
+			)
+		}
 		return nil
 	}
 	if recognizedReaction {
@@ -1525,14 +1533,37 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 	message string,
 	metadata groupReactionPushMetadata,
 ) {
-	if s.push == nil || len(metadata.NotificationRecipientTransportPeerIDs) == 0 {
+	if s.push == nil {
+		return
+	}
+	if len(metadata.NotificationRecipientTransportPeerIDs) == 0 {
+		groupReactionWakeCounter.WithLabelValues("no_wake_recipients").Inc()
+		log.Printf(
+			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=no_wake_recipients group=%s from=%s",
+			groupID[:min(20, len(groupID))],
+			from[:min(20, len(from))],
+		)
 		return
 	}
 	for _, peerID := range metadata.NotificationRecipientTransportPeerIDs {
-		if peerID == "" || peerID == from ||
-			!s.push.recipientSupportsCapability(peerID, groupReactionCapability) {
+		if peerID == "" || peerID == from {
 			continue
 		}
+		if !s.push.recipientSupportsCapability(peerID, groupReactionCapability) {
+			groupReactionWakeCounter.WithLabelValues("incapable_skipped").Inc()
+			log.Printf(
+				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=incapable_skipped group=%s recipient=%s",
+				groupID[:min(20, len(groupID))],
+				peerID[:min(20, len(peerID))],
+			)
+			continue
+		}
+		groupReactionWakeCounter.WithLabelValues("attempted").Inc()
+		log.Printf(
+			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=%s recipient=%s",
+			groupID[:min(20, len(groupID))],
+			peerID[:min(20, len(peerID))],
+		)
 		go s.push.SendGroupReactionNotification(
 			context.Background(),
 			peerID,

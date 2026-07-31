@@ -52,6 +52,18 @@ bool _matchesCurrentPrivateRetryRecipients({
   ]);
 }
 
+bool _hasNoGroupReactionReplayRecipients(String inboxRetryPayload) {
+  try {
+    final decoded = jsonDecode(inboxRetryPayload);
+    if (decoded is! Map) return false;
+    if (!decoded.containsKey('recipientPeerIds')) return true;
+    final recipients = decoded['recipientPeerIds'];
+    return recipients == null || (recipients is List && recipients.isEmpty);
+  } catch (_) {
+    return false;
+  }
+}
+
 /// Retries inbox store for outgoing group messages where the initial
 /// inbox store failed.
 ///
@@ -355,6 +367,20 @@ Future<bool> _retryGroupReactionReplayCandidate({
 }) async {
   final current = await repository.getEntry(expected.reactionId);
   if (current == null || !_sameReactionReplayCandidate(current, expected)) {
+    return false;
+  }
+  if (_hasNoGroupReactionReplayRecipients(current.inboxRetryPayload)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+      details: {
+        'reactionId': current.reactionId.length > 8
+            ? current.reactionId.substring(0, 8)
+            : current.reactionId,
+        'reason': 'empty_recipients',
+      },
+    );
+    await repository.deleteEntry(current.reactionId);
     return false;
   }
   try {

@@ -196,6 +196,11 @@ var pushSentCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Push notifications attempted.",
 }, []string{"result"})
 
+var groupReactionWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_group_reaction_wake_total",
+	Help: "Group reaction wake decisions by outcome.",
+}, []string{"outcome"})
+
 // Rendezvous counters
 
 var rendezvousRegisteredCounter = promauto.NewCounter(prometheus.CounterOpts{

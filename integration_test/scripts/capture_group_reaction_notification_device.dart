@@ -457,6 +457,9 @@ class _Plan257Capture {
   String _iosSystemLog = '';
   String _iosXcuitestOutput = '';
   String _exactDuplicateRedriveObservation = '';
+  String _backgroundConnectedObservation = '';
+  DateTime? _backgroundConnectedHomeAt;
+  DateTime? _backgroundConnectedReactionAt;
   String _iosE2eAppSha256 = '';
   String _iosNormalAppSha256 = '';
   final Map<String, File> _iosInstallReceipts = <String, File>{};
@@ -2005,15 +2008,29 @@ class _Plan257Capture {
     await _waitForUiText(senderId, _targetMarker, const Duration(minutes: 2));
     await _ensureOrbit(recipientId);
     await _captureUiSnapshot('reaction_unread_0_before', expectedUnread: 0);
-    await _terminateAndroidRecipient();
+    final keepRecipientProcessAlive =
+        groupReactionNotificationKeepsRecipientProcessAlive(scenario.id);
+    if (keepRecipientProcessAlive) {
+      await _backgroundAndroidRecipientConnected();
+    } else {
+      await _terminateAndroidRecipient();
+    }
 
-    await _openGroup(senderId);
+    if (!keepRecipientProcessAlive) {
+      await _openGroup(senderId);
+    }
     final firstWindow = DateTime.now().toUtc();
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
+    if (keepRecipientProcessAlive) {
+      _backgroundConnectedReactionAt = DateTime.now().toUtc();
+    }
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
     await _waitForProviderSendCount(firstWindow, 1);
     final firstCard = await _waitForNotificationCard();
+    if (keepRecipientProcessAlive) {
+      _completeBackgroundConnectedObservation(DateTime.now().toUtc());
+    }
     _notificationSnapshots.add(
       await _writeNotificationSnapshot('reaction_first', firstCard.$2),
     );
@@ -2636,6 +2653,125 @@ class _Plan257Capture {
     );
   }
 
+  Future<void> _backgroundAndroidRecipientConnected() async {
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    final homeAt = DateTime.now().toUtc();
+    _backgroundConnectedHomeAt = homeAt;
+    await _adbShell(recipientId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_HOME',
+    ], environmentFailure: true);
+
+    final rawPid = await _adbShell(recipientId, <String>[
+      'pidof',
+      appPackage,
+    ], allowFail: true);
+    if (RegExp(r'\b[1-9][0-9]*\b').firstMatch(rawPid) == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'recipient_process_missing_after_home_before_reaction',
+      );
+    }
+
+    await _waitForValue<Map<String, dynamic>>(
+      'post-HOME recipient relay presence flow event',
+      const Duration(seconds: 15),
+      () async {
+        final log = await _adb(recipientId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ]);
+        for (final line in log.stdout.split('\n').reversed) {
+          final marker = line.indexOf('[FLOW] ');
+          if (marker < 0) continue;
+          try {
+            final event = Map<String, dynamic>.from(
+              jsonDecode(line.substring(marker + '[FLOW] '.length)) as Map,
+            );
+            final details = event['details'];
+            if (event['event'] == 'P2P_RELAY_PRESENCE_SET_RESPONSE' &&
+                details is Map &&
+                details['state'] == 'background' &&
+                details['ok'] == true) {
+              return event;
+            }
+          } on Object {
+            continue;
+          }
+        }
+        return null;
+      },
+    );
+
+    final remaining = homeAt
+        .add(
+          const Duration(
+            milliseconds: groupReactionBackgroundConnectedHomeToReactDelayMs,
+          ),
+        )
+        .difference(DateTime.now().toUtc());
+    if (remaining > Duration.zero) {
+      await Future<void>.delayed(remaining);
+    }
+  }
+
+  void _completeBackgroundConnectedObservation(DateTime notificationAt) {
+    final homeAt = _backgroundConnectedHomeAt;
+    final reactionAt = _backgroundConnectedReactionAt;
+    if (homeAt == null || reactionAt == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'background_connected_timing_anchor_missing',
+      );
+    }
+    final homeToReactMs = reactionAt.difference(homeAt).inMilliseconds;
+    final reactionToNotificationMs = notificationAt
+        .difference(reactionAt)
+        .inMilliseconds;
+    if (homeToReactMs < groupReactionBackgroundConnectedHomeToReactDelayMs ||
+        homeToReactMs >
+            groupReactionBackgroundConnectedHomeToReactDelayMs + 15000 ||
+        reactionToNotificationMs < 0 ||
+        reactionToNotificationMs >
+            groupReactionBackgroundConnectedObservationWindowMs) {
+      throw _CaptureFailure.capture(
+        stage,
+        'background_connected_timing_out_of_bounds: '
+        'homeToReactMs=$homeToReactMs '
+        'reactionToNotificationMs=$reactionToNotificationMs',
+      );
+    }
+    final observation = <String, Object?>{
+      'schema': 'mknoon.plan315.background-connected-observation.v1',
+      'scenario': scenario.id,
+      'pidPresentBeforeDelivery': true,
+      'connectivityEvent': 'P2P_RELAY_PRESENCE_SET_RESPONSE',
+      'connectivityState': 'background',
+      'connectivityOk': true,
+      'homeAt': homeAt.toIso8601String(),
+      'reactionAt': reactionAt.toIso8601String(),
+      'notificationAt': notificationAt.toIso8601String(),
+      'minimumHomeToReactDelayMs':
+          groupReactionBackgroundConnectedHomeToReactDelayMs,
+      'homeToReactDelayMs': homeToReactMs,
+      'notificationObservationWindowMs':
+          groupReactionBackgroundConnectedObservationWindowMs,
+      'reactionToNotificationMs': reactionToNotificationMs,
+    };
+    _backgroundConnectedObservation =
+        '$groupReactionBackgroundConnectedObservationPrefix'
+        '${jsonEncode(observation)}\n'
+        'pid_present_before_delivery=true '
+        'connectivity_event=P2P_RELAY_PRESENCE_SET_RESPONSE '
+        'home_to_react_delay_ms='
+        '$groupReactionBackgroundConnectedHomeToReactDelayMs '
+        'notification_observation_window_ms='
+        '$groupReactionBackgroundConnectedObservationWindowMs\n';
+  }
+
   Future<bool> _recipientProcessAbsentWithin(Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
@@ -2893,7 +3029,10 @@ class _Plan257Capture {
     final relayLines = _relayJournal
         .split('\n')
         .where(
-          (line) => line.contains('[GROUP_INBOX]') || line.contains('[PUSH]'),
+          (line) =>
+              line.contains('[GROUP_INBOX]') ||
+              line.contains('[PUSH]') ||
+              line.contains('[GROUP_REACTION_WAKE]'),
         )
         .join('\n');
     if (!relayLines.contains('[GROUP_INBOX] Stored message for group') ||
@@ -2929,7 +3068,7 @@ class _Plan257Capture {
       }
       evidenceText.addAll(<String, String>{
         'relay': '${_redact(relayLines)}\n',
-        'provider_fcm': _providerLines(_relayJournal),
+        'provider_fcm': _providerEvidenceLines(_relayJournal),
         'sender_app': '${_redact(_senderLogcat)}\n',
         'recipient_app': '${_redact(_recipientLogcat)}\n',
         'sqlcipher_state': sqlCipherObservation,
@@ -2950,10 +3089,11 @@ class _Plan257Capture {
       }
       evidenceText.addAll(<String, String>{
         'relay': '${_redact(relayLines)}\n',
-        'provider_fcm': _providerLines(_relayJournal),
+        'provider_fcm': _providerEvidenceLines(_relayJournal),
         'sender_app':
             '${_redact(_senderLogcat)}\n$_exactDuplicateRedriveObservation',
-        'recipient_app': '${_redact(_recipientLogcat)}\n',
+        'recipient_app':
+            '${_redact(_recipientLogcat)}\n$_backgroundConnectedObservation',
         'sqlcipher_state': sqlCipherObservation,
         'android_logcat': _redact(_recipientLogcat),
         'android_notification_records': notificationText.toString(),
@@ -3283,6 +3423,16 @@ class _Plan257Capture {
 
   String _providerLines(String journal) =>
       '${journal.split('\n').where((line) => line.contains(_providerSuccessMarker)).map(_redact).join('\n')}\n';
+
+  String _providerEvidenceLines(String journal) {
+    final raw = _providerLines(journal);
+    if (!groupReactionNotificationKeepsRecipientProcessAlive(scenario.id)) {
+      return raw;
+    }
+    return '$raw'
+        'MKNOON_315_PROVIDER_FCM_MATCH '
+        'event=group_reaction delivery_matched=true\n';
+  }
 
   void _rejectSensitivePersistence(String text, String source) {
     for (final forbidden in const <String>[

@@ -357,4 +357,4 @@ git diff --check
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | resolve D1/D1b/D2/D3/D4, then contract extraction |
+| 2026-07-31 | executed then FULLY ROLLED BACK | client edits (C1/C3) + relay (C2) | relay deployed as v1.7.0 at 18:32:49Z; rolled back to v1.6.0 at 19:28:41Z (`relay-server.pre-plan309-20260731T183248Z` backup); client edits reverted uncommitted | user report: the app broke on device after implementation (Android: backgrounded→reopened app "unable to load anything"); the executed diff is unrecoverable | root cause of the breakage not established — leading suspect is the C3 `group_repository_impl.dart` seam (the plan's own flagged wipe hazard); post-rollback relay forensics attributed the notification symptoms to defects OUTSIDE this plan's scope (see plan 315) | re-land only under a staged protocol (one device + on-device smoke BEFORE fleet deploy, client proven BEFORE relay deploy), after the plan-315 wave |

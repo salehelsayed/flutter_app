@@ -108,7 +108,7 @@ void main() {
   });
 
   group('Plan 257 device scenario catalog', () {
-    test('lists the five availability-bounded scenarios in stable order', () {
+    test('lists the six availability-bounded scenarios in stable order', () {
       expect(
         groupReactionNotificationScenarios.map((scenario) => scenario.id),
         const <String>[
@@ -116,6 +116,7 @@ void main() {
           'android_announcement_message_unread_lifecycle',
           'android_group_reaction_recipient',
           'android_announcement_reaction_recipient',
+          'android_group_reaction_recipient_background_connected',
           'ios_announcement_reaction_recipient',
         ],
       );
@@ -166,6 +167,7 @@ void main() {
       'android_announcement_message_unread_lifecycle',
       'android_group_reaction_recipient',
       'android_announcement_reaction_recipient',
+      groupReactionBackgroundConnectedScenarioId,
     ]) {
       test(
         'accepts raw authoritative Android evidence for $scenario',
@@ -181,6 +183,38 @@ void main() {
         },
       );
     }
+
+    test(
+      'background-connected reaction proof rejects process termination',
+      () async {
+        const scenario = groupReactionBackgroundConnectedScenarioId;
+        final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+        _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+          (journal['commands'] as List<dynamic>).add(<String, Object?>{
+            'stage': 'android_reaction_lifecycle',
+            'executable': 'adb',
+            'args': <String>[
+              '-s',
+              'ANDROIDPHYSICAL123',
+              'shell',
+              'am',
+              'kill',
+              'com.mknoon.app',
+            ],
+            'exitCode': 0,
+            'recordedAt': '2026-07-12T12:00:02.000Z',
+          });
+        });
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse);
+        expect(result.detail, contains('process termination'));
+      },
+    );
 
     test('accepts a centrally prepared production-FCM Android APK', () async {
       const scenario = 'android_group_message_unread_lifecycle';
@@ -1239,21 +1273,39 @@ List<Map<String, Object?>> _commandJournal({
     '1600',
   ]);
   if (!scenario.id.endsWith('_message_unread_lifecycle')) {
-    add(lifecycleStage, 'adb', <String>[
-      '-s',
-      senderId,
-      'shell',
-      'am',
-      'kill',
-      'com.mknoon.app',
-    ]);
-    add(lifecycleStage, 'adb', <String>[
-      '-s',
-      senderId,
-      'shell',
-      'pidof',
-      'com.mknoon.app',
-    ]);
+    if (groupReactionNotificationKeepsRecipientProcessAlive(scenario.id)) {
+      add(lifecycleStage, 'adb', <String>[
+        '-s',
+        recipientId,
+        'shell',
+        'input',
+        'keyevent',
+        'KEYCODE_HOME',
+      ]);
+      add(lifecycleStage, 'adb', <String>[
+        '-s',
+        recipientId,
+        'shell',
+        'pidof',
+        'com.mknoon.app',
+      ]);
+    } else {
+      add(lifecycleStage, 'adb', <String>[
+        '-s',
+        senderId,
+        'shell',
+        'am',
+        'kill',
+        'com.mknoon.app',
+      ]);
+      add(lifecycleStage, 'adb', <String>[
+        '-s',
+        senderId,
+        'shell',
+        'pidof',
+        'com.mknoon.app',
+      ]);
+    }
     if (scenario.recipientPlatform == 'android') {
       if (centralPrebuilt) {
         add(lifecycleStage, 'adb', <String>[
@@ -1327,11 +1379,19 @@ String _rawEvidence({
   final targetMarker = measurements['targetMarker']! as String;
   switch (kind) {
     case 'relay':
-      return '${<String>['2026-07-12T12:00:01.000Z [GROUP_INBOX] Stored message for group '
-          'group_hash=group-257 remote_type=$event '
-          'group_type=${scenario.groupType}', '2026-07-12T12:00:02.000Z [PUSH] Queued group delivery '
-          'event=$event action=add relay_store_matched=true', '2026-07-12T12:00:03.000Z [GROUP_INBOX] Stored message for group '
-          'group_hash=group-257 remote_type=$event action=add'].join('\n')}\n';
+      final lines = <String>[
+        '2026-07-12T12:00:01.000Z [GROUP_INBOX] Stored message for group '
+            'group_hash=group-257 remote_type=$event '
+            'group_type=${scenario.groupType}',
+        '2026-07-12T12:00:02.000Z [PUSH] Queued group delivery '
+            'event=$event action=add relay_store_matched=true',
+        '2026-07-12T12:00:03.000Z [GROUP_INBOX] Stored message for group '
+            'group_hash=group-257 remote_type=$event action=add',
+        if (groupReactionNotificationKeepsRecipientProcessAlive(scenario.id))
+          '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] '
+              'remote_type=group_reaction outcome=attempted',
+      ];
+      return '${lines.join('\n')}\n';
     case 'provider_fcm':
       final providerMarker = messageScenario
           ? 'Group notification sent to'
@@ -1371,6 +1431,34 @@ String _rawEvidence({
         return '${<String>[
           _flowLine('GROUP_NOTIFICATION_ROUTE_TARGET_MATCHED', <String, Object?>{'group': groupName}),
           _flowLine('GROUP_CONVERSATION_READ_COMMITTED', <String, Object?>{'unreadAfter': 0}),
+        ].join('\n')}\n';
+      }
+      if (groupReactionNotificationKeepsRecipientProcessAlive(scenario.id)) {
+        final observation = <String, Object?>{
+          'schema': 'mknoon.plan315.background-connected-observation.v1',
+          'scenario': scenario.id,
+          'pidPresentBeforeDelivery': true,
+          'connectivityEvent': 'P2P_RELAY_PRESENCE_SET_RESPONSE',
+          'connectivityState': 'background',
+          'connectivityOk': true,
+          'homeAt': '2026-07-12T12:00:00.000Z',
+          'reactionAt': '2026-07-12T12:00:03.000Z',
+          'notificationAt': '2026-07-12T12:00:04.000Z',
+          'minimumHomeToReactDelayMs':
+              groupReactionBackgroundConnectedHomeToReactDelayMs,
+          'homeToReactDelayMs':
+              groupReactionBackgroundConnectedHomeToReactDelayMs,
+          'notificationObservationWindowMs':
+              groupReactionBackgroundConnectedObservationWindowMs,
+          'reactionToNotificationMs': 1000,
+        };
+        return '${<String>[
+          _flowLine('P2P_RELAY_PRESENCE_SET_RESPONSE', <String, Object?>{'state': 'background', 'ok': true}),
+          _flowLine('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{'processState': 'background_connected'}),
+          _flowLine('PUSH_ANDROID_DATA_DECRYPT_OK', <String, Object?>{'parity': true}),
+          _flowLine('GROUP_NOTIFICATION_ROUTE_TARGET_MATCHED', <String, Object?>{'targetMarker': targetMarker}),
+          '$groupReactionBackgroundConnectedObservationPrefix${jsonEncode(observation)}',
+          'pid_present_before_delivery=true connectivity_event=P2P_RELAY_PRESENCE_SET_RESPONSE home_to_react_delay_ms=$groupReactionBackgroundConnectedHomeToReactDelayMs notification_observation_window_ms=$groupReactionBackgroundConnectedObservationWindowMs',
         ].join('\n')}\n';
       }
       return '${<String>[

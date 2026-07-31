@@ -10,6 +10,18 @@ const String groupReactionNotificationVerdictSchema =
     'mknoon.plan257.orchestrator-verdict.v1';
 const String groupReactionNotificationStagingSchema =
     'mknoon.plan257.staging-prerequisites.v1';
+const String groupReactionBackgroundConnectedScenarioId =
+    'android_group_reaction_recipient_background_connected';
+const int groupReactionBackgroundConnectedHomeToReactDelayMs = 3000;
+const int groupReactionBackgroundConnectedObservationWindowMs = 60000;
+const String groupReactionBackgroundConnectedObservationPrefix =
+    'MKNOON_315_BACKGROUND_CONNECTED_OBSERVATION ';
+const Set<String> _processAliveReactionScenarioIds = <String>{
+  groupReactionBackgroundConnectedScenarioId,
+};
+
+bool groupReactionNotificationKeepsRecipientProcessAlive(String scenarioId) =>
+    _processAliveReactionScenarioIds.contains(scenarioId);
 
 /// Builds a least-disclosure probe for the rollout flag inherited by the
 /// running relay process. `systemctl show --property=Environment` omits values
@@ -467,6 +479,87 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
           'stored_reaction=true',
           'route_target_matched=true',
           'pid_absent_before_delivery=true',
+          'unread_after_tap=0',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'sqlcipher_state',
+        markers: <String>[
+          'reaction_rows=1',
+          'reaction_created_message_rows=0',
+          'unread=0,0,0',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'android_logcat',
+        markers: <String>[
+          'PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK',
+          'PUSH_ANDROID_DATA_DECRYPT_OK',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'android_notification_records',
+        markers: <String>[
+          'title_source=recipient_owned_group',
+          'body=Alice reacted 👍 to your message',
+          'stable_group_card=true',
+          'contains_new_message_copy=false',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'ui_automation',
+        markers: <String>[
+          'target_message_visible=true',
+          'orbit_indicators=0',
+          'manual_taps=0',
+        ],
+      ),
+    ],
+  ),
+  GroupReactionNotificationScenario(
+    id: groupReactionBackgroundConnectedScenarioId,
+    testCase: 'TC-12',
+    summary:
+        'backgrounded connected Android target author receives a provably '
+        'push-origin discussion reaction while its process stays alive',
+    groupType: 'chat',
+    senderRole: 'member_reactor',
+    senderPlatform: 'android',
+    senderDeviceKind: 'emulator',
+    recipientRole: 'target_message_author',
+    recipientPlatform: 'android',
+    recipientDeviceKind: 'physical',
+    evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay',
+        markers: <String>[
+          'remote_type=group_reaction',
+          'action=add',
+          'remove_provider_send=false',
+          'duplicate_provider_send=false',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'provider_fcm',
+        markers: <String>['event=group_reaction', 'delivery_matched=true'],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'sender_app',
+        markers: <String>[
+          'role=member_reactor',
+          'group_type=chat',
+          'reaction_send_committed=true',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'recipient_app',
+        markers: <String>[
+          'stored_reaction=true',
+          'route_target_matched=true',
+          'pid_present_before_delivery=true',
+          'connectivity_event=P2P_RELAY_PRESENCE_SET_RESPONSE',
+          'home_to_react_delay_ms=3000',
+          'notification_observation_window_ms=60000',
           'unread_after_tap=0',
         ],
       ),
@@ -1535,6 +1628,9 @@ void _validateCommandJournal(
   final lifecycleStage = requirement.id.endsWith('_message_unread_lifecycle')
       ? 'android_unread_lifecycle'
       : 'android_reaction_lifecycle';
+  final processAliveReaction = _processAliveReactionScenarioIds.contains(
+    requirement.id,
+  );
   final lifecycleCommands = commands
       .where((command) => command['stage'] == lifecycleStage)
       .toList(growable: false);
@@ -1556,6 +1652,7 @@ void _validateCommandJournal(
     );
   }
   if (!requirement.id.endsWith('_message_unread_lifecycle') &&
+      !processAliveReaction &&
       (!lifecycleCommands.any(
             (command) => (command['args'] as List).contains('kill'),
           ) ||
@@ -1566,7 +1663,35 @@ void _validateCommandJournal(
       r'$.capture.commandJournal lacks killed-process/pidof reaction proof',
     );
   }
-  if (!requirement.id.endsWith('_message_unread_lifecycle')) {
+  if (processAliveReaction) {
+    final homeIndex = lifecycleCommands.indexWhere((command) {
+      final args = command['args'] as List;
+      return command['executable'] == 'adb' &&
+          command['exitCode'] == 0 &&
+          (recipientDeviceId == null || args.contains(recipientDeviceId)) &&
+          args.contains('input') &&
+          args.contains('KEYCODE_HOME');
+    });
+    final pidIndex = lifecycleCommands.indexWhere((command) {
+      final args = command['args'] as List;
+      return command['executable'] == 'adb' &&
+          command['exitCode'] == 0 &&
+          (recipientDeviceId == null || args.contains(recipientDeviceId)) &&
+          args.contains('pidof');
+    }, homeIndex < 0 ? 0 : homeIndex + 1);
+    final usedProcessTermination = lifecycleCommands.any((command) {
+      final args = command['args'] as List;
+      return args.contains('kill') || args.contains('stop-app');
+    });
+    if (homeIndex < 0 || pidIndex <= homeIndex || usedProcessTermination) {
+      failures.add(
+        r'$.capture.commandJournal lacks ordered HOME/pidof process-alive '
+        'reaction proof or contains process termination',
+      );
+    }
+  }
+  if (!requirement.id.endsWith('_message_unread_lifecycle') &&
+      !processAliveReaction) {
     if (centralPrebuiltAndroid) {
       final runtimeProbeIndex = commands.indexWhere(
         (command) =>
@@ -1771,6 +1896,7 @@ void _validateAuthoritativeEvidence({
   final provider = evidenceTexts['provider_fcm'] ?? '';
   final senderApp = evidenceTexts['sender_app'] ?? '';
   final recipientApp = evidenceTexts['recipient_app'] ?? '';
+  final androidLogcat = evidenceTexts['android_logcat'] ?? '';
   final sqlCipher = evidenceTexts['sqlcipher_state'] ?? '';
   final notificationRecords =
       evidenceTexts['android_notification_records'] ?? '';
@@ -1779,7 +1905,10 @@ void _validateAuthoritativeEvidence({
   final rawRelayLines = relay
       .split('\n')
       .where(
-        (line) => line.contains('[GROUP_INBOX]') || line.contains('[PUSH]'),
+        (line) =>
+            line.contains('[GROUP_INBOX]') ||
+            line.contains('[PUSH]') ||
+            line.contains('[GROUP_REACTION_WAKE]'),
       )
       .toList(growable: false);
   if (rawRelayLines.isEmpty ||
@@ -1792,6 +1921,25 @@ void _validateAuthoritativeEvidence({
     failures.add(r'$.evidence[relay] is not raw timestamped relay custody');
   }
   final messageScenario = requirement.id.endsWith('_message_unread_lifecycle');
+  final processAliveReaction = _processAliveReactionScenarioIds.contains(
+    requirement.id,
+  );
+  if (processAliveReaction &&
+      (!rawRelayLines.any(
+            (line) =>
+                line.contains('[GROUP_REACTION_WAKE]') &&
+                line.contains('remote_type=group_reaction'),
+          ) ||
+          !provider.contains('event=group_reaction') ||
+          !provider.contains('delivery_matched=true') ||
+          !androidLogcat.contains(
+            'PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK',
+          ))) {
+    failures.add(
+      r'$.evidence background-connected reaction lacks relay/provider/logcat '
+      'push-origin discrimination',
+    );
+  }
   final providerMarker = messageScenario
       ? '[PUSH] Group notification sent to'
       : '[PUSH] Notification sent to';
@@ -1837,8 +1985,18 @@ void _validateAuthoritativeEvidence({
     if (!recipientApp.contains('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK') ||
         !recipientApp.contains('PUSH_ANDROID_DATA_DECRYPT_OK')) {
       failures.add(
-        r'$.evidence[recipient_app] lacks raw killed-process crypto/parity '
-        'success',
+        processAliveReaction
+            ? r'$.evidence[recipient_app] lacks raw background-connected '
+                  'crypto/parity success'
+            : r'$.evidence[recipient_app] lacks raw killed-process '
+                  'crypto/parity success',
+      );
+    }
+    if (processAliveReaction) {
+      _validateBackgroundConnectedObservation(
+        recipientApp,
+        scenario: requirement.id,
+        failures: failures,
       );
     }
     _validateExactDuplicateRedrive(
@@ -1871,6 +2029,103 @@ void _validateAuthoritativeEvidence({
     targetMarker: measurements['targetMarker'] as String? ?? '',
     failures: failures,
   );
+}
+
+void _validateBackgroundConnectedObservation(
+  String text, {
+  required String scenario,
+  required List<String> failures,
+}) {
+  final lines = text
+      .split('\n')
+      .where(
+        (line) =>
+            line.startsWith(groupReactionBackgroundConnectedObservationPrefix),
+      )
+      .toList(growable: false);
+  if (lines.length != 1) {
+    failures.add(
+      r'$.evidence[recipient_app] must contain one background-connected '
+      'timing observation',
+    );
+    return;
+  }
+  final observed = _decodeObject(
+    lines.single.substring(
+      groupReactionBackgroundConnectedObservationPrefix.length,
+    ),
+    r'$.evidence[recipient_app].backgroundConnectedObservation',
+    failures,
+  );
+  if (observed == null) return;
+  _expectExactKeys(
+    observed,
+    const <String>{
+      'schema',
+      'scenario',
+      'pidPresentBeforeDelivery',
+      'connectivityEvent',
+      'connectivityState',
+      'connectivityOk',
+      'homeAt',
+      'reactionAt',
+      'notificationAt',
+      'minimumHomeToReactDelayMs',
+      'homeToReactDelayMs',
+      'notificationObservationWindowMs',
+      'reactionToNotificationMs',
+    },
+    r'$.evidence[recipient_app].backgroundConnectedObservation',
+    failures,
+  );
+  final homeAt = DateTime.tryParse('${observed['homeAt']}')?.toUtc();
+  final reactionAt = DateTime.tryParse('${observed['reactionAt']}')?.toUtc();
+  final notificationAt = DateTime.tryParse(
+    '${observed['notificationAt']}',
+  )?.toUtc();
+  final homeToReaction = observed['homeToReactDelayMs'];
+  final reactionToNotification = observed['reactionToNotificationMs'];
+  final timestampsOrdered =
+      homeAt != null &&
+      reactionAt != null &&
+      notificationAt != null &&
+      !reactionAt.isBefore(homeAt) &&
+      !notificationAt.isBefore(reactionAt);
+  final derivedHomeToReaction = timestampsOrdered
+      ? reactionAt.difference(homeAt).inMilliseconds
+      : -1;
+  final derivedReactionToNotification = timestampsOrdered
+      ? notificationAt.difference(reactionAt).inMilliseconds
+      : -1;
+  bool closeToDerived(Object? value, int derived) =>
+      value is int && (value - derived).abs() <= 1500;
+  if (observed['schema'] !=
+          'mknoon.plan315.background-connected-observation.v1' ||
+      observed['scenario'] != scenario ||
+      observed['pidPresentBeforeDelivery'] != true ||
+      observed['connectivityEvent'] != 'P2P_RELAY_PRESENCE_SET_RESPONSE' ||
+      observed['connectivityState'] != 'background' ||
+      observed['connectivityOk'] != true ||
+      observed['minimumHomeToReactDelayMs'] !=
+          groupReactionBackgroundConnectedHomeToReactDelayMs ||
+      observed['notificationObservationWindowMs'] !=
+          groupReactionBackgroundConnectedObservationWindowMs ||
+      homeToReaction is! int ||
+      homeToReaction < groupReactionBackgroundConnectedHomeToReactDelayMs ||
+      homeToReaction >
+          groupReactionBackgroundConnectedHomeToReactDelayMs + 15000 ||
+      reactionToNotification is! int ||
+      reactionToNotification < 0 ||
+      reactionToNotification >
+          groupReactionBackgroundConnectedObservationWindowMs ||
+      !timestampsOrdered ||
+      !closeToDerived(homeToReaction, derivedHomeToReaction) ||
+      !closeToDerived(reactionToNotification, derivedReactionToNotification)) {
+    failures.add(
+      r'$.evidence[recipient_app] background-connected process, connectivity, '
+      'or timing proof mismatched',
+    );
+  }
 }
 
 void _validateExactDuplicateRedrive(
