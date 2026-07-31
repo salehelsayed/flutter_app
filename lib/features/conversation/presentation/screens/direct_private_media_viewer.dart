@@ -244,6 +244,9 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
               ? l10n.private_media_ios_capture_limit
               : l10n.private_media_ios_image_capture_limit
         : l10n.private_media_android_capture_limit;
+    final minimalViewerChrome =
+        grant.mode == PrivateMediaMode.viewOnce &&
+        grant.kind == MediaViewerKind.image;
 
     return PopScope(
       canPop: _allowPop,
@@ -272,57 +275,61 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
               ),
               onPostFrameFailure: () =>
                   _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure),
+              onBackRequested: () async {
+                await Navigator.of(context).maybePop();
+              },
             ),
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      l10n.private_media_notification_body,
-                      key: const ValueKey('private-media-generic-copy'),
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      captureLimitCopy,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 11,
+            if (!minimalViewerChrome)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        l10n.private_media_notification_body,
+                        key: const ValueKey('private-media-generic-copy'),
+                        style: const TextStyle(color: Colors.white70),
                       ),
-                    ),
-                    if (widget.onSafeAction != null)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _PrivateActionButton(
-                            action: DirectPrivateMediaAction.reply,
-                            icon: Icons.reply_rounded,
-                            tooltip: l10n.media_viewer_action_reply,
-                            onPressed: _dispatchSafe,
-                          ),
-                          _PrivateActionButton(
-                            action: DirectPrivateMediaAction.info,
-                            icon: Icons.info_outline_rounded,
-                            tooltip: l10n.media_viewer_action_info,
-                            onPressed: _dispatchSafe,
-                          ),
-                          _PrivateActionButton(
-                            action: DirectPrivateMediaAction.deleteForMe,
-                            icon: Icons.delete_outline_rounded,
-                            tooltip: l10n.media_viewer_action_delete,
-                            onPressed: _dispatchSafe,
-                          ),
-                        ],
+                      const SizedBox(height: 4),
+                      Text(
+                        captureLimitCopy,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
                       ),
-                  ],
+                      if (widget.onSafeAction != null)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _PrivateActionButton(
+                              action: DirectPrivateMediaAction.reply,
+                              icon: Icons.reply_rounded,
+                              tooltip: l10n.media_viewer_action_reply,
+                              onPressed: _dispatchSafe,
+                            ),
+                            _PrivateActionButton(
+                              action: DirectPrivateMediaAction.info,
+                              icon: Icons.info_outline_rounded,
+                              tooltip: l10n.media_viewer_action_info,
+                              onPressed: _dispatchSafe,
+                            ),
+                            _PrivateActionButton(
+                              action: DirectPrivateMediaAction.deleteForMe,
+                              icon: Icons.delete_outline_rounded,
+                              tooltip: l10n.media_viewer_action_delete,
+                              onPressed: _dispatchSafe,
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
             if (_covered)
               const Positioned.fill(
                 child: ColoredBox(
@@ -363,6 +370,7 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
   const DirectPrivateMediaTerminalPlaceholder({
     super.key,
     required this.state,
+    required this.mode,
     this.direction = PrivateMediaDirection.incoming,
     this.onReply,
     this.onInfo,
@@ -370,6 +378,7 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
   });
 
   final PrivateMediaLifecycleState state;
+  final PrivateMediaMode mode;
   final PrivateMediaDirection direction;
   final VoidCallback? onReply;
   final VoidCallback? onInfo;
@@ -386,6 +395,28 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
               ? l10n.private_media_sender_consumed
               : l10n.private_media_consumed
         : l10n.private_media_expired;
+    if (mode == PrivateMediaMode.viewOnce &&
+        state == PrivateMediaLifecycleState.consumed) {
+      final photoLabel = l10n.shared_media_kind_photo;
+      return Semantics(
+        label: '$photoLabel. $copy',
+        excludeSemantics: true,
+        child: Container(
+          key: ValueKey('private-terminal-${state.name}'),
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            key: const ValueKey('private-terminal-view-once-consumed-summary'),
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.visibility_off_outlined),
+              const SizedBox(width: 8),
+              Text(photoLabel),
+            ],
+          ),
+        ),
+      );
+    }
     return Semantics(
       label: copy,
       child: Container(
@@ -478,7 +509,7 @@ class PrivateMediaVisualCard extends StatelessWidget {
        );
 
   final String? title;
-  final String body;
+  final String? body;
   final IconData icon;
   final Key? titleKey;
   final Widget? action;
@@ -549,7 +580,8 @@ class PrivateMediaVisualCard extends StatelessWidget {
               ),
             const SizedBox(height: 4),
           ],
-          Text(body, style: Theme.of(context).textTheme.bodySmall),
+          if (body != null)
+            Text(body!, style: Theme.of(context).textTheme.bodySmall),
           if (action != null) ...[const SizedBox(height: 10), action!],
         ],
       ),
@@ -763,6 +795,10 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
         labeledPolicy?.mode == PrivateMediaMode.disappearing ||
         labeledPolicy?.mode == PrivateMediaMode.viewOnce;
     final usesTapTile = tapTileKind && tapTileMode && onOpen != null;
+    final minimalViewOnceImage =
+        usesTapTile &&
+        labeledPolicy?.mode == PrivateMediaMode.viewOnce &&
+        kind == PrivateMediaAttachmentKind.image;
     final actionLabel = labeledPolicy?.mode == PrivateMediaMode.viewOnce
         ? (privateMediaCardUsesVideoCopy(kind)
               ? l10n.private_media_view_video
@@ -801,11 +837,15 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
       _ => null,
     };
     final card = PrivateMediaVisualCard(
-      title: usesTapTile && labeledPolicy.mode == PrivateMediaMode.protected
+      title:
+          minimalViewOnceImage ||
+              (usesTapTile && labeledPolicy.mode == PrivateMediaMode.protected)
           ? null
           : title,
       titleKey: const ValueKey('private-media-mode-label'),
-      body: body ?? privateMediaModeLabel(l10n, labeledPolicy),
+      body: minimalViewOnceImage
+          ? null
+          : body ?? privateMediaModeLabel(l10n, labeledPolicy),
       icon: privateMediaCardIcon(labeledPolicy),
       action: usesTapTile ? null : button,
       onTap: usesTapTile ? onOpen : null,
@@ -844,6 +884,25 @@ class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final label = privateMediaCardTitle(l10n, policy, kind);
+    final minimalViewOnceImage =
+        policy.mode == PrivateMediaMode.viewOnce &&
+        kind == PrivateMediaAttachmentKind.image &&
+        localMediaAvailable &&
+        onOpen != null;
+    if (minimalViewOnceImage) {
+      return KeyedSubtree(
+        key: const ValueKey('private-media-outgoing'),
+        child: PrivateMediaVisualCard(
+          title: null,
+          body: null,
+          icon: privateMediaCardIcon(policy),
+          onTap: onOpen,
+          opening: opening,
+          tapLabel: label,
+          openingLabel: l10n.private_media_opening,
+        ),
+      );
+    }
     final supportsSenderReopen =
         policy.mode == PrivateMediaMode.protected ||
         policy.mode == PrivateMediaMode.viewOnce;

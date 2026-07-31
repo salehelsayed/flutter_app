@@ -23,6 +23,16 @@ typedef MediaPictureInPictureControllerFactory =
       required MediaPictureInPictureRestorePlayback restorePlayback,
     });
 
+enum _CompactVideoOverflowAction {
+  save,
+  share,
+  info,
+  reply,
+  forward,
+  pictureInPicture,
+  delete,
+}
+
 /// 230: typed, callback-only full-screen media viewer.
 ///
 /// Knows which received attachment is visible (stable id + owner lane), renders
@@ -47,6 +57,7 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
     this.onFirstRenderedFrame,
     this.onPreFrameFailure,
     this.onPostFrameFailure,
+    this.onBackRequested,
   }) : assert(
          (pictureInPictureControllerFactory == null) ==
              (loadPictureInPictureAuthorization == null),
@@ -93,6 +104,11 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
   final VoidCallback? onPreFrameFailure;
   final VoidCallback? onPostFrameFailure;
 
+  /// Optional route-owner back coordinator. Null preserves the ordinary
+  /// viewer's direct Navigator pop; private owners use this to route the
+  /// visible AppBar Back through their fail-closed PopScope.
+  final Future<void> Function()? onBackRequested;
+
   @override
   State<FullScreenTypedMediaViewer> createState() =>
       _FullScreenTypedMediaViewerState();
@@ -110,6 +126,27 @@ class _FullScreenTypedMediaViewerState
     MediaViewerAction.info,
     MediaViewerAction.delete,
   ];
+  static const List<MediaViewerAction> _compactMenuOrder = <MediaViewerAction>[
+    MediaViewerAction.save,
+    MediaViewerAction.share,
+    MediaViewerAction.info,
+    MediaViewerAction.reply,
+  ];
+  static const List<_CompactVideoOverflowAction> _compactVideoMenuOrder =
+      <_CompactVideoOverflowAction>[
+        _CompactVideoOverflowAction.save,
+        _CompactVideoOverflowAction.share,
+        _CompactVideoOverflowAction.info,
+        _CompactVideoOverflowAction.reply,
+        _CompactVideoOverflowAction.forward,
+        _CompactVideoOverflowAction.pictureInPicture,
+        _CompactVideoOverflowAction.delete,
+      ];
+  static const double _compactTapExtent = 48;
+  static const double _compactVisualExtent = 36;
+  static const double _compactEdgeInset = 12;
+  static const double _compactResultBottom =
+      _compactEdgeInset + _compactTapExtent + _compactEdgeInset;
 
   late final PageController _pageController;
   late int _currentIndex;
@@ -390,6 +427,12 @@ class _FullScreenTypedMediaViewerState
     final items = widget.items;
     final showIndicator = items.length > 1;
     final current = _currentItem;
+    final compactImageActions =
+        current.actionPresentation ==
+        MediaViewerActionPresentation.compactImageOverlay;
+    final compactVideoActions =
+        current.actionPresentation ==
+        MediaViewerActionPresentation.compactVideoOverflow;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -398,7 +441,9 @@ class _FullScreenTypedMediaViewerState
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: widget.onBackRequested == null
+              ? () => Navigator.of(context).pop()
+              : () => unawaited(widget.onBackRequested!()),
         ),
         title: showIndicator
             ? Text(
@@ -414,7 +459,7 @@ class _FullScreenTypedMediaViewerState
         actions: widget.privacyMinimized
             ? const <Widget>[]
             : <Widget>[
-                if (_pictureInPictureVisible)
+                if (_pictureInPictureVisible && !compactVideoActions)
                   IconButton(
                     key: const ValueKey('media_action_picture_in_picture'),
                     tooltip: l10n.media_viewer_action_picture_in_picture,
@@ -429,7 +474,11 @@ class _FullScreenTypedMediaViewerState
                         ? _requestPictureInPicture
                         : null,
                   ),
-                ..._buildActions(l10n, current),
+                ...(compactImageActions
+                    ? _buildCompactTopActions(l10n, current)
+                    : compactVideoActions
+                    ? _buildCompactVideoTopActions(l10n, current)
+                    : _buildActions(l10n, current)),
               ],
       ),
       extendBodyBehindAppBar: true,
@@ -455,12 +504,23 @@ class _FullScreenTypedMediaViewerState
               right: 0,
               child: _MediaViewerMetadata(item: current),
             ),
+          if (!widget.privacyMinimized && compactImageActions)
+            _buildCompactBottomActions(l10n, current),
           if (_lastResult != null)
-            Positioned(
-              right: 16,
-              bottom: 16,
-              child: _MediaViewerActionResultChip(result: _lastResult!),
-            ),
+            if (!widget.privacyMinimized && compactImageActions)
+              PositionedDirectional(
+                end: _compactEdgeInset,
+                bottom:
+                    MediaQuery.of(context).padding.bottom +
+                    _compactResultBottom,
+                child: _MediaViewerActionResultChip(result: _lastResult!),
+              )
+            else
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: _MediaViewerActionResultChip(result: _lastResult!),
+              ),
         ],
       ),
     );
@@ -485,6 +545,245 @@ class _FullScreenTypedMediaViewerState
       );
     }
     return actions;
+  }
+
+  List<Widget> _buildCompactTopActions(
+    AppLocalizations l10n,
+    MediaViewerItem item,
+  ) {
+    if (widget.onAction == null) return const <Widget>[];
+    final actions = _compactMenuOrder
+        .where(item.capabilities.allows)
+        .toList(growable: false);
+    if (actions.isEmpty) return const <Widget>[];
+    final enabled = item.isActionEligible && !_dispatching;
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsetsDirectional.only(end: _compactEdgeInset),
+        child: SizedBox.square(
+          dimension: _compactTapExtent,
+          child: PopupMenuButton<MediaViewerAction>(
+            key: const ValueKey('media_action_more'),
+            tooltip: l10n.media_viewer_more_actions,
+            enabled: enabled,
+            padding: EdgeInsets.zero,
+            position: PopupMenuPosition.under,
+            color: const Color(0xFF1C1C1E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: Color(0x66FFFFFF)),
+            ),
+            onSelected: (action) => unawaited(_dispatch(action)),
+            itemBuilder: (context) => [
+              for (final action in actions)
+                PopupMenuItem<MediaViewerAction>(
+                  key: ValueKey('media_action_${action.name}'),
+                  value: action,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(_actionIcon(action), size: 20, color: Colors.white),
+                      const SizedBox(width: 12),
+                      Text(
+                        _compactActionLabel(l10n, action),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            child: Center(
+              child: _compactActionVisual(
+                name: 'more',
+                icon: Icons.more_horiz_rounded,
+                enabled: enabled,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _buildCompactVideoTopActions(
+    AppLocalizations l10n,
+    MediaViewerItem item,
+  ) {
+    final actions = _compactVideoMenuOrder
+        .where((action) {
+          final mediaAction = _compactVideoMediaAction(action);
+          if (mediaAction != null) {
+            return widget.onAction != null &&
+                item.capabilities.allows(mediaAction);
+          }
+          return _pictureInPictureVisible;
+        })
+        .toList(growable: false);
+    if (actions.isEmpty) return const <Widget>[];
+
+    final mediaEnabled =
+        widget.onAction != null && item.isActionEligible && !_dispatching;
+    final page = _videoPageKeys[_pictureInPictureIdentity(item)]?.currentState;
+    final pictureInPictureEnabled =
+        _pictureInPictureVisible &&
+        !_pictureInPictureRequestInFlight &&
+        (page?.canStartPictureInPicture ?? false);
+    final enabled = item.isActionEligible && !_dispatching;
+
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsetsDirectional.only(end: _compactEdgeInset),
+        child: SizedBox.square(
+          dimension: _compactTapExtent,
+          child: PopupMenuButton<_CompactVideoOverflowAction>(
+            key: const ValueKey('media_action_more'),
+            tooltip: l10n.media_viewer_more_actions,
+            enabled: enabled,
+            padding: EdgeInsets.zero,
+            position: PopupMenuPosition.under,
+            color: const Color(0xFF1C1C1E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: Color(0x66FFFFFF)),
+            ),
+            onSelected: (action) {
+              final mediaAction = _compactVideoMediaAction(action);
+              if (mediaAction != null) {
+                unawaited(_dispatch(mediaAction));
+              } else {
+                unawaited(_requestPictureInPicture());
+              }
+            },
+            itemBuilder: (context) => [
+              for (final action in actions)
+                PopupMenuItem<_CompactVideoOverflowAction>(
+                  key: ValueKey(
+                    'media_action_${_compactVideoActionName(action)}',
+                  ),
+                  value: action,
+                  enabled:
+                      action == _CompactVideoOverflowAction.pictureInPicture
+                      ? pictureInPictureEnabled
+                      : mediaEnabled,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _compactVideoActionIcon(action),
+                        size: 20,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          _compactVideoActionLabel(l10n, action),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            child: Center(
+              child: _compactActionVisual(
+                name: 'more',
+                icon: Icons.more_horiz_rounded,
+                enabled: enabled,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildCompactBottomActions(
+    AppLocalizations l10n,
+    MediaViewerItem item,
+  ) {
+    if (widget.onAction == null) return const SizedBox.shrink();
+    final controls = <Widget>[];
+    for (final entry
+        in const <({MediaViewerAction action, AlignmentGeometry alignment})>[
+          (
+            action: MediaViewerAction.forward,
+            alignment: AlignmentDirectional.bottomEnd,
+          ),
+          (
+            action: MediaViewerAction.delete,
+            alignment: AlignmentDirectional.bottomStart,
+          ),
+        ]) {
+      if (!item.capabilities.allows(entry.action)) continue;
+      controls.add(
+        Align(
+          alignment: entry.alignment,
+          child: _compactActionButton(l10n, item, entry.action),
+        ),
+      );
+    }
+    if (controls.isEmpty) return const SizedBox.shrink();
+    return Positioned.fill(
+      child: SafeArea(
+        minimum: const EdgeInsets.all(_compactEdgeInset),
+        child: Stack(children: controls),
+      ),
+    );
+  }
+
+  Widget _compactActionButton(
+    AppLocalizations l10n,
+    MediaViewerItem item,
+    MediaViewerAction action,
+  ) {
+    final enabled = item.isActionEligible && !_dispatching;
+    return SizedBox.square(
+      dimension: _compactTapExtent,
+      child: IconButton(
+        key: ValueKey('media_action_${action.name}'),
+        tooltip: _actionTooltip(l10n, action),
+        padding: const EdgeInsets.all(
+          (_compactTapExtent - _compactVisualExtent) / 2,
+        ),
+        constraints: const BoxConstraints.tightFor(
+          width: _compactTapExtent,
+          height: _compactTapExtent,
+        ),
+        onPressed: enabled ? () => unawaited(_dispatch(action)) : null,
+        icon: _compactActionVisual(
+          name: action.name,
+          icon: _actionIcon(action),
+          enabled: enabled,
+        ),
+      ),
+    );
+  }
+
+  Widget _compactActionVisual({
+    required String name,
+    required IconData icon,
+    required bool enabled,
+  }) {
+    return Container(
+      key: ValueKey('media_action_${name}_visual'),
+      width: _compactVisualExtent,
+      height: _compactVisualExtent,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: enabled ? const Color(0xCC1C1C1E) : const Color(0x661C1C1E),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: enabled ? const Color(0x66FFFFFF) : const Color(0x33FFFFFF),
+        ),
+      ),
+      child: Icon(
+        icon,
+        size: 20,
+        color: enabled ? Colors.white : Colors.white38,
+      ),
+    );
   }
 
   Widget _buildPage(MediaViewerItem item, int index) {
@@ -537,6 +836,51 @@ class _FullScreenTypedMediaViewerState
   }
 }
 
+MediaViewerAction? _compactVideoMediaAction(
+  _CompactVideoOverflowAction action,
+) {
+  switch (action) {
+    case _CompactVideoOverflowAction.save:
+      return MediaViewerAction.save;
+    case _CompactVideoOverflowAction.share:
+      return MediaViewerAction.share;
+    case _CompactVideoOverflowAction.info:
+      return MediaViewerAction.info;
+    case _CompactVideoOverflowAction.reply:
+      return MediaViewerAction.reply;
+    case _CompactVideoOverflowAction.forward:
+      return MediaViewerAction.forward;
+    case _CompactVideoOverflowAction.pictureInPicture:
+      return null;
+    case _CompactVideoOverflowAction.delete:
+      return MediaViewerAction.delete;
+  }
+}
+
+String _compactVideoActionName(_CompactVideoOverflowAction action) {
+  if (action == _CompactVideoOverflowAction.pictureInPicture) {
+    return 'picture_in_picture';
+  }
+  return _compactVideoMediaAction(action)!.name;
+}
+
+IconData _compactVideoActionIcon(_CompactVideoOverflowAction action) {
+  if (action == _CompactVideoOverflowAction.pictureInPicture) {
+    return Icons.picture_in_picture_alt_rounded;
+  }
+  return _actionIcon(_compactVideoMediaAction(action)!);
+}
+
+String _compactVideoActionLabel(
+  AppLocalizations l10n,
+  _CompactVideoOverflowAction action,
+) {
+  if (action == _CompactVideoOverflowAction.pictureInPicture) {
+    return l10n.media_viewer_action_picture_in_picture;
+  }
+  return _actionTooltip(l10n, _compactVideoMediaAction(action)!);
+}
+
 IconData _actionIcon(MediaViewerAction action) {
   switch (action) {
     case MediaViewerAction.save:
@@ -579,6 +923,13 @@ String _actionTooltip(AppLocalizations l10n, MediaViewerAction action) {
   }
 }
 
+String _compactActionLabel(AppLocalizations l10n, MediaViewerAction action) {
+  if (action == MediaViewerAction.save) {
+    return l10n.media_viewer_action_save_image;
+  }
+  return _actionTooltip(l10n, action);
+}
+
 /// Current-item metadata: sender, timestamp, caption, MIME/type, byte size, and
 /// image dimensions or video duration. Never renders the local path.
 class _MediaViewerMetadata extends StatelessWidget {
@@ -595,23 +946,25 @@ class _MediaViewerMetadata extends StatelessWidget {
     );
 
     final children = <Widget>[];
-    if (item.senderLabel != null) {
-      children.add(
-        Text(
-          item.senderLabel!,
-          key: const ValueKey('media_meta_sender'),
-          style: style,
-        ),
-      );
-    }
-    if (item.timestamp != null) {
-      children.add(
-        Text(
-          _formatTimestamp(item.timestamp!),
-          key: const ValueKey('media_meta_timestamp'),
-          style: subStyle,
-        ),
-      );
+    if (item.showMetadataDetails) {
+      if (item.senderLabel != null) {
+        children.add(
+          Text(
+            item.senderLabel!,
+            key: const ValueKey('media_meta_sender'),
+            style: style,
+          ),
+        );
+      }
+      if (item.timestamp != null) {
+        children.add(
+          Text(
+            _formatTimestamp(item.timestamp!),
+            key: const ValueKey('media_meta_timestamp'),
+            style: subStyle,
+          ),
+        );
+      }
     }
     if (item.caption != null && item.caption!.isNotEmpty) {
       children.add(
@@ -623,30 +976,38 @@ class _MediaViewerMetadata extends StatelessWidget {
       );
     }
 
-    final info = <Widget>[
-      Text(item.mime, key: const ValueKey('media_meta_mime'), style: subStyle),
-      if (item.sizeBytes != null)
+    if (item.showMetadataDetails) {
+      final info = <Widget>[
         Text(
-          _formatBytes(item.sizeBytes!),
-          key: const ValueKey('media_meta_size'),
+          item.mime,
+          key: const ValueKey('media_meta_mime'),
           style: subStyle,
         ),
-      if (item.isVideo && item.durationMs != null)
-        Text(
-          _formatDurationMs(item.durationMs!),
-          key: const ValueKey('media_meta_duration'),
-          style: subStyle,
-        ),
-      if (!item.isVideo && item.width != null && item.height != null)
-        Text(
-          _formatDimensions(item.width!, item.height!),
-          key: const ValueKey('media_meta_dimensions'),
-          style: subStyle,
-        ),
-    ];
-    children.add(Wrap(spacing: 10, runSpacing: 2, children: info));
+        if (item.sizeBytes != null)
+          Text(
+            _formatBytes(item.sizeBytes!),
+            key: const ValueKey('media_meta_size'),
+            style: subStyle,
+          ),
+        if (item.isVideo && item.durationMs != null)
+          Text(
+            _formatDurationMs(item.durationMs!),
+            key: const ValueKey('media_meta_duration'),
+            style: subStyle,
+          ),
+        if (!item.isVideo && item.width != null && item.height != null)
+          Text(
+            _formatDimensions(item.width!, item.height!),
+            key: const ValueKey('media_meta_dimensions'),
+            style: subStyle,
+          ),
+      ];
+      children.add(Wrap(spacing: 10, runSpacing: 2, children: info));
+    }
 
+    if (children.isEmpty) return const SizedBox.shrink();
     return Padding(
+      key: const ValueKey('media_viewer_metadata_content'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -52,6 +52,12 @@ void main() {
       expect(viewer.items, hasLength(51));
       expect(viewer.items[49].messageId, 'm49');
       expect(viewer.items[50].messageId, 'm50');
+      expect(viewer.items[49].kind, MediaViewerKind.image);
+      expect(viewer.items[49].showMetadataDetails, isTrue);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('media_meta_mime'))).data,
+        'image/jpeg',
+      );
       expect(
         viewer.items.every(
           (item) =>

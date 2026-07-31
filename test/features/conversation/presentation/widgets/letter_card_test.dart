@@ -1879,8 +1879,15 @@ void main() {
       );
 
       expect(tester.takeException(), isNull);
+      expect(
+        tester
+            .widget<LetterCard>(find.byType(LetterCard))
+            .hugPrivateContentBubble,
+        isFalse,
+      );
       expect(find.text('9:57 AM'), findsOneWidget);
       expect(find.byType(LinkableText), findsNothing);
+      expect(bubbleWidth(tester), closeTo(400 * 0.78, 1));
     });
 
     // TC-T3 (guard) — a near-full line wraps the inline timestamp atomically,

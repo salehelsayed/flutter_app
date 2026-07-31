@@ -874,6 +874,10 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
           ? screen.contactUsername
           : null,
       timestamp: DateTime.tryParse(entry.parentTimestamp),
+      // Production viewer entry revalidates every parent as ordinary. Mirror
+      // the inline Keep-in-chat policy for static images and videos without
+      // clearing the typed metadata that actions and diagnostics may need.
+      showMetadataDetails: kind == MediaViewerKind.gif,
       canEnterPictureInPicture:
           _pictureInPictureByAttachmentId[attachment.id] ?? false,
       protection: MediaViewerProtection(

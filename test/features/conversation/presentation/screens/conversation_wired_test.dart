@@ -1502,6 +1502,144 @@ void main() {
       expect(capturedMediaMimes.last, const ['image/gif']);
     });
 
+    testWidgets('video replacement blocks stale view-once send', (
+      tester,
+    ) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
+      final tempDir = Directory.systemTemp.createTempSync(
+        'private_media_stale_video_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final video = File('${tempDir.path}/replacement.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final fixture = (await tester.runAsync(
+        MediaRepositoryRealDbFixture.create,
+      ))!;
+      addTearDown(fixture.dispose);
+      final messageRepo = fixture.messageRepo;
+      final durableMediaFileManager =
+          TrackingDurableConversationMediaFileManager(tempDir);
+      var uploadCalls = 0;
+      var sendCalls = 0;
+      String? attemptedAttachmentId;
+      debugConversationWiredInitialPrivateMediaPolicy =
+          const PrivateMediaPolicy.viewOnce();
+      addTearDown(() => debugConversationWiredInitialPrivateMediaPolicy = null);
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        contactRepo: FakeContactRepository(),
+        initialPendingMedia: [
+          PendingComposerMedia(file: video, budgetBytes: video.lengthSync()),
+        ],
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: durableMediaFileManager,
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async {
+              uploadCalls++;
+              attemptedAttachmentId = blobId;
+              return null;
+            },
+        sendFn:
+            ({
+              required p2pService,
+              required messageRepo,
+              required targetPeerId,
+              required text,
+              required senderPeerId,
+              required senderUsername,
+              messageId,
+              timestamp,
+              bridge,
+              recipientMlKemPublicKey,
+              quotedMessageId,
+              mediaAttachments,
+              privateMediaPolicy,
+              mediaAttachmentRepo,
+              transportMetrics,
+            }) async {
+              sendCalls++;
+              return _instantSuccessSendFn(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                targetPeerId: targetPeerId,
+                text: text,
+                senderPeerId: senderPeerId,
+                senderUsername: senderUsername,
+                messageId: messageId,
+                timestamp: timestamp,
+                bridge: bridge,
+                recipientMlKemPublicKey: recipientMlKemPublicKey,
+                quotedMessageId: quotedMessageId,
+                mediaAttachments: mediaAttachments,
+                privateMediaPolicy: privateMediaPolicy,
+                mediaAttachmentRepo: mediaAttachmentRepo,
+                transportMetrics: transportMetrics,
+              );
+            },
+      );
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('private-media-selector')),
+          matching: find.text('Keep in chat'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+
+      expect(
+        find.text('Private media needs one photo or video with no caption.'),
+        findsOneWidget,
+      );
+      expect(uploadCalls, 0);
+      expect(sendCalls, 0);
+      expect(
+        await tester.runAsync(
+          () => messageRepo.getMessagesForContact(makeContact().peerId),
+        ),
+        isEmpty,
+        reason: 'the rejected tap must not publish an optimistic parent',
+      );
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpUntilAsyncIo(tester, () => uploadCalls == 1);
+      await pumpUntilAsyncIo(tester, () {
+        final attachmentId = attemptedAttachmentId;
+        return attachmentId != null &&
+            !directPrivateMediaTransferRegistry.isActive(attachmentId) &&
+            !mediaUploadInFlightTracker.isInFlight(attachmentId);
+      });
+
+      expect(uploadCalls, 1);
+      expect(sendCalls, 0);
+    });
+
     testWidgets('failed private upload restores the exact selected policy', (
       tester,
     ) async {
@@ -11555,6 +11693,14 @@ void main() {
         await pumpUntil(
           tester,
           () => find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+        );
+        await tester.tap(find.byKey(const ValueKey('media_action_more')));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('media_action_share'))
+              .evaluate()
+              .isNotEmpty,
         );
         await tester.tap(find.byKey(const ValueKey('media_action_share')));
         await pumpUntil(tester, () => egressService.calls.length >= 2);

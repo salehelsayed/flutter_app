@@ -1066,6 +1066,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                     state == PrivateMediaLifecycleState.expired) {
                   return DirectPrivateMediaTerminalPlaceholder(
                     state: state,
+                    mode: message.privateMediaMode,
                     direction: message.isIncoming
                         ? PrivateMediaDirection.incoming
                         : PrivateMediaDirection.outgoing,
@@ -1314,6 +1315,10 @@ class _ConversationScreenState extends State<ConversationScreen>
                 // 155: on 1:1 the inline glyph reflects the TRANSPORT the
                 // message travelled (own outgoing AND received). Group keeps v1.
                 transportStatusGlyph: true,
+                hugPrivateContentBubble:
+                    message.privateMediaMode == PrivateMediaMode.viewOnce &&
+                    message.privateMediaState ==
+                        PrivateMediaLifecycleState.consumed,
                 status: message.isIncoming ? null : message.status,
                 transport: message.transport,
                 quotedText: quotedText,
@@ -2115,6 +2120,18 @@ class _ConversationScreenState extends State<ConversationScreen>
           : message.text,
       senderLabel: message.isIncoming ? widget.contactUsername : null,
       timestamp: message.parsedTimestamp,
+      // This builder is reachable only after ordinary-policy revalidation.
+      // Keep user-authored captions and typed metadata values, but do not
+      // automatically overlay technical details on Keep-in-chat images or
+      // videos. GIF metadata keeps its existing presentation.
+      showMetadataDetails: kind == MediaViewerKind.gif,
+      actionPresentation: message.isIncoming && decision.isOrdinary
+          ? kind == MediaViewerKind.image
+                ? MediaViewerActionPresentation.compactImageOverlay
+                : kind == MediaViewerKind.video
+                ? MediaViewerActionPresentation.compactVideoOverflow
+                : MediaViewerActionPresentation.standardToolbar
+          : MediaViewerActionPresentation.standardToolbar,
       canEnterPictureInPicture:
           message.isIncoming &&
           (currentParentDecision?.canEnterPictureInPicture ??

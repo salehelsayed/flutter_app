@@ -5,6 +5,8 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+void _noop() {}
+
 void main() {
   Future<void> pumpPlaceholder(
     WidgetTester tester,
@@ -94,12 +96,20 @@ void main() {
         const DirectPrivateMediaOutgoingPlaceholder(
           policy: PrivateMediaPolicy.viewOnce(),
           contactDisplayName: 'Layla',
+          onOpen: _noop,
         ),
       );
 
       expect(
         find.textContaining('You can reopen it once here after sending.'),
-        findsOneWidget,
+        findsNothing,
+      );
+      expect(find.text('View-once photo'), findsNothing);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('private-media-card-visual')))
+            .height,
+        150,
       );
       expect(find.textContaining('anytime'), findsNothing);
     },

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -92,6 +93,12 @@ class MessageContextOverlay extends StatefulWidget {
 
 class _MessageContextOverlayState extends State<MessageContextOverlay> {
   bool _handledAction = false;
+
+  @override
+  void initState() {
+    super.initState();
+    HapticFeedback.lightImpact();
+  }
 
   void _handleOnce(VoidCallback action) {
     if (_handledAction) return;

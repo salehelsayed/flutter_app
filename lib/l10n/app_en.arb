@@ -1087,6 +1087,8 @@
   "conversation_empty_first_letter": "Write the first letter\nto start your conversation",
   "media_video_load_failed": "Could not load video",
   "media_viewer_action_save": "Save",
+  "media_viewer_action_save_image": "Save image",
+  "media_viewer_more_actions": "More actions",
   "media_viewer_action_share": "Share",
   "media_viewer_action_forward": "Forward",
   "media_viewer_action_delete": "Delete",

@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
-import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -43,6 +42,7 @@ void main() {
     required PrivateMediaLifecycleState state,
     List<MediaAttachment> media = const [],
     String status = 'delivered',
+    String? transport,
   }) {
     return ConversationMessage(
       id: id,
@@ -53,6 +53,7 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: '2026-07-19T10:00:00.000Z',
+      transport: transport,
       privateMediaPolicy: policy,
       privateMediaState: state,
       media: media,
@@ -104,6 +105,79 @@ void main() {
       find.byKey(ValueKey('private-media-slot-$messageId'));
   Finder decoratedBody(String messageId) =>
       find.byKey(ValueKey('private-media-decorated-body-$messageId'));
+
+  LetterCard letterCardUnder(WidgetTester tester, Finder root) {
+    final card = find.descendant(of: root, matching: find.byType(LetterCard));
+    expect(card, findsOneWidget);
+    return tester.widget<LetterCard>(card);
+  }
+
+  LetterCard liveLetterCard(WidgetTester tester, String messageId) =>
+      letterCardUnder(tester, row(messageId));
+
+  void expectCompactReceiptGeometry(WidgetTester tester, String messageId) {
+    final messageRow = row(messageId);
+    final scopedSlot = find.descendant(
+      of: messageRow,
+      matching: slot(messageId),
+    );
+    final summary = find.descendant(
+      of: scopedSlot,
+      matching: find.byKey(
+        const ValueKey('private-terminal-view-once-consumed-summary'),
+      ),
+    );
+    final icon = find.descendant(
+      of: summary,
+      matching: find.byIcon(Icons.visibility_off_outlined),
+    );
+    final label = find.descendant(of: summary, matching: find.byType(Text));
+    final body = find.descendant(
+      of: messageRow,
+      matching: decoratedBody(messageId),
+    );
+    expect(summary, findsOneWidget);
+    expect(icon, findsOneWidget);
+    expect(label, findsOneWidget);
+    expect(body, findsOneWidget);
+
+    final iconRect = tester.getRect(icon);
+    final labelRect = tester.getRect(label);
+    final bodyRect = tester.getRect(body);
+    final visualLeft = iconRect.left < labelRect.left
+        ? iconRect.left
+        : labelRect.left;
+    final visualRight = iconRect.right > labelRect.right
+        ? iconRect.right
+        : labelRect.right;
+    final visualSpan = visualRight - visualLeft;
+
+    expect(bodyRect.left, lessThanOrEqualTo(visualLeft + 1));
+    expect(bodyRect.right, greaterThanOrEqualTo(visualRight - 1));
+    expect(bodyRect.width, greaterThanOrEqualTo(visualSpan + 23));
+    expect(
+      bodyRect.width,
+      lessThanOrEqualTo(visualSpan + 49),
+      reason:
+          'The receipt bubble should hug its content plus terminal padding '
+          'and unchanged footer metadata.',
+    );
+  }
+
+  AlignmentGeometry liveBubbleAlignment(WidgetTester tester, String messageId) {
+    final candidates = tester
+        .widgetList<Align>(
+          find.descendant(of: row(messageId), matching: find.byType(Align)),
+        )
+        .where(
+          (align) =>
+              align.alignment == Alignment.centerLeft ||
+              align.alignment == Alignment.centerRight,
+        )
+        .toList();
+    expect(candidates, hasLength(1));
+    return candidates.single.alignment;
+  }
 
   void expectSlotInsideDecoratedBody(
     WidgetTester tester,
@@ -207,6 +281,10 @@ void main() {
             matching: find.byType(LetterCard),
           ),
           findsOneWidget,
+        );
+        expect(
+          liveLetterCard(tester, messageId).hugPrivateContentBubble,
+          isFalse,
         );
         expectSlotInsideDecoratedBody(tester, messageId);
       }
@@ -324,14 +402,164 @@ void main() {
     expectSlotInsideDecoratedBody(tester, message.id, scope: selected);
   });
 
-  testWidgets('terminal and unsupported cards keep action rows in-bubble', (
+  testWidgets(
+    'consumed view-once receipt is minimal in live and lifted cards while outer reply and delete remain reachable',
+    (tester) async {
+      final incoming = privateMessage(
+        id: 'consumed-incoming',
+        isIncoming: true,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.consumed,
+        transport: 'direct',
+      );
+      final outgoing = privateMessage(
+        id: 'consumed-outgoing',
+        isIncoming: false,
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.consumed,
+        status: 'sent',
+        transport: 'direct',
+      );
+      final replies = <String>[];
+      final deletions = <String>[];
+
+      await pumpConversation(
+        tester,
+        messages: [incoming, outgoing],
+        onQuoteReply: replies.add,
+        onDeleteMessage: deletions.add,
+      );
+
+      for (final message in [incoming, outgoing]) {
+        final card = liveLetterCard(tester, message.id);
+        expect(card.hugPrivateContentBubble, isTrue);
+        expect(card.time, isNotEmpty);
+        expect(
+          find.descendant(of: row(message.id), matching: find.text(card.time)),
+          findsOneWidget,
+        );
+        expectSlotInsideDecoratedBody(tester, message.id);
+        expectCompactReceiptGeometry(tester, message.id);
+      }
+      expect(liveBubbleAlignment(tester, incoming.id), Alignment.centerLeft);
+      expect(liveBubbleAlignment(tester, outgoing.id), Alignment.centerRight);
+      expect(
+        find.descendant(
+          of: row(incoming.id),
+          matching: find.byIcon(Icons.device_hub),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: row(outgoing.id),
+          matching: find.byIcon(Icons.device_hub),
+        ),
+        findsOneWidget,
+      );
+
+      final liveSlot = slot(incoming.id);
+      expect(
+        find.descendant(
+          of: liveSlot,
+          matching: find.byKey(
+            const ValueKey('private-terminal-view-once-consumed-summary'),
+          ),
+        ),
+        findsOneWidget,
+      );
+      for (final key in const [
+        ValueKey('private-action-reply'),
+        ValueKey('private-action-info'),
+        ValueKey('private-action-deleteForMe'),
+      ]) {
+        expect(
+          find.descendant(of: liveSlot, matching: find.byKey(key)),
+          findsNothing,
+        );
+      }
+
+      await tester.longPress(
+        find.descendant(
+          of: liveSlot,
+          matching: find.byKey(
+            const ValueKey('private-terminal-view-once-consumed-summary'),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final lifted = find.byKey(MessageContextOverlay.selectedMessageKey);
+      expect(lifted, findsOneWidget);
+      expect(letterCardUnder(tester, lifted).hugPrivateContentBubble, isTrue);
+      expectSlotInsideDecoratedBody(tester, incoming.id, scope: lifted);
+      expect(
+        find.descendant(
+          of: lifted,
+          matching: find.byKey(
+            const ValueKey('private-terminal-view-once-consumed-summary'),
+          ),
+        ),
+        findsOneWidget,
+      );
+      for (final key in const [
+        ValueKey('private-action-reply'),
+        ValueKey('private-action-info'),
+        ValueKey('private-action-deleteForMe'),
+      ]) {
+        expect(
+          find.descendant(of: lifted, matching: find.byKey(key)),
+          findsNothing,
+        );
+      }
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.deleteActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+
+      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(replies, [incoming.id]);
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+
+      await tester.longPress(
+        find.descendant(
+          of: liveSlot,
+          matching: find.byKey(
+            const ValueKey('private-terminal-view-once-consumed-summary'),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(deletions, [incoming.id]);
+    },
+  );
+
+  testWidgets('non-view-once terminal cards retain generic copy and actions', (
     tester,
   ) async {
-    final consumed = privateMessage(
-      id: 'consumed-private',
+    final consumedViewOnce = privateMessage(
+      id: 'view-once-consumed-comparator',
       isIncoming: true,
       policy: const PrivateMediaPolicy.viewOnce(),
       state: PrivateMediaLifecycleState.consumed,
+      transport: 'direct',
+    );
+    final protectedConsumed = privateMessage(
+      id: 'protected-consumed',
+      isIncoming: false,
+      policy: const PrivateMediaPolicy.protected(),
+      state: PrivateMediaLifecycleState.consumed,
+      status: 'sent',
+    );
+    final expired = privateMessage(
+      id: 'expired-private',
+      isIncoming: true,
+      policy: const PrivateMediaPolicy.viewOnce(),
+      state: PrivateMediaLifecycleState.expired,
     );
     final unsupported = privateMessage(
       id: 'unsupported-private',
@@ -339,30 +567,65 @@ void main() {
       policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
       state: PrivateMediaLifecycleState.unsupported,
     );
-    final parents = {consumed.id: consumed, unsupported.id: unsupported};
-    final replies = <String>[];
-    final deletions = <String>[];
 
     await pumpConversation(
       tester,
-      messages: [consumed, unsupported],
-      onQuoteReply: replies.add,
-      onDeleteMessage: deletions.add,
-      onLoadPrivateParentDecision: (messageId) async {
-        return DirectPrivateMediaActionEligibility.evaluate(
-          parent: parents[messageId],
-          attachment: null,
-          expectedMessageId: messageId,
-          attachmentRequired: false,
-          requireIncoming: false,
-        );
-      },
+      messages: [consumedViewOnce, protectedConsumed, expired, unsupported],
+      onQuoteReply: (_) {},
+      onDeleteMessage: (_) {},
     );
 
     expect(
+      liveLetterCard(tester, consumedViewOnce.id).hugPrivateContentBubble,
+      isTrue,
+    );
+    for (final messageId in [
+      protectedConsumed.id,
+      expired.id,
+      unsupported.id,
+    ]) {
+      expect(
+        liveLetterCard(tester, messageId).hugPrivateContentBubble,
+        isFalse,
+      );
+    }
+    final compactWidth = tester
+        .getSize(decoratedBody(consumedViewOnce.id))
+        .width;
+    for (final messageId in [
+      protectedConsumed.id,
+      expired.id,
+      unsupported.id,
+    ]) {
+      expect(
+        tester.getSize(decoratedBody(messageId)).width,
+        greaterThan(compactWidth + 48),
+        reason:
+            'Other private terminal bubbles must retain their existing '
+            'non-compact layout.',
+      );
+    }
+
+    expect(
       find.descendant(
-        of: slot(consumed.id),
+        of: slot(protectedConsumed.id),
         matching: find.byKey(const ValueKey('private-terminal-consumed')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: slot(protectedConsumed.id),
+        matching: find.byKey(
+          const ValueKey('private-media-terminal-generic-title'),
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: slot(expired.id),
+        matching: find.byKey(const ValueKey('private-terminal-expired')),
       ),
       findsOneWidget,
     );
@@ -373,9 +636,22 @@ void main() {
       ),
       findsOneWidget,
     );
-    for (final messageId in parents.keys) {
+    for (final messageId in [
+      protectedConsumed.id,
+      expired.id,
+      unsupported.id,
+    ]) {
       expectSlotInsideDecoratedBody(tester, messageId);
       final scopedSlot = slot(messageId);
+      expect(
+        find.descendant(
+          of: scopedSlot,
+          matching: find.byKey(
+            const ValueKey('private-terminal-view-once-consumed-summary'),
+          ),
+        ),
+        findsNothing,
+      );
       expect(
         find.descendant(
           of: scopedSlot,
@@ -398,23 +674,5 @@ void main() {
         findsOneWidget,
       );
     }
-
-    await tester.tap(
-      find.descendant(
-        of: slot(consumed.id),
-        matching: find.byKey(const ValueKey('private-action-reply')),
-      ),
-    );
-    await tester.pump();
-    expect(replies, [consumed.id]);
-
-    await tester.tap(
-      find.descendant(
-        of: slot(unsupported.id),
-        matching: find.byKey(const ValueKey('private-action-deleteForMe')),
-      ),
-    );
-    await tester.pump();
-    expect(deletions, [unsupported.id]);
   });
 }

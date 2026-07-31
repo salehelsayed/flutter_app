@@ -113,6 +113,10 @@ void main() {
     );
     expect(viewer.items[49].messageId, 'm49');
     expect(viewer.items[50].messageId, 'm50');
+    expect(
+      viewer.items.map((item) => item.actionPresentation),
+      everyElement(MediaViewerActionPresentation.standardToolbar),
+    );
     expect(repository.requests, hasLength(2));
   });
 
@@ -191,6 +195,10 @@ void main() {
       );
       expect(viewer.items.single.owner, MediaOwnerLane.group);
       expect(viewer.items.single.messageId, 'group-pip-message');
+      expect(
+        viewer.items.single.actionPresentation,
+        MediaViewerActionPresentation.standardToolbar,
+      );
       expect(viewer.items.single.canEnterPictureInPicture, isTrue);
       expect(viewer.pictureInPictureControllerFactory, isNotNull);
       expect(viewer.loadPictureInPictureAuthorization, isNotNull);
@@ -201,6 +209,289 @@ void main() {
       expect(authorized.last.attachmentId, 'group-pip-video');
       expect(gateway.capabilityCalls, greaterThanOrEqualTo(1));
       expect(gateway.startCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'discussion Group Shared Media image hides automatic metadata while GIF and video policies remain',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+      final temp = Directory.systemTemp.createTempSync(
+        'group-image-metadata-314-',
+      );
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final image = File('${temp.path}/hidden.png')..writeAsBytesSync(_tinyPng);
+      final gif = File('${temp.path}/visible.gif')..writeAsBytesSync(_tinyPng);
+      final repository = StrictGroupMediaLibraryRepository(
+        expectedGroupId: 'group-a',
+        entries: [
+          groupMediaEntry(
+            'group-hidden-image-314',
+            messageId: 'group-hidden-image-message-314',
+            mime: 'image/png',
+            downloadStatus: 'done',
+            localPath: image.path,
+            parentTimestamp: '2026-07-31T10:11:00.000Z',
+          ),
+          groupMediaEntry(
+            'group-visible-gif-314',
+            messageId: 'group-visible-gif-message-314',
+            mime: 'image/gif',
+            downloadStatus: 'done',
+            localPath: gif.path,
+            parentTimestamp: '2026-07-31T12:13:00.000Z',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_app(repository));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(
+        find.byKey(const ValueKey('group-shared-media-filter-all')),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(
+        find.byKey(
+          const ValueKey(
+            'media-grid-cell-group-hidden-image-message-314-group-hidden-image-314',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items, hasLength(2));
+      final imageIndex = viewer.items.indexWhere(
+        (item) => item.attachmentId == 'group-hidden-image-314',
+      );
+      final gifIndex = viewer.items.indexWhere(
+        (item) => item.attachmentId == 'group-visible-gif-314',
+      );
+      expect(imageIndex, isNonNegative);
+      expect(gifIndex, isNonNegative);
+      final imageItem = viewer.items[imageIndex];
+      expect(imageItem.kind, MediaViewerKind.image);
+      expect(imageItem.showMetadataDetails, isFalse);
+      expect(imageItem.mime, 'image/png');
+      expect(imageItem.sizeBytes, 128);
+      expect(imageItem.senderLabel, 'peer-sender');
+      expect(imageItem.timestamp, DateTime.parse('2026-07-31T10:11:00.000Z'));
+      expect(imageItem.capabilities.allowed, const <MediaViewerAction>{
+        MediaViewerAction.bookmark,
+      });
+      for (final key in const <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_dimensions',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsNothing);
+      }
+      for (final value in const <String>['peer-sender', 'image/png', '128 B']) {
+        expect(find.text(value), findsNothing);
+        expect(
+          find.semantics.byLabel(RegExp(RegExp.escape(value))),
+          findsNothing,
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('media_action_bookmark')),
+        findsOneWidget,
+      );
+
+      final towardGif = gifIndex > imageIndex
+          ? const Offset(-500, 0)
+          : const Offset(500, 0);
+      await tester.fling(find.byType(PageView), towardGif, 1500);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      final gifItem = viewer.items[gifIndex];
+      expect(gifItem.kind, MediaViewerKind.gif);
+      expect(gifItem.showMetadataDetails, isTrue);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('media_meta_mime'))).data,
+        'image/gif',
+      );
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'group Shared Media video hides automatic metadata without changing PiP composition',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+      final temp = Directory.systemTemp.createTempSync(
+        'group-video-metadata-312-',
+      );
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final video = File('${temp.path}/hidden.mp4')
+        ..writeAsBytesSync(const <int>[1, 2, 3]);
+      final gif = File('${temp.path}/visible.gif')..writeAsBytesSync(_tinyPng);
+      final repository = StrictGroupMediaLibraryRepository(
+        expectedGroupId: 'group-a',
+        entries: [
+          groupMediaEntry(
+            'group-hidden-video-312',
+            messageId: 'group-hidden-video-message-312',
+            mediaType: 'video',
+            mime: 'video/x-group-library-312',
+            downloadStatus: 'done',
+            localPath: video.path,
+            parentTimestamp: '2026-07-12T10:11:00.000Z',
+          ),
+          groupMediaEntry(
+            'group-visible-gif-312',
+            messageId: 'group-visible-gif-message-312',
+            mime: 'image/gif',
+            downloadStatus: 'done',
+            localPath: gif.path,
+            parentTimestamp: '2026-07-13T12:13:00.000Z',
+          ),
+        ],
+      );
+      final gateway = _GroupRoutePictureInPictureGateway();
+      final resume = _GroupRouteResumeStore();
+      final authorized = <MediaViewerItem>[];
+
+      await tester.pumpWidget(
+        _app(
+          repository,
+          capabilitiesForEntry: (entry) => {
+            GroupSharedMediaAction.save,
+            GroupSharedMediaAction.share,
+            GroupSharedMediaAction.bookmark,
+            GroupSharedMediaAction.goToMessage,
+            if (entry.attachment.mediaType == 'video')
+              GroupSharedMediaAction.pictureInPicture,
+          },
+          pictureInPictureControllerFactory:
+              ({required reloadCurrent, required restorePlayback}) =>
+                  MediaPictureInPictureController(
+                    gateway: gateway,
+                    pathAuthority: _GroupRoutePathAuthority(),
+                    reloadCurrent: reloadCurrent,
+                    resumeStore: resume,
+                    restorePlayback: restorePlayback,
+                    pollTicks: const Stream<void>.empty(),
+                  ),
+          loadPictureInPictureAuthorization: (item) async {
+            authorized.add(item);
+            return MediaPictureInPictureAuthorization(
+              item: item,
+              generation: 312,
+              policyState: MediaPictureInPicturePolicyState.ordinary,
+              isIncoming: true,
+              isTransferComplete: true,
+              routeActive: true,
+            );
+          },
+          mediaViewerResumeStore: resume,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(
+        find.byKey(const ValueKey('group-shared-media-filter-all')),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(
+        find.byKey(
+          const ValueKey(
+            'media-grid-cell-group-hidden-video-message-312-group-hidden-video-312',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items, hasLength(2));
+      final videoIndex = viewer.items.indexWhere(
+        (item) => item.attachmentId == 'group-hidden-video-312',
+      );
+      final gifIndex = viewer.items.indexWhere(
+        (item) => item.attachmentId == 'group-visible-gif-312',
+      );
+      expect(videoIndex, isNonNegative);
+      expect(gifIndex, isNonNegative);
+      final videoItem = viewer.items[videoIndex];
+      expect(videoItem.kind, MediaViewerKind.video);
+      expect(videoItem.showMetadataDetails, isFalse);
+      expect(videoItem.mime, 'video/x-group-library-312');
+      expect(videoItem.sizeBytes, 128);
+      expect(videoItem.senderLabel, 'peer-sender');
+      expect(videoItem.timestamp, DateTime.parse('2026-07-12T10:11:00.000Z'));
+      for (final key in const <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_duration',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsNothing);
+      }
+      for (final value in const <String>[
+        'peer-sender',
+        'video/x-group-library-312',
+        '128 B',
+      ]) {
+        expect(find.text(value), findsNothing);
+        expect(
+          find.semantics.byLabel(RegExp(RegExp.escape(value))),
+          findsNothing,
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsOneWidget,
+      );
+      expect(authorized.last.attachmentId, videoItem.attachmentId);
+
+      final towardGif = gifIndex > videoIndex
+          ? const Offset(-500, 0)
+          : const Offset(500, 0);
+      await tester.fling(find.byType(PageView), towardGif, 1500);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(viewer.items[gifIndex].kind, MediaViewerKind.gif);
+      expect(viewer.items[gifIndex].showMetadataDetails, isTrue);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('media_meta_mime'))).data,
+        'image/gif',
+      );
+
+      await tester.fling(find.byType(PageView), Offset(-towardGif.dx, 0), 1500);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const ValueKey('media_meta_mime')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsOneWidget,
+      );
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
     },
   );
 

@@ -288,27 +288,38 @@ void main() {
     );
   });
 
-  testWidgets('view-once and exact disappearing durations emit typed policy', (
+  testWidgets('image view-once and exact disappearing durations emit policy', (
     tester,
   ) async {
     final cases =
-        <({Key? modeKey, Key? durationKey, PrivateMediaPolicy expected})>[
+        <
+          ({
+            PrivateMediaAttachmentKind kind,
+            Key? modeKey,
+            Key? durationKey,
+            PrivateMediaPolicy expected,
+          })
+        >[
           (
+            kind: PrivateMediaAttachmentKind.image,
             modeKey: const ValueKey('private-media-option-view-once'),
             durationKey: null,
             expected: const PrivateMediaPolicy.viewOnce(),
           ),
           (
+            kind: PrivateMediaAttachmentKind.video,
             modeKey: const ValueKey('private-media-option-expiry'),
             durationKey: const ValueKey('private-media-option-disappearing-1h'),
             expected: PrivateMediaPolicy.disappearing(3600),
           ),
           (
+            kind: PrivateMediaAttachmentKind.video,
             modeKey: const ValueKey('private-media-option-expiry'),
             durationKey: const ValueKey('private-media-option-disappearing-1d'),
             expected: PrivateMediaPolicy.disappearing(86400),
           ),
           (
+            kind: PrivateMediaAttachmentKind.video,
             modeKey: const ValueKey('private-media-option-expiry'),
             durationKey: const ValueKey('private-media-option-disappearing-7d'),
             expected: PrivateMediaPolicy.disappearing(604800),
@@ -319,9 +330,9 @@ void main() {
       PrivateMediaPolicy? selected;
       await tester.pumpWidget(
         buildComposer(
-          eligibility: const PrivateMediaEligibility(
+          eligibility: PrivateMediaEligibility(
             attachmentCount: 1,
-            attachmentKind: PrivateMediaAttachmentKind.video,
+            attachmentKind: testCase.kind,
           ),
           onPolicyChanged: (policy) => selected = policy,
         ),
@@ -348,6 +359,61 @@ void main() {
       );
     }
   });
+
+  testWidgets(
+    'video omits only view-once while retaining private video modes',
+    (tester) async {
+      PrivateMediaPolicy? selected;
+      await tester.pumpWidget(
+        buildComposer(
+          eligibility: const PrivateMediaEligibility(
+            attachmentCount: 1,
+            attachmentKind: PrivateMediaAttachmentKind.video,
+          ),
+          policy: const PrivateMediaPolicy.viewOnce(),
+          onPolicyChanged: (policy) => selected = policy,
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('private-media-selector')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('private-media-option-view-once')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('private-media-option-protected')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('private-media-option-expiry')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('private-media-option-ordinary')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('private-media-option-protected')),
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pumpAndSettle();
+      expect(selected, const PrivateMediaPolicy.protected());
+    },
+  );
 
   testWidgets('dismissing the sheet does not commit provisional state', (
     tester,
@@ -560,7 +626,12 @@ void main() {
                     eligibility: eligibility,
                     eligibleAttachmentIdentityChanged: false,
                   );
-                  expect(retained, selectedPolicy, reason: reason);
+                  final expectedRetained =
+                      selectedPolicy.mode == PrivateMediaMode.viewOnce &&
+                          attachmentKind == PrivateMediaAttachmentKind.video
+                      ? const PrivateMediaPolicy.ordinary()
+                      : selectedPolicy;
+                  expect(retained, expectedRetained, reason: reason);
                 }
               }
             }

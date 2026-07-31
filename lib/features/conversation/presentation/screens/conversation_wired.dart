@@ -327,6 +327,9 @@ Stream<void> directPictureInPictureAuthorizationChanges(
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
 /// and handles sending messages via use cases.
+@visibleForTesting
+PrivateMediaPolicy? debugConversationWiredInitialPrivateMediaPolicy;
+
 class ConversationWired extends StatefulWidget {
   static const deleteSheetKey = ValueKey('conversation-delete-message-sheet');
   static const deletePromptKey = ValueKey('conversation-delete-message-prompt');
@@ -548,6 +551,7 @@ class _ConversationWiredState extends State<ConversationWired>
       ConversationReactionProjectionController();
   late final ConversationVoiceCaptureController _voiceCaptureController;
   PrivateMediaPolicy _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
+  bool _privateMediaPolicyInvalidated = false;
   static const _maxAttachments = 10;
 
   // 117 Session 3: a recording captured by the 5-minute auto-stop is held
@@ -1120,6 +1124,13 @@ class _ConversationWiredState extends State<ConversationWired>
           unawaited(_hydrateLegacyInitialAttachments(initialAttachments));
         });
       }
+    }
+    final debugInitialPrivateMediaPolicy =
+        debugConversationWiredInitialPrivateMediaPolicy;
+    debugConversationWiredInitialPrivateMediaPolicy = null;
+    if (debugInitialPrivateMediaPolicy?.isPrivate ?? false) {
+      _privateMediaPolicy = debugInitialPrivateMediaPolicy!;
+      _updateComposerState(privateMediaPolicy: debugInitialPrivateMediaPolicy);
     }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
@@ -3119,8 +3130,12 @@ class _ConversationWiredState extends State<ConversationWired>
     final privateEligibility = _currentPrivateMediaEligibility(
       draftText: sanitizedText,
     );
-    if (privateMediaPolicy.isPrivate &&
-        !privateEligibility.allowsNewPrivateMedia) {
+    if (_privateMediaPolicyInvalidated ||
+        (privateMediaPolicy.isPrivate &&
+            !isPrivateMediaComposerPolicyEligible(
+              selectedPolicy: privateMediaPolicy,
+              eligibility: privateEligibility,
+            ))) {
       _setPrivateMediaPolicy(const PrivateMediaPolicy.ordinary());
       messenger?.showSnackBar(
         SnackBar(
@@ -4020,6 +4035,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (sanitizeMessageText(text).trim().isNotEmpty &&
         _privateMediaPolicy.isPrivate) {
       _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
+      _privateMediaPolicyInvalidated = false;
     }
     _updateComposerState();
   }
@@ -5218,9 +5234,14 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _setPrivateMediaPolicy(PrivateMediaPolicy policy) {
     final eligibility = _currentPrivateMediaEligibility();
-    _privateMediaPolicy = policy.isPrivate && eligibility.allowsNewPrivateMedia
-        ? policy
-        : const PrivateMediaPolicy.ordinary();
+    _privateMediaPolicyInvalidated =
+        policy.mode == PrivateMediaMode.viewOnce &&
+        eligibility.attachmentKind == PrivateMediaAttachmentKind.video;
+    _privateMediaPolicy = normalizePrivateMediaComposerPolicy(
+      selectedPolicy: policy,
+      eligibility: eligibility,
+      eligibleAttachmentIdentityChanged: false,
+    );
     _updateComposerState();
   }
 
@@ -5291,6 +5312,10 @@ class _ConversationWiredState extends State<ConversationWired>
               (entry) => entry.$2.path != pendingAttachmentFiles[entry.$1].path,
             ));
     var effectivePrivateMediaPolicy = privateMediaPolicy ?? _privateMediaPolicy;
+    if (effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce &&
+        eligibility.attachmentKind == PrivateMediaAttachmentKind.video) {
+      _privateMediaPolicyInvalidated = true;
+    }
     effectivePrivateMediaPolicy = normalizePrivateMediaComposerPolicy(
       selectedPolicy: effectivePrivateMediaPolicy,
       eligibility: eligibility,

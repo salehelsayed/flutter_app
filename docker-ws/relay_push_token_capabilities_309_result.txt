@@ -1,0 +1,31 @@
+=== generated 2026-07-31T20:03:39Z ===
+url length=58 scheme=redis
+host=localhost port=6379 user_present=no pass_len=32 tls=no
+ping: PONG
+push token key count: 1515
+
+== peer 12D3KooWSmFBWf4T4tjC... ==
+{"Token":"<masked>","Platform":"ios","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:39:40.688817689Z"}
+
+== peer 12D3KooWM43NCsZpuh7Q... ==
+{"Token":"<masked>","Platform":"android","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:30:37.406319515Z"}
+
+== peer 12D3KooWHyiSmJVcHfQo... ==
+{"Token":"<masked>","Platform":"ios","UpdatedAt":"2026-07-31T19:15:03.891214172Z"}
+
+== peer 12D3KooWEnpArQAHp36y... ==
+{"Token":"<masked>","Platform":"android","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:16:10.707292384Z"}
+
+== peer 12D3KooWLB4TNaHM1D3B... ==
+{"Token":"<masked>","Platform":"ios","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:28:41.575564703Z"}
+
+== peer 12D3KooWDJ96ouLuM78r... ==
+{"Token":"<masked>","Platform":"ios","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:18:29.070738776Z"}
+
+== peer 12D3KooWNbc17WZYUM7w... ==
+{"Token":"<masked>","Platform":"ios","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:22:20.996038174Z"}
+
+== peer 12D3KooWRofUkyAuKdsp... ==
+{"Token":"<masked>","Platform":"android","Capabilities":["direct_reaction_v1","group_reaction_v1"],"UpdatedAt":"2026-07-31T19:39:06.658998559Z"}
+
+matched entries: 8

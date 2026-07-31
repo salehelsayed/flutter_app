@@ -18667,14 +18667,26 @@ void main() {
         required String attachmentId,
         String caption = 'photo caption',
         String senderPeerId = 'peer-alice',
+        String mime = 'image/png',
+        bool isIncoming = true,
+        int? size,
+        int? width,
+        int? height,
+        DateTime? timestamp,
       }) async {
         await msgRepo.saveMessage(
-          makeMessage(id: messageId, text: caption, senderPeerId: senderPeerId),
+          makeMessage(
+            id: messageId,
+            text: caption,
+            isIncoming: isIncoming,
+            senderPeerId: senderPeerId,
+            timestamp: timestamp,
+          ),
         );
         final relativePath = mediaFileManager.relativePathForAttachment(
           contactPeerId: 'group-1',
           blobId: attachmentId,
-          mime: 'image/png',
+          mime: mime,
         );
         final absolutePath = await mediaFileManager.resolveStoredPath(
           relativePath,
@@ -18686,16 +18698,71 @@ void main() {
           MediaAttachment(
             id: attachmentId,
             messageId: messageId,
-            mime: 'image/png',
-            size: _tinyPngBytes.length,
+            mime: mime,
+            size: size ?? _tinyPngBytes.length,
             mediaType: 'image',
+            width: width,
+            height: height,
             localPath: absolutePath,
             downloadStatus: kMediaDownloadStatusDone,
-            createdAt: DateTime.now().toUtc().toIso8601String(),
+            createdAt: (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
             contentHash: _validContentHash,
             encryptionKeyBase64: 'a2V5',
             encryptionNonce: 'bm9uY2U=',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        return absolutePath;
+      }
+
+      Future<String> seedOrdinaryDoneVideo({
+        required String messageId,
+        required String attachmentId,
+        required bool isIncoming,
+        required String caption,
+        required String mime,
+        required int size,
+        required int durationMs,
+        required DateTime timestamp,
+      }) async {
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: messageId,
+            text: caption,
+            isIncoming: isIncoming,
+            senderPeerId: isIncoming ? 'peer-alice' : 'peer-self',
+            timestamp: timestamp,
+          ),
+        );
+        final relativePath = mediaFileManager.relativePathForAttachment(
+          contactPeerId: 'group-1',
+          blobId: attachmentId,
+          mime: mime,
+        );
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final mediaFile = File(absolutePath);
+        mediaFile.parent.createSync(recursive: true);
+        mediaFile.writeAsBytesSync(const <int>[1, 2, 3], flush: true);
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: mime,
+            size: size,
+            mediaType: 'video',
+            localPath: absolutePath,
+            downloadStatus: kMediaDownloadStatusDone,
+            createdAt: timestamp.toUtc().toIso8601String(),
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'a2V5',
+            encryptionNonce: 'bm9uY2U=',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            width: 1920,
+            height: 1080,
+            durationMs: durationMs,
           ),
           owner: MediaOwnerLane.group,
         );
@@ -18723,6 +18790,37 @@ void main() {
           }
         }
         fail('media for $messageId did not load');
+      }
+
+      Future<void> pumpUntilCanWrite(WidgetTester tester) async {
+        for (var i = 0; i < 40; i++) {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          if (screen.canWrite) return;
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          });
+          await tester.pump();
+        }
+        fail('group write capability did not become available');
+      }
+
+      Future<void> showViewerMoreMenu(WidgetTester tester) async {
+        final more = find.byKey(const ValueKey('media_action_more'));
+        expect(more, findsOneWidget);
+        tester.state<PopupMenuButtonState<dynamic>>(more).showButtonMenu();
+        await pumpFrames(tester, count: 4);
+      }
+
+      Future<void> selectViewerPopupAction(
+        WidgetTester tester,
+        MediaViewerAction action,
+      ) async {
+        final row = find.byKey(ValueKey('media_action_${action.name}'));
+        expect(row, findsOneWidget);
+        Navigator.of(tester.element(row)).pop(action);
+        await tester.pump();
       }
 
       ContactModel plan247SenderContact() => ContactModel(
@@ -18753,6 +18851,751 @@ void main() {
         await contactRepo.addContact(plan247SenderContact());
         return (group, currentMessages);
       }
+
+      testWidgets(
+        'incoming discussion image uses compact keep-in-chat controls without losing actions',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const imageMessageId = 'group-compact-image-message-313';
+          const imageAttachmentId = 'group-compact-image-attachment-313';
+          const gifMessageId = 'group-standard-gif-message-313';
+          const gifAttachmentId = 'group-standard-gif-attachment-313';
+          await seedIncomingDoneImage(
+            messageId: imageMessageId,
+            attachmentId: imageAttachmentId,
+          );
+          await seedIncomingDoneImage(
+            messageId: gifMessageId,
+            attachmentId: gifAttachmentId,
+            mime: 'image/gif',
+          );
+          final controller = RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: controller,
+              mediaDeleteForMeCoordinator:
+                  RecordingGroupMediaDeleteForMeCoordinator(),
+              groupMediaForwardLauncher: (_, _) async {},
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, imageMessageId);
+          await pumpUntilMediaLoaded(tester, gifMessageId);
+          await pumpUntilCanWrite(tester);
+
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-$imageMessageId-$imageAttachmentId',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          var viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final imageItem = viewer.items.single;
+          expect(imageItem.kind, MediaViewerKind.image);
+          expect(
+            imageItem.actionPresentation,
+            MediaViewerActionPresentation.compactImageOverlay,
+          );
+          expect(
+            imageItem.capabilities.allowed,
+            unorderedEquals(const <MediaViewerAction>[
+              MediaViewerAction.save,
+              MediaViewerAction.share,
+              MediaViewerAction.info,
+              MediaViewerAction.reply,
+              MediaViewerAction.forward,
+              MediaViewerAction.delete,
+            ]),
+          );
+          final appBar = find.byType(AppBar);
+          expect(
+            find.descendant(
+              of: appBar,
+              matching: find.byKey(const ValueKey('media_action_more')),
+            ),
+            findsOneWidget,
+          );
+          for (final action in const <MediaViewerAction>[
+            MediaViewerAction.save,
+            MediaViewerAction.share,
+            MediaViewerAction.info,
+            MediaViewerAction.reply,
+          ]) {
+            expect(
+              find.byKey(ValueKey('media_action_${action.name}')),
+              findsNothing,
+              reason: '${action.name} must stay inside the closed image menu',
+            );
+          }
+          for (final action in const <MediaViewerAction>[
+            MediaViewerAction.forward,
+            MediaViewerAction.delete,
+          ]) {
+            final key = ValueKey('media_action_${action.name}');
+            expect(find.byKey(key), findsOneWidget);
+            expect(
+              find.descendant(of: appBar, matching: find.byKey(key)),
+              findsNothing,
+              reason: '${action.name} must not remain in the top AppBar',
+            );
+          }
+
+          await showViewerMoreMenu(tester);
+          const imageMenuIcons = <MediaViewerAction, IconData>{
+            MediaViewerAction.save: Icons.download_rounded,
+            MediaViewerAction.share: Icons.ios_share_rounded,
+            MediaViewerAction.info: Icons.info_outline_rounded,
+            MediaViewerAction.reply: Icons.reply_rounded,
+          };
+          for (final entry in imageMenuIcons.entries) {
+            final row = find.byKey(ValueKey('media_action_${entry.key.name}'));
+            expect(row, findsOneWidget);
+            expect(
+              find.descendant(of: row, matching: find.byIcon(entry.value)),
+              findsOneWidget,
+              reason: '${entry.key.name} must keep its compact-menu icon',
+            );
+          }
+          await selectViewerPopupAction(tester, MediaViewerAction.save);
+          await pumpFrames(tester, count: 4);
+          expect(controller.saves, [
+            'group-1/$imageMessageId/$imageAttachmentId',
+          ]);
+
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+          await tester.tap(
+            find.byKey(
+              const ValueKey('media-grid-cell-$gifMessageId-$gifAttachmentId'),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          expect(viewer.items.single.kind, MediaViewerKind.gif);
+          expect(
+            viewer.items.single.actionPresentation,
+            MediaViewerActionPresentation.standardToolbar,
+          );
+          expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+          expect(
+            find.byKey(const ValueKey('media_action_save')),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+
+      testWidgets(
+        'incoming discussion video uses all-action keep-in-chat overflow without losing actions',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const incomingMessageId = 'group-compact-video-message-313';
+          const incomingAttachmentId = 'group-compact-video-attachment-313';
+          const outgoingMessageId = 'group-outgoing-video-message-313';
+          const outgoingAttachmentId = 'group-outgoing-video-attachment-313';
+          await seedOrdinaryDoneVideo(
+            messageId: incomingMessageId,
+            attachmentId: incomingAttachmentId,
+            isIncoming: true,
+            caption: 'incoming compact video',
+            mime: 'video/mp4',
+            size: 4096,
+            durationMs: 12000,
+            timestamp: DateTime.utc(2026, 7, 31, 18, 1),
+          );
+          await seedOrdinaryDoneVideo(
+            messageId: outgoingMessageId,
+            attachmentId: outgoingAttachmentId,
+            isIncoming: false,
+            caption: 'outgoing standard video',
+            mime: 'video/mp4',
+            size: 8192,
+            durationMs: 18000,
+            timestamp: DateTime.utc(2026, 7, 31, 18, 2),
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: RecordingGroupMediaActionsController(
+                messageRepository: msgRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+              ),
+              mediaDeleteForMeCoordinator:
+                  RecordingGroupMediaDeleteForMeCoordinator(),
+              groupMediaForwardLauncher: (_, _) async {},
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, incomingMessageId);
+          await pumpUntilMediaLoaded(tester, outgoingMessageId);
+          await pumpUntilCanWrite(tester);
+
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-$incomingMessageId-$incomingAttachmentId',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          var viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final incomingItem = viewer.items.single;
+          expect(incomingItem.kind, MediaViewerKind.video);
+          expect(
+            incomingItem.actionPresentation,
+            MediaViewerActionPresentation.compactVideoOverflow,
+          );
+          expect(incomingItem.canEnterPictureInPicture, isTrue);
+          const videoActions = <MediaViewerAction>[
+            MediaViewerAction.save,
+            MediaViewerAction.share,
+            MediaViewerAction.info,
+            MediaViewerAction.reply,
+            MediaViewerAction.forward,
+            MediaViewerAction.delete,
+          ];
+          expect(
+            incomingItem.capabilities.allowed,
+            unorderedEquals(videoActions),
+          );
+          expect(
+            find.byKey(const ValueKey('media_action_more')),
+            findsOneWidget,
+          );
+          for (final action in videoActions) {
+            expect(
+              find.byKey(ValueKey('media_action_${action.name}')),
+              findsNothing,
+              reason: '${action.name} escaped the closed video overflow',
+            );
+          }
+
+          await showViewerMoreMenu(tester);
+          const videoMenuIcons = <MediaViewerAction, IconData>{
+            MediaViewerAction.save: Icons.download_rounded,
+            MediaViewerAction.share: Icons.ios_share_rounded,
+            MediaViewerAction.info: Icons.info_outline_rounded,
+            MediaViewerAction.reply: Icons.reply_rounded,
+            MediaViewerAction.forward: Icons.forward_rounded,
+            MediaViewerAction.delete: Icons.delete_outline_rounded,
+          };
+          final appBar = find.byType(AppBar);
+          for (final action in videoActions) {
+            final row = find.byKey(ValueKey('media_action_${action.name}'));
+            expect(row, findsOneWidget);
+            expect(
+              find.descendant(
+                of: row,
+                matching: find.byIcon(videoMenuIcons[action]!),
+              ),
+              findsOneWidget,
+              reason: '${action.name} must keep its compact-menu icon',
+            );
+            expect(
+              find.descendant(of: appBar, matching: row),
+              findsNothing,
+              reason: '${action.name} must not remain in the top AppBar',
+            );
+          }
+          await tester.tapAt(const Offset(20, 300));
+          await pumpFrames(tester, count: 4);
+
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-$outgoingMessageId-$outgoingAttachmentId',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          expect(viewer.items.single.kind, MediaViewerKind.video);
+          expect(
+            viewer.items.single.actionPresentation,
+            MediaViewerActionPresentation.standardToolbar,
+          );
+          expect(viewer.items.single.canEnterPictureInPicture, isFalse);
+          expect(viewer.items.single.capabilities.allowed, isEmpty);
+          expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+          expect(tester.takeException(), isNull);
+        },
+      );
+
+      testWidgets(
+        'ordinary discussion images hide automatic metadata for sender and receiver while Info and GIF remain',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final semantics = tester.ensureSemantics();
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+
+          const incomingMessageId = 'group-image-incoming-message-314';
+          const incomingAttachmentId = 'group-image-incoming-attachment-314';
+          const outgoingMessageId = 'group-image-outgoing-message-314';
+          const outgoingAttachmentId = 'group-image-outgoing-attachment-314';
+          const gifMessageId = 'group-image-gif-message-314';
+          const gifAttachmentId = 'group-image-gif-attachment-314';
+          final incomingTimestamp = DateTime.utc(2026, 7, 31, 10, 11);
+          final outgoingTimestamp = DateTime.utc(2026, 7, 31, 12, 13);
+          await seedIncomingDoneImage(
+            messageId: incomingMessageId,
+            attachmentId: incomingAttachmentId,
+            caption: 'GROUP_INCOMING_IMAGE_CAPTION_314',
+            size: 8192,
+            width: 641,
+            height: 479,
+            timestamp: incomingTimestamp,
+          );
+          await seedIncomingDoneImage(
+            messageId: outgoingMessageId,
+            attachmentId: outgoingAttachmentId,
+            caption: '',
+            senderPeerId: 'peer-self',
+            mime: 'image/webp',
+            isIncoming: false,
+            size: 16384,
+            width: 1280,
+            height: 720,
+            timestamp: outgoingTimestamp,
+          );
+          await seedIncomingDoneImage(
+            messageId: gifMessageId,
+            attachmentId: gifAttachmentId,
+            caption: 'GROUP_GIF_CAPTION_314',
+            mime: 'image/gif',
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: RecordingGroupMediaActionsController(
+                messageRepository: msgRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+              ),
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, incomingMessageId);
+          await pumpUntilMediaLoaded(tester, outgoingMessageId);
+          await pumpUntilMediaLoaded(tester, gifMessageId);
+          await pumpUntilCanWrite(tester);
+
+          const detailKeys = <String>[
+            'media_meta_sender',
+            'media_meta_timestamp',
+            'media_meta_mime',
+            'media_meta_size',
+            'media_meta_dimensions',
+            'media_meta_duration',
+          ];
+          void expectHiddenDetails(List<String> values) {
+            for (final key in detailKeys) {
+              expect(find.byKey(ValueKey(key)), findsNothing);
+            }
+            for (final value in values) {
+              expect(
+                find.descendant(
+                  of: find.byType(FullScreenTypedMediaViewer),
+                  matching: find.text(value),
+                ),
+                findsNothing,
+              );
+              expect(
+                find.descendant(
+                  of: find.byType(FullScreenTypedMediaViewer),
+                  matching: find.bySemanticsLabel(RegExp(RegExp.escape(value))),
+                ),
+                findsNothing,
+              );
+            }
+          }
+
+          Future<MediaViewerItem> open(
+            String messageId,
+            String attachmentId,
+          ) async {
+            await tester.tap(
+              find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
+            );
+            await pumpFrames(tester, count: 4);
+            final viewer = tester.widget<FullScreenTypedMediaViewer>(
+              find.byType(FullScreenTypedMediaViewer),
+            );
+            expect(viewer.items, hasLength(1));
+            return viewer.items.single;
+          }
+
+          var item = await open(incomingMessageId, incomingAttachmentId);
+          expect(item.kind, MediaViewerKind.image);
+          expect(item.showMetadataDetails, isFalse);
+          expect(item.mime, 'image/png');
+          expect(item.sizeBytes, 8192);
+          expect(item.width, 641);
+          expect(item.height, 479);
+          expect(item.timestamp, incomingTimestamp);
+          expect(item.senderLabel, 'Alice');
+          expect(item.caption, 'GROUP_INCOMING_IMAGE_CAPTION_314');
+          expect(
+            item.actionPresentation,
+            MediaViewerActionPresentation.compactImageOverlay,
+          );
+          expect(
+            item.capabilities.allowed,
+            unorderedEquals(const <MediaViewerAction>[
+              MediaViewerAction.save,
+              MediaViewerAction.share,
+              MediaViewerAction.info,
+              MediaViewerAction.reply,
+            ]),
+          );
+          expectHiddenDetails(const <String>[
+            'Alice',
+            'image/png',
+            '8 KB',
+            '641 × 479',
+          ]);
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_caption')))
+                .data,
+            'GROUP_INCOMING_IMAGE_CAPTION_314',
+          );
+
+          final incomingViewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final infoFlight = incomingViewer.onAction!(
+            item,
+            MediaViewerAction.info,
+          );
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-mime')),
+                )
+                .data,
+            'image/png',
+          );
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-size')),
+                )
+                .data,
+            '8 KB',
+          );
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-dimensions')),
+                )
+                .data,
+            '641 × 479',
+          );
+          await tester.tapAt(const Offset(5, 5));
+          await pumpFrames(tester, count: 10);
+          expect(await infoFlight, MediaViewerActionResult.success);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+
+          item = await open(outgoingMessageId, outgoingAttachmentId);
+          expect(item.kind, MediaViewerKind.image);
+          expect(item.showMetadataDetails, isFalse);
+          expect(item.mime, 'image/webp');
+          expect(item.sizeBytes, 16384);
+          expect(item.width, 1280);
+          expect(item.height, 720);
+          expect(item.timestamp, outgoingTimestamp);
+          expect(item.senderLabel, 'You');
+          expect(item.caption, isNull);
+          expect(
+            item.actionPresentation,
+            MediaViewerActionPresentation.standardToolbar,
+          );
+          expect(item.capabilities.allows(MediaViewerAction.info), isFalse);
+          expectHiddenDetails(const <String>[
+            'You',
+            'image/webp',
+            '16 KB',
+            '1280 × 720',
+          ]);
+          expect(
+            find.byKey(const ValueKey('media_viewer_metadata_content')),
+            findsNothing,
+          );
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+
+          item = await open(gifMessageId, gifAttachmentId);
+          expect(item.kind, MediaViewerKind.gif);
+          expect(item.showMetadataDetails, isTrue);
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_mime')))
+                .data,
+            'image/gif',
+          );
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_caption')))
+                .data,
+            'GROUP_GIF_CAPTION_314',
+          );
+          semantics.dispose();
+          expect(tester.takeException(), isNull);
+        },
+      );
+
+      testWidgets(
+        'ordinary group videos hide automatic metadata for sender and receiver while Info retains it',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final semantics = tester.ensureSemantics();
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const incomingMessageId = 'group-video-incoming-message-312';
+          const incomingAttachmentId = 'group-video-incoming-attachment-312';
+          const outgoingMessageId = 'group-video-outgoing-message-312';
+          const outgoingAttachmentId = 'group-video-outgoing-attachment-312';
+          const gifMessageId = 'group-gif-message-312';
+          const gifAttachmentId = 'group-gif-attachment-312';
+          final incomingTimestamp = DateTime.utc(2026, 7, 14, 10, 11);
+          final outgoingTimestamp = DateTime.utc(2026, 7, 15, 12, 13);
+          await seedOrdinaryDoneVideo(
+            messageId: incomingMessageId,
+            attachmentId: incomingAttachmentId,
+            isIncoming: true,
+            caption: 'GROUP_INCOMING_VIDEO_CAPTION_312',
+            mime: 'video/x-group-incoming-312',
+            size: 8192,
+            durationMs: 83000,
+            timestamp: incomingTimestamp,
+          );
+          await seedOrdinaryDoneVideo(
+            messageId: outgoingMessageId,
+            attachmentId: outgoingAttachmentId,
+            isIncoming: false,
+            caption: '',
+            mime: 'video/x-group-outgoing-312',
+            size: 16384,
+            durationMs: 65000,
+            timestamp: outgoingTimestamp,
+          );
+          await seedIncomingDoneImage(
+            messageId: gifMessageId,
+            attachmentId: gifAttachmentId,
+            caption: 'GROUP_GIF_CAPTION_312',
+            mime: 'image/gif',
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: RecordingGroupMediaActionsController(
+                messageRepository: msgRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+              ),
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, incomingMessageId);
+          await pumpUntilMediaLoaded(tester, outgoingMessageId);
+          await pumpUntilMediaLoaded(tester, gifMessageId);
+
+          const detailKeys = <String>[
+            'media_meta_sender',
+            'media_meta_timestamp',
+            'media_meta_mime',
+            'media_meta_size',
+            'media_meta_dimensions',
+            'media_meta_duration',
+          ];
+          void expectHiddenDetails(List<String> values) {
+            for (final key in detailKeys) {
+              expect(find.byKey(ValueKey(key)), findsNothing);
+            }
+            for (final value in values) {
+              expect(
+                find.descendant(
+                  of: find.byType(FullScreenTypedMediaViewer),
+                  matching: find.text(value),
+                ),
+                findsNothing,
+              );
+              expect(
+                find.descendant(
+                  of: find.byType(FullScreenTypedMediaViewer),
+                  matching: find.bySemanticsLabel(RegExp(RegExp.escape(value))),
+                ),
+                findsNothing,
+              );
+            }
+          }
+
+          Future<MediaViewerItem> open(
+            String messageId,
+            String attachmentId,
+          ) async {
+            await tester.tap(
+              find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
+            );
+            await pumpFrames(tester, count: 4);
+            final viewer = tester.widget<FullScreenTypedMediaViewer>(
+              find.byType(FullScreenTypedMediaViewer),
+            );
+            expect(viewer.items, hasLength(1));
+            return viewer.items.single;
+          }
+
+          var item = await open(incomingMessageId, incomingAttachmentId);
+          expect(item.kind, MediaViewerKind.video);
+          expect(item.showMetadataDetails, isFalse);
+          expect(item.mime, 'video/x-group-incoming-312');
+          expect(item.sizeBytes, 8192);
+          expect(item.durationMs, 83000);
+          expect(item.width, 1920);
+          expect(item.height, 1080);
+          expect(item.timestamp, incomingTimestamp);
+          expect(item.senderLabel, 'Alice');
+          expect(item.caption, 'GROUP_INCOMING_VIDEO_CAPTION_312');
+          expectHiddenDetails(const <String>[
+            'Alice',
+            'video/x-group-incoming-312',
+            '8 KB',
+            '1:23',
+          ]);
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_caption')))
+                .data,
+            'GROUP_INCOMING_VIDEO_CAPTION_312',
+          );
+          expect(find.byKey(const ValueKey('media_action_info')), findsNothing);
+          await showViewerMoreMenu(tester);
+          expect(
+            find.byKey(const ValueKey('media_action_info')),
+            findsOneWidget,
+          );
+          await tester.tapAt(const Offset(20, 300));
+          await pumpFrames(tester, count: 4);
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final infoFlight = viewer.onAction!(item, MediaViewerAction.info);
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-mime')),
+                )
+                .data,
+            'video/x-group-incoming-312',
+          );
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-size')),
+                )
+                .data,
+            '8 KB',
+          );
+          expect(
+            tester
+                .widget<Text>(
+                  find.byKey(const ValueKey('group-media-info-duration')),
+                )
+                .data,
+            '1:23',
+          );
+          await tester.tapAt(const Offset(5, 5));
+          await pumpFrames(tester, count: 10);
+          expect(await infoFlight, MediaViewerActionResult.success);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+
+          item = await open(outgoingMessageId, outgoingAttachmentId);
+          expect(item.kind, MediaViewerKind.video);
+          expect(item.showMetadataDetails, isFalse);
+          expect(item.mime, 'video/x-group-outgoing-312');
+          expect(item.sizeBytes, 16384);
+          expect(item.durationMs, 65000);
+          expect(item.timestamp, outgoingTimestamp);
+          expect(item.senderLabel, 'You');
+          expect(item.caption, isNull);
+          expectHiddenDetails(const <String>[
+            'You',
+            'video/x-group-outgoing-312',
+            '16 KB',
+            '1:05',
+          ]);
+          expect(
+            find.byKey(const ValueKey('media_viewer_metadata_content')),
+            findsNothing,
+          );
+          expect(find.byKey(const ValueKey('media_action_info')), findsNothing);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+
+          item = await open(gifMessageId, gifAttachmentId);
+          expect(item.kind, MediaViewerKind.gif);
+          expect(item.showMetadataDetails, isTrue);
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_mime')))
+                .data,
+            'image/gif',
+          );
+          expect(
+            tester
+                .widget<Text>(find.byKey(const ValueKey('media_meta_caption')))
+                .data,
+            'GROUP_GIF_CAPTION_312',
+          );
+          semantics.dispose();
+          expect(tester.takeException(), isNull);
+        },
+      );
 
       testWidgets(
         'GMA-03 viewer selection and reopen preserve exact attachment identity',
@@ -18836,14 +19679,25 @@ void main() {
           expect(viewer.items[1].messageId, 'msg-a');
 
           // The dispatched action carries the exact selected item.
-          await tester.tap(find.byKey(const ValueKey('media_action_save')));
-          await pumpFrames(tester, count: 4);
-          expect(controller.saves, ['group-1/msg-a/att-b']);
-
-          // Reopen from a different parent: identity follows the new parent.
-          await tester.tap(find.byIcon(Icons.arrow_back));
+          await showViewerMoreMenu(tester);
+          await selectViewerPopupAction(tester, MediaViewerAction.save);
           await pumpFrames(tester, count: 10);
+          expect(controller.saves, ['group-1/msg-a/att-b']);
+          expect(find.byKey(const ValueKey('media_action_save')), findsNothing);
+
+          // Reopen from a fresh mount and a different parent: identity follows
+          // the newly selected row rather than the previous viewer item.
+          await tester.pumpWidget(const SizedBox.shrink());
           expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: controller,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, 'msg-b');
           await tester.tap(
             find.byKey(const ValueKey('media-grid-cell-msg-b-att-c')),
           );
@@ -18855,7 +19709,8 @@ void main() {
             'att-c',
           ]);
           expect(viewer.initialIndex, 0);
-          await tester.tap(find.byKey(const ValueKey('media_action_save')));
+          await showViewerMoreMenu(tester);
+          await selectViewerPopupAction(tester, MediaViewerAction.save);
           await pumpFrames(tester, count: 4);
           expect(controller.saves, [
             'group-1/msg-a/att-b',
@@ -18906,7 +19761,14 @@ void main() {
           gatedMedia.armed = true;
           final pathResolvesBeforeForward =
               mediaFileManager.resolveStoredPathCount;
-          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final forwardFlight = viewer.onAction!(
+            viewer.items.single,
+            MediaViewerAction.forward,
+          );
+          await tester.pump();
           await tester.runAsync(
             () => gatedMedia.firstReadCaptured.future.timeout(
               const Duration(seconds: 2),
@@ -18927,6 +19789,7 @@ void main() {
             mediaFileManager.resolveStoredPathCount,
             pathResolvesBeforeForward,
           );
+          expect(await forwardFlight, MediaViewerActionResult.failure);
           expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         },
       );
@@ -18999,9 +19862,16 @@ void main() {
             findsOneWidget,
           );
 
-          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final forwardResult = await viewer.onAction!(
+            viewer.items.single,
+            MediaViewerAction.forward,
+          );
           await pumpFrames(tester, count: 10);
 
+          expect(forwardResult, MediaViewerActionResult.failure);
           expect(find.byType(ShareTargetPickerWired), findsNothing);
           expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         },
@@ -19064,7 +19934,13 @@ void main() {
           );
 
           gatedFiles.armed = true;
-          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          unawaited(
+            viewer.onAction!(viewer.items.single, MediaViewerAction.forward),
+          );
+          await tester.pump();
           await tester.runAsync(
             () =>
                 gatedFiles.captured.future.timeout(const Duration(seconds: 2)),
@@ -19134,7 +20010,14 @@ void main() {
           );
 
           exactRowAwait.gateAfterExactReads(2);
-          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final forwardFlight = viewer.onAction!(
+            viewer.items.single,
+            MediaViewerAction.forward,
+          );
+          await tester.pump();
           for (var i = 0; i < 40 && !exactRowAwait.hasCaptured; i++) {
             await tester.runAsync(
               () => Future<void>.delayed(const Duration(milliseconds: 25)),
@@ -19157,6 +20040,7 @@ void main() {
           exactRowAwait.release();
           await pumpFrames(tester, count: 10);
 
+          expect(await forwardFlight, MediaViewerActionResult.failure);
           expect(find.byType(ShareTargetPickerWired), findsNothing);
           expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         },
@@ -19352,11 +20236,12 @@ void main() {
           find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
         );
         await pumpFrames(tester, count: 4);
+        await showViewerMoreMenu(tester);
         expect(
           find.byKey(const ValueKey('media_action_reply')),
           findsOneWidget,
         );
-        await tester.tap(find.byKey(const ValueKey('media_action_reply')));
+        await selectViewerPopupAction(tester, MediaViewerAction.reply);
         await pumpFrames(tester, count: 10);
         expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
         final screen = tester.widget<GroupConversationScreen>(
@@ -19410,6 +20295,7 @@ void main() {
         );
         await pumpFrames(tester, count: 4);
         expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        await showViewerMoreMenu(tester);
         expect(find.byKey(const ValueKey('media_action_reply')), findsNothing);
         expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
       });
@@ -19460,7 +20346,8 @@ void main() {
             find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
           );
           await pumpFrames(tester, count: 4);
-          await tester.tap(find.byKey(const ValueKey('media_action_share')));
+          await showViewerMoreMenu(tester);
+          await selectViewerPopupAction(tester, MediaViewerAction.share);
           await pumpFrames(tester, count: 4);
           expect(controller.shares, ['group-1/msg-m/att-1']);
           await tester.tap(find.byIcon(Icons.arrow_back));
@@ -19623,6 +20510,19 @@ void main() {
             await tester.tap(find.byKey(cellKey));
             await pumpFrames(tester, count: 4);
             expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+            final announcementViewer = tester
+                .widget<FullScreenTypedMediaViewer>(
+                  find.byType(FullScreenTypedMediaViewer),
+                );
+            expect(announcementViewer.items, hasLength(1));
+            expect(announcementViewer.items.single.kind, MediaViewerKind.image);
+            expect(announcementViewer.items.single.showMetadataDetails, isTrue);
+            expect(
+              tester
+                  .widget<Text>(find.byKey(const ValueKey('media_meta_mime')))
+                  .data,
+              'image/png',
+            );
             for (final action in [
               MediaViewerAction.save,
               MediaViewerAction.share,

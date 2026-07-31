@@ -17,6 +17,15 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 /// inferred from the path/extension inside the shared viewer.
 enum MediaViewerKind { image, gif, video }
 
+/// Presentation-only placement policy for the actions authorized on one page.
+/// Lane owners select it explicitly; the shared viewer never infers it from a
+/// path, MIME type, direction, or owner.
+enum MediaViewerActionPresentation {
+  standardToolbar,
+  compactImageOverlay,
+  compactVideoOverflow,
+}
+
 /// A per-item action the viewer may surface. The viewer performs no side
 /// effect itself: it invokes the supplied [MediaViewerActionCallback] with the
 /// exact current item. Concrete per-lane policies live in plans 231-242.
@@ -126,6 +135,8 @@ class MediaViewerItem {
     this.caption,
     this.senderLabel,
     this.timestamp,
+    this.showMetadataDetails = true,
+    this.actionPresentation = MediaViewerActionPresentation.standardToolbar,
     this.canEnterPictureInPicture = false,
     this.protection = const MediaViewerProtection(),
     this.capabilities = MediaViewerActionCapabilities.none,
@@ -153,6 +164,18 @@ class MediaViewerItem {
   final String? caption;
   final String? senderLabel;
   final DateTime? timestamp;
+
+  /// Whether the ordinary viewer presents automatic sender, timestamp, MIME,
+  /// size, and dimensions/duration rows. Captions are user-authored content
+  /// and remain independently visible.
+  ///
+  /// Defaults to the established visible behavior so only explicit lane-owner
+  /// policies can suppress these presentation details.
+  final bool showMetadataDetails;
+
+  /// Where this item's existing action capabilities are presented. The
+  /// default preserves every existing caller's AppBar toolbar.
+  final MediaViewerActionPresentation actionPresentation;
 
   /// Typed lane-owner input for downstream PiP work. The shared viewer never
   /// infers this from video MIME/path and does not implement PiP itself.

@@ -28,6 +28,8 @@ void main() {
     required String messageId,
     required MediaOwnerLane? owner,
     Set<MediaViewerAction> caps = const <MediaViewerAction>{},
+    MediaViewerActionPresentation actionPresentation =
+        MediaViewerActionPresentation.standardToolbar,
     MediaViewerProtection protection = const MediaViewerProtection(),
     String? caption,
     String? sender,
@@ -48,6 +50,7 @@ void main() {
     width: width,
     height: height,
     sizeBytes: sizeBytes,
+    actionPresentation: actionPresentation,
     capabilities: MediaViewerActionCapabilities(allowed: caps),
     protection: protection,
   );
@@ -57,8 +60,11 @@ void main() {
     required String messageId,
     required MediaOwnerLane? owner,
     Set<MediaViewerAction> caps = const <MediaViewerAction>{},
+    MediaViewerActionPresentation actionPresentation =
+        MediaViewerActionPresentation.standardToolbar,
     String? caption,
     String? sender,
+    DateTime? timestamp,
     int? durationMs,
     int? sizeBytes,
     bool canEnterPictureInPicture = false,
@@ -72,8 +78,10 @@ void main() {
     localPath: '/tmp/secret-$attachmentId.mp4',
     caption: caption,
     senderLabel: sender,
+    timestamp: timestamp,
     durationMs: durationMs,
     sizeBytes: sizeBytes,
+    actionPresentation: actionPresentation,
     canEnterPictureInPicture: canEnterPictureInPicture,
     protection: protection,
     capabilities: MediaViewerActionCapabilities(allowed: caps),
@@ -111,6 +119,11 @@ void main() {
       await tester.pump();
 
       expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+      expect(
+        tester.getCenter(find.byKey(const ValueKey('media_action_delete'))).dy,
+        lessThan(tester.getSize(find.byType(Scaffold)).height / 2),
+      );
 
       await tester.tap(find.byKey(const ValueKey('media_action_delete')));
       await tester.pump();
@@ -125,6 +138,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('2 / 2'), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+      expect(
+        tester.getCenter(find.byKey(const ValueKey('media_action_delete'))).dy,
+        lessThan(tester.getSize(find.byType(Scaffold)).height / 2),
+      );
 
       await tester.tap(find.byKey(const ValueKey('media_action_delete')));
       await tester.pump();
@@ -323,6 +341,791 @@ void main() {
   );
 
   testWidgets(
+    'compact image layout places overflow forward and delete on safe corners',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const caps = <MediaViewerAction>{
+        MediaViewerAction.save,
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+        MediaViewerAction.delete,
+      };
+      final items = [
+        imageItem(
+          attachmentId: 'compact-layout-a',
+          messageId: 'compact-layout-message',
+          owner: MediaOwnerLane.direct,
+          caps: caps,
+          actionPresentation: MediaViewerActionPresentation.compactImageOverlay,
+        ),
+        imageItem(
+          attachmentId: 'compact-layout-b',
+          messageId: 'compact-layout-message',
+          owner: MediaOwnerLane.direct,
+          caps: caps,
+          actionPresentation: MediaViewerActionPresentation.compactImageOverlay,
+        ),
+      ];
+
+      for (final locale in const [Locale('en'), Locale('ar')]) {
+        await tester.pumpWidget(
+          wrap(
+            MediaQuery(
+              data: const MediaQueryData(
+                size: Size(320, 568),
+                padding: EdgeInsets.fromLTRB(10, 24, 20, 34),
+              ),
+              child: FullScreenTypedMediaViewer(
+                key: ValueKey('compact-layout-${locale.languageCode}'),
+                items: items,
+                onAction: (_, _) async => MediaViewerActionResult.success,
+              ),
+            ),
+            locale: locale,
+          ),
+        );
+        await tester.pump();
+
+        final more = find.byKey(const ValueKey('media_action_more'));
+        final forward = find.byKey(const ValueKey('media_action_forward'));
+        final delete = find.byKey(const ValueKey('media_action_delete'));
+        expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+        expect(find.text('1 / 2'), findsOneWidget);
+        expect(more, findsOneWidget);
+        expect(forward, findsOneWidget);
+        expect(delete, findsOneWidget);
+        for (final action in const ['save', 'share', 'info', 'reply']) {
+          expect(find.byKey(ValueKey('media_action_$action')), findsNothing);
+        }
+
+        for (final control in [more, forward, delete]) {
+          expect(tester.getSize(control), const Size(48, 48));
+        }
+        for (final action in const ['more', 'forward', 'delete']) {
+          expect(
+            tester.getSize(
+              find.byKey(ValueKey('media_action_${action}_visual')),
+            ),
+            const Size(36, 36),
+          );
+        }
+
+        final moreRect = tester.getRect(more);
+        final forwardRect = tester.getRect(forward);
+        final deleteRect = tester.getRect(delete);
+        expect(moreRect.center.dy, lessThan(568 / 2));
+        expect(forwardRect.center.dy, greaterThan(568 / 2));
+        expect(deleteRect.center.dy, greaterThan(568 / 2));
+        expect(forwardRect.bottom, lessThanOrEqualTo(568 - 34));
+        expect(deleteRect.bottom, lessThanOrEqualTo(568 - 34));
+        if (locale.languageCode == 'ar') {
+          expect(forwardRect.center.dx, lessThan(deleteRect.center.dx));
+          expect(moreRect.center.dx, lessThan(320 / 2));
+        } else {
+          expect(forwardRect.center.dx, greaterThan(deleteRect.center.dx));
+          expect(moreRect.center.dx, greaterThan(320 / 2));
+        }
+
+        await tester.tap(forward);
+        await tester.pump();
+        await tester.pump();
+        final result = find.byKey(
+          const ValueKey('media_action_result_success'),
+        );
+        expect(result, findsOneWidget);
+        expect(tester.getRect(result).overlaps(forwardRect), isFalse);
+        expect(tester.getRect(result).overlaps(deleteRect), isFalse);
+      }
+    },
+  );
+
+  testWidgets(
+    'compact overflow lists localized image actions in order and targets the current item',
+    (tester) async {
+      const expected = <String, ({String more, List<String> actions})>{
+        'en': (
+          more: 'More actions',
+          actions: ['Save image', 'Share', 'Info', 'Reply'],
+        ),
+        'de': (
+          more: 'Weitere Aktionen',
+          actions: ['Bild speichern', 'Teilen', 'Info', 'Antworten'],
+        ),
+        'ar': (
+          more: 'المزيد من الإجراءات',
+          actions: ['حفظ الصورة', 'مشاركة', 'معلومات', 'رد'],
+        ),
+      };
+      const caps = <MediaViewerAction>{
+        MediaViewerAction.save,
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+        MediaViewerAction.delete,
+      };
+
+      for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+        final dispatched =
+            <({MediaViewerItem item, MediaViewerAction action})>[];
+        final itemA = imageItem(
+          attachmentId: 'compact-menu-a-${locale.languageCode}',
+          messageId: 'compact-menu-message',
+          owner: MediaOwnerLane.direct,
+          caps: caps,
+          actionPresentation: MediaViewerActionPresentation.compactImageOverlay,
+        );
+        final itemB = imageItem(
+          attachmentId: 'compact-menu-b-${locale.languageCode}',
+          messageId: 'compact-menu-message',
+          owner: MediaOwnerLane.direct,
+          caps: caps,
+          actionPresentation: MediaViewerActionPresentation.compactImageOverlay,
+        );
+        await tester.pumpWidget(
+          wrap(
+            FullScreenTypedMediaViewer(
+              key: ValueKey('compact-menu-${locale.languageCode}'),
+              items: [itemA, itemB],
+              onAction: (item, action) async {
+                dispatched.add((item: item, action: action));
+                return MediaViewerActionResult.success;
+              },
+            ),
+            locale: locale,
+          ),
+        );
+        await tester.pump();
+        await tester.fling(
+          find.byType(PageView),
+          Offset(locale.languageCode == 'ar' ? 400 : -400, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('2 / 2'), findsOneWidget);
+
+        final more = tester.widget<PopupMenuButton<MediaViewerAction>>(
+          find.byKey(const ValueKey('media_action_more')),
+        );
+        expect(more.tooltip, expected[locale.languageCode]!.more);
+        await tester.tap(find.byKey(const ValueKey('media_action_more')));
+        await tester.pumpAndSettle();
+
+        final actionKeys = const [
+          ValueKey('media_action_save'),
+          ValueKey('media_action_share'),
+          ValueKey('media_action_info'),
+          ValueKey('media_action_reply'),
+        ];
+        const actionIcons = <IconData>[
+          Icons.download_rounded,
+          Icons.ios_share_rounded,
+          Icons.info_outline_rounded,
+          Icons.reply_rounded,
+        ];
+        for (var index = 0; index < actionKeys.length; index++) {
+          final item = find.byKey(actionKeys[index]);
+          final label = find.descendant(
+            of: item,
+            matching: find.text(expected[locale.languageCode]!.actions[index]),
+          );
+          final icon = find.descendant(of: item, matching: find.byType(Icon));
+          expect(item, findsOneWidget);
+          expect(label, findsOneWidget);
+          expect(icon, findsOneWidget);
+
+          final iconWidget = tester.widget<Icon>(icon);
+          expect(iconWidget.icon, actionIcons[index]);
+          expect(iconWidget.size, 20);
+          expect(iconWidget.color, Colors.white);
+
+          final iconRect = tester.getRect(icon);
+          final labelRect = tester.getRect(label);
+          if (Directionality.of(tester.element(item)) == TextDirection.rtl) {
+            expect(iconRect.left - labelRect.right, closeTo(12, 0.01));
+          } else {
+            expect(labelRect.left - iconRect.right, closeTo(12, 0.01));
+          }
+          if (index > 0) {
+            expect(
+              tester.getCenter(item).dy,
+              greaterThan(
+                tester.getCenter(find.byKey(actionKeys[index - 1])).dy,
+              ),
+            );
+          }
+        }
+        for (final key in const [
+          ValueKey('media_action_forward'),
+          ValueKey('media_action_delete'),
+        ]) {
+          expect(
+            find.ancestor(
+              of: find.byKey(key),
+              matching: find.byType(PopupMenuItem<MediaViewerAction>),
+            ),
+            findsNothing,
+          );
+        }
+
+        await tester.tap(find.byKey(const ValueKey('media_action_info')));
+        await tester.pump();
+        expect(dispatched, hasLength(1));
+        expect(dispatched.single.item.attachmentId, itemB.attachmentId);
+        expect(dispatched.single.action, MediaViewerAction.info);
+      }
+    },
+  );
+
+  testWidgets(
+    'compact actions remain capability gated and single dispatch while pending',
+    (tester) async {
+      const compact = MediaViewerActionPresentation.compactImageOverlay;
+      final calls = <({MediaViewerItem item, MediaViewerAction action})>[];
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-subset'),
+            items: [
+              imageItem(
+                attachmentId: 'compact-subset',
+                messageId: 'compact-message',
+                owner: MediaOwnerLane.direct,
+                caps: const {MediaViewerAction.save, MediaViewerAction.forward},
+                actionPresentation: compact,
+              ),
+            ],
+            onAction: (item, action) async {
+              calls.add((item: item, action: action));
+              return MediaViewerActionResult.success;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('media_action_forward')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('media_action_delete')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_share')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('media_action_save')));
+      await tester.pumpAndSettle();
+      expect(calls.single.action, MediaViewerAction.save);
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-ownerless'),
+            items: [
+              imageItem(
+                attachmentId: 'compact-ownerless',
+                messageId: 'compact-message',
+                owner: null,
+                caps: const {
+                  MediaViewerAction.save,
+                  MediaViewerAction.forward,
+                  MediaViewerAction.delete,
+                },
+                actionPresentation: compact,
+              ),
+            ],
+            onAction: (item, action) async {
+              calls.add((item: item, action: action));
+              return MediaViewerActionResult.success;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<PopupMenuButton<MediaViewerAction>>(
+              find.byKey(const ValueKey('media_action_more')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('media_action_forward')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('media_action_delete')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(calls, hasLength(1));
+
+      final pending = Completer<MediaViewerActionResult>();
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-pending'),
+            items: [
+              imageItem(
+                attachmentId: 'compact-pending',
+                messageId: 'compact-message',
+                owner: MediaOwnerLane.direct,
+                caps: const {
+                  MediaViewerAction.save,
+                  MediaViewerAction.forward,
+                  MediaViewerAction.delete,
+                },
+                actionPresentation: compact,
+              ),
+            ],
+            onAction: (item, action) {
+              calls.add((item: item, action: action));
+              return pending.future;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+      await tester.pump();
+      expect(calls, hasLength(2));
+      expect(calls.last.action, MediaViewerAction.forward);
+      expect(
+        tester
+            .widget<PopupMenuButton<MediaViewerAction>>(
+              find.byKey(const ValueKey('media_action_more')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('media_action_delete')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('media_action_delete')),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(calls, hasLength(2));
+      pending.complete(MediaViewerActionResult.success);
+      await tester.pump();
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-private'),
+            privacyMinimized: true,
+            items: [
+              imageItem(
+                attachmentId: 'compact-private',
+                messageId: 'compact-private-message',
+                owner: MediaOwnerLane.direct,
+                caps: const {
+                  MediaViewerAction.save,
+                  MediaViewerAction.share,
+                  MediaViewerAction.info,
+                  MediaViewerAction.reply,
+                  MediaViewerAction.forward,
+                  MediaViewerAction.delete,
+                },
+                actionPresentation: compact,
+              ),
+            ],
+            onAction: (item, action) async {
+              calls.add((item: item, action: action));
+              return MediaViewerActionResult.success;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      for (final action in const [
+        'more',
+        'save',
+        'share',
+        'info',
+        'reply',
+        'forward',
+        'delete',
+      ]) {
+        expect(find.byKey(ValueKey('media_action_$action')), findsNothing);
+      }
+      expect(calls, hasLength(2));
+    },
+  );
+
+  testWidgets(
+    'compact video overflow lists and dispatches every authorized media action',
+    (tester) async {
+      final compactVideo = MediaViewerActionPresentation.values.singleWhere(
+        (value) => value.name == 'compactVideoOverflow',
+      );
+      const orderedActions = <MediaViewerAction>[
+        MediaViewerAction.save,
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+        MediaViewerAction.delete,
+      ];
+      const expectedLabels = <String, List<String>>{
+        'en': ['Save', 'Share', 'Info', 'Reply', 'Forward', 'Delete'],
+        'de': [
+          'Speichern',
+          'Teilen',
+          'Info',
+          'Antworten',
+          'Weiterleiten',
+          'Löschen',
+        ],
+        'ar': ['حفظ', 'مشاركة', 'معلومات', 'رد', 'إعادة توجيه', 'حذف'],
+      };
+      const expectedIcons = <IconData>[
+        Icons.download_rounded,
+        Icons.ios_share_rounded,
+        Icons.info_outline_rounded,
+        Icons.reply_rounded,
+        Icons.forward_rounded,
+        Icons.delete_outline_rounded,
+      ];
+
+      for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+        final dispatched =
+            <({MediaViewerItem item, MediaViewerAction action})>[];
+        final first = videoItem(
+          attachmentId: 'compact-video-a-${locale.languageCode}',
+          messageId: 'compact-video-message',
+          owner: MediaOwnerLane.direct,
+          caps: orderedActions.toSet(),
+          actionPresentation: compactVideo,
+        );
+        final second = videoItem(
+          attachmentId: 'compact-video-b-${locale.languageCode}',
+          messageId: 'compact-video-message',
+          owner: MediaOwnerLane.direct,
+          caps: orderedActions.toSet(),
+          actionPresentation: compactVideo,
+        );
+
+        await tester.pumpWidget(
+          wrap(
+            MediaQuery(
+              data: const MediaQueryData(size: Size(320, 568)),
+              child: FullScreenTypedMediaViewer(
+                key: ValueKey('compact-video-${locale.languageCode}'),
+                items: [first, second],
+                playbackAdapterFactory: (_) => FakeMediaPlaybackAdapter(),
+                onAction: (item, action) async {
+                  dispatched.add((item: item, action: action));
+                  return MediaViewerActionResult.success;
+                },
+              ),
+            ),
+            locale: locale,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.fling(
+          find.byType(PageView),
+          Offset(locale.languageCode == 'ar' ? 400 : -400, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('2 / 2'), findsOneWidget);
+        expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+        for (final action in orderedActions) {
+          expect(
+            find.byKey(ValueKey('media_action_${action.name}')),
+            findsNothing,
+            reason: '${action.name} escaped the closed video popup',
+          );
+        }
+
+        for (
+          var selectedIndex = 0;
+          selectedIndex < orderedActions.length;
+          selectedIndex++
+        ) {
+          await tester.tap(find.byKey(const ValueKey('media_action_more')));
+          await tester.pumpAndSettle();
+
+          for (var rowIndex = 0; rowIndex < orderedActions.length; rowIndex++) {
+            final action = orderedActions[rowIndex];
+            final row = find.byKey(ValueKey('media_action_${action.name}'));
+            final label = find.descendant(
+              of: row,
+              matching: find.text(
+                expectedLabels[locale.languageCode]![rowIndex],
+              ),
+            );
+            final icon = find.descendant(of: row, matching: find.byType(Icon));
+            expect(row, findsOneWidget);
+            expect(label, findsOneWidget);
+            expect(icon, findsOneWidget);
+            final iconWidget = tester.widget<Icon>(icon);
+            expect(iconWidget.icon, expectedIcons[rowIndex]);
+            expect(iconWidget.size, 20);
+            expect(iconWidget.color, Colors.white);
+            final iconRect = tester.getRect(icon);
+            final labelRect = tester.getRect(label);
+            if (Directionality.of(tester.element(row)) == TextDirection.rtl) {
+              expect(iconRect.left - labelRect.right, closeTo(12, 0.01));
+            } else {
+              expect(labelRect.left - iconRect.right, closeTo(12, 0.01));
+            }
+            if (rowIndex > 0) {
+              expect(
+                tester.getCenter(row).dy,
+                greaterThan(
+                  tester
+                      .getCenter(
+                        find.byKey(
+                          ValueKey(
+                            'media_action_${orderedActions[rowIndex - 1].name}',
+                          ),
+                        ),
+                      )
+                      .dy,
+                ),
+              );
+            }
+          }
+          expect(
+            find.byKey(const ValueKey('media_action_picture_in_picture')),
+            findsNothing,
+          );
+
+          final selected = find.byKey(
+            ValueKey('media_action_${orderedActions[selectedIndex].name}'),
+          );
+          if (selectedIndex == orderedActions.length - 1) {
+            await tester.ensureVisible(selected);
+            await tester.pump();
+          }
+          await tester.tap(selected);
+          await tester.pumpAndSettle();
+        }
+
+        expect(dispatched.map((call) => call.action), orderedActions);
+        expect(dispatched.map((call) => call.item.attachmentId).toSet(), {
+          second.attachmentId,
+        });
+        expect(tester.takeException(), isNull);
+      }
+
+      final pending = Completer<MediaViewerActionResult>();
+      final pendingCalls =
+          <({MediaViewerItem item, MediaViewerAction action})>[];
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-video-pending'),
+            items: [
+              videoItem(
+                attachmentId: 'compact-video-pending',
+                messageId: 'compact-video-pending-message',
+                owner: MediaOwnerLane.direct,
+                caps: const {MediaViewerAction.save, MediaViewerAction.delete},
+                actionPresentation: compactVideo,
+              ),
+            ],
+            playbackAdapterFactory: (_) => FakeMediaPlaybackAdapter(),
+            onAction: (item, action) {
+              pendingCalls.add((item: item, action: action));
+              return pending.future;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_delete')), findsOneWidget);
+      for (final action in const [
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+      ]) {
+        expect(
+          find.byKey(ValueKey('media_action_${action.name}')),
+          findsNothing,
+        );
+      }
+      await tester.tap(find.byKey(const ValueKey('media_action_save')));
+      await tester.pump();
+      expect(pendingCalls, hasLength(1));
+      final more =
+          tester.widget(find.byKey(const ValueKey('media_action_more')))
+              as dynamic;
+      expect(more.enabled, isFalse);
+      await tester.tap(
+        find.byKey(const ValueKey('media_action_more')),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(pendingCalls, hasLength(1));
+      pending.complete(MediaViewerActionResult.success);
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'compact video overflow nests conditional PiP and starts exact current owner',
+    (tester) async {
+      final compactVideo = MediaViewerActionPresentation.values.singleWhere(
+        (value) => value.name == 'compactVideoOverflow',
+      );
+      const caps = <MediaViewerAction>{
+        MediaViewerAction.save,
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+        MediaViewerAction.delete,
+      };
+      final first = videoItem(
+        attachmentId: 'compact-pip-first',
+        messageId: 'compact-pip-message',
+        owner: MediaOwnerLane.direct,
+        caps: caps,
+        actionPresentation: compactVideo,
+        canEnterPictureInPicture: true,
+      );
+      final second = videoItem(
+        attachmentId: 'compact-pip-second',
+        messageId: 'compact-pip-message',
+        owner: MediaOwnerLane.direct,
+        caps: caps,
+        actionPresentation: compactVideo,
+        canEnterPictureInPicture: true,
+      );
+      final adapters = <String, List<FakeMediaPlaybackAdapter>>{};
+      final gateway = _ViewerPictureInPictureGateway();
+      final resume = RecordingResumeStore();
+      final loaded = <MediaViewerItem>[];
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            items: [first, second],
+            playbackAdapterFactory: (item) {
+              final adapter = FakeMediaPlaybackAdapter(
+                position: const Duration(milliseconds: 3200),
+              )..isPlaying = true;
+              adapters.putIfAbsent(item.attachmentId, () => []).add(adapter);
+              return adapter;
+            },
+            resumeStore: resume,
+            pictureInPictureControllerFactory:
+                ({required reloadCurrent, required restorePlayback}) =>
+                    MediaPictureInPictureController(
+                      gateway: gateway,
+                      pathAuthority: _ViewerPathAuthority(),
+                      reloadCurrent: reloadCurrent,
+                      resumeStore: resume,
+                      restorePlayback: restorePlayback,
+                      pollTicks: const Stream<void>.empty(),
+                      sessionIdFactory: () => 'compact-video-session',
+                    ),
+            loadPictureInPictureAuthorization: (item) async {
+              loaded.add(item);
+              return MediaPictureInPictureAuthorization(
+                item: item,
+                generation: Object.hash(
+                  item.owner,
+                  item.messageId,
+                  item.attachmentId,
+                ),
+                policyState: MediaPictureInPicturePolicyState.ordinary,
+                isIncoming: true,
+                isTransferComplete: true,
+                routeActive: true,
+              );
+            },
+            onAction: (_, _) async => MediaViewerActionResult.success,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsNothing,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(loaded.last.attachmentId, second.attachmentId);
+      final firstDisposeBaseline = adapters[first.attachmentId]!
+          .map((adapter) => adapter.disposeCount)
+          .fold(0, (sum, count) => sum + count);
+
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await tester.pumpAndSettle();
+      const pipKey = ValueKey('media_action_picture_in_picture');
+      final pipRow = find.byWidgetPredicate(
+        (widget) => widget is PopupMenuItem && widget.key == pipKey,
+      );
+      final pipButton = find.byWidgetPredicate(
+        (widget) => widget is IconButton && widget.key == pipKey,
+      );
+      expect(pipRow, findsOneWidget);
+      expect(pipButton, findsNothing);
+      expect(
+        find.descendant(of: pipRow, matching: find.text('Picture in Picture')),
+        findsOneWidget,
+      );
+      final pipIcon = find.descendant(of: pipRow, matching: find.byType(Icon));
+      expect(pipIcon, findsOneWidget);
+      expect(
+        tester.widget<Icon>(pipIcon).icon,
+        Icons.picture_in_picture_alt_rounded,
+      );
+      expect(
+        tester.getCenter(pipRow).dy,
+        lessThan(
+          tester
+              .getCenter(find.byKey(const ValueKey('media_action_delete')))
+              .dy,
+        ),
+      );
+      await tester.tap(pipRow);
+      await tester.pumpAndSettle();
+      expect(gateway.starts, hasLength(1));
+      expect(gateway.starts.single.attachment, second.attachmentId);
+      expect(
+        adapters[first.attachmentId]!
+            .map((adapter) => adapter.disposeCount)
+            .fold(0, (sum, count) => sum + count),
+        firstDisposeBaseline,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'metadata and action semantics follow current item in LTR and RTL',
     (tester) async {
       final image = imageItem(
@@ -342,6 +1145,7 @@ void main() {
         owner: MediaOwnerLane.group,
         caption: 'CaptionVideo',
         sender: 'Bob',
+        timestamp: DateTime(2026, 7, 11, 9, 5),
         durationMs: 83000,
         sizeBytes: 654321,
       );
@@ -365,15 +1169,39 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Page 0 (image): dimensions present, duration absent, current caption.
+        // Page 0 (image): every applicable detail is visible.
         expect(
-          find.byKey(const ValueKey('media_meta_dimensions')),
-          findsOneWidget,
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_sender')))
+              .data,
+          'Alice',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_timestamp')))
+              .data,
+          '2026-07-10 14:30',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_mime')))
+              .data,
+          'image/jpeg',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_size')))
+              .data,
+          '121 KB',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_dimensions')))
+              .data,
+          '800 × 600',
         );
         expect(find.byKey(const ValueKey('media_meta_duration')), findsNothing);
-        expect(find.byKey(const ValueKey('media_meta_size')), findsOneWidget);
         expect(find.text('CaptionImage'), findsOneWidget);
-        expect(find.text('Alice'), findsOneWidget);
         expect(find.textContaining('secret-att-img'), findsNothing);
         expect(
           Directionality.of(
@@ -389,20 +1217,207 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('2 / 2'), findsOneWidget);
 
-        // Page 1 (video): duration present, dimensions absent, new caption.
+        // Page 1 (video): every applicable detail follows the current page.
         expect(
-          find.byKey(const ValueKey('media_meta_duration')),
-          findsOneWidget,
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_sender')))
+              .data,
+          'Bob',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_timestamp')))
+              .data,
+          '2026-07-11 09:05',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_mime')))
+              .data,
+          'video/mp4',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_size')))
+              .data,
+          '639 KB',
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('media_meta_duration')))
+              .data,
+          '1:23',
         );
         expect(
           find.byKey(const ValueKey('media_meta_dimensions')),
           findsNothing,
         );
         expect(find.text('CaptionVideo'), findsOneWidget);
-        expect(find.text('Bob'), findsOneWidget);
         expect(find.text('CaptionImage'), findsNothing);
         expect(find.textContaining('secret-att-vid'), findsNothing);
       }
+    },
+  );
+
+  testWidgets(
+    'metadata detail visibility follows current item while captions and actions remain',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final actions = <({MediaViewerItem item, MediaViewerAction action})>[];
+      const hiddenCaption = 'CAPTION_REMAINS_306';
+      final hiddenCaptioned = MediaViewerItem(
+        attachmentId: 'hidden-captioned-306',
+        messageId: 'message-hidden-captioned-306',
+        kind: MediaViewerKind.image,
+        mime: 'image/x-hidden-captioned-306',
+        owner: MediaOwnerLane.direct,
+        localPath: '/tmp/hidden-captioned-306.jpg',
+        sizeBytes: 111,
+        width: 311,
+        height: 211,
+        caption: hiddenCaption,
+        senderLabel: 'HIDDEN_SENDER_306',
+        timestamp: DateTime(2026, 5, 1, 10, 11),
+        showMetadataDetails: false,
+        capabilities: const MediaViewerActionCapabilities(
+          allowed: {MediaViewerAction.share},
+        ),
+      );
+      final visibleVideo = videoItem(
+        attachmentId: 'visible-video-306',
+        messageId: 'message-visible-video-306',
+        owner: MediaOwnerLane.direct,
+        caption: 'VISIBLE_VIDEO_CAPTION_306',
+        sender: 'VISIBLE_VIDEO_SENDER_306',
+        timestamp: DateTime(2026, 5, 2, 12, 13),
+        durationMs: 61000,
+        sizeBytes: 222,
+      );
+      final hiddenCaptionless = MediaViewerItem(
+        attachmentId: 'hidden-captionless-306',
+        messageId: 'message-hidden-captionless-306',
+        kind: MediaViewerKind.image,
+        mime: 'image/x-hidden-captionless-306',
+        owner: MediaOwnerLane.direct,
+        localPath: '/tmp/hidden-captionless-306.jpg',
+        sizeBytes: 333,
+        width: 333,
+        height: 233,
+        senderLabel: 'HIDDEN_CAPTIONLESS_SENDER_306',
+        timestamp: DateTime(2026, 5, 3, 14, 15),
+        showMetadataDetails: false,
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            items: [hiddenCaptioned, visibleVideo, hiddenCaptionless],
+            playbackAdapterFactory: (_) => FakeMediaPlaybackAdapter(),
+            onAction: (item, action) async {
+              actions.add((item: item, action: action));
+              return MediaViewerActionResult.success;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const detailKeys = <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_dimensions',
+        'media_meta_duration',
+      ];
+      void expectHiddenDetails(List<String> values) {
+        for (final key in detailKeys) {
+          expect(find.byKey(ValueKey(key)), findsNothing);
+        }
+        for (final value in values) {
+          expect(find.text(value), findsNothing);
+          expect(
+            find.semantics.byLabel(RegExp(RegExp.escape(value))),
+            findsNothing,
+          );
+        }
+      }
+
+      expectHiddenDetails(const [
+        'HIDDEN_SENDER_306',
+        '2026-05-01 10:11',
+        'image/x-hidden-captioned-306',
+        '111 B',
+        '311 × 211',
+      ]);
+      expect(find.text(hiddenCaption), findsOneWidget);
+      expect(find.semantics.byLabel(RegExp(hiddenCaption)), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('media_action_share')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_share')));
+      await tester.pump();
+      expect(actions, hasLength(1));
+      expect(actions.single.item.attachmentId, hiddenCaptioned.attachmentId);
+      expect(actions.single.action, MediaViewerAction.share);
+
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(find.text('VISIBLE_VIDEO_SENDER_306'), findsOneWidget);
+      expect(find.text('2026-05-02 12:13'), findsOneWidget);
+      expect(find.text('video/mp4'), findsOneWidget);
+      expect(find.text('222 B'), findsOneWidget);
+      expect(find.text('1:01'), findsOneWidget);
+      expect(find.text('VISIBLE_VIDEO_CAPTION_306'), findsOneWidget);
+      for (final value in const [
+        'VISIBLE_VIDEO_SENDER_306',
+        '2026-05-02 12:13',
+        'video/mp4',
+        '222 B',
+        '1:01',
+      ]) {
+        expect(
+          find.semantics.byLabel(RegExp(RegExp.escape(value))),
+          findsOneWidget,
+        );
+      }
+
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pumpAndSettle();
+      expect(find.text('3 / 3'), findsOneWidget);
+      expectHiddenDetails(const [
+        'HIDDEN_CAPTIONLESS_SENDER_306',
+        '2026-05-03 14:15',
+        'image/x-hidden-captionless-306',
+        '333 B',
+        '333 × 233',
+      ]);
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsNothing,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(500, 0), 1500);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(find.text('VISIBLE_VIDEO_SENDER_306'), findsOneWidget);
+
+      await tester.fling(find.byType(PageView), const Offset(500, 0), 1500);
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 3'), findsOneWidget);
+      expectHiddenDetails(const [
+        'HIDDEN_SENDER_306',
+        '2026-05-01 10:11',
+        'image/x-hidden-captioned-306',
+        '111 B',
+        '311 × 211',
+      ]);
+      expect(find.text(hiddenCaption), findsOneWidget);
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
     },
   );
 

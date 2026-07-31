@@ -28,11 +28,17 @@ class _MutableContinuityGuard implements DirectPrivateMediaContinuityGuard {
 }
 
 class _Lane implements PrivateMediaLifecycleLaneAdapter {
-  _Lane(this.target, {this.beforeLoadTarget, this.throwCleanup = false});
+  _Lane(
+    this.target, {
+    this.beforeLoadTarget,
+    this.throwCleanup = false,
+    this.cleanupBarrier,
+  });
 
   PrivateMediaLifecycleTarget target;
   final void Function(_Lane lane, int loadCount)? beforeLoadTarget;
   final bool throwCleanup;
+  final Future<void>? cleanupBarrier;
   int loadCount = 0;
   int claimCount = 0;
   int markCount = 0;
@@ -163,6 +169,7 @@ class _Lane implements PrivateMediaLifecycleLaneAdapter {
     PrivateMediaLifecycleTarget current,
   ) async {
     cleanupCount++;
+    if (cleanupBarrier != null) await cleanupBarrier;
     if (throwCleanup) throw StateError('cleanup failed');
     target = target.copyWith(attachments: const []);
   }
@@ -280,6 +287,7 @@ _fixture({
   currentAttachmentForLoad,
   void Function(_Lane lane, int loadCount)? beforeLifecycleLoad,
   bool throwCleanup = false,
+  Future<void>? cleanupBarrier,
   String mediaType = 'image',
   String? mime,
   bool openablePath = true,
@@ -309,6 +317,7 @@ _fixture({
     ),
     beforeLoadTarget: beforeLifecycleLoad,
     throwCleanup: throwCleanup,
+    cleanupBarrier: cleanupBarrier,
   );
   final nativeCalls = <String>[];
   final events = StreamController<Object?>();
@@ -1430,6 +1439,185 @@ void main() {
     },
   );
 
+  testWidgets('minimal viewer chrome is image view-once only', (tester) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'private_viewer_chrome_',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final image = File('${directory.path}/private.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
+
+    for (final testCase in const [
+      (
+        mode: PrivateMediaMode.viewOnce,
+        mediaType: 'image',
+        mime: 'image/png',
+        minimal: true,
+      ),
+      (
+        mode: PrivateMediaMode.viewOnce,
+        mediaType: 'video',
+        mime: 'video/mp4',
+        minimal: false,
+      ),
+      (
+        mode: PrivateMediaMode.protected,
+        mediaType: 'image',
+        mime: 'image/png',
+        minimal: false,
+      ),
+      (
+        mode: PrivateMediaMode.disappearing,
+        mediaType: 'image',
+        mime: 'image/png',
+        minimal: false,
+      ),
+    ]) {
+      final fixture = _fixture(
+        mode: testCase.mode,
+        path: image.path,
+        mediaType: testCase.mediaType,
+        mime: testCase.mime,
+        expiresAtMs: testCase.mode == PrivateMediaMode.disappearing
+            ? 100000
+            : null,
+      );
+      final grant = (await fixture.controller.prepare(identity))!;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey(
+            'viewer-chrome-${testCase.mode.name}-${testCase.mediaType}',
+          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: DirectPrivateMediaViewer(
+            grant: grant,
+            controller: fixture.controller,
+            onSafeAction: (_) async {},
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('private-media-generic-copy')),
+        testCase.minimal ? findsNothing : findsOneWidget,
+        reason: '${testCase.mode.name}/${testCase.mediaType}',
+      );
+      expect(
+        find.byKey(const ValueKey('private-action-info')),
+        testCase.minimal ? findsNothing : findsOneWidget,
+        reason: '${testCase.mode.name}/${testCase.mediaType}',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      for (var frame = 0; frame < 20 && !grant.protectionReleased; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(grant.protectionReleased, isTrue);
+    }
+  });
+
+  testWidgets('view-once image Back consumes and cleans exactly once', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'private_viewer_back_',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final image = File('${directory.path}/private.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
+    final cleanupBarrier = Completer<void>();
+    addTearDown(() {
+      if (!cleanupBarrier.isCompleted) cleanupBarrier.complete();
+    });
+    final fixture = _fixture(
+      path: image.path,
+      cleanupBarrier: cleanupBarrier.future,
+      onNativeExit: () async {
+        expect(
+          find.byKey(const ValueKey('direct-private-media-viewer')),
+          findsNothing,
+          reason: 'the viewer route is removed before native exit',
+        );
+        expect(
+          find.byKey(const ValueKey('ordinary-underlying-route')),
+          findsOneWidget,
+        );
+      },
+    );
+    final grant = (await fixture.controller.prepare(identity))!;
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: const SizedBox(key: ValueKey('ordinary-underlying-route')),
+      ),
+    );
+    final route = navigatorKey.currentState!.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DirectPrivateMediaViewer(
+          grant: grant,
+          controller: fixture.controller,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final viewer = find.byKey(const ValueKey('direct-private-media-viewer'));
+    final back = find.descendant(
+      of: viewer,
+      matching: find.byIcon(Icons.arrow_back),
+    );
+    expect(back, findsOneWidget);
+    await tester.tap(back);
+
+    for (var frame = 0; frame < 20 && fixture.lane.cleanupCount == 0; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(fixture.lane.target.state, PrivateMediaLifecycleState.consumed);
+    expect(fixture.lane.consumeCount, 1);
+    expect(fixture.lane.cleanupCount, 1);
+    expect(fixture.lane.rollbackCount, 0);
+    expect(fixture.lane.target.attachments, isNotEmpty);
+    expect(viewer, findsOneWidget);
+    expect(find.byKey(const ValueKey('private-media-cover')), findsOneWidget);
+    expect(fixture.nativeCalls, ['enter']);
+
+    cleanupBarrier.complete();
+    for (var frame = 0; frame < 40 && !grant.protectionReleased; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(grant.settled, isTrue);
+    expect(grant.protectionReleased, isTrue);
+    expect(fixture.lane.target.state, PrivateMediaLifecycleState.consumed);
+    expect(fixture.lane.consumeCount, 1);
+    expect(fixture.lane.cleanupCount, 1);
+    expect(fixture.lane.rollbackCount, 0);
+    expect(fixture.lane.target.attachments, isEmpty);
+    expect(viewer, findsNothing);
+    expect(
+      find.byKey(const ValueKey('ordinary-underlying-route')),
+      findsOneWidget,
+    );
+    expect(fixture.nativeCalls, ['enter', 'exit']);
+    await route;
+  });
+
   test(
     'ordinary direct and group viewers remain unchanged when private callbacks are absent',
     () {
@@ -1493,7 +1681,7 @@ void main() {
   );
 
   testWidgets(
-    'view-once placeholder uses warned tap tile as its sole open control',
+    'view-once image placeholder uses one minimal tile as its sole open control',
     (tester) async {
       var opens = 0;
       await tester.pumpWidget(
@@ -1512,29 +1700,20 @@ void main() {
       );
       await tester.pump();
 
-      const warning = 'You can only view this once.';
-      expect(find.text(warning), findsOneWidget);
+      expect(find.text('You can only view this once.'), findsNothing);
       expect(
         find.textContaining("doesn't allow saving or sharing"),
         findsNothing,
       );
-      expect(find.text('View-once photo'), findsOneWidget);
+      expect(find.text('View-once photo'), findsNothing);
 
       final modeLabel = find.byKey(const ValueKey('private-media-mode-label'));
-      expect(modeLabel, findsOneWidget);
+      expect(modeLabel, findsNothing);
 
       final visual = find.byKey(const ValueKey('private-media-card-visual'));
       expect(visual, findsOneWidget);
       expect(tester.getSize(visual).height, 150);
       expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
-
-      await tester.tap(modeLabel);
-      await tester.pump();
-      expect(opens, 0, reason: 'the retained title is pointer-inert');
-
-      await tester.tap(find.text(warning));
-      await tester.pump();
-      expect(opens, 0, reason: 'the one-view warning is pointer-inert');
 
       await tester.tap(visual);
       await tester.pump();
@@ -1567,7 +1746,7 @@ void main() {
   });
 
   testWidgets(
-    'sender protected and view-once expose reopen affordance while disappearing and missing local media do not',
+    'sender protected keeps its button while view-once image uses a minimal tile',
     (tester) async {
       var opens = 0;
       Future<void> pump(
@@ -1589,32 +1768,35 @@ void main() {
         ),
       );
 
-      // 302: both modes keep the Open affordance; only the promise forks —
-      // protected re-opens anytime, view-once keeps its one more look.
-      for (final (policy, expectedOpens, reopenLine)
-          in <(PrivateMediaPolicy, int, String)>[
+      for (final (policy, expectedOpens, reopenLine, minimalTile)
+          in <(PrivateMediaPolicy, int, String?, bool)>[
             (
               const PrivateMediaPolicy.protected(),
               1,
               'You can reopen it here anytime.',
+              false,
             ),
-            (
-              const PrivateMediaPolicy.viewOnce(),
-              2,
-              'You can reopen it once here after sending.',
-            ),
+            (const PrivateMediaPolicy.viewOnce(), 2, null, true),
           ]) {
         await pump(policy);
         expect(
           find.byKey(const ValueKey('private-media-open')),
-          findsOneWidget,
+          minimalTile ? findsNothing : findsOneWidget,
         );
         expect(
-          find.textContaining(reopenLine),
-          findsOneWidget,
+          find.textContaining(
+            reopenLine ?? 'You can reopen it once here after sending.',
+          ),
+          reopenLine == null ? findsNothing : findsOneWidget,
           reason: policy.mode.name,
         );
-        await tester.tap(find.byKey(const ValueKey('private-media-open')));
+        final visual = find.byKey(const ValueKey('private-media-card-visual'));
+        expect(tester.getSize(visual).height, minimalTile ? 150 : 88);
+        await tester.tap(
+          minimalTile
+              ? visual
+              : find.byKey(const ValueKey('private-media-open')),
+        );
         expect(opens, expectedOpens);
       }
 
@@ -1633,6 +1815,16 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('Choose'), findsNothing);
+
+      await pump(
+        const PrivateMediaPolicy.viewOnce(),
+        localMediaAvailable: false,
+      );
+      expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+      expect(
+        find.text("Your sent media can't be reopened on this phone."),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1715,40 +1907,159 @@ void main() {
     expect(find.byKey(const ValueKey('private-media-try-again')), findsNothing);
   });
 
-  testWidgets('sender-consumed terminal is generic after attachment cleanup', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        locale: Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: DirectPrivateMediaTerminalPlaceholder(
-            state: PrivateMediaLifecycleState.consumed,
-            direction: PrivateMediaDirection.outgoing,
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
+  testWidgets(
+    'consumed view-once terminal is eye-off plus localized Photo only',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
 
-    expect(find.text('Private media'), findsOneWidget);
-    expect(find.text("You've used your one more look"), findsOneWidget);
-    expect(find.textContaining('photo'), findsNothing);
-    expect(find.textContaining('video'), findsNothing);
-    expect(find.textContaining('GIF'), findsNothing);
-    expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
-  });
+      for (final direction in PrivateMediaDirection.values) {
+        for (final locale in const <Locale>[
+          Locale('en'),
+          Locale('de'),
+          Locale('ar'),
+        ]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              key: ValueKey(
+                'consumed-${direction.name}-${locale.languageCode}',
+              ),
+              locale: locale,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: const TextScaler.linear(1.3)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: Center(
+                  child: DirectPrivateMediaTerminalPlaceholder(
+                    state: PrivateMediaLifecycleState.consumed,
+                    mode: PrivateMediaMode.viewOnce,
+                    direction: direction,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+
+          final terminal = find.byKey(
+            const ValueKey('private-terminal-consumed'),
+          );
+          final summary = find.descendant(
+            of: terminal,
+            matching: find.byKey(
+              const ValueKey('private-terminal-view-once-consumed-summary'),
+            ),
+          );
+          expect(terminal, findsOneWidget);
+          expect(summary, findsOneWidget);
+          expect(tester.widget<Row>(summary).mainAxisSize, MainAxisSize.min);
+
+          final context = tester.element(summary);
+          final l10n = AppLocalizations.of(context)!;
+          final lifecycleCopy = direction == PrivateMediaDirection.outgoing
+              ? l10n.private_media_sender_consumed
+              : l10n.private_media_consumed;
+          final semanticLabel =
+              '${l10n.shared_media_kind_photo}. $lifecycleCopy';
+          expect(find.bySemanticsLabel(semanticLabel), findsOneWidget);
+
+          final icon = find.descendant(
+            of: summary,
+            matching: find.byIcon(Icons.visibility_off_outlined),
+          );
+          final label = find.descendant(
+            of: summary,
+            matching: find.text(l10n.shared_media_kind_photo),
+          );
+          expect(icon, findsOneWidget);
+          expect(label, findsOneWidget);
+
+          final iconRect = tester.getRect(icon);
+          final labelRect = tester.getRect(label);
+          final visualLeft = iconRect.left < labelRect.left
+              ? iconRect.left
+              : labelRect.left;
+          final visualRight = iconRect.right > labelRect.right
+              ? iconRect.right
+              : labelRect.right;
+          final visualSpan = visualRight - visualLeft;
+          expect(
+            tester.getSize(terminal).width,
+            closeTo(visualSpan + 24, 1),
+            reason:
+                'The terminal should add only its 12px horizontal padding '
+                'around the eye-off and localized Photo content.',
+          );
+          final directionality = Directionality.of(context);
+          final gap = directionality == TextDirection.ltr
+              ? labelRect.left - iconRect.right
+              : iconRect.left - labelRect.right;
+          expect(gap, greaterThan(0));
+          expect(gap, lessThanOrEqualTo(12));
+
+          expect(
+            find.descendant(of: terminal, matching: find.text(lifecycleCopy)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: terminal,
+              matching: find.byKey(
+                const ValueKey('private-media-terminal-generic-title'),
+              ),
+            ),
+            findsNothing,
+          );
+          for (final key in const [
+            ValueKey('private-action-reply'),
+            ValueKey('private-action-info'),
+            ValueKey('private-action-deleteForMe'),
+            ValueKey('private-media-open'),
+          ]) {
+            expect(
+              find.descendant(of: terminal, matching: find.byKey(key)),
+              findsNothing,
+            );
+          }
+          expect(
+            find.descendant(of: terminal, matching: find.byType(Image)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(of: terminal, matching: find.byType(RawImage)),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        }
+      }
+      semantics.dispose();
+    },
+  );
 
   testWidgets(
-    'attachmentless consumed and expired parents render generic terminal actions without synthetic media',
+    'attachmentless expired and non-view-once consumed parents retain generic terminal actions',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(320, 480));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      for (final state in <PrivateMediaLifecycleState>[
-        PrivateMediaLifecycleState.consumed,
-        PrivateMediaLifecycleState.expired,
+      for (final testCase in const [
+        (
+          state: PrivateMediaLifecycleState.consumed,
+          mode: PrivateMediaMode.protected,
+          direction: PrivateMediaDirection.outgoing,
+        ),
+        (
+          state: PrivateMediaLifecycleState.expired,
+          mode: PrivateMediaMode.viewOnce,
+          direction: PrivateMediaDirection.incoming,
+        ),
       ]) {
         for (final locale in const <Locale>[
           Locale('en'),
@@ -1761,31 +2072,56 @@ void main() {
               localizationsDelegates: AppLocalizations.localizationsDelegates,
               supportedLocales: AppLocalizations.supportedLocales,
               home: Scaffold(
-                body: DirectPrivateMediaTerminalPlaceholder(state: state),
+                body: DirectPrivateMediaTerminalPlaceholder(
+                  state: testCase.state,
+                  mode: testCase.mode,
+                  direction: testCase.direction,
+                ),
               ),
             ),
           );
           await tester.pump();
+          final terminal = find.byKey(
+            ValueKey('private-terminal-${testCase.state.name}'),
+          );
+          expect(terminal, findsOneWidget);
+          final context = tester.element(terminal);
+          final l10n = AppLocalizations.of(context)!;
+          final expectedCopy =
+              testCase.state == PrivateMediaLifecycleState.consumed
+              ? l10n.private_media_sender_consumed
+              : l10n.private_media_expired;
           expect(
-            find.byKey(ValueKey('private-terminal-${state.name}')),
+            find.descendant(of: terminal, matching: find.text(expectedCopy)),
             findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: terminal,
+              matching: find.byKey(
+                const ValueKey('private-terminal-view-once-consumed-summary'),
+              ),
+            ),
+            findsNothing,
           );
           expect(find.byType(Image), findsNothing);
           expect(
             find.byKey(const ValueKey('private-media-open')),
             findsNothing,
           );
-          expect(
-            find.byKey(const ValueKey('private-action-info')),
-            findsOneWidget,
-          );
+          for (final key in const [
+            ValueKey('private-action-reply'),
+            ValueKey('private-action-info'),
+            ValueKey('private-action-deleteForMe'),
+          ]) {
+            expect(
+              find.descendant(of: terminal, matching: find.byKey(key)),
+              findsOneWidget,
+            );
+          }
           expect(find.textContaining('SECRET'), findsNothing);
           expect(tester.takeException(), isNull);
-          final direction = Directionality.of(
-            tester.element(
-              find.byKey(ValueKey('private-terminal-${state.name}')),
-            ),
-          );
+          final direction = Directionality.of(context);
           expect(
             direction,
             locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
@@ -1840,9 +2176,11 @@ void main() {
                     ),
                     DirectPrivateMediaTerminalPlaceholder(
                       state: PrivateMediaLifecycleState.consumed,
+                      mode: PrivateMediaMode.protected,
                     ),
                     DirectPrivateMediaTerminalPlaceholder(
                       state: PrivateMediaLifecycleState.expired,
+                      mode: PrivateMediaMode.disappearing,
                     ),
                     DirectPrivateMediaUnsupportedPlaceholder(),
                   ],

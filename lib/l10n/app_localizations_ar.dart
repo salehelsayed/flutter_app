@@ -2165,6 +2165,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_viewer_action_save => 'حفظ';
 
   @override
+  String get media_viewer_action_save_image => 'حفظ الصورة';
+
+  @override
+  String get media_viewer_more_actions => 'المزيد من الإجراءات';
+
+  @override
   String get media_viewer_action_share => 'مشاركة';
 
   @override

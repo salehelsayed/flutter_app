@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart';
@@ -6,10 +7,12 @@ import 'package:flutter_app/features/conversation/application/direct_media_libra
 import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_shared_media_library_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../domain/repositories/strict_direct_media_library_repository.dart';
@@ -22,17 +25,34 @@ void main() {
     String? messageId,
     String parentTimestamp = '2026-02-11T10:00:00.000Z',
     String mediaType = 'image',
+    String mime = 'image/jpeg',
     String? localPath = 'media/present.jpg',
     String downloadStatus = 'done',
+    int size = 3,
+    int? width,
+    int? height,
+    int? durationMs,
+    String? parentSenderPeerId = kContactPeerId,
+    MediaOwnerLane? ownerLane = MediaOwnerLane.direct,
   }) {
-    return makeDirectLibraryEntry(
-      attachmentId,
-      contactPeerId: kContactPeerId,
-      messageId: messageId,
+    final resolvedMessageId = messageId ?? 'msg-of-$attachmentId';
+    return MediaLibraryEntry(
+      attachment: MediaAttachment(
+        id: attachmentId,
+        messageId: resolvedMessageId,
+        mime: mime,
+        size: size,
+        mediaType: mediaType,
+        width: width,
+        height: height,
+        durationMs: durationMs,
+        localPath: localPath,
+        downloadStatus: downloadStatus,
+        createdAt: parentTimestamp,
+        ownerLane: ownerLane,
+      ),
       parentTimestamp: parentTimestamp,
-      mediaType: mediaType,
-      localPath: localPath,
-      downloadStatus: downloadStatus,
+      parentSenderPeerId: parentSenderPeerId,
     );
   }
 
@@ -158,6 +178,312 @@ void main() {
       expect(egressCalls, hasLength(2));
       expect(egressCalls.last.identities.single.attachmentId, 'vc');
       expect(egressCalls.last.identities.single.messageId, 'msg-c');
+    },
+  );
+
+  testWidgets(
+    'direct Shared Media hides automatic metadata for image and video pages while GIF remains visible',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+
+      final incomingImage = makeEntry(
+        'hidden-library-incoming',
+        messageId: 'message-library-incoming',
+        parentTimestamp: '2026-04-11T10:11:00.000Z',
+        mime: 'image/x-library-incoming-306',
+        localPath: 'media/library-incoming.jpg',
+        size: 101,
+        width: 301,
+        height: 201,
+      );
+      final outgoingImage = makeEntry(
+        'hidden-library-outgoing',
+        messageId: 'message-library-outgoing',
+        parentTimestamp: '2026-04-12T12:13:00.000Z',
+        mime: 'image/x-library-outgoing-306',
+        localPath: 'media/library-outgoing.jpg',
+        size: 202,
+        width: 302,
+        height: 202,
+        parentSenderPeerId: '12D3KooWViewerOwnPeer',
+      );
+      final visibleGif = makeEntry(
+        'visible-library-gif',
+        messageId: 'message-library-gif',
+        parentTimestamp: '2026-04-13T14:15:00.000Z',
+        mime: 'image/gif',
+        localPath: 'media/library.gif',
+        size: 303,
+        width: 303,
+        height: 203,
+      );
+      final incomingVideo = makeEntry(
+        'hidden-library-incoming-video-312',
+        messageId: 'message-library-incoming-video-312',
+        parentTimestamp: '2026-04-14T16:17:00.000Z',
+        mediaType: 'video',
+        mime: 'video/x-library-incoming-312',
+        localPath: 'media/library-incoming-312.mp4',
+        size: 404,
+        durationMs: 61000,
+      );
+      final outgoingVideo = makeEntry(
+        'hidden-library-outgoing-video-312',
+        messageId: 'message-library-outgoing-video-312',
+        parentTimestamp: '2026-04-15T18:19:00.000Z',
+        mediaType: 'video',
+        mime: 'video/x-library-outgoing-312',
+        localPath: 'media/library-outgoing-312.mp4',
+        size: 505,
+        durationMs: 62000,
+        parentSenderPeerId: '12D3KooWViewerOwnPeer',
+      );
+      final entries = [
+        incomingImage,
+        outgoingImage,
+        visibleGif,
+        incomingVideo,
+        outgoingVideo,
+      ];
+      final byAttachmentId = {
+        for (final entry in entries) entry.attachment.id: entry,
+      };
+      final egressCalls =
+          <
+            ({
+              List<DirectReceivedMediaActionIdentity> identities,
+              MediaEgressDestination destination,
+            })
+          >[];
+      final repo = StrictDirectMediaLibraryRepository(
+        expectedContactPeerId: kContactPeerId,
+      )..seedPage(entries: entries, nextCursor: null);
+
+      await tester.pumpWidget(
+        buildLibraryApp(
+          repo,
+          loadActionDecision: (identity) async {
+            final entry = byAttachmentId[identity.attachmentId]!;
+            final isIncoming = entry.parentSenderPeerId == kContactPeerId;
+            final parent = ConversationMessage(
+              id: identity.messageId,
+              contactPeerId: kContactPeerId,
+              senderPeerId: isIncoming
+                  ? kContactPeerId
+                  : '12D3KooWViewerOwnPeer',
+              text: '',
+              timestamp: entry.parentTimestamp,
+              status: 'delivered',
+              isIncoming: isIncoming,
+              createdAt: entry.parentTimestamp,
+              media: [entry.attachment],
+              privateMediaPolicy: const PrivateMediaPolicy.ordinary(),
+            );
+            return DirectPrivateMediaActionEligibility.evaluate(
+              parent: parent,
+              attachment: entry.attachment,
+              expectedMessageId: identity.messageId,
+              expectedAttachmentId: identity.attachmentId,
+              requireIncoming: false,
+            );
+          },
+          dispatchEgress: (identities, destination) async {
+            egressCalls.add((identities: identities, destination: destination));
+            return successResult(identities, destination);
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(tile(incomingImage.attachment.id));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items, hasLength(5));
+      for (final entry in entries) {
+        final item = viewer.items.singleWhere(
+          (candidate) => candidate.attachmentId == entry.attachment.id,
+        );
+        expect(item.messageId, entry.attachment.messageId);
+        expect(item.owner, MediaOwnerLane.direct);
+        expect(item.mime, entry.attachment.mime);
+        expect(item.sizeBytes, entry.attachment.size);
+        expect(item.width, entry.attachment.width);
+        expect(item.height, entry.attachment.height);
+        expect(item.durationMs, entry.attachment.durationMs);
+        expect(item.timestamp, DateTime.tryParse(entry.parentTimestamp));
+        expect(
+          item.senderLabel,
+          entry.parentSenderPeerId == kContactPeerId ? 'Alice' : null,
+        );
+      }
+      expect(viewer.items.map((item) => item.kind), [
+        MediaViewerKind.image,
+        MediaViewerKind.image,
+        MediaViewerKind.gif,
+        MediaViewerKind.video,
+        MediaViewerKind.video,
+      ]);
+
+      String renderedTimestamp(String isoTimestamp) {
+        final value = DateTime.parse(isoTimestamp).toLocal();
+        String two(int part) => part.toString().padLeft(2, '0');
+        return '${value.year}-${two(value.month)}-${two(value.day)} '
+            '${two(value.hour)}:${two(value.minute)}';
+      }
+
+      const detailKeys = <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_dimensions',
+        'media_meta_duration',
+      ];
+      void expectHiddenDetails(
+        MediaLibraryEntry entry, {
+        required String renderedSize,
+        required String renderedShape,
+      }) {
+        for (final key in detailKeys) {
+          expect(
+            find.byKey(ValueKey(key)),
+            findsNothing,
+            reason: '$key leaked for ${entry.attachment.id}',
+          );
+        }
+        final hiddenValues = <String>[
+          if (entry.parentSenderPeerId == kContactPeerId) 'Alice',
+          renderedTimestamp(entry.parentTimestamp),
+          entry.attachment.mime,
+          renderedSize,
+          renderedShape,
+        ];
+        for (final value in hiddenValues) {
+          expect(find.text(value), findsNothing);
+          expect(
+            find.semantics.byLabel(RegExp(RegExp.escape(value))),
+            findsNothing,
+          );
+        }
+        expect(
+          find.byKey(const ValueKey('media_viewer_metadata_content')),
+          findsNothing,
+        );
+      }
+
+      String visibleMetadata(String key) =>
+          tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+      expectHiddenDetails(
+        incomingImage,
+        renderedSize: '101 B',
+        renderedShape: '301 × 201',
+      );
+      expect(find.byKey(const ValueKey('media_action_share')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_share')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        egressCalls.single.identities.single.attachmentId,
+        incomingImage.attachment.id,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('2 / 5'), findsOneWidget);
+      expectHiddenDetails(
+        outgoingImage,
+        renderedSize: '202 B',
+        renderedShape: '302 × 202',
+      );
+      await tester.tap(find.byKey(const ValueKey('media_action_share')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        egressCalls.last.identities.single.attachmentId,
+        outgoingImage.attachment.id,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('3 / 5'), findsOneWidget);
+      expect(visibleMetadata('media_meta_sender'), 'Alice');
+      expect(
+        visibleMetadata('media_meta_timestamp'),
+        renderedTimestamp(visibleGif.parentTimestamp),
+      );
+      expect(visibleMetadata('media_meta_mime'), 'image/gif');
+      expect(visibleMetadata('media_meta_size'), '303 B');
+      expect(visibleMetadata('media_meta_dimensions'), '303 × 203');
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('4 / 5'), findsOneWidget);
+      expectHiddenDetails(
+        incomingVideo,
+        renderedSize: '404 B',
+        renderedShape: '1:01',
+      );
+      expect(
+        viewer.items
+            .singleWhere(
+              (item) => item.attachmentId == incomingVideo.attachment.id,
+            )
+            .showMetadataDetails,
+        isFalse,
+      );
+      await tester.tap(find.byKey(const ValueKey('media_action_share')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        egressCalls.last.identities.single.attachmentId,
+        incomingVideo.attachment.id,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('5 / 5'), findsOneWidget);
+      expectHiddenDetails(
+        outgoingVideo,
+        renderedSize: '505 B',
+        renderedShape: '1:02',
+      );
+      expect(
+        viewer.items
+            .singleWhere(
+              (item) => item.attachmentId == outgoingVideo.attachment.id,
+            )
+            .showMetadataDetails,
+        isFalse,
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('4 / 5'), findsOneWidget);
+      expectHiddenDetails(
+        incomingVideo,
+        renderedSize: '404 B',
+        renderedShape: '1:01',
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('3 / 5'), findsOneWidget);
+      expect(visibleMetadata('media_meta_mime'), 'image/gif');
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -468,6 +794,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('1 / 2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('media_action_bookmark')));
     await tester.pump(const Duration(milliseconds: 200));

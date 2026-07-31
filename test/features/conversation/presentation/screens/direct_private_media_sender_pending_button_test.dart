@@ -20,6 +20,7 @@ void main() {
           PrivateMediaPolicy policy,
           DirectPrivateMediaOpenFailureReason failureReason,
           bool expectLocalMissingCopy,
+          bool expectMinimalTile,
         })
       >[
         (
@@ -28,12 +29,14 @@ void main() {
           failureReason:
               DirectPrivateMediaOpenFailureReason.senderLocalBytesMissing,
           expectLocalMissingCopy: true,
+          expectMinimalTile: false,
         ),
         (
           label: 'view_once',
           policy: PrivateMediaPolicy.viewOnce(),
           failureReason: DirectPrivateMediaOpenFailureReason.authorityLost,
           expectLocalMissingCopy: false,
+          expectMinimalTile: true,
         ),
       ];
 
@@ -122,10 +125,30 @@ void main() {
         await tester.pump(const Duration(milliseconds: 500));
 
         final openButton = find.byKey(const ValueKey('private-media-open'));
-        expect(openButton, findsOneWidget);
-        expect(tester.widget<FilledButton>(openButton).onPressed, isNotNull);
+        final visual = find.byKey(const ValueKey('private-media-card-visual'));
+        expect(visual, findsOneWidget);
+        expect(
+          tester.getSize(visual).height,
+          testCase.expectMinimalTile ? 150 : 88,
+        );
+        expect(
+          openButton,
+          testCase.expectMinimalTile ? findsNothing : findsOneWidget,
+        );
+        if (!testCase.expectMinimalTile) {
+          expect(tester.widget<FilledButton>(openButton).onPressed, isNotNull);
+        }
+        expect(find.text('View-once photo'), findsNothing);
+        expect(
+          find.text('Protected photo'),
+          testCase.expectMinimalTile ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.textContaining('You can reopen it once here after sending.'),
+          findsNothing,
+        );
 
-        await tester.tap(openButton);
+        await tester.tap(testCase.expectMinimalTile ? visual : openButton);
         await tester.pump();
 
         expect(openedGuardState, DirectPrivateMediaContinuityState.valid);

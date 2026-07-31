@@ -734,6 +734,133 @@ void main() {
     },
   );
 
+  testWidgets(
+    'group text, media, and voice long-press overlays each emit one light impact',
+    (tester) async {
+      final platformCalls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        platformCalls.add(call);
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      GroupMessage message({required String id, String text = ''}) {
+        final timestamp = DateTime.utc(2026, 7, 31, 12);
+        return GroupMessage(
+          id: id,
+          groupId: 'group-1',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: text,
+          timestamp: timestamp,
+          createdAt: timestamp,
+          isIncoming: true,
+        );
+      }
+
+      Future<void> expectLightImpact({
+        required GroupMessage message,
+        required Map<String, List<MediaAttachment>> mediaMap,
+        required Finder Function() target,
+        required String variant,
+      }) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [message],
+            mediaMap: mediaMap,
+            initialLoadDone: true,
+            onQuoteReply: (_) {},
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        platformCalls.clear();
+
+        final targetFinder = target();
+        expect(targetFinder, findsOneWidget, reason: variant);
+        await tester.longPress(targetFinder);
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.overlayKey),
+          findsOneWidget,
+          reason: variant,
+        );
+        final hapticCalls = platformCalls
+            .where((call) => call.method == 'HapticFeedback.vibrate')
+            .toList(growable: false);
+        expect(hapticCalls, hasLength(1), reason: variant);
+        expect(
+          hapticCalls.single.arguments,
+          'HapticFeedbackType.lightImpact',
+          reason: variant,
+        );
+
+        await tester.tap(find.byKey(MessageContextOverlay.backdropKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+      }
+
+      await expectLightImpact(
+        message: message(id: 'haptic-text', text: 'Haptic group text'),
+        mediaMap: const {},
+        target: () => find.text('Haptic group text'),
+        variant: 'text bubble',
+      );
+      await expectLightImpact(
+        message: message(id: 'haptic-media'),
+        mediaMap: {
+          'haptic-media': [
+            const MediaAttachment(
+              id: 'haptic-media-attachment',
+              messageId: 'haptic-media',
+              mime: 'image/jpeg',
+              size: 42,
+              mediaType: 'image',
+              localPath: '/tmp/haptic-media.jpg',
+              downloadStatus: 'done',
+              contentHash: _validContentHash,
+              encryptionKeyBase64: _validEncryptionKey,
+              encryptionNonce: _validEncryptionNonce,
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              createdAt: '2026-07-31T12:00:00.000Z',
+            ),
+          ],
+        },
+        target: () => find.byType(MediaGridCell),
+        variant: 'media bubble',
+      );
+      await expectLightImpact(
+        message: message(id: 'haptic-voice'),
+        mediaMap: {
+          'haptic-voice': [
+            const MediaAttachment(
+              id: 'haptic-voice-attachment',
+              messageId: 'haptic-voice',
+              mime: 'audio/mp4',
+              size: 2048,
+              mediaType: 'audio',
+              durationMs: 4200,
+              downloadStatus: 'pending',
+              contentHash: _validContentHash,
+              encryptionKeyBase64: _validEncryptionKey,
+              encryptionNonce: _validEncryptionNonce,
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              createdAt: '2026-07-31T12:00:00.000Z',
+              waveform: <double>[0.2, 0.6, 0.3],
+            ),
+          ],
+        },
+        target: () => find.byKey(const ValueKey('haptic-voice-attachment')),
+        variant: 'voice bubble',
+      );
+    },
+  );
+
   testWidgets('long-press reply uses the existing quote-reply path', (
     tester,
   ) async {

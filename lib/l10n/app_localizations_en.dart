@@ -2135,6 +2135,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_viewer_action_save => 'Save';
 
   @override
+  String get media_viewer_action_save_image => 'Save image';
+
+  @override
+  String get media_viewer_more_actions => 'More actions';
+
+  @override
   String get media_viewer_action_share => 'Share';
 
   @override

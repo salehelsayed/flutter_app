@@ -639,6 +639,157 @@ void main() {
   );
 
   testWidgets(
+    'compact viewer bottom forward launches existing picker with current attachment',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final secondFile = File('${tempDir.path}/source-second.jpg')
+        ..writeAsBytesSync([2]);
+      final firstAttachment = MediaAttachment(
+        id: 'compact-forward-a',
+        messageId: 'compact-forward-message',
+        mime: 'image/jpeg',
+        size: sourceFile.lengthSync(),
+        mediaType: 'image',
+        localPath: sourceFile.path,
+        downloadStatus: 'done',
+        createdAt: '2026-07-10T10:00:00.000Z',
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final secondAttachment = MediaAttachment(
+        id: 'compact-forward-b',
+        messageId: 'compact-forward-message',
+        mime: 'image/jpeg',
+        size: secondFile.lengthSync(),
+        mediaType: 'image',
+        localPath: secondFile.path,
+        downloadStatus: 'done',
+        createdAt: '2026-07-10T10:00:01.000Z',
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final multiMessage = ConversationMessage(
+        id: 'compact-forward-message',
+        contactPeerId: 'contact-1',
+        senderPeerId: 'contact-1',
+        text: 'editable multi-image caption',
+        timestamp: '2026-07-10T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-07-10T10:00:00.000Z',
+        media: [firstAttachment, secondAttachment],
+      );
+      final multiRepo = FakeMediaAttachmentRepository()
+        ..seed([firstAttachment, secondAttachment]);
+      final navigatorKey = GlobalKey<NavigatorState>();
+      String? launchedCurrentAttachmentId;
+      var tokenCounter = 0;
+
+      await tester.pumpWidget(
+        app(
+          locale: const Locale('en'),
+          navigatorKey: navigatorKey,
+          screenMessages: [multiMessage],
+          onForward: (messageId, {currentAttachmentId}) async {
+            launchedCurrentAttachmentId = currentAttachmentId;
+            final draft =
+                await BuildReceivedMediaForward(
+                  loadParentMessage: (_) async => multiMessage,
+                  mediaAttachmentRepository: multiRepo,
+                  operationTokenFactory: () => 'compact-${++tokenCounter}',
+                  validateCanonicalPlaintext:
+                      ({
+                        required attachment,
+                        required ownerScopeId,
+                      }) async => File(attachment.localPath!).existsSync()
+                      ? CanonicalGroupMediaPlaintextValidationResult.valid(
+                          attachment.localPath!,
+                        )
+                      : const CanonicalGroupMediaPlaintextValidationResult.invalid(
+                          'missing_file',
+                        ),
+                ).build(
+                  parent: multiMessage,
+                  currentAttachmentId: currentAttachmentId,
+                );
+            final intent = draft.draft!.shareIntent;
+            final caption = TextEditingController(text: intent.text);
+            await navigatorKey.currentState!.push(
+              MaterialPageRoute<void>(
+                builder: (_) => ShareTargetPickerScreen(
+                  sharedText: intent.text,
+                  sharedFilePaths: intent.filePaths,
+                  captionController: caption,
+                  contacts: const [],
+                  groups: const [],
+                  onToggleContact: (_) {},
+                  onToggleGroup: (_) {},
+                ),
+              ),
+            );
+            caption.dispose();
+            return true;
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(
+        find.byKey(
+          const ValueKey(
+            'media-grid-cell-compact-forward-message-compact-forward-a',
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+      expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+      expect(
+        tester
+            .widget<FullScreenTypedMediaViewer>(
+              find.byType(FullScreenTypedMediaViewer),
+            )
+            .items,
+        hasLength(2),
+      );
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      final forward = find.byKey(const ValueKey('media_action_forward'));
+      expect(
+        tester.getCenter(forward).dy,
+        greaterThan(tester.getSize(find.byType(Scaffold)).height / 2),
+      );
+      await tester.tap(forward);
+      await pumpUntil(
+        tester,
+        () => find.byType(ShareTargetPickerScreen).evaluate().isNotEmpty,
+        reason: 'bottom Forward did not open the existing picker',
+      );
+
+      expect(launchedCurrentAttachmentId, secondAttachment.id);
+      final picker = tester.widget<ShareTargetPickerScreen>(
+        find.byType(ShareTargetPickerScreen),
+      );
+      expect(picker.sharedFilePaths, [secondFile.path]);
+      expect(find.byKey(const ValueKey('share-preview-image')), findsOneWidget);
+      final captionField = find.byKey(const ValueKey('share-caption-field'));
+      expect(
+        tester.widget<TextField>(captionField).controller!.text,
+        multiMessage.text,
+      );
+      await tester.enterText(captionField, 'edited compact caption');
+      expect(
+        tester.widget<TextField>(captionField).controller!.text,
+        'edited compact caption',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'production-wired forward opens picker and delivers to a writable group',
     (tester) async {
       final identities = FakeIdentityRepository()

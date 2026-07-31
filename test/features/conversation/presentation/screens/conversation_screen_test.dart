@@ -983,6 +983,107 @@ void main() {
       },
     );
 
+    testWidgets(
+      '1:1 text, media, and voice long-press overlays each emit one light impact',
+      (tester) async {
+        final platformCalls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          platformCalls.add(call);
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        Future<void> expectLightImpact({
+          required ConversationMessage message,
+          required Finder Function() target,
+          required String variant,
+        }) async {
+          await tester.pumpWidget(
+            buildTestWidget(
+              messages: [message],
+              initialLoadDone: true,
+              onQuoteReply: (_) {},
+            ),
+          );
+          await pumpFrames(tester);
+          platformCalls.clear();
+
+          final targetFinder = target();
+          expect(targetFinder, findsOneWidget, reason: variant);
+          await tester.longPress(targetFinder);
+          await tester.pump(const Duration(milliseconds: 250));
+
+          expect(
+            find.byKey(MessageContextOverlay.overlayKey),
+            findsOneWidget,
+            reason: variant,
+          );
+          final hapticCalls = platformCalls
+              .where((call) => call.method == 'HapticFeedback.vibrate')
+              .toList(growable: false);
+          expect(hapticCalls, hasLength(1), reason: variant);
+          expect(
+            hapticCalls.single.arguments,
+            'HapticFeedbackType.lightImpact',
+            reason: variant,
+          );
+
+          await tester.tap(find.byKey(MessageContextOverlay.backdropKey));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 250));
+          expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+        }
+
+        await expectLightImpact(
+          message: makeMessage(id: 'haptic-text', text: 'Haptic text'),
+          target: () => find.text('Haptic text'),
+          variant: 'text bubble',
+        );
+        await expectLightImpact(
+          message: makeMessage(
+            id: 'haptic-media',
+            text: '',
+            media: [
+              makeImageAttachment(
+                id: 'haptic-media-attachment',
+                messageId: 'haptic-media',
+              ),
+            ],
+          ),
+          target: () => find.byType(MediaGridCell),
+          variant: 'media bubble',
+        );
+        await expectLightImpact(
+          message: makeMessage(
+            id: 'haptic-voice',
+            text: '',
+            media: const [
+              MediaAttachment(
+                id: 'haptic-voice-attachment',
+                messageId: 'haptic-voice',
+                mime: 'audio/mp4',
+                size: 2048,
+                mediaType: 'audio',
+                durationMs: 4200,
+                downloadStatus: 'pending',
+                createdAt: '2026-02-09T15:32:00.000Z',
+                waveform: <double>[0.2, 0.6, 0.3],
+              ),
+            ],
+          ),
+          target: () => find.byKey(const ValueKey('haptic-voice-attachment')),
+          variant: 'voice bubble',
+        );
+      },
+    );
+
     testWidgets('long-press reply is available for outgoing messages', (
       tester,
     ) async {

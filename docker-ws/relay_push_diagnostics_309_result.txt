@@ -1,0 +1,146 @@
+=== generated 2026-07-31T19:59:05Z ===
+
+=== version history today (deploy + rollback provenance) ===
+Jul 31 18:32:49 ip-172-31-34-24 relay-server[636552]: 2026/07/31 18:32:49 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 18:32:49 ip-172-31-34-24 relay-server[636552]: 2026/07/31 18:32:49 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 18:32:49 ip-172-31-34-24 relay-server[636552]: 2026/07/31 18:32:49 Starting relay-server v1.7.0
+Jul 31 18:32:49 ip-172-31-34-24 relay-server[636552]: 2026/07/31 18:32:49 Control-plane: backend=redis durable=true prefix=relay:
+Jul 31 19:28:41 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 19:28:41 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 19:28:41 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 Starting relay-server v1.6.0
+Jul 31 19:28:41 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 Control-plane: backend=redis durable=true prefix=relay:
+
+=== push counters (cumulative, all labels) ===
+relay_inbox_push_tokens 1515
+relay_push_sent_total{result="success"} 3
+relay_push_tokens_by_platform{platform="android"} 306
+relay_push_tokens_by_platform{platform="ios"} 1209
+
+=== last 24h: every PUSH outcome, counted by shape ===
+      4 2026/07/31 15:06:34 [PUSH] Group notification sent  for
+      2 2026/07/31 19:38:12 [PUSH] Token registered  (android)
+      2 2026/07/31 19:30:37 [PUSH] Token registered  (android)
+      2 2026/07/31 19:22:55 [PUSH] Token registered  (android)
+      2 2026/07/31 19:17:26 [PUSH] Token registered  (android)
+      2 2026/07/31 19:15:03 [PUSH] Token registered  (ios)
+      2 2026/07/31 18:52:39 [PUSH] Token registered  (android)
+      2 2026/07/31 18:47:51 [PUSH] Token registered  (android)
+      2 2026/07/31 18:46:21 [PUSH] Token registered  (ios)
+      2 2026/07/31 18:28:58 [PUSH] Token registered  (ios)
+      2 2026/07/31 18:24:03 [PUSH] Token registered  (android)
+      2 2026/07/31 17:39:28 [PUSH] Token registered  (android)
+      2 2026/07/31 15:21:58 [PUSH] Token registered  (ios)
+      2 2026/07/31 15:21:58 [PUSH] Skip chat push  no registered token
+      2 2026/07/31 15:06:38 [PUSH] Token registered  (ios)
+      2 2026/07/31 15:06:35 [PUSH] Group notification sent  for
+      2 2026/07/31 15:05:55 [PUSH] Token registered  (android)
+      2 2026/07/31 10:50:28 [PUSH] Token registered  (ios)
+      2 2026/07/31 09:14:01 [PUSH] Token registered  (ios)
+      2 2026/07/31 09:02:31 [PUSH] Token registered  (ios)
+      2 2026/07/30 22:59:00 [PUSH] Token registered  (ios)
+      2 2026/07/30 20:37:23 [PUSH] Token registered  (android)
+      1 2026/07/31 19:39:48 [PUSH] Group notification sent  for
+      1 2026/07/31 19:39:40 [PUSH] Token registered  (ios)
+      1 2026/07/31 19:39:26 [PUSH] Group notification sent  for
+      1 2026/07/31 19:39:20 [PUSH] Group notification sent  for
+      1 2026/07/31 19:39:06 [PUSH] Token registered  (android)
+      1 2026/07/31 19:38:58 [PUSH] Token registered  (android)
+      1 2026/07/31 19:38:34 [PUSH] Token registered  (android)
+      1 2026/07/31 19:38:29 [PUSH] Token registered  (android)
+
+=== last 24h: PUSH lines per hour (find the test window) ===
+      3 2026-07-30T20
+      1 2026-07-30T21
+      2 2026-07-30T22
+      1 2026-07-30T23
+      1 2026-07-31T02
+      1 2026-07-31T06
+      2 2026-07-31T08
+      6 2026-07-31T09
+      3 2026-07-31T10
+      1 2026-07-31T11
+      3 2026-07-31T12
+     15 2026-07-31T15
+     16 2026-07-31T16
+     25 2026-07-31T17
+     26 2026-07-31T18
+     68 2026-07-31T19
+
+=== last 24h: group_reaction + reaction PUSH lines (raw tail 40) ===
+
+=== last 24h: group store + group push fan-out (tail 40) ===
+2026-07-31T15:06:34+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:34 [GROUP_INBOX] Stored message for group 80ff6e1e-0366-4ffa-b from 12D3KooWAt4ThiVT7S52
+2026-07-31T15:06:34+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:34 [PUSH] Group notification sent to 12D3KooWE2UsgX8GDogq for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:06:34+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:34 [PUSH] Group notification sent to 12D3KooWBbvBSAJf4qvF for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:06:34+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:34 [PUSH] Group notification sent to 12D3KooWHyiSmJVcHfQo for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:06:34+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:34 [PUSH] Group notification sent to 12D3KooWMmTMvwStwXKC for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:06:35+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:35 [PUSH] Group notification sent to 12D3KooWLvYpDCJpvwPB for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:06:35+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:06:35 [PUSH] Group notification sent to 12D3KooWG6navuVi5B9c for group 80ff6e1e-0366-4ffa-b (attempt 1/3)
+2026-07-31T15:22:02+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 15:22:02 [GROUP_INBOX] Stored message for group 80ff6e1e-0366-4ffa-b from 12D3KooWHyiSmJVcHfQo
+2026-07-31T17:14:41+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:14:41 [GROUP_INBOX] Stored message for group 46119482-700b-4ae6-b from 12D3KooWDiJmLUm2HHKf
+2026-07-31T17:14:41+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:14:41 [PUSH] Group notification sent to 12D3KooWSH6ZQ8HRxjEi for group 46119482-700b-4ae6-b (attempt 1/3)
+2026-07-31T17:15:24+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:15:24 [GROUP_INBOX] Stored message for group 46119482-700b-4ae6-b from 12D3KooWSH6ZQ8HRxjEi
+2026-07-31T17:15:24+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:15:24 [PUSH] Group notification sent to 12D3KooWDiJmLUm2HHKf for group 46119482-700b-4ae6-b (attempt 1/3)
+2026-07-31T17:15:29+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:15:29 [GROUP_INBOX] Stored message for group 46119482-700b-4ae6-b from 12D3KooWDiJmLUm2HHKf
+2026-07-31T17:15:29+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:15:29 [PUSH] Group notification sent to 12D3KooWSH6ZQ8HRxjEi for group 46119482-700b-4ae6-b (attempt 1/3)
+2026-07-31T17:42:32+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:42:32 [GROUP_INBOX] Stored message for group d65829a1-6f82-42d1-a from 12D3KooWRqixJC8REvMX
+2026-07-31T17:42:32+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:42:32 [PUSH] Group notification sent to 12D3KooWDcYnMP1iDiZj for group d65829a1-6f82-42d1-a (attempt 1/3)
+2026-07-31T17:42:46+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:42:46 [GROUP_INBOX] Stored message for group d65829a1-6f82-42d1-a from 12D3KooWRqixJC8REvMX
+2026-07-31T17:42:46+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:42:46 [PUSH] Group notification sent to 12D3KooWDcYnMP1iDiZj for group d65829a1-6f82-42d1-a (attempt 1/3)
+2026-07-31T17:43:01+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:43:01 [GROUP_INBOX] Stored message for group d65829a1-6f82-42d1-a from 12D3KooWDcYnMP1iDiZj
+2026-07-31T17:43:02+00:00 ip-172-31-34-24 relay-server[543236]: 2026/07/31 17:43:02 [PUSH] Group notification sent to 12D3KooWRqixJC8REvMX for group d65829a1-6f82-42d1-a (attempt 1/3)
+2026-07-31T19:16:40+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:16:40 [GROUP_INBOX] Stored message for group 83d6d5e6-14e1-4542-8 from 12D3KooWDJ96ouLuM78r
+2026-07-31T19:16:40+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:16:40 [PUSH] Group notification sent to 12D3KooWEnpArQAHp36y for group 83d6d5e6-14e1-4542-8 (attempt 1/3)
+2026-07-31T19:16:57+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:16:57 [GROUP_INBOX] Stored message for group 83d6d5e6-14e1-4542-8 from 12D3KooWDJ96ouLuM78r
+2026-07-31T19:16:57+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:16:57 [PUSH] Group notification sent to 12D3KooWEnpArQAHp36y for group 83d6d5e6-14e1-4542-8 (attempt 1/3)
+2026-07-31T19:17:13+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:17:13 [GROUP_INBOX] Stored message for group 83d6d5e6-14e1-4542-8 from 12D3KooWDJ96ouLuM78r
+2026-07-31T19:17:13+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:17:13 [PUSH] Group notification sent to 12D3KooWEnpArQAHp36y for group 83d6d5e6-14e1-4542-8 (attempt 1/3)
+2026-07-31T19:24:32+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:24:32 [GROUP_INBOX] Stored message for group cee8bcf6-2803-4b0c-b from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:24:32+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:24:32 [PUSH] Group notification sent to 12D3KooWM43NCsZpuh7Q for group cee8bcf6-2803-4b0c-b (attempt 1/3)
+2026-07-31T19:25:26+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:25:26 [GROUP_INBOX] Stored message for group cee8bcf6-2803-4b0c-b from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:25:26+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:25:26 [PUSH] Group notification sent to 12D3KooWM43NCsZpuh7Q for group cee8bcf6-2803-4b0c-b (attempt 1/3)
+2026-07-31T19:25:44+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:25:44 [GROUP_INBOX] Stored message for group cee8bcf6-2803-4b0c-b from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:25:44+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:25:44 [PUSH] Group notification sent to 12D3KooWM43NCsZpuh7Q for group cee8bcf6-2803-4b0c-b (attempt 1/3)
+2026-07-31T19:30:08+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:30:08 [GROUP_INBOX] Stored message for group cee8bcf6-2803-4b0c-b from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:30:32+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:30:32 [GROUP_INBOX] Stored message for group cee8bcf6-2803-4b0c-b from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:39:19+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:19 [GROUP_INBOX] Stored message for group 9bc055cc-9a2a-4801-9 from 12D3KooWRofUkyAuKdsp
+2026-07-31T19:39:20+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:20 [PUSH] Group notification sent to 12D3KooWSmFBWf4T4tjC for group 9bc055cc-9a2a-4801-9 (attempt 1/3)
+2026-07-31T19:39:26+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:26 [GROUP_INBOX] Stored message for group 9bc055cc-9a2a-4801-9 from 12D3KooWSmFBWf4T4tjC
+2026-07-31T19:39:26+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:26 [PUSH] Group notification sent to 12D3KooWRofUkyAuKdsp for group 9bc055cc-9a2a-4801-9 (attempt 1/3)
+2026-07-31T19:39:48+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:48 [GROUP_INBOX] Stored message for group 9bc055cc-9a2a-4801-9 from 12D3KooWSmFBWf4T4tjC
+2026-07-31T19:39:48+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:39:48 [PUSH] Group notification sent to 12D3KooWRofUkyAuKdsp for group 9bc055cc-9a2a-4801-9 (attempt 1/3)
+
+=== last 24h: 1:1 store + push outcomes (tail 30) ===
+2026-07-31T19:17:32+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:17:32 [INBOX] Stored message for 12D3KooWHyiSmJVcHfQo from 12D3KooWMfVwMKyb6vqP
+2026-07-31T19:17:32+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:17:32 [INBOX] Stored message for 12D3KooWB7TUQRb5n5mA from 12D3KooWMfVwMKyb6vqP
+2026-07-31T19:17:50+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:17:50 [INBOX] Stored message for 12D3KooWPAse4j4LKkoj from 12D3KooWPAse4j4LKkoj
+2026-07-31T19:18:24+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:18:24 [INBOX] Stored message for 12D3KooWDJ96ouLuM78r from 12D3KooWPAse4j4LKkoj
+2026-07-31T19:18:25+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:18:25 [PUSH] Strict routing fallback sent to 12D3KooWDJ96ouLuM78r after provider rejected chat payload size
+2026-07-31T19:20:37+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:20:37 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:20:49+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:20:49 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWNbc17WZYUM7w
+2026-07-31T19:21:30+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:21:30 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:21:35+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:21:35 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:21:35+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:21:35 [PUSH] Strict routing fallback sent to 12D3KooWNbc17WZYUM7w after provider rejected chat payload size
+2026-07-31T19:22:34+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:34 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWNbc17WZYUM7w
+2026-07-31T19:22:35+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:35 [PUSH] Strict routing fallback sent to 12D3KooWLB4TNaHM1D3B after provider rejected chat payload size
+2026-07-31T19:22:52+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:52 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:22:52+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:52 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:22:54+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:54 [INBOX] Stored message for 12D3KooWM43NCsZpuh7Q from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:22:54+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:54 [INBOX] Stored message for 12D3KooWM43NCsZpuh7Q from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:22:54+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:22:54 [INBOX] Stored message for 12D3KooWM43NCsZpuh7Q from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:23:18+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:23:18 [INBOX] Stored message for 12D3KooWNbc17WZYUM7w from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:24:14+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:24:14 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:24:27+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:24:27 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:24:27+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:24:27 [PUSH] Notification sent to 12D3KooWLB4TNaHM1D3B (attempt 1/3)
+2026-07-31T19:28:41+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 [INBOX] Stored message for 12D3KooWM43NCsZpuh7Q from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:28:41+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:28:41+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:28:41 [INBOX] Stored message for 12D3KooWLB4TNaHM1D3B from 12D3KooWLB4TNaHM1D3B
+2026-07-31T19:30:36+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:30:36 [INBOX] Stored message for 12D3KooWM43NCsZpuh7Q from 12D3KooWM43NCsZpuh7Q
+2026-07-31T19:37:56+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:37:56 [INBOX] Stored message for 12D3KooWSmFBWf4T4tjC from 12D3KooWSmFBWf4T4tjC
+2026-07-31T19:37:58+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:37:58 [INBOX] Stored message for 12D3KooWEM8EoeYbgJ2d from 12D3KooWEM8EoeYbgJ2d
+2026-07-31T19:38:11+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:38:11 [INBOX] Stored message for 12D3KooWRofUkyAuKdsp from 12D3KooWRofUkyAuKdsp
+2026-07-31T19:38:11+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:38:11 [INBOX] Stored message for 12D3KooWRofUkyAuKdsp from 12D3KooWRofUkyAuKdsp
+2026-07-31T19:38:11+00:00 ip-172-31-34-24 relay-server[637006]: 2026/07/31 19:38:11 [INBOX] Stored message for 12D3KooWRofUkyAuKdsp from 12D3KooWRofUkyAuKdsp
+
+=== last 24h: errors of any kind (tail 20) ===
+2026-07-31T19:03:37+00:00 ip-172-31-34-24 relay-server[636552]: 2026/07/31 19:03:37 [INBOX] Read error from 12D3KooWHyiSmJVcHfQo: read payload: stream reset

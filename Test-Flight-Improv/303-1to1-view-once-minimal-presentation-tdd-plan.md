@@ -1,6 +1,6 @@
 # 303 - 1:1 Image View-Once Minimal Presentation and Back Cleanup
 
-Status: execution-ready
+Status: completed
 Type: Modification
 Spec: free-text product intent — user clarification 2026-07-30
 Classification: implementation-ready
@@ -20,10 +20,10 @@ Closure tier: host causal tests plus availability-bounded single-Android device 
 
 | Stage | State | Required evidence |
 |---|---|---|
-| RED | not started | TC-01 through TC-06 fail only for their documented presentation/composer mechanisms; preservation rows pass |
-| GREEN | not started | Focused tests and exact deletion sentinels pass |
-| Refactor | not started | No storage, lifecycle, capture-protection, group, or terminal drift |
-| Closure | not started | `1to1`, hygiene, and the unchanged device sentinels on one pinned Android target when available; unavailable legs are `N/A (target unavailable by project policy)` |
+| RED | complete | TC-01 through TC-06 failed for the documented mode/picker/minimal-presentation/viewer-chrome mechanisms. TC-07 additionally exposed that the shared AppBar used bare `Navigator.pop`, bypassing the direct owner's `PopScope`. Preservation rows stayed green. |
+| GREEN | complete | The exact 13-file focused/preservation command passed 247 tests. TC-07 now proves one consume, one cleanup, zero rollback, cleanup-before-route-removal, and route-removal-before-native-release. |
+| Refactor | complete | No storage, lifecycle, controller, capture-protection, group, terminal, schema, migration, wire, secure-storage, or l10n production file changed. The shared viewer gained one optional Back coordinator whose null/default behavior is preserved. |
+| Closure | complete | `completeness-check` passed 1366/1366, `1to1` passed 2516 Flutter tests plus the relay Go gate, affected shared/ordinary/group sentinels passed, hygiene passed, and both unchanged device sentinels passed on USB Pixel 6 `21071FDF600CSC`. |
 
 ## Problem And Evidence
 
@@ -94,6 +94,7 @@ Affected implementation files:
 - `lib/features/conversation/presentation/widgets/compose_area.dart`
 - `lib/features/conversation/presentation/screens/conversation_wired.dart`
 - `lib/features/conversation/presentation/screens/direct_private_media_viewer.dart`
+- `lib/shared/widgets/media/full_screen_typed_media_viewer.dart` (execution-discovered AppBar Back seam; optional callback, default behavior unchanged)
 
 ## Test Contract
 
@@ -107,7 +108,7 @@ Affected implementation files:
 | TC-04 | Sender view-once image is one tappable 150px cover tile; opening disables it; open-denied/local-missing states remain honest | Rewrite the view-once leg in `direct_private_media_sender_pending_button_test.dart::hydrated outgoing view_once upload_pending row offers exact one-more-look`; extend the image state matrix in `direct_private_media_viewer_test.dart`; update only the view-once-image expectation in `direct_private_media_placeholder_body_test.dart::direct private placeholders render localized bodies` | widget | causal RED: title/body/button render today -> tile shape, one semantics action, existing open intent and state guards pass; protected/local-missing body assertions stay GREEN | restore the button/card branch, duplicate the semantics node, or remove preserved sibling copy | focused files; placeholder-body is registered in `1to1`, sender-pending remains an explicit command |
 | TC-05 | Receiver view-once image is the same minimal tile; legacy video/GIF and protected/disappearing retain current presentation | Rewrite image assertions in `direct_private_media_tile_tap_test.dart::view-once tile is one warned semantic button` and preserve the video/GIF legs in `::view-once tap tile covers image and video while legacy GIF keeps the old branch`; retain `direct_private_media_card_test.dart` video title sentinel | widget | causal RED for image copy; GREEN sentinels for video/GIF/sibling modes -> image copy absent and open semantics preserved | suppress copy for every kind or break the existing tap callback | focused files; registered in `1to1` |
 | TC-06 | Only image view-once viewer hides bottom copy/actions; legacy view-once video and protected/disappearing keep them | Add `direct_private_media_viewer_test.dart::minimal viewer chrome is image view-once only` using an exact mode/kind matrix | widget | causal RED for image view-once; sibling legs GREEN -> only that leg finds no overlay copy/action | guard on mode alone or remove the guard | focused viewer file; registered in `1to1` |
-| TC-07 | Actual incoming AppBar Back runs close settlement once, keeps the covered route mounted until cleanup finishes, then removes it before protection release | Add `direct_private_media_viewer_test.dart::view-once image Back consumes and cleans exactly once` using existing `_fixture`/`_Lane`, a real pushed route, valid 1x1 PNG, viewer-scoped Back, a test-only cleanup barrier, and `onNativeExit` | widget + fake lifecycle lane | new GREEN characterization on HEAD: after Back and cleanup entry, viewer/cover remain mounted and native calls are only `enter`; after releasing the barrier assert `terminalized/close`, consume=1, cleanup=1, rollback=0, attachments empty, route gone/underlying visible; inside `onNativeExit`, assert viewer absent and underlying visible | bare-pop early, release protection before route removal, bypass `_close`, or let dispose consume twice | focused viewer file |
+| TC-07 | Actual incoming AppBar Back runs close settlement once, keeps the covered route mounted until cleanup finishes, then removes it before protection release | Add `direct_private_media_viewer_test.dart::view-once image Back consumes and cleans exactly once` using existing `_fixture`/`_Lane`, a real pushed route, valid 1x1 PNG, viewer-scoped Back, a test-only cleanup barrier, and `onNativeExit` | widget + fake lifecycle lane | causal RED found during execution: the shared AppBar's bare `Navigator.pop` bypassed the owner's `PopScope` -> after Back and cleanup entry, viewer/cover remain mounted and native calls are only `enter`; after releasing the barrier assert `terminalized/close`, consume=1, cleanup=1, rollback=0, attachments empty, route gone/underlying visible; inside `onNativeExit`, assert viewer absent and underlying visible | bare-pop early, release protection before route removal, bypass `_close`, or let dispose consume twice | focused viewer file |
 | TC-08 | View-once cleanup is exact and retry-convergent; reopen never returns; unhanded-off outgoing bytes are retained only as transport custody and deleted after handoff | Existing `private_media_cleanup_race_test.dart::terminal cleanup removes every exact direct artifact and preserves siblings`, `::cleanup failure retains terminal row/key metadata and retry converges`; existing `private_media_restart_replay_test.dart::reopen terminalizes opening...`, `::restart terminalizes viewer state without destroying unhanded-off outbox custody`, and `::restart with durable envelope handoff cleans terminal outbox custody` | production-schema SQLite + fake secure store/file manager | GREEN sentinels -> file/key/row exactness, retry convergence, no second lease, custody retention, and post-handoff deletion all stay true | delete unhanded-off custody early, retain handed-off bytes, skip key/row cleanup, or remint a lease | both files registered in `1to1` |
 | TC-09 | Real SQLCipher recipient cleanup removes view-once file/row and remains irreopenable after database reopen | Run the unchanged recipient role in `direct_private_media_device_local_journey_harness.dart` directly on one pinned Android target; do not use or edit its stale sender leg | Android integration / password-backed SQLCipher | unchanged device sentinel -> recipient observations report cleanup complete, attachment absent, and available-after-reopen false | retain the row/file or permit a new lease after reopen | availability-bounded pinned Android command |
 | TC-10 | Screenshot/recording blocker and fail-closed cover are unchanged | Existing viewer protection cases at `direct_private_media_viewer_test.dart:981-1445` plus unchanged `integration_test/direct_private_media_platform_protection_proof_test.dart` | widget + device proof | GREEN sentinel before/after | any protection/cover/native change | focused viewer test; platform proof unchanged |
@@ -115,7 +116,7 @@ Affected implementation files:
 
 ### Test Notes
 
-- TC-07 is intentionally a GREEN characterization rather than a manufactured RED. TC-04/05/06 provide the causal presentation REDs; TC-07 locks the already-correct destructive invariant across those edits.
+- TC-07 was planned as a GREEN characterization, but the real AppBar action produced a legitimate causal RED: the shared viewer performed a direct pop before the private owner could settle. The narrow fix adds an optional owner Back callback; ordinary/shared/group viewers retain the existing null/default direct-pop path.
 - TC-07 and TC-08 are complementary: a barrier-controlled fake lane proves Back ordering and one invocation, while the real repositories prove cleanup convergence/artifact boundaries. “Exactly once” applies to consumption/open authority; cleanup is idempotent, retryable, and convergent.
 - TC-09 is the real SQLCipher boundary. It needs one Android target, not two peers; resolve and pin that target at execution. The current full paired runner is not a plan-303 gate because its unrelated sender fixture is stale/synthetic.
 - The platform protection proof is a preservation sentinel only. This plan must not “improve,” rewrite, or rebaseline screenshot blocking.
@@ -201,23 +202,36 @@ git diff --check
 
 Semantic outcomes:
 
-- Every focused command exits 0 at GREEN; only TC-01 through TC-06 fail at RED for the documented mechanism.
+- Every focused command exits 0 at GREEN; TC-01 through TC-06 fail at RED for the documented mechanism, and TC-07 fails at the execution-discovered AppBar/`PopScope` seam.
 - TC-07 reports one consume, one cleanup, zero rollback, consumed state, empty attachments, removed viewer route, and one protection enter/exit pair.
 - TC-08 proves exact file/key/row cleanup, retry convergence, no second lease, and the retain-until-handoff sender exception.
 - TC-09 reports recipient cleanup complete, attachment absent after cleanup, and unavailable after SQLCipher reopen.
 - `completeness-check`, `1to1`, `flutter analyze`, and `git diff --check` pass with no new issues.
 
+## Closure Evidence
+
+- Focused causal and preservation suite: PASS, 247 tests across the 13 literal host files.
+- Shared-viewer affected sentinels: PASS, 24 tests across `full_screen_typed_media_viewer_test.dart`, `media_viewer_boundary_test.dart`, `conversation_shared_media_viewer_test.dart`, and `group_private_media_viewer_test.dart`.
+- Registration: PASS, `completeness-check` reports 1366/1366 tests registered.
+- Curated lane: PASS, `./scripts/run_test_gates.sh 1to1` reports 2516 Flutter tests passed; relay Go toolchain contract and relay Go tests passed.
+- Device matrix rediscovery: USB Pixel 6 `21071FDF600CSC`, Android 16/API 36, was available and pinned. No iPhone was used.
+- Unchanged native protection proof: PASS on `21071FDF600CSC`.
+- Unchanged recipient SQLCipher journey: PASS on `21071FDF600CSC`; its emitted artifact reports view-once cleanup complete, attachment absent after cleanup, and unavailable after reopen.
+- Hygiene: PASS, Flutter 3.41.4 / Dart 3.11.1, `flutter analyze` reports no issues, and `git diff --check` is clean.
+- Graphify: incremental architecture refresh completed; refreshed affected analysis included all six production files, including the execution-discovered shared AppBar seam.
+- Scope audit: no prohibited lifecycle/controller/database/schema/migration/wire/secure-storage/l10n/group/capture/device-harness file changed.
+
 ## Execution Interpretation And Done Criteria
 
-- [ ] Newly composed view-once is image-only at picker, restore, normalization, and final-send boundaries.
-- [ ] Sender and receiver image bubbles are minimal and remain one accessible tap target.
-- [ ] Only the image view-once viewer loses bottom chrome; Back remains visible.
-- [ ] Incoming actual Back consumes once, awaits cleanup before route removal, deletes payload artifacts, and cannot reopen.
-- [ ] Outgoing actual Back consumes its sole viewing authority; handed-off artifacts clean immediately, while unhanded-off custody remains non-viewable and cleans after handoff.
-- [ ] Screenshot/recording protection code and proofs are unchanged.
-- [ ] Terminal presentation and legacy view-once video/GIF behavior are unchanged.
-- [ ] No schema, migration, wire-version, secure-storage, l10n, group, lifecycle, or controller production diff.
-- [ ] Focused tests, affected tests, `1to1`, and hygiene pass; device result is PASS or policy-valid N/A.
+- [x] Newly composed view-once is image-only at picker, restore, normalization, and final-send boundaries.
+- [x] Sender and receiver image bubbles are minimal and remain one accessible tap target.
+- [x] Only the image view-once viewer loses bottom chrome; Back remains visible.
+- [x] Incoming actual Back consumes once, awaits cleanup before route removal, deletes payload artifacts, and cannot reopen.
+- [x] Outgoing actual Back consumes its sole viewing authority; handed-off artifacts clean immediately, while unhanded-off custody remains non-viewable and cleans after handoff.
+- [x] Screenshot/recording protection code and proofs are unchanged.
+- [x] Terminal presentation and legacy view-once video/GIF behavior are unchanged.
+- [x] No schema, migration, wire-version, secure-storage, l10n, group, lifecycle, or controller production diff.
+- [x] Focused tests, affected tests, `1to1`, and hygiene pass; device result is PASS or policy-valid N/A.
 
 ## Rollback
 

@@ -59,6 +59,7 @@ void main() {
     List<MediaAttachment> media = const [],
     String? deletedAt,
     String? quotedMessageId,
+    String timestamp = '2026-02-09T15:30:00.000Z',
     PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
     PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
   }) {
@@ -67,7 +68,7 @@ void main() {
       contactPeerId: contactPeerId,
       senderPeerId: isIncoming ? contactPeerId : ownPeerId,
       text: text,
-      timestamp: '2026-02-09T15:30:00.000Z',
+      timestamp: timestamp,
       status: 'delivered',
       isIncoming: isIncoming,
       createdAt: '2026-02-09T15:30:01.000Z',
@@ -111,9 +112,11 @@ void main() {
   Widget buildScreen({
     required List<ConversationMessage> messages,
     Locale locale = const Locale('en'),
+    String contactUsername = 'Alice',
     DirectReceivedMediaEgressHandler? onMediaEgress,
     DirectReceivedMediaInfoLoader? onLoadMediaInfo,
     DirectPrivateMediaActionDecisionLoader? onLoadMediaActionDecision,
+    DirectReceivedMediaForwardHandler? onForwardMedia,
     ValueChanged<String>? onDeleteMediaMessage,
     ValueChanged<String>? onQuoteReply,
     ValueChanged<String>? onDeleteMessage,
@@ -131,7 +134,7 @@ void main() {
       home: Scaffold(
         body: ConversationScreen(
           contactPeerId: contactPeerId,
-          contactUsername: 'Alice',
+          contactUsername: contactUsername,
           connectionDate: 'February 9, 2026',
           ownPeerId: ownPeerId,
           messages: messages,
@@ -143,6 +146,7 @@ void main() {
           onMediaEgress: onMediaEgress,
           onLoadMediaInfo: onLoadMediaInfo,
           onLoadMediaActionDecision: onLoadMediaActionDecision,
+          onForwardMedia: onForwardMedia,
           onDeleteMediaMessage: onDeleteMediaMessage,
           activeQuoteText: activeQuoteText,
           mediaViewerBuilder: mediaViewerBuilder,
@@ -393,6 +397,338 @@ void main() {
   );
 
   testWidgets(
+    'incoming keep-in-chat images select compact actions while sibling media stays standard',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final firstImage = makeAttachment(
+        id: 'layout-image-a',
+        messageId: 'layout-incoming',
+        localPath: writeMediaFile('layout-a.jpg'),
+      );
+      final secondImage = makeAttachment(
+        id: 'layout-image-b',
+        messageId: 'layout-incoming',
+        localPath: writeMediaFile('layout-b.jpg'),
+      );
+      final gif = makeAttachment(
+        id: 'layout-gif',
+        messageId: 'layout-incoming',
+        localPath: writeMediaFile('layout.gif'),
+        mime: 'image/gif',
+      );
+      final outgoingImage = makeAttachment(
+        id: 'layout-outgoing-image',
+        messageId: 'layout-outgoing',
+        localPath: writeMediaFile('layout-outgoing.jpg'),
+      );
+      final incoming = makeMessage(
+        id: 'layout-incoming',
+        text: 'incoming layout',
+        media: [firstImage, secondImage, gif],
+      );
+      final outgoing = makeMessage(
+        id: 'layout-outgoing',
+        isIncoming: false,
+        text: 'outgoing layout',
+        media: [outgoingImage],
+      );
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [incoming, outgoing],
+          onMediaEgress: (identity, destination) async =>
+              performedOutcome(destination, identity.attachmentId),
+          onLoadMediaInfo: (_) async =>
+              makeInfo(mime: 'image/jpeg', mediaType: 'image'),
+          onQuoteReply: (_) {},
+          onForwardMedia: (_, {currentAttachmentId}) async => true,
+          onDeleteMediaMessage: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(cell(incoming.id, firstImage.id));
+      await pumpFrames(tester);
+      var viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items.map((item) => item.kind), [
+        MediaViewerKind.image,
+        MediaViewerKind.image,
+        MediaViewerKind.gif,
+      ]);
+      expect(viewer.items.map((item) => item.actionPresentation), [
+        MediaViewerActionPresentation.compactImageOverlay,
+        MediaViewerActionPresentation.compactImageOverlay,
+        MediaViewerActionPresentation.standardToolbar,
+      ]);
+      expect(find.text('1 / 3'), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('media_action_forward')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('media_action_delete')), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_save')), findsNothing);
+
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('3 / 3'), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+      expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
+      expect(
+        tester.getCenter(find.byKey(const ValueKey('media_action_forward'))).dy,
+        lessThan(tester.getSize(find.byType(Scaffold)).height / 2),
+      );
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await pumpFrames(tester);
+      await tester.tap(cell(outgoing.id, outgoingImage.id));
+      await pumpFrames(tester);
+      viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(
+        viewer.items.single.actionPresentation,
+        MediaViewerActionPresentation.standardToolbar,
+      );
+      expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'compact image overflow preserves save share info and reply routes',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final egressCalls =
+          <
+            ({
+              DirectReceivedMediaActionIdentity identity,
+              MediaEgressDestination destination,
+            })
+          >[];
+      final infoCalls = <DirectReceivedMediaActionIdentity>[];
+      final quoteCalls = <String>[];
+      final first = makeAttachment(
+        id: 'compact-route-a',
+        messageId: 'compact-route-message',
+        localPath: writeMediaFile('compact-route-a.jpg'),
+      );
+      final second = makeAttachment(
+        id: 'compact-route-b',
+        messageId: 'compact-route-message',
+        localPath: writeMediaFile('compact-route-b.jpg'),
+      );
+      final message = makeMessage(
+        id: 'compact-route-message',
+        text: 'compact route caption',
+        media: [first, second],
+      );
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [message],
+          onMediaEgress: (identity, destination) async {
+            egressCalls.add((identity: identity, destination: destination));
+            return performedOutcome(destination, identity.attachmentId);
+          },
+          onLoadMediaInfo: (identity) async {
+            infoCalls.add(identity);
+            return makeInfo(mime: 'image/jpeg', mediaType: 'image');
+          },
+          onQuoteReply: quoteCalls.add,
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(cell(message.id, first.id));
+      await pumpFrames(tester);
+      await tester.fling(find.byType(PageView), const Offset(-500, 0), 1500);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      Future<void> selectOverflow(String action) async {
+        await tester.tap(find.byKey(const ValueKey('media_action_more')));
+        await pumpFrames(tester);
+        await tester.tap(find.byKey(ValueKey('media_action_$action')));
+        await pumpFrames(tester);
+      }
+
+      await selectOverflow('save');
+      expect(
+        find.byKey(DirectMediaSaveDestinationSheet.photosActionKey),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(DirectMediaSaveDestinationSheet.photosActionKey),
+      );
+      await pumpFrames(tester);
+      expect(egressCalls, hasLength(1));
+      expect(egressCalls.single.identity.attachmentId, second.id);
+      expect(egressCalls.single.destination, MediaEgressDestination.photos);
+
+      await selectOverflow('share');
+      expect(egressCalls, hasLength(2));
+      expect(egressCalls.last.identity.attachmentId, second.id);
+      expect(egressCalls.last.destination, MediaEgressDestination.share);
+
+      await selectOverflow('info');
+      expect(infoCalls, hasLength(1));
+      expect(infoCalls.single.attachmentId, second.id);
+      expect(find.byKey(DirectReceivedMediaInfoSheet.sheetKey), findsOneWidget);
+      await dismissModal(tester);
+
+      await selectOverflow('reply');
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      expect(quoteCalls, [message.id]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'received keep-in-chat video selects its all-action overflow without widening sibling media',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final receivedVideo = makeAttachment(
+        id: 'video-overflow-received',
+        messageId: 'video-overflow-incoming',
+        localPath: writeMediaFile('video-overflow-received.mp4'),
+        mime: 'video/mp4',
+        mediaType: 'video',
+      );
+      final receivedImage = makeAttachment(
+        id: 'video-overflow-image',
+        messageId: 'video-overflow-incoming',
+        localPath: writeMediaFile('video-overflow-image.jpg'),
+      );
+      final receivedGif = makeAttachment(
+        id: 'video-overflow-gif',
+        messageId: 'video-overflow-incoming',
+        localPath: writeMediaFile('video-overflow.gif'),
+        mime: 'image/gif',
+      );
+      final outgoingVideo = makeAttachment(
+        id: 'video-overflow-outgoing',
+        messageId: 'video-overflow-outgoing-message',
+        localPath: writeMediaFile('video-overflow-outgoing.mp4'),
+        mime: 'video/mp4',
+        mediaType: 'video',
+      );
+      final incoming = makeMessage(
+        id: 'video-overflow-incoming',
+        media: [receivedVideo, receivedImage, receivedGif],
+      );
+      final outgoing = makeMessage(
+        id: 'video-overflow-outgoing-message',
+        isIncoming: false,
+        media: [outgoingVideo],
+      );
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [incoming, outgoing],
+          onMediaEgress: (identity, destination) async =>
+              performedOutcome(destination, identity.attachmentId),
+          onLoadMediaInfo: (_) async =>
+              makeInfo(mime: 'video/mp4', mediaType: 'video'),
+          onQuoteReply: (_) {},
+          onForwardMedia: (_, {currentAttachmentId}) async => true,
+          onDeleteMediaMessage: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(cell(incoming.id, receivedVideo.id));
+      await pumpFrames(tester);
+
+      var viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items.map((item) => item.kind), [
+        MediaViewerKind.video,
+        MediaViewerKind.image,
+        MediaViewerKind.gif,
+      ]);
+      expect(viewer.items.map((item) => item.actionPresentation.name), [
+        'compactVideoOverflow',
+        'compactImageOverlay',
+        'standardToolbar',
+      ]);
+      expect(viewer.items.first.capabilities.allowed, {
+        MediaViewerAction.save,
+        MediaViewerAction.share,
+        MediaViewerAction.info,
+        MediaViewerAction.reply,
+        MediaViewerAction.forward,
+        MediaViewerAction.delete,
+      });
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      for (final action in const [
+        'save',
+        'share',
+        'info',
+        'reply',
+        'forward',
+        'delete',
+        'picture_in_picture',
+      ]) {
+        expect(find.byKey(ValueKey('media_action_$action')), findsNothing);
+      }
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
+      for (final action in const [
+        'save',
+        'share',
+        'info',
+        'reply',
+        'forward',
+        'delete',
+      ]) {
+        expect(
+          find.byKey(ValueKey('media_action_$action')),
+          findsOneWidget,
+          reason: '$action was omitted from the received-video popup',
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsNothing,
+      );
+      await dismissModal(tester);
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await pumpFrames(tester);
+      await tester.tap(cell(outgoing.id, outgoingVideo.id));
+      await pumpFrames(tester);
+      viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items.single.actionPresentation.name, 'standardToolbar');
+      expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'same message bubble and viewer parity follows selected attachment',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2160);
@@ -481,13 +817,20 @@ void main() {
         expect(item.messageId, 'msg-parity');
         expect(item.owner, MediaOwnerLane.direct);
       }
-      for (final key in viewerActionKeys) {
-        expect(find.byKey(key), findsOneWidget, reason: 'viewer missing $key');
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_delete')), findsOneWidget);
+      for (final key in viewerActionKeys.take(4)) {
+        expect(find.byKey(key), findsNothing, reason: '$key escaped popup');
       }
       expect(find.byKey(const ValueKey('media_action_forward')), findsNothing);
       expect(find.byKey(const ValueKey('media_action_bookmark')), findsNothing);
 
       // Page A action carries attachment A...
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
+      for (final key in viewerActionKeys.take(4)) {
+        expect(find.byKey(key), findsOneWidget, reason: 'popup missing $key');
+      }
       await tester.tap(find.byKey(const ValueKey('media_action_share')));
       await pumpFrames(tester);
       expect(egressCalls, hasLength(2));
@@ -500,11 +843,408 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('2 / 2'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('media_action_share')));
       await pumpFrames(tester);
       expect(egressCalls, hasLength(3));
       expect(egressCalls.last.identity.messageId, 'msg-parity');
       expect(egressCalls.last.identity.attachmentId, 'att-b');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'ordinary 1:1 videos hide automatic metadata for sender and receiver while GIF remains visible',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+
+      final gif = makeAttachment(
+        id: 'att-visible-gif-312',
+        messageId: 'msg-visible-gif-312',
+        localPath: writeMediaFile('visible-312.gif'),
+        mime: 'image/gif',
+        size: 4096,
+        width: 321,
+        height: 241,
+      );
+      final incomingVideo = makeAttachment(
+        id: 'att-hidden-incoming-video-312',
+        messageId: 'msg-hidden-incoming-video-312',
+        localPath: writeMediaFile('hidden-incoming-312.mp4'),
+        mime: 'video/x-incoming-312',
+        mediaType: 'video',
+        size: 8192,
+        durationMs: 83000,
+      );
+      final outgoingVideo = makeAttachment(
+        id: 'att-hidden-outgoing-video-312',
+        messageId: 'msg-hidden-outgoing-video-312',
+        localPath: writeMediaFile('hidden-outgoing-312.mp4'),
+        mime: 'video/x-outgoing-312',
+        mediaType: 'video',
+        size: 16384,
+        durationMs: 65000,
+      );
+      final incoming = makeMessage(
+        id: 'msg-hidden-incoming-video-312',
+        text: 'INCOMING_VIDEO_CAPTION_312',
+        timestamp: '2026-05-11T10:11:00.000Z',
+        media: [incomingVideo],
+      );
+      final outgoing = makeMessage(
+        id: 'msg-hidden-outgoing-video-312',
+        isIncoming: false,
+        text: '',
+        timestamp: '2026-05-12T12:13:00.000Z',
+        media: [outgoingVideo],
+      );
+      final gifMessage = makeMessage(
+        id: 'msg-visible-gif-312',
+        text: 'GIF_CAPTION_STAYS_312',
+        timestamp: '2026-05-13T14:15:00.000Z',
+        media: [gif],
+      );
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [incoming, outgoing, gifMessage],
+          onMediaEgress: (identity, destination) async =>
+              performedOutcome(destination, identity.attachmentId),
+          onLoadMediaInfo: (_) async => makeInfo(
+            mime: incomingVideo.mime,
+            mediaType: 'video',
+            sizeBytes: incomingVideo.size,
+            durationMs: incomingVideo.durationMs,
+          ),
+          onQuoteReply: (_) {},
+          onForwardMedia: (_, {currentAttachmentId}) async => true,
+          onDeleteMediaMessage: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      const detailKeys = <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_dimensions',
+        'media_meta_duration',
+      ];
+      String renderedTimestamp(ConversationMessage message) {
+        final value = message.parsedTimestamp!.toLocal();
+        String two(int part) => part.toString().padLeft(2, '0');
+        return '${value.year}-${two(value.month)}-${two(value.day)} '
+            '${two(value.hour)}:${two(value.minute)}';
+      }
+
+      void expectHiddenDetails(List<String> values) {
+        for (final key in detailKeys) {
+          expect(find.byKey(ValueKey(key)), findsNothing);
+        }
+        for (final value in values) {
+          expect(find.text(value), findsNothing);
+          expect(
+            find.semantics.byLabel(RegExp(RegExp.escape(value))),
+            findsNothing,
+          );
+        }
+      }
+
+      Future<MediaViewerItem> open(
+        ConversationMessage message,
+        MediaAttachment attachment,
+      ) async {
+        await tester.tap(cell(message.id, attachment.id));
+        await pumpFrames(tester);
+        final viewer = tester.widget<FullScreenTypedMediaViewer>(
+          find.byType(FullScreenTypedMediaViewer),
+        );
+        expect(viewer.items, hasLength(1));
+        return viewer.items.single;
+      }
+
+      var item = await open(incoming, incomingVideo);
+      expect(item.kind, MediaViewerKind.video);
+      expect(item.showMetadataDetails, isFalse);
+      expect(item.mime, incomingVideo.mime);
+      expect(item.sizeBytes, incomingVideo.size);
+      expect(item.durationMs, incomingVideo.durationMs);
+      expect(item.senderLabel, 'Alice');
+      expect(item.timestamp, incoming.parsedTimestamp);
+      expect(item.caption, incoming.text);
+      expectHiddenDetails([
+        'Alice',
+        renderedTimestamp(incoming),
+        incomingVideo.mime,
+        '8 KB',
+        '1:23',
+      ]);
+      expect(find.text(incoming.text), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
+      expect(find.byKey(const ValueKey('media_action_info')), findsOneWidget);
+      await dismissModal(tester);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await pumpFrames(tester);
+
+      item = await open(outgoing, outgoingVideo);
+      expect(item.kind, MediaViewerKind.video);
+      expect(item.showMetadataDetails, isFalse);
+      expect(item.mime, outgoingVideo.mime);
+      expect(item.sizeBytes, outgoingVideo.size);
+      expect(item.durationMs, outgoingVideo.durationMs);
+      expect(item.senderLabel, isNull);
+      expect(item.timestamp, outgoing.parsedTimestamp);
+      expect(item.caption, isNull);
+      expectHiddenDetails([
+        renderedTimestamp(outgoing),
+        outgoingVideo.mime,
+        '16 KB',
+        '1:05',
+      ]);
+      expect(
+        find.byKey(const ValueKey('media_viewer_metadata_content')),
+        findsNothing,
+      );
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await pumpFrames(tester);
+
+      item = await open(gifMessage, gif);
+      expect(item.kind, MediaViewerKind.gif);
+      expect(item.showMetadataDetails, isTrue);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('media_meta_mime'))).data,
+        'image/gif',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('media_meta_size'))).data,
+        '4 KB',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('media_meta_dimensions')))
+            .data,
+        '321 × 241',
+      );
+      expect(find.text(gifMessage.text), findsOneWidget);
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'ordinary keep-in-chat image viewer hides automatic metadata for incoming and outgoing messages',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+
+      const sender = 'INCOMING_SENDER_306';
+      final incomingAttachment = makeAttachment(
+        id: 'att-hidden-incoming',
+        messageId: 'msg-hidden-incoming',
+        localPath: writeMediaFile('hidden-incoming.jpg'),
+        mime: 'image/x-incoming-306',
+        size: 111,
+        width: 311,
+        height: 211,
+      );
+      final outgoingAttachment = makeAttachment(
+        id: 'att-hidden-outgoing',
+        messageId: 'msg-hidden-outgoing',
+        localPath: writeMediaFile('hidden-outgoing.jpg'),
+        mime: 'image/x-outgoing-306',
+        size: 222,
+        width: 322,
+        height: 222,
+      );
+      final captionlessAttachment = makeAttachment(
+        id: 'att-hidden-captionless',
+        messageId: 'msg-hidden-captionless',
+        localPath: writeMediaFile('hidden-captionless.jpg'),
+        mime: 'image/x-captionless-306',
+        size: 333,
+        width: 333,
+        height: 233,
+      );
+      final incoming = makeMessage(
+        id: 'msg-hidden-incoming',
+        text: 'INCOMING_CAPTION_306',
+        timestamp: '2026-04-01T10:11:00.000Z',
+        media: [incomingAttachment],
+      );
+      final outgoing = makeMessage(
+        id: 'msg-hidden-outgoing',
+        isIncoming: false,
+        text: 'OUTGOING_CAPTION_306',
+        timestamp: '2026-04-02T12:13:00.000Z',
+        media: [outgoingAttachment],
+      );
+      final captionless = makeMessage(
+        id: 'msg-hidden-captionless',
+        text: '',
+        timestamp: '2026-04-03T14:15:00.000Z',
+        media: [captionlessAttachment],
+      );
+
+      String renderedTimestamp(ConversationMessage message) {
+        final value = message.parsedTimestamp!.toLocal();
+        String two(int part) => part.toString().padLeft(2, '0');
+        return '${value.year}-${two(value.month)}-${two(value.day)} '
+            '${two(value.hour)}:${two(value.minute)}';
+      }
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [incoming, outgoing, captionless],
+          contactUsername: sender,
+          onLoadMediaInfo: (_) async =>
+              makeInfo(mime: 'image/jpeg', mediaType: 'image'),
+        ),
+      );
+      await pumpFrames(tester);
+
+      const detailKeys = <String>[
+        'media_meta_sender',
+        'media_meta_timestamp',
+        'media_meta_mime',
+        'media_meta_size',
+        'media_meta_dimensions',
+        'media_meta_duration',
+      ];
+
+      Future<void> openAndAssert({
+        required ConversationMessage message,
+        required MediaAttachment attachment,
+        required String? expectedSender,
+        required String? expectedCaption,
+        required String renderedSize,
+        required bool expectInfo,
+      }) async {
+        await tester.tap(cell(message.id, attachment.id));
+        await pumpFrames(tester);
+
+        final viewer = tester.widget<FullScreenTypedMediaViewer>(
+          find.byType(FullScreenTypedMediaViewer),
+        );
+        expect(viewer.items, hasLength(1));
+        final item = viewer.items.single;
+        expect(item.attachmentId, attachment.id);
+        expect(item.messageId, message.id);
+        expect(item.owner, MediaOwnerLane.direct);
+        expect(item.kind, MediaViewerKind.image);
+        expect(item.mime, attachment.mime);
+        expect(item.sizeBytes, attachment.size);
+        expect(item.width, attachment.width);
+        expect(item.height, attachment.height);
+        expect(item.timestamp, message.parsedTimestamp);
+        expect(item.senderLabel, expectedSender);
+        expect(item.caption, expectedCaption);
+
+        for (final key in detailKeys) {
+          expect(
+            find.byKey(ValueKey(key)),
+            findsNothing,
+            reason: '$key leaked for ${message.id}',
+          );
+        }
+        final hiddenValues = <String>[
+          ?expectedSender,
+          renderedTimestamp(message),
+          attachment.mime,
+          renderedSize,
+          '${attachment.width} × ${attachment.height}',
+        ];
+        for (final value in hiddenValues) {
+          expect(
+            find.text(value),
+            findsNothing,
+            reason: '$value remained visible for ${message.id}',
+          );
+          expect(
+            find.semantics.byLabel(RegExp(RegExp.escape(value))),
+            findsNothing,
+            reason: '$value remained announced for ${message.id}',
+          );
+        }
+
+        if (expectedCaption == null) {
+          expect(
+            find.byKey(const ValueKey('media_meta_caption')),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('media_viewer_metadata_content')),
+            findsNothing,
+          );
+        } else {
+          expect(find.text(expectedCaption), findsOneWidget);
+          expect(
+            find.semantics.byLabel(RegExp(RegExp.escape(expectedCaption))),
+            findsOneWidget,
+          );
+        }
+        if (expectInfo) {
+          expect(
+            find.byKey(const ValueKey('media_action_more')),
+            findsOneWidget,
+          );
+          expect(find.byKey(const ValueKey('media_action_info')), findsNothing);
+          await tester.tap(find.byKey(const ValueKey('media_action_more')));
+          await pumpFrames(tester);
+          expect(
+            find.byKey(const ValueKey('media_action_info')),
+            findsOneWidget,
+          );
+          await dismissModal(tester);
+        } else {
+          expect(find.byKey(const ValueKey('media_action_more')), findsNothing);
+          expect(find.byKey(const ValueKey('media_action_info')), findsNothing);
+        }
+
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        await pumpFrames(tester);
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      }
+
+      await openAndAssert(
+        message: incoming,
+        attachment: incomingAttachment,
+        expectedSender: sender,
+        expectedCaption: incoming.text,
+        renderedSize: '111 B',
+        expectInfo: true,
+      );
+      await openAndAssert(
+        message: outgoing,
+        attachment: outgoingAttachment,
+        expectedSender: null,
+        expectedCaption: outgoing.text,
+        renderedSize: '222 B',
+        expectInfo: false,
+      );
+      await openAndAssert(
+        message: captionless,
+        attachment: captionlessAttachment,
+        expectedSender: sender,
+        expectedCaption: null,
+        renderedSize: '333 B',
+        expectInfo: true,
+      );
+      semantics.dispose();
       expect(tester.takeException(), isNull);
     },
   );
@@ -564,6 +1304,8 @@ void main() {
       );
       // Message-bounded: ONLY the tapped parent's item, no conversation list.
       expect(viewer.items.map((i) => i.attachmentId), ['att-one']);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('media_action_share')));
       await pumpFrames(tester);
       expect(egressCalls, hasLength(1));
@@ -582,6 +1324,8 @@ void main() {
         find.byType(FullScreenTypedMediaViewer),
       );
       expect(viewer.items.map((i) => i.attachmentId), ['att-two']);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('media_action_share')));
       await pumpFrames(tester);
       expect(egressCalls, hasLength(2));
@@ -659,6 +1403,8 @@ void main() {
 
       await tester.tap(cell('msg-info', 'att-img'));
       await pumpFrames(tester);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('media_action_info')));
       await pumpFrames(tester);
 
@@ -677,6 +1423,13 @@ void main() {
         find.descendant(
           of: find.byKey(DirectReceivedMediaInfoSheet.typeValueKey),
           matching: find.text('image/jpeg'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(DirectReceivedMediaInfoSheet.sizeValueKey),
+          matching: find.text('121 KB'),
         ),
         findsOneWidget,
       );
@@ -710,6 +1463,8 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('2 / 2'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('media_action_info')));
       await pumpFrames(tester);
 
@@ -719,6 +1474,13 @@ void main() {
         find.descendant(
           of: find.byKey(DirectReceivedMediaInfoSheet.typeValueKey),
           matching: find.text('video/mp4'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(DirectReceivedMediaInfoSheet.sizeValueKey),
+          matching: find.text('639 KB'),
         ),
         findsOneWidget,
       );
@@ -794,6 +1556,8 @@ void main() {
 
     // Viewer reply: closes the viewer and quotes the same owning message.
     await tester.tap(cell('msg-reply', 'att-r'));
+    await pumpFrames(tester);
+    await tester.tap(find.byKey(const ValueKey('media_action_more')));
     await pumpFrames(tester);
     await tester.tap(find.byKey(const ValueKey('media_action_reply')));
     await pumpFrames(tester);
@@ -1192,6 +1956,13 @@ void main() {
       expect(viewer.items.single.canEnterPictureInPicture, isTrue);
       expect(viewer.pictureInPictureControllerFactory, isNotNull);
       expect(viewer.loadPictureInPictureAuthorization, isNotNull);
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('media_action_more')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await pumpFrames(tester);
       expect(
         find.byKey(const ValueKey('media_action_picture_in_picture')),
         findsOneWidget,

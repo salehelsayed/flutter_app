@@ -97,13 +97,58 @@ void main() {
       expect(encoded.contains('SECRET-PATH-XYZ'), isFalse);
       expect(encoded.contains(secretCaption), isFalse);
       expect(encoded.contains(secretSender), isFalse);
-      expect(encoded.contains('ATTACHMENT-1234567890'), isFalse,
-          reason: 'full attachment id must not be logged raw');
+      expect(
+        encoded.contains('ATTACHMENT-1234567890'),
+        isFalse,
+        reason: 'full attachment id must not be logged raw',
+      );
 
       final details = actionEvents.first['details'] as Map<String, dynamic>;
       expect(details['action'], 'save');
       expect(details['outcome'], 'success');
       expect((details['attachmentId'] as String).length, lessThanOrEqualTo(8));
+
+      // The compact popup must enter the same redacted callback/diagnostic
+      // boundary; menu-local logging of the item would fail these assertions.
+      events.clear();
+      final compactItem = MediaViewerItem(
+        attachmentId: item.attachmentId,
+        messageId: item.messageId,
+        kind: item.kind,
+        mime: item.mime,
+        owner: item.owner,
+        localPath: item.localPath,
+        caption: item.caption,
+        senderLabel: item.senderLabel,
+        actionPresentation: MediaViewerActionPresentation.compactImageOverlay,
+        capabilities: item.capabilities,
+      );
+      await tester.pumpWidget(
+        wrap(
+          FullScreenTypedMediaViewer(
+            key: const ValueKey('compact-boundary-viewer'),
+            items: [compactItem],
+            onAction: (_, _) async => MediaViewerActionResult.success,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('media_action_more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('media_action_save')));
+      await tester.pump();
+      await tester.pump();
+
+      final compactEvents = events
+          .where((event) => event['event'] == 'MEDIA_VIEWER_ACTION')
+          .toList();
+      expect(compactEvents, hasLength(1));
+      final compactEncoded = jsonEncode(compactEvents);
+      expect(compactEncoded.contains('SECRET-PATH-XYZ'), isFalse);
+      expect(compactEncoded.contains(secretCaption), isFalse);
+      expect(compactEncoded.contains(secretSender), isFalse);
+      expect(compactEncoded.contains('ATTACHMENT-1234567890'), isFalse);
+      expect(compactEvents.single['details'], containsPair('action', 'save'));
     },
   );
 }

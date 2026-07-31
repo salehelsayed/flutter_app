@@ -1,0 +1,22 @@
+=== generated 2026-07-31T20:06:25Z ===
+ping: PONG
+
+== group cee8bcf6-2803... type=list len=5 ==
+<string>:27: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+  ts=2026-07-31T19:24:32.211000 from=12D3KooWLB4TNaHM1D3B meta={'kind': 'group_offline_replay', 'payloadType': 'group_message', 'version': 1, 'keyEpoch': 1} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:25:26.729000 from=12D3KooWLB4TNaHM1D3B meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': 'b289ea93-bd30-4528-b7e6-364fffeb34d9'} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:25:44.420000 from=12D3KooWLB4TNaHM1D3B meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': 'affb1cf2-e802-420f-adee-3046be423186'} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:30:08.782000 from=12D3KooWLB4TNaHM1D3B meta={'kind': 'group_offline_replay', 'payloadType': 'group_reaction', 'version': 1, 'keyEpoch': 1, 'messageId': 'group-reaction-add-558cd41b12086829bd98ba4d796ebe7b'} ext=True action=add notifRecipients=[]
+  ts=2026-07-31T19:30:32.411000 from=12D3KooWLB4TNaHM1D3B meta={'kind': 'group_offline_replay', 'payloadType': 'group_reaction', 'version': 1, 'keyEpoch': 1, 'messageId': 'group-reaction-add-720bcc7a5d84146d2a5394c83c0c89b7'} ext=True action=add notifRecipients=[]
+
+== group 9bc055cc-9a2a... type=list len=3 ==
+  ts=2026-07-31T19:39:19.315000 from=12D3KooWRofUkyAuKdsp meta={'kind': 'group_offline_replay', 'payloadType': 'group_message', 'version': 1, 'keyEpoch': 1} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:39:26.931000 from=12D3KooWSmFBWf4T4tjC meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': '841b08ec-df52-4358-8a69-b08a03c3c474'} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:39:48.099000 from=12D3KooWSmFBWf4T4tjC meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': 'db2add35-f388-4841-9731-d9293fbf7e9a'} ext=False action= notifRecipients=None
+<string>:27: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+
+== group 83d6d5e6-14e1... type=list len=3 ==
+<string>:27: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+  ts=2026-07-31T19:16:40.006000 from=12D3KooWDJ96ouLuM78r meta={'kind': 'group_offline_replay', 'payloadType': 'group_message', 'version': 1, 'keyEpoch': 1} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:16:57.554000 from=12D3KooWDJ96ouLuM78r meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': '402f8461-1fa6-417e-92a2-057d4a0214fc'} ext=False action= notifRecipients=None
+  ts=2026-07-31T19:17:13.656000 from=12D3KooWDJ96ouLuM78r meta={'type': 'group_message', 'version': '3', 'keyEpoch': 1, 'messageId': '5461b8a4-7df0-4c69-8f3b-bc1735a539c1'} ext=False action= notifRecipients=None

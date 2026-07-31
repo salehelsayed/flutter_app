@@ -287,8 +287,22 @@ PrivateMediaPolicy normalizePrivateMediaComposerPolicy({
   required bool eligibleAttachmentIdentityChanged,
 }) {
   if (!selectedPolicy.isPrivate) return const PrivateMediaPolicy.ordinary();
-  if (!eligibility.allowsNewPrivateMedia || eligibleAttachmentIdentityChanged) {
+  if (!isPrivateMediaComposerPolicyEligible(
+        selectedPolicy: selectedPolicy,
+        eligibility: eligibility,
+      ) ||
+      eligibleAttachmentIdentityChanged) {
     return const PrivateMediaPolicy.ordinary();
   }
   return selectedPolicy;
+}
+
+bool isPrivateMediaComposerPolicyEligible({
+  required PrivateMediaPolicy selectedPolicy,
+  required PrivateMediaEligibility eligibility,
+}) {
+  if (!selectedPolicy.isPrivate) return true;
+  if (!eligibility.allowsNewPrivateMedia) return false;
+  return selectedPolicy.mode != PrivateMediaMode.viewOnce ||
+      eligibility.attachmentKind == PrivateMediaAttachmentKind.image;
 }

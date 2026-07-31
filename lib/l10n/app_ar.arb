@@ -1038,6 +1038,8 @@
   "conversation_empty_first_letter": "اكتب الرسالة الأولى\nلبدء محادثتكما",
   "media_video_load_failed": "تعذر تحميل الفيديو",
   "media_viewer_action_save": "حفظ",
+  "media_viewer_action_save_image": "حفظ الصورة",
+  "media_viewer_more_actions": "المزيد من الإجراءات",
   "media_viewer_action_share": "مشاركة",
   "media_viewer_action_forward": "إعادة توجيه",
   "media_viewer_action_delete": "حذف",

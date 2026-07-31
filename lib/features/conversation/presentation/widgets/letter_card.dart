@@ -121,6 +121,11 @@ class LetterCard extends StatelessWidget {
   /// ✓✓ stays retired in both paths.
   final bool transportStatusGlyph;
 
+  /// Shrink-wraps a private-content bubble whose empty-text footer would
+  /// otherwise expand to the normal bubble cap. Kept default-off so ordinary
+  /// and other private bubbles preserve their existing layout.
+  final bool hugPrivateContentBubble;
+
   /// Privacy-safe presentation mounted inside the decorated message body.
   /// When present, ordinary media/audio renderers are suppressed so private
   /// bytes can never be projected into the conversation scroll.
@@ -176,6 +181,7 @@ class LetterCard extends StatelessWidget {
     this.showSenderName = true,
     this.avatarOutsideBubble = false,
     this.transportStatusGlyph = false,
+    this.hugPrivateContentBubble = false,
     this.privateContentSlot,
     this.decoratedBodyKey,
     this.messageUploadProgress,
@@ -820,9 +826,12 @@ class LetterCard extends StatelessWidget {
           // flush-left so it shares the recipient's left edge. The `Align`
           // already left-aligns the bubble; in avatar-outside mode the gutter
           // (below) keeps that shared edge while moving the avatar outside.
+          final sized = hugPrivateContentBubble
+              ? IntrinsicWidth(child: attributed)
+              : attributed;
           final capped = ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxWidth),
-            child: attributed,
+            child: sized,
           );
           if (!avatarOutsideBubble) return capped;
           // The sender name (first balloon of the run) is a label ABOVE the

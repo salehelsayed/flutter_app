@@ -361,6 +361,12 @@ class _ComposeAreaState extends State<ComposeArea>
             final picked = await showPrivateMediaPolicyPickerSheet(
               context: context,
               initialSelection: selection,
+              kind: switch (widget.privateMediaEligibility.attachmentKind) {
+                PrivateMediaAttachmentKind.video =>
+                  PrivateMediaPickerKind.video,
+                PrivateMediaAttachmentKind.gif => PrivateMediaPickerKind.gif,
+                _ => PrivateMediaPickerKind.photo,
+              },
               title: title,
               recipientName: widget.privateMediaRecipientName,
               targetPlatform:

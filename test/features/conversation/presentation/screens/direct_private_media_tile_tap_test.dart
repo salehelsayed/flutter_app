@@ -264,7 +264,7 @@ void main() {
   );
 
   testWidgets(
-    'view-once tile is one warned semantic button and opening is disabled in tile',
+    'view-once image tile is one minimal semantic button and opening disables it',
     (tester) => _withSemantics(tester, () async {
       var opens = 0;
       const label = 'View-once photo';
@@ -276,14 +276,14 @@ void main() {
         onOpen: () => opens++,
       );
 
-      expect(_modeLabel, findsOneWidget);
-      expect(find.text(label), findsOneWidget);
-      expect(find.text('You can only view this once.'), findsOneWidget);
+      expect(_modeLabel, findsNothing);
+      expect(find.text(label), findsNothing);
+      expect(find.text('You can only view this once.'), findsNothing);
       expect(_openButton, findsNothing);
       expect(
         _semanticsNodesWhere(tester, (data) => data.label == label),
         hasLength(1),
-        reason: 'the visible View-once title must not be announced twice',
+        reason: 'the looks-one tile is the sole open announcement',
       );
       _expectEnabledTileSemantics(tester, label: label);
 
@@ -302,8 +302,8 @@ void main() {
         opening: true,
       );
 
-      expect(_modeLabel, findsOneWidget);
-      expect(find.text(label), findsOneWidget);
+      expect(_modeLabel, findsNothing);
+      expect(find.text(label), findsNothing);
       expect(_openButton, findsNothing);
       expect(
         find.descendant(
@@ -326,7 +326,7 @@ void main() {
       expect(
         _semanticsNodesWhere(tester, (candidate) => candidate.label == label),
         hasLength(1),
-        reason: 'the opening tile must retain one title announcement',
+        reason: 'the opening tile must retain one semantic announcement',
       );
       expect(
         _semanticsNodesWhere(
@@ -593,14 +593,22 @@ void main() {
   );
 
   testWidgets(
-    'view-once tap tile covers image and video while legacy GIF keeps the old branch',
+    'view-once image is minimal while legacy video and GIF keep copy',
     (tester) => _withSemantics(tester, () async {
       var opens = 0;
       var expectedOpens = 0;
 
       for (final testCase in const [
-        (kind: PrivateMediaAttachmentKind.image, label: 'View-once photo'),
-        (kind: PrivateMediaAttachmentKind.video, label: 'View-once video'),
+        (
+          kind: PrivateMediaAttachmentKind.image,
+          label: 'View-once photo',
+          minimal: true,
+        ),
+        (
+          kind: PrivateMediaAttachmentKind.video,
+          label: 'View-once video',
+          minimal: false,
+        ),
       ]) {
         await _pumpPlaceholder(
           tester,
@@ -614,9 +622,15 @@ void main() {
           150,
           reason: 'View once/${testCase.kind}',
         );
-        expect(_modeLabel, findsOneWidget);
-        expect(find.text(testCase.label), findsOneWidget);
-        expect(find.text('You can only view this once.'), findsOneWidget);
+        expect(_modeLabel, testCase.minimal ? findsNothing : findsOneWidget);
+        expect(
+          find.text(testCase.label),
+          testCase.minimal ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.text('You can only view this once.'),
+          testCase.minimal ? findsNothing : findsOneWidget,
+        );
         expect(_openButton, findsNothing);
         _expectEnabledTileSemantics(tester, label: testCase.label);
 

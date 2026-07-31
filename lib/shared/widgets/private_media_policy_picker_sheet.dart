@@ -176,13 +176,18 @@ class PrivateMediaSummaryChip extends StatelessWidget {
 Future<PrivateMediaPickerSelection?> showPrivateMediaPolicyPickerSheet({
   required BuildContext context,
   required PrivateMediaPickerSelection initialSelection,
+  required PrivateMediaPickerKind kind,
   required String title,
   required String recipientName,
   required TargetPlatform targetPlatform,
   required String optionKeyPrefix,
   bool senderReopenEnabled = false,
 }) {
-  var provisional = initialSelection;
+  var provisional =
+      initialSelection.mode == PrivateMediaPickerMode.viewOnce &&
+          kind != PrivateMediaPickerKind.photo
+      ? const PrivateMediaPickerSelection(mode: PrivateMediaPickerMode.ordinary)
+      : initialSelection;
   return showModalBottomSheet<PrivateMediaPickerSelection>(
     context: context,
     isScrollControlled: true,
@@ -256,7 +261,11 @@ Future<PrivateMediaPickerSelection?> showPrivateMediaPolicyPickerSheet({
                           ),
                         ),
                         const SizedBox(height: 14),
-                        for (final mode in PrivateMediaPickerMode.values) ...[
+                        for (final mode in PrivateMediaPickerMode.values.where(
+                          (candidate) =>
+                              candidate != PrivateMediaPickerMode.viewOnce ||
+                              kind == PrivateMediaPickerKind.photo,
+                        )) ...[
                           _ModeOption(
                             key: ValueKey(
                               '$optionKeyPrefix-${_modeKeySuffix(mode)}',

@@ -6032,14 +6032,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final integrityVerified =
         GroupMediaIntegrityPolicy.hasRequiredVerificationMetadata(attachment);
     final caption = message?.text.trim();
+    final kind = attachment.mediaType == 'video'
+        ? MediaViewerKind.video
+        : attachment.isAnimated
+        ? MediaViewerKind.gif
+        : MediaViewerKind.image;
+    final showMetadataDetails =
+        kind == MediaViewerKind.gif ||
+        (kind == MediaViewerKind.image && _group.type != GroupType.chat);
+    final usesCompactDiscussionActions =
+        _group.type == GroupType.chat &&
+        message != null &&
+        message.isIncoming &&
+        message.privateMediaPolicy.isOrdinary;
     return MediaViewerItem(
       attachmentId: attachment.id,
       messageId: attachment.messageId,
-      kind: attachment.mediaType == 'video'
-          ? MediaViewerKind.video
-          : (attachment.isAnimated
-                ? MediaViewerKind.gif
-                : MediaViewerKind.image),
+      kind: kind,
       mime: attachment.mime,
       owner: MediaOwnerLane.group,
       localPath: resolvedPath,
@@ -6050,6 +6059,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       caption: caption == null || caption.isEmpty ? null : caption,
       senderLabel: _senderLabelFor(message),
       timestamp: message?.timestamp,
+      showMetadataDetails: showMetadataDetails,
+      // Match the incoming 1:1 Keep-in-chat controls without widening into
+      // announcements (which can carry Message sender), outgoing rows, or GIFs.
+      actionPresentation: usesCompactDiscussionActions
+          ? kind == MediaViewerKind.image
+                ? MediaViewerActionPresentation.compactImageOverlay
+                : kind == MediaViewerKind.video
+                ? MediaViewerActionPresentation.compactVideoOverflow
+                : MediaViewerActionPresentation.standardToolbar
+          : MediaViewerActionPresentation.standardToolbar,
       canEnterPictureInPicture:
           message?.isIncoming == true &&
           !message!.privateMediaPolicy.requiresRedaction &&

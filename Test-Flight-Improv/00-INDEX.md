@@ -474,7 +474,95 @@ authority. Neither composite may be restated as a fresh unbroken pass.
 
 | Plan | Status | Owns / boundary |
 |---|---|---|
-| [303-1to1-view-once-minimal-presentation-tdd-plan.md](303-1to1-view-once-minimal-presentation-tdd-plan.md) | **Execution-ready (2026-07-30)** — `/tdd-plan` first-hand grounding + verify→refute workflow `wf_cbc42ea5-fda` (7 workers, 51 findings; refuter confirmed all four surfaces outstanding at HEAD and killed two premises: private-message INFO has no post-303 fallback surface (overlay Info needs a media-targeted press private bubbles can never produce), and the viewer keeps a non-overlay exit via FullScreenTypedMediaViewer's unconditional back-arrow). 16-row contract, zero new test files, no migration, no registration changes; host-tier closure with the plan-234/260 device journey replay deferred to the next device campaign | MODIFICATION (user UX request, 2 screenshots): 1:1 view-once presentation strips to essentials — sender bubble becomes the tappable 150px cover tile ("1" icon, no title/body/"Open private media" button; same reopen flow), receiver tap tile drops its title + one-view warning, the direct viewer loses its entire bottom overlay (generic copy, capture-limit notice, reply/info/delete buttons — `onSafeAction` plumbing fully removed; protected/disappearing 1:1 viewers simplify too, mode-scoped fallback documented), and the terminal card becomes eye-off icon + media-kind word (new en/ar/de `private_media_terminal_kind_*` keys; generic "Private media" when attachment rows are already cleaned up). Reply/delete stay reachable via swipe-to-quote + long-press overlay (source-verified); prunes `private_media_sender_consumed`, `private_media_view_once_body_received`, orphan `media_view_once_not_viewed`; journey harness terminal step re-proves delete via the context overlay (3-file rewrite, host criteria contract test). Group, protected thumbnails/reopen, disappearing titles, legacy viewOnce GIF card, unsupported placeholder icons, engine/controller/SQL all byte-identical. |
+| [303-1to1-view-once-minimal-presentation-tdd-plan.md](303-1to1-view-once-minimal-presentation-tdd-plan.md) | **Completed / host+single-Android green (2026-07-30)** — focused 247-test closure, 1to1 gate, affected shared-viewer sentinels, analyzer/hygiene, native protection, and recipient SQLCipher journey passed | MODIFICATION: new 1:1 view-once composition is image-only; sender/receiver image bubbles are minimal tap tiles; image view-once viewer bottom chrome is hidden; actual AppBar Back settles and cleans before route removal/native release. Terminal receipts remained intentionally unchanged during Plan 303 and are owned by Plan 304. |
+
+---
+
+## 3U. 1:1 consumed view-once Photo receipt (2026-07-30)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [304-1to1-view-once-consumed-photo-receipt-tdd-plan.md](304-1to1-view-once-consumed-photo-receipt-tdd-plan.md) | **Completed / host-green (2026-07-30)** — causal RED/GREEN and mutation re-red passed; viewer/card suites, Plan-303 composer/Back sentinels, 2,517-test `1to1` plus relay Go gate, analyzer, diff hygiene, and Graphify refresh passed | MODIFICATION: only direct `viewOnce + consumed` terminal bubbles become a compact eye-off + localized `Photo` receipt with no inline Reply/Info/Delete or lifecycle copy. Outer swipe/long-press Reply/Delete remain; expired/unsupported/protected terminals, lifecycle/cleanup/protection, group surfaces, and schema/wire state remain unchanged. Legacy consumed view-once videos share the fixed `Photo` receipt because secure cleanup deliberately removes exact kind. |
+
+---
+
+## 3V. 1:1 consumed view-once receipt content hug (2026-07-30)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [305-1to1-view-once-consumed-receipt-content-hug-tdd-plan.md](305-1to1-view-once-consumed-receipt-content-hug-tdd-plan.md) | **Execution-ready** — 4-row host-widget contract; no migration, device/relay proof, localization generation, or registration edit | MODIFICATION: only direct `viewOnce + consumed` eye-off/Photo receipt bubbles hug their summary plus unchanged timestamp/status footer instead of filling the 78% cap. Uses a default-off `LetterCard` intrinsic-size opt-in; expired/unsupported/protected and ordinary empty/media/text bubbles keep their existing size and behavior. |
+
+---
+
+## 3W. 1:1 Keep-in-chat image viewer metadata removal (2026-07-30)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [306-1to1-keep-in-chat-image-viewer-metadata-removal-tdd-plan.md](306-1to1-keep-in-chat-image-viewer-metadata-removal-tdd-plan.md) | **Implemented / host-green (2026-07-30)** — causal RED/GREEN plus mutation re-red passed; all three touched suites, exact preservation sentinels, clean 2,520-test `1to1` retry plus relay Go checks, analyzer, diff hygiene, and Graphify refresh passed | MODIFICATION: direct 1:1 ordinary (`Keep in chat`) static images suppress automatic sender/date/MIME/size/dimensions in the full-screen viewer for both incoming and outgoing directions, from either the conversation or direct Shared Media. Captions, actions, explicit received-media Info, videos/GIFs, group/announcement, and private/default routes retain their current behavior through an additive item-level default-visible policy. |
+
+---
+
+## 3X. 1:1 Keep-in-chat received-image viewer action layout (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [307-1to1-keep-in-chat-image-viewer-action-layout-tdd-plan.md](307-1to1-keep-in-chat-image-viewer-action-layout-tdd-plan.md) | **Implemented / host-green (2026-07-31)** — causal RED/GREEN, preservation suites, three mutation re-reds, the 2,523-test `1to1` lane plus relay Go checks, analyzer, diff hygiene, and Graphify refresh passed | MODIFICATION: only incoming ordinary static images opened from a 1:1 conversation select an additive compact action presentation: circular top-end ellipsis lists Save image/Share/Info/Reply, Forward moves bottom-end, and Delete moves bottom-start. Existing per-item authority, current-item dispatch, Save/Share/Info/Reply/Forward effects, and whole-message Delete-for-Me stay unchanged. Outgoing, GIF/video, direct Shared Media, group/announcement, private/default routes, schema/wire/native/transport stay unchanged. |
+
+---
+
+## 3Y. 1:1 Keep-in-chat image viewer overflow action icons (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [308-1to1-keep-in-chat-image-viewer-overflow-action-icons-tdd-plan.md](308-1to1-keep-in-chat-image-viewer-overflow-action-icons-tdd-plan.md) | **Implemented / host-green (2026-07-31)** — `$tdd-review` verdict `ready`; causal RED/GREEN, trailing-icon mutation re-red, shared/direct preservation, 2,523-test `1to1` lane plus relay Go checks, analyzer, diff hygiene, and Graphify refresh passed | MODIFICATION: add the canonical Download, iOS Share, outlined Info, and Reply icons beside Plan 307's unchanged localized compact-overflow labels. Preserve order, directional layout, capabilities, keys, dispatch, action effects, bottom controls, and every non-compact viewer. |
+
+---
+
+## 3Z. Message context long-press haptics (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [309-message-context-long-press-haptics-tdd-plan.md](309-message-context-long-press-haptics-tdd-plan.md) | **Implemented / host-green (2026-07-31)** — `$tdd-review` tightened isolated per-variant discrimination and exact sentinel paths; causal RED/GREEN plus mutation re-red passed; full 16/80/73 affected suites, 2,524-test `1to1`, 3,266-test `groups`, Go tails, analyzer, diff hygiene, and Graphify refresh are green | FEATURE IMPROVEMENT: one small `lightImpact` when the shared message context overlay opens from text, visual-media, or voice long presses in 1:1 and group conversations. Existing copy `selectionClick`, menus, actions, authorization, and message behavior remain unchanged. |
+
+---
+
+## 3Z. Group notification reliability (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [309-group-notification-reliability-tdd-plan.md](309-group-notification-reliability-tdd-plan.md) | **Execution-ready (v2, `$tdd-review` applied 2026-07-31)** — 13-agent verify→refute pass (**5 of 9 candidate findings refuted**, recorded as do-not-re-introduce), then a 4-worker adversarial review that returned `plan-fixes-required` on v1 and found **2 blockers**: C1's surface census was incomplete (six unguarded surfaces, not four — both live in-app paths were missed) and C3's fix was a **no-op** (`saveKey` already publishes the epoch before any appended write). Both fixed in v2 along with 9 plan-fixes. 17-row contract across Dart host, Swift XCTest, and Go host; one manual `GROUP_TESTS` registration; no migration; five user-owned decisions (D1/D1b/D2/D3/D4) open by design | BUG: three source-confirmed notification defects — (C1) the `archived` guard exists on only 2 of 8 notification-decision surfaces, so archived groups still alert for reactions on both platforms and for messages *and* reactions in-app; (C2) group reaction pushes collapse per-group, so concurrent offline reactions overwrite each other (FCM caps a token at 4 distinct collapse keys — review recommends omitting the key rather than making it per-event); (C3) a freshly joined group sits in the iOS NSE projection without a keyEpoch for the whole roster loop, blanking every group push in that window. Preserves push-message archived suppression, mute on both live paths, `apns-collapse-id` semantics, the iOS epoch/role gates, the NSE blanking privacy boundary, and the relay ACL. Defers: drain-notifies-for-reactions (D4) and the later-joined-admin custody drop (F7 — *message loss*, needs its own plan). |
+
+---
+
+## 3AA. 1:1 Keep-in-chat received-video overflow actions (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [310-1to1-keep-in-chat-video-viewer-overflow-actions-tdd-plan.md](310-1to1-keep-in-chat-video-viewer-overflow-actions-tdd-plan.md) | **Implemented / host-green (2026-07-31)** — `$tdd-review` initial `plan-fixes-required` was applied and re-audited `ready`; causal RED/GREEN plus three mutation re-reds passed; complete 20/20 shared-viewer and 19/19 direct-actions suites, exact preservation sentinels, the 2,525-test `1to1` lane and Go tails, analyzer, format/diff hygiene, and incremental Graphify refresh are green | MODIFICATION: received ordinary 1:1 videos use one three-dot popup containing every authorized media action (Save/Share/Info/Reply/Forward/Delete) plus conditional PiP, with icons and no duplicate top/bottom controls. Received photos retain their existing popup plus bottom Forward/Delete; outgoing, GIF, Shared Media, group/announcement, private/default, effects, PiP policy, native, schema, wire, and transport remain unchanged. |
+
+---
+
+## 3AB. Direct and group video metadata overlay removal (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [312-direct-group-video-viewer-metadata-removal-tdd-plan.md](312-direct-group-video-viewer-metadata-removal-tdd-plan.md) | **Implemented / host-green (2026-07-31)** — four independent caller RED/GREEN cycles plus restored mutation re-reds; focused suites and Info/action/private/PiP sentinels green; curated `1to1` `+2525` and clean `groups` retry `+3318` with Go tails; analyzer, format, diff, impact query, and incremental Graphify refresh green. No migration, device, native, localization, transport, or gate registration change | MODIFICATION: automatic sender/time/type/size/duration details disappear from ordinary direct/group video pages while captions, typed metadata, eligible existing Info, images/GIFs, actions, playback/resume/PiP, private media, and default/legacy callers retain their current contracts. |
+
+---
+
+## 3AC. Group Keep-in-chat media viewer action layout parity (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [313-group-keep-in-chat-media-viewer-action-layout-tdd-plan.md](313-group-keep-in-chat-media-viewer-action-layout-tdd-plan.md) | **Implemented; host-green (2026-07-31)** — reviewed plan executed tests-first: both causal tests RED/GREEN/mutation-proven, the complete group conversation and group-library/shared/direct preservation suites passed, the curated group gate passed 3,320 Flutter cases plus all Go/relay tails, and analyzer/format/diff/Graphify closure is clean. Full `host-all` remains deferred to the presentation batch/release cadence. | MODIFICATION: incoming ordinary discussion-group static images select the existing 1:1 compact image popup plus bottom Forward/Delete layout, and incoming ordinary discussion-group videos select the existing all-action video overflow. Announcements, outgoing media, GIFs, private/Shared Media viewers, capabilities, dispatch, metadata, PiP, direct chat, native, persistence, and transport remain unchanged. |
+
+---
+
+## 3AD. Group image metadata overlay removal (2026-07-31)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [314-group-image-viewer-metadata-removal-tdd-plan.md](314-group-image-viewer-metadata-removal-tdd-plan.md) | **Implemented; host-green (2026-07-31)** — `$tdd-plan` plus reviewed correction executed tests-first: both caller tests RED/GREEN and old-behavior mutation-proven, the announcement boundary mutation re-failed, complete affected suites and direct/default/private sentinels passed, the curated groups gate passed 3,272 Flutter cases plus all Go/relay tails, and analyzer/format/diff/Graphify closure is green. Full `host-all` remains deferred to the presentation batch/release cadence. | MODIFICATION: remove automatic sender/time/type/size/dimensions from ordinary static images opened in discussion-group conversation and Shared Media routes while retaining captions, typed data, eligible incoming Info, compact actions, GIF/video policy, and announcement/default/private behavior. |
 
 ---
 
@@ -482,6 +570,7 @@ authority. Neither composite may be restated as a fresh unbroken pass.
 
 | Report | Focus |
 |--------|-------|
+| [311-remove-qa-group-type-tdd-plan.md](311-remove-qa-group-type-tdd-plan.md) | **Execution-ready (2026-07-31)** — `$tdd-plan`; retires the unreachable `GroupType.qa` ("Q&A") third group type: no shipped build can create one (`orbit_screen.dart:946,951` offers only chat/announce) and its sole ingress is a wire string no build emits. Removes 8 `lib/` symbol sites, 21 references across 16 test files, the localized badge in en/ar/de plus the generated API, and `'qa'` from the Android push handler's accepted set — permanently closing the latent Android/iOS notification divergence plan 309 deliberately left out of scope. **The crux is the read path:** `GroupType.fromValue` throws on unknown values and has three unguarded persisted/wire call sites, so deletion without a fallback would turn a dead type into a crash-on-read; the plan adds `tryFromValue` with explicit per-call-site fallbacks rather than a blanket default (which would silently reclassify announcement groups). 13-row contract, host-only, **no migration** (both CHECK constraints stay permissive and are test-locked), one manual `GROUP_TESTS` registration, compile-RED via enum exhaustiveness in four named files |
 | [06-dead-code-lib.md](06-dead-code-lib.md) | Conservative dead-code review — only a small subset looks safely removable now |
 | [07-dead-code-deps-config.md](07-dead-code-deps-config.md) | Dependency/config cleanup — confirmed unused package plus low-value optional script cleanup |
 | [dead-code-and-technical-debt-removal-roadmap.md](dead-code-and-technical-debt-removal-roadmap.md) | Canonical DTR sequencing and acceptance ledger. Waves 4A, 4B, and 4C are accepted. DTR-16 and DTR-17 are Plan-green/Wave-accepted; DTR-18 is terminally complete and Wave-accepted under `DTR18-AUTH-01` plus closed `DTR18-AUTH-02`. The terminal architecture result is 165 dependency / 0 placement / 0 issues, an overall DTR-18 delta of dependency -17 and placement -24. Wave 4C `performance-host` then full `host-all` are green. Final release `host-all` and `performance-host` remain pending. [Stable Wave 4A evidence](evidence/dtr-wave4a/README.md). [Stable Wave 4B evidence](evidence/dtr-wave4b/README.md). [Stable Wave 4C evidence](evidence/dtr-wave4c/README.md). |

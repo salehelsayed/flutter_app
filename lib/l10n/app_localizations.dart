@@ -3632,6 +3632,18 @@ abstract class AppLocalizations {
   /// **'Save'**
   String get media_viewer_action_save;
 
+  /// No description provided for @media_viewer_action_save_image.
+  ///
+  /// In en, this message translates to:
+  /// **'Save image'**
+  String get media_viewer_action_save_image;
+
+  /// No description provided for @media_viewer_more_actions.
+  ///
+  /// In en, this message translates to:
+  /// **'More actions'**
+  String get media_viewer_more_actions;
+
   /// No description provided for @media_viewer_action_share.
   ///
   /// In en, this message translates to:

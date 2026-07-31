@@ -1,0 +1,96 @@
+=== generated 2026-07-31T20:12:21Z ===
+ping: PONG
+
+== group cee8bcf6-2803-4b0c-b8d9-720434944616 ==
+{
+ "ts": "2026-07-31T19:24:32.211000+00:00",
+ "outer_from": "12D3KooWLB4TNaHM1D3B",
+ "outer_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "kind": "group_offline_replay",
+ "type": null,
+ "payloadType": "group_message",
+ "messageId": null,
+ "senderPeerId": "12D3KooWLB4TNaHM1D3B",
+ "senderTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+ "env_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ]
+}
+{
+ "ts": "2026-07-31T19:25:26.729000+00:00",
+ "outer_from": "12D3KooWLB4TNaHM1D3B",
+ "outer_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "kind": null,
+ "type": "group_message",
+ "payloadType": null,
+ "messageId": "b289ea93-bd30-4528-b7e6-364fffeb34d9",
+ "senderPeerId": null,
+ "senderTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+ "env_recipients": null
+}
+{
+ "ts": "2026-07-31T19:25:44.420000+00:00",
+ "outer_from": "12D3KooWLB4TNaHM1D3B",
+ "outer_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "kind": null,
+ "type": "group_message",
+ "payloadType": null,
+ "messageId": "affb1cf2-e802-420f-adee-3046be423186",
+ "senderPeerId": null,
+ "senderTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+ "env_recipients": null
+}
+{
+ "ts": "2026-07-31T19:30:08.782000+00:00",
+ "outer_from": "12D3KooWLB4TNaHM1D3B",
+ "outer_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "kind": "group_offline_replay",
+ "type": null,
+ "payloadType": "group_reaction",
+ "messageId": "group-reaction-add-558cd41b12086829bd98ba4d796ebe7b",
+ "senderPeerId": "12D3KooWLB4TNaHM1D3B",
+ "senderTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+ "env_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "ext": {
+  "action": "add",
+  "transitionId": "group-reaction-event-c0e556b9-b7c7-40c7-b7ac",
+  "targetMessageId": "b289ea93-bd30-4528-b7e6-364fffeb34d9",
+  "reactorPeerId": "12D3KooWLB4TNaHM1D3B",
+  "reactorTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+  "notificationRecipientTransportPeerIds": []
+ }
+}
+{
+ "ts": "2026-07-31T19:30:32.411000+00:00",
+ "outer_from": "12D3KooWLB4TNaHM1D3B",
+ "outer_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "kind": "group_offline_replay",
+ "type": null,
+ "payloadType": "group_reaction",
+ "messageId": "group-reaction-add-720bcc7a5d84146d2a5394c83c0c89b7",
+ "senderPeerId": "12D3KooWLB4TNaHM1D3B",
+ "senderTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+ "env_recipients": [
+  "12D3KooWM43NCsZpuh7Q"
+ ],
+ "ext": {
+  "action": "add",
+  "transitionId": "group-reaction-event-a0785e0a-4e56-4f0b-958f",
+  "targetMessageId": "affb1cf2-e802-420f-adee-3046be423186",
+  "reactorPeerId": "12D3KooWLB4TNaHM1D3B",
+  "reactorTransportPeerId": "12D3KooWLB4TNaHM1D3B",
+  "notificationRecipientTransportPeerIds": []
+ }
+}

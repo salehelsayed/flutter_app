@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
@@ -64,6 +65,46 @@ void main() {
   }
 
   group('MessageContextOverlay', () {
+    testWidgets(
+      'emits one light-impact haptic on mount and does not repeat on rebuild',
+      (tester) async {
+        final platformCalls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          platformCalls.add(call);
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        await tester.pumpWidget(buildTestWidget(onCopyTap: () {}));
+        await tester.pump();
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        var hapticCalls = platformCalls
+            .where((call) => call.method == 'HapticFeedback.vibrate')
+            .toList(growable: false);
+        expect(hapticCalls, hasLength(1));
+        expect(hapticCalls.single.arguments, 'HapticFeedbackType.lightImpact');
+
+        await tester.pumpWidget(
+          buildTestWidget(size: const Size(420, 800), onCopyTap: () {}),
+        );
+        await tester.pump();
+
+        hapticCalls = platformCalls
+            .where((call) => call.method == 'HapticFeedback.vibrate')
+            .toList(growable: false);
+        expect(hapticCalls, hasLength(1));
+        expect(hapticCalls.single.arguments, 'HapticFeedbackType.lightImpact');
+      },
+    );
+
     testWidgets(
       'renders reaction bar plus reply and copy actions when copy is enabled',
       (tester) async {

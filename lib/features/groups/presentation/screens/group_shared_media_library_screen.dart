@@ -860,6 +860,11 @@ class _GroupSharedMediaViewerHostState
   MediaViewerItem _item(MediaLibraryEntry entry) {
     final attachment = entry.attachment;
     final localPath = attachment.localPath;
+    final kind = attachment.mediaType == 'video'
+        ? MediaViewerKind.video
+        : attachment.isAnimated
+        ? MediaViewerKind.gif
+        : MediaViewerKind.image;
     final capabilities =
         widget.screen.capabilitiesForEntry?.call(entry) ??
         const <GroupSharedMediaAction>{GroupSharedMediaAction.bookmark};
@@ -869,11 +874,7 @@ class _GroupSharedMediaViewerHostState
     return MediaViewerItem(
       attachmentId: attachment.id,
       messageId: attachment.messageId,
-      kind: attachment.mediaType == 'video'
-          ? MediaViewerKind.video
-          : attachment.isAnimated
-          ? MediaViewerKind.gif
-          : MediaViewerKind.image,
+      kind: kind,
       mime: attachment.mime,
       owner: MediaOwnerLane.group,
       localPath: localPath == null
@@ -885,6 +886,9 @@ class _GroupSharedMediaViewerHostState
       durationMs: attachment.durationMs,
       senderLabel: entry.parentSenderPeerId,
       timestamp: DateTime.tryParse(entry.parentTimestamp),
+      showMetadataDetails:
+          kind == MediaViewerKind.gif ||
+          (kind == MediaViewerKind.image && widget.screen.incomingOnly),
       canEnterPictureInPicture:
           capabilities.contains(GroupSharedMediaAction.pictureInPicture) &&
           attachment.mediaType == 'video' &&

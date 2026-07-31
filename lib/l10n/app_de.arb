@@ -1038,6 +1038,8 @@
   "conversation_empty_first_letter": "Schreib den ersten Brief,\num eure Unterhaltung zu beginnen",
   "media_video_load_failed": "Video konnte nicht geladen werden",
   "media_viewer_action_save": "Speichern",
+  "media_viewer_action_save_image": "Bild speichern",
+  "media_viewer_more_actions": "Weitere Aktionen",
   "media_viewer_action_share": "Teilen",
   "media_viewer_action_forward": "Weiterleiten",
   "media_viewer_action_delete": "Löschen",
