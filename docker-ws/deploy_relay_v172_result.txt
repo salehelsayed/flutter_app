@@ -1,0 +1,30 @@
+=== v1.7.2 deploy started 2026-07-31T23:18:06Z ===
+--- embedded toolchain (must be go1.25.0) ---
+relay-server-linux-v172: go1.25.0
+21c8956494a126e4e6b3a3307fb6ea9213502b3794a14cefe0576d633c1b2657  relay-server-linux-v172
+--- TC-08 pre-deploy baselines ---
+0
+3
+no payload_too_large counters yet
+--- plan-315 wake lines since v1.7.1 (task-4 verification) ---
+Jul 31 22:56:21 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:56:21 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=f253d168-6fbe-4435-b from=12D3KooWDZWSTM7BVPE3
+Jul 31 23:00:24 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:00:24 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=0ed12c3c-0c52-478f-a recipient=12D3KooWALKeRZhbURBR
+Jul 31 23:01:00 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:01:00 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=0ed12c3c-0c52-478f-a recipient=12D3KooWALKeRZhbURBR
+Jul 31 23:01:10 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:01:10 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=0ed12c3c-0c52-478f-a from=12D3KooWGZGvyefeyG3J
+Jul 31 23:05:16 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:05:16 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=d53306ac-1436-4c7b-a recipient=12D3KooWCobQfpWDJpWc
+Jul 31 23:05:48 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:05:48 [GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=d53306ac-1436-4c7b-a recipient=12D3KooWCobQfpWDJpWc
+relay_group_reaction_wake_total{outcome="attempted"} 6
+relay_group_reaction_wake_total{outcome="duplicate_suppressed"} 2
+baseline NRestarts=0
+--- t+12s ---
+active
+Jul 31 23:18:33 ip-172-31-34-24 relay-server[649248]: 2026/07/31 23:18:33 Starting relay-server v1.7.2
+--- t+52s ---
+active
+0
+--- t+92s ---
+active
+0
+0
+--- post-deploy peer evidence ---
+=== v1.7.2 deploy finished 2026-07-31T23:20:05Z ===

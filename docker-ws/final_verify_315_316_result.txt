@@ -1,0 +1,13 @@
+=== 2026-07-31T23:21:56Z ===
+active
+0
+--- android token registrations since the Xiaomi relaunch (23:08Z) ---
+Jul 31 23:08:40 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:08:40 [PUSH] Token registered for 12D3KooWRofUkyAuKdsp (android)
+Jul 31 23:08:40 ip-172-31-34-24 relay-server[645546]: 2026/07/31 23:08:40 [PUSH] Token registered for 12D3KooWRofUkyAuKdsp (android)
+Jul 31 23:18:34 ip-172-31-34-24 relay-server[649248]: 2026/07/31 23:18:34 [PUSH] Token registered for 12D3KooWRofUkyAuKdsp (android)
+--- current STATS ---
+Jul 31 23:23:34 ip-172-31-34-24 relay-server[649248]: 2026/07/31 23:23:34 [STATS] conns=3 rz_ns=20 rz_peers=26 inbox_peers=72 inbox_msgs=352 push_tokens=1525 media_blobs=21 media_disk_mb=627 profile_count=246 profile_disk_mb=13 group_inbox_groups=29 group_inbox_msgs=105 dau=3 wau=3 mau=3 daily_msgs=6 daily_media=0 heap_mb=4 goroutines=47
+--- wake counters (post-restart process; zero until next reaction) ---
+none yet this process
+--- TC-08 steady: Refusing oversized since v1.7.2 (must be 0) ---
+0
