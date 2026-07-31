@@ -1,0 +1,16 @@
+=== 2026-07-31T23:08:35Z ===
+--- preserve guard backup ---
+333M	/Users/I560101/Project-Sat/mknoon-2/flutter_app/docker-ws/xiaomi-state-guard-backup-20260801
+total 16
+drwxr-xr-x@  5 I560101  staff   160 Aug  1 01:08 .
+drwxr-xr-x  74 I560101  staff  2368 Aug  1 01:08 ..
+drwxr-xr-x@  4 I560101  staff   128 Aug  1 01:08 21071FDF600CSC
+-rw-r--r--@  1 I560101  staff   992 Aug  1 01:08 recovery-manifest.json
+-rw-r--r--@  1 I560101  staff    65 Aug  1 01:08 recovery-manifest.sha256
+--- installed app ---
+    versionName=1.0.0-277c5596e.d55.t260731213520
+--- launch app ---
+Events injected: 1
+## Network stats: elapsed time=19ms (0ms mobile, 0ms wifi, 19ms not connected)
+--- app process alive ---
+13383

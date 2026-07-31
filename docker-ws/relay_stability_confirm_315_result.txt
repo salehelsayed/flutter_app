@@ -1,0 +1,17 @@
+=== 2026-07-31T22:32:49Z ===
+active
+NRestarts=0
+ActiveEnterTimestamp=Fri 2026-07-31 22:30:16 UTC
+--- panics since deploy (must be 0) ---
+0
+--- peer connections + stats since deploy ---
+Jul 31 22:30:07 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:30:07 [STATS] conns=3 rz_ns=5 rz_peers=5 inbox_peers=72 inbox_msgs=352 push_tokens=1515 media_blobs=21 media_disk_mb=627 profile_count=246 profile_disk_mb=13 group_inbox_groups=24 group_inbox_msgs=84 dau=1 wau=1 mau=1 daily_msgs=5 daily_media=0 heap_mb=3 goroutines=49
+Jul 31 22:30:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:30:17 [NODE] Peer connected: 12D3KooWRofUkyAuKdsp... (total=3)
+Jul 31 22:30:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:30:17 [PUSH] Token registered for 12D3KooWSmFBWf4T4tjC (ios)
+Jul 31 22:30:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:30:17 [PUSH] Token registered for 12D3KooWEM8EoeYbgJ2d (ios)
+Jul 31 22:30:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:30:17 [PUSH] Token registered for 12D3KooWRofUkyAuKdsp (android)
+Jul 31 22:31:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:31:17 [STATS] conns=3 rz_ns=5 rz_peers=5 inbox_peers=72 inbox_msgs=352 push_tokens=1515 media_blobs=21 media_disk_mb=627 profile_count=246 profile_disk_mb=13 group_inbox_groups=24 group_inbox_msgs=84 dau=1 wau=1 mau=1 daily_msgs=6 daily_media=0 heap_mb=3 goroutines=49
+Jul 31 22:32:17 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:32:17 [STATS] conns=3 rz_ns=5 rz_peers=5 inbox_peers=72 inbox_msgs=352 push_tokens=1515 media_blobs=21 media_disk_mb=627 profile_count=246 profile_disk_mb=13 group_inbox_groups=24 group_inbox_msgs=84 dau=1 wau=1 mau=1 daily_msgs=6 daily_media=0 heap_mb=4 goroutines=49
+--- push token gauge ---
+relay_backend_durable 1
+relay_inbox_push_tokens 1515

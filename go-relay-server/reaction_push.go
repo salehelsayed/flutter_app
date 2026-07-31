@@ -488,28 +488,15 @@ func buildGroupReactionPushMessage(
 	}
 }
 
-// projectGroupReactionPushMessageForPlatform removes configuration that can
-// never be consumed by the registered token's platform. Keeping both the FCM
-// data map and an APNs CustomData copy on an Android-targeted reaction nearly
-// doubles the provider request and can cross FCM's 4096-byte limit even when
-// each platform payload is independently valid. On iOS the APNs custom data is
-// authoritative, so the duplicate top-level FCM data map is omitted as well.
+// projectGroupReactionPushMessageForPlatform delegates to the generalized
+// per-platform projection shared by every send site. Group-reaction messages
+// always carry an APNs CustomData copy, so the generalized ios rule (drop the
+// duplicate data map only when CustomData exists) is byte-identical here.
 func projectGroupReactionPushMessageForPlatform(
 	message *messaging.Message,
 	platform string,
 ) *messaging.Message {
-	if message == nil {
-		return nil
-	}
-	projected := *message
-	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case "android":
-		projected.APNS = nil
-	case "ios":
-		projected.Android = nil
-		projected.Data = nil
-	}
-	return &projected
+	return projectPushMessageForPlatform(message, platform)
 }
 
 // boundedReactionEventIdentity is shared by Dart, Go, and Swift. It is stable
@@ -556,7 +543,7 @@ func buildReactionPushMessage(token, authenticatedFromPeerID, message string) *m
 		},
 	}
 
-	return &messaging.Message{
+	pushMessage := &messaging.Message{
 		Token: token,
 		Data:  data,
 		Android: &messaging.AndroidConfig{
@@ -575,6 +562,13 @@ func buildReactionPushMessage(token, authenticatedFromPeerID, message string) *m
 			},
 		},
 	}
+	// The raw data cap alone admits envelopes whose single marshalled platform
+	// leg exceeds the provider budget once projected — enforce the same per-leg
+	// check the ordinary lanes use (a refused build stays silent custody).
+	if !messageFitsProviderBudgets(pushMessage) {
+		return nil
+	}
+	return pushMessage
 }
 
 func loadDirectReactionPushEnabledFromEnv() bool {

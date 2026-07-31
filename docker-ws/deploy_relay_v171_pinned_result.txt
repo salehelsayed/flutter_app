@@ -1,0 +1,19 @@
+=== attempt-2 started 2026-07-31T22:29:38Z ===
+--- building linux/amd64 with pinned toolchain ---
+--- embedded toolchain check (must say go1.25.0) ---
+relay-server-linux-v171: go1.25.0
+--- uploading ---
+--- backup + install + restart ---
+baseline NRestarts=0
+--- t+12s ---
+active
+Jul 31 22:30:16 ip-172-31-34-24 relay-server[645546]: 2026/07/31 22:30:16 Starting relay-server v1.7.1
+--- t+52s ---
+active
+0
+--- t+92s (NRestarts must equal baseline; no panic lines) ---
+active
+0
+0
+--- recent connection evidence ---
+=== attempt-2 finished 2026-07-31T22:31:49Z ===

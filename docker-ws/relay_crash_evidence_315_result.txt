@@ -1,0 +1,90 @@
+=== 2026-07-31T22:25:14Z ===
+NRestarts=5
+ActiveState=activating
+SubState=auto-restart
+--- panic/exit/systemd lines since 22:22 ---
+Jul 31 22:22:41 ip-172-31-34-24 relay-server[637006]: 2026/07/31 22:22:41 [STATS] conns=3 rz_ns=4 rz_peers=4 inbox_peers=72 inbox_msgs=352 push_tokens=1515 media_blobs=21 media_disk_mb=627 profile_count=246 profile_disk_mb=13 group_inbox_groups=24 group_inbox_msgs=84 dau=13 wau=13 mau=13 daily_msgs=18 daily_media=3 heap_mb=3 goroutines=47
+Jul 31 22:23:07 ip-172-31-34-24 systemd[1]: relay-server.service: Deactivated successfully.
+Jul 31 22:23:07 ip-172-31-34-24 systemd[1]: relay-server.service: Consumed 1min 18.131s CPU time.
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: goroutine 165 [running]:
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 135
+Jul 31 22:23:07 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:23:07 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+Jul 31 22:23:12 ip-172-31-34-24 systemd[1]: relay-server.service: Scheduled restart job, restart counter is at 1.
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: goroutine 191 [running]:
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 146
+Jul 31 22:23:23 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:23:23 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+Jul 31 22:23:28 ip-172-31-34-24 systemd[1]: relay-server.service: Scheduled restart job, restart counter is at 2.
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: goroutine 215 [running]:
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 133
+Jul 31 22:23:53 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:23:53 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+Jul 31 22:23:58 ip-172-31-34-24 systemd[1]: relay-server.service: Scheduled restart job, restart counter is at 3.
+Jul 31 22:24:10 ip-172-31-34-24 relay-server[645079]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:24:10 ip-172-31-34-24 relay-server[645079]: goroutine 215 [running]:
+Jul 31 22:24:10 ip-172-31-34-24 relay-server[645079]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 132
+Jul 31 22:24:10 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:24:10 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+Jul 31 22:24:15 ip-172-31-34-24 systemd[1]: relay-server.service: Scheduled restart job, restart counter is at 4.
+Jul 31 22:24:39 ip-172-31-34-24 relay-server[645169]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:24:39 ip-172-31-34-24 relay-server[645169]: goroutine 229 [running]:
+Jul 31 22:24:39 ip-172-31-34-24 relay-server[645169]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 141
+Jul 31 22:24:39 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:24:39 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+Jul 31 22:24:44 ip-172-31-34-24 systemd[1]: relay-server.service: Scheduled restart job, restart counter is at 5.
+Jul 31 22:25:09 ip-172-31-34-24 relay-server[645185]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:25:09 ip-172-31-34-24 relay-server[645185]: goroutine 231 [running]:
+Jul 31 22:25:09 ip-172-31-34-24 relay-server[645185]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 133
+Jul 31 22:25:09 ip-172-31-34-24 systemd[1]: relay-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Jul 31 22:25:09 ip-172-31-34-24 systemd[1]: relay-server.service: Failed with result 'exit-code'.
+--- last 25 lines of the PREVIOUS (dead) instance 644991 ---
+Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
+Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] stream handled in 4.415518ms
+Jul 31 22:23:52 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:52 [RENDEZVOUS] Incoming stream from 12D3KooWRofUkyAuKdsp...
+Jul 31 22:23:52 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:52 [RENDEZVOUS] Request type=3 from 12D3KooWRofUkyAuKdsp...
+Jul 31 22:23:52 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:52 [RENDEZVOUS] DISCOVER ns=/mknoon/group/9bc055cc-9a2a-4801-94be-7a34d15353fa limit=64 from 12D3KooWRofUkyAuKdsp...
+Jul 31 22:23:52 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:52 [RENDEZVOUS] Sent response type=4
+Jul 31 22:23:52 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:52 [RENDEZVOUS] stream handled in 4.915193ms
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: panic: crypto/tls bug: where's my session ticket?
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: goroutine 215 [running]:
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go/internal/handshake.(*cryptoSetup).GetSessionTicket(0x27ebd36a240)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/internal/handshake/crypto_setup.go:366 +0x24a
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).handleHandshakeComplete(0x27ebcfa3008)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:755 +0x225
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).handleFrames(0x27ebcfa3008, {0x27ebce8a013?, 0x5007ebd1778b8?, 0x7f8196d6fa80?}, {{0x0, 0xc2, 0xa5, 0x4c, 0x0, 0x0, ...}, ...}, ...)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:1294 +0x47a
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).handleUnpackedLongHeaderPacket(0x27ebcfa3008, 0x27ebd290720, 0x1, {0x261?, 0x5ac?, 0x26f26c0?}, 0x261)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:1213 +0x68c
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).handleLongHeaderPacket(0x27ebcfa3008, {0x27ebd13a0c0, {0x1993790, 0x27ebd2906c0}, {0xc29365fe6b57d232, 0x5ca3c7344, 0x26f26c0}, {0x27ebce8a000, 0x261, 0x5ac}, ...}, ...)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:985 +0x73b
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).handlePacketImpl(0x27ebcfa3008, {0x27ebd13a0c0, {0x1993790, 0x27ebd2906c0}, {0xc29365fe6b57d232, 0x5ca3c7344, 0x26f26c0}, {0x27ebce8a000, 0x2c2, 0x5ac}, ...})
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:859 +0x1ff
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: github.com/quic-go/quic-go.(*connection).run(0x27ebcfa3008)
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:563 +0x588
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 133
+Jul 31 22:23:53 ip-172-31-34-24 relay-server[644991]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/server.go:716 +0xe6c
+--- first 5 + last 15 lines of instance 644974 ---
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [PUSH] Firebase Admin SDK initialized
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [PROFILE] Loaded 246 existing profile(s) from disk
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 Starting relay-server v1.7.1
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/internal/handshake/crypto_setup.go:366 +0x24a
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).handleHandshakeComplete(0x2abd229c7008)
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:755 +0x225
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).handleFrames(0x2abd229c7008, {0x2abd22db2613?, 0x500bd22b358b8?, 0x76d903d8d2c0?}, {{0xa6, 0xde, 0x1d, 0x4b, 0x0, 0x0, ...}, ...}, ...)
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:1294 +0x47a
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).handleUnpackedLongHeaderPacket(0x2abd229c7008, 0x2abd22c64960, 0x1, {0x261?, 0x5ac?, 0x26f26c0?}, 0x261)
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:1213 +0x68c
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).handleLongHeaderPacket(0x2abd229c7008, {0x2abd228fc3a0, {0x1993790, 0x2abd22c64930}, {0xc29365f6e75722cd, 0x2928e2ba3, 0x26f26c0}, {0x2abd22db2600, 0x261, 0x5ac}, ...}, ...)
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:985 +0x73b
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).handlePacketImpl(0x2abd229c7008, {0x2abd228fc3a0, {0x1993790, 0x2abd22c64930}, {0xc29365f6e75722cd, 0x2928e2ba3, 0x26f26c0}, {0x2abd22db2600, 0x2c2, 0x5ac}, ...})
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:859 +0x1ff
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: github.com/quic-go/quic-go.(*connection).run(0x2abd229c7008)
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/connection.go:563 +0x588
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]: created by github.com/quic-go/quic-go.(*baseServer).handleInitialImpl in goroutine 146
+Jul 31 22:23:23 ip-172-31-34-24 relay-server[644974]:         /Users/I560101/go/pkg/mod/github.com/quic-go/quic-go@v0.48.2/server.go:716 +0xe6c

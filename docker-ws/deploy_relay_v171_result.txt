@@ -1,0 +1,13 @@
+=== deploy started 2026-07-31T22:21:55Z ===
+go version go1.26.4 darwin/arm64
+--- building linux/amd64 ---
+-rwxr-xr-x@ 1 I560101  staff  51640993 Aug  1 00:22 relay-server-linux-v171
+--- uploading ---
+--- backup + install + restart ---
+backup: /usr/local/bin/relay-server.pre-plan315-20260731T222306Z
+--- journal (post-restart) ---
+--- durability gauge ---
+--- wake counter family (empty until first increment is expected) ---
+0
+--- service state ---
+activating

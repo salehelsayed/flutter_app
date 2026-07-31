@@ -1805,8 +1805,8 @@ func TestPushService_SendGroupNotification_RetriesTransientFailure(t *testing.T)
 		t.Fatalf("recorded messages = %d, want 2", len(messages))
 	}
 	for _, msg := range messages {
-		if msg.Data["groupId"] != "group-1" {
-			t.Fatalf("groupId = %q, want %q", msg.Data["groupId"], "group-1")
+		if sentRoutingString(msg, "groupId") != "group-1" {
+			t.Fatalf("groupId = %q, want %q", sentRoutingString(msg, "groupId"), "group-1")
 		}
 	}
 }
@@ -1893,23 +1893,23 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 	seenTokens := map[string]bool{}
 	for _, msg := range messages {
 		seenTokens[msg.Token] = true
-		if msg.Data["type"] != "group_message" {
-			t.Fatalf("push type = %q, want group_message", msg.Data["type"])
+		if sentRoutingString(msg, "type") != "group_message" {
+			t.Fatalf("push type = %q, want group_message", sentRoutingString(msg, "type"))
 		}
-		if msg.Data["groupId"] != testCanonicalGroupPushID {
-			t.Fatalf("groupId = %q, want %s", msg.Data["groupId"], testCanonicalGroupPushID)
+		if sentRoutingString(msg, "groupId") != testCanonicalGroupPushID {
+			t.Fatalf("groupId = %q, want %s", sentRoutingString(msg, "groupId"), testCanonicalGroupPushID)
 		}
-		if _, ok := msg.Data["title"]; ok {
-			t.Fatalf("title should be omitted, got %q", msg.Data["title"])
+		if sentRoutingHas(msg, "title") {
+			t.Fatalf("title should be omitted, got %q", sentRoutingString(msg, "title"))
 		}
-		if _, ok := msg.Data["body"]; ok {
-			t.Fatalf("body should be omitted, got %q", msg.Data["body"])
+		if sentRoutingHas(msg, "body") {
+			t.Fatalf("body should be omitted, got %q", sentRoutingString(msg, "body"))
 		}
-		if msg.Data["message_id"] != "group-msg-1" {
-			t.Fatalf("message_id = %q, want group-msg-1", msg.Data["message_id"])
+		if sentRoutingString(msg, "message_id") != "group-msg-1" {
+			t.Fatalf("message_id = %q, want group-msg-1", sentRoutingString(msg, "message_id"))
 		}
-		if msg.Data["ciphertext"] != "gc" || msg.Data["nonce"] != "gn" {
-			t.Fatalf("encrypted group data missing or wrong: %#v", msg.Data)
+		if sentRoutingString(msg, "ciphertext") != "gc" || sentRoutingString(msg, "nonce") != "gn" {
+			t.Fatalf("encrypted group data missing or wrong: %#v", apnsCustomDataAsStringMap(msg))
 		}
 	}
 
@@ -2761,10 +2761,16 @@ func TestInboxStore_ReactionAddRequiresCapabilityAndAuthorization(t *testing.T) 
 
 	msg := waitForRecordedPush(t, recorder)
 	if msg.Notification != nil {
-		t.Fatal("reaction push must be Android data-only (no top-level notification)")
+		t.Fatal("reaction push must carry no top-level notification")
 	}
-	if msg.Android == nil || msg.Android.Priority != "high" || msg.Android.Notification != nil {
-		t.Fatalf("Android reaction push must be high-priority data-only: %#v", msg.Android)
+	// The recipient token is registered as ios, so the sent message is
+	// platform-projected: Android and the duplicate data map are stripped and
+	// the APNs CustomData copy is the authoritative routing set.
+	if msg.Android != nil {
+		t.Fatalf("ios reaction push must be projected APNs-only: %#v", msg.Android)
+	}
+	if msg.Data != nil {
+		t.Fatalf("ios reaction push must drop the duplicate data map: %#v", msg.Data)
 	}
 	wantData := map[string]string{
 		"type":               "message_reaction",
@@ -2778,8 +2784,8 @@ func TestInboxStore_ReactionAddRequiresCapabilityAndAuthorization(t *testing.T) 
 		"ciphertext":         "fixture-ciphertext",
 		"nonce":              "fixture-nonce",
 	}
-	if !mapsEqualStringString(msg.Data, wantData) {
-		t.Fatalf("reaction push data = %#v, want exact ciphertext-only allowlist %#v", msg.Data, wantData)
+	if !mapsEqualStringString(apnsCustomDataAsStringMap(msg), wantData) {
+		t.Fatalf("reaction push custom data = %#v, want exact ciphertext-only allowlist %#v", apnsCustomDataAsStringMap(msg), wantData)
 	}
 }
 
@@ -2816,7 +2822,7 @@ func TestInboxHandler_ReactionPushBindsAuthenticatedRemotePeer(t *testing.T) {
 	}
 
 	msg := waitForRecordedPush(t, recorder)
-	if got := msg.Data["sender_id"]; got != remotePeer {
+	if got := sentRoutingString(msg, "sender_id"); got != remotePeer {
 		t.Fatalf("push sender_id = %q, want authenticated remote peer %q", got, remotePeer)
 	}
 	pending, _ := inbox.RetrievePendingWithMeta(recipientPeer, 10)

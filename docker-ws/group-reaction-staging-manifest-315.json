@@ -1,0 +1,17 @@
+{
+  "schema": "mknoon.plan257.staging-prerequisites.v1",
+  "version": 1,
+  "environment": "staging",
+  "relayActive": true,
+  "providerConfigured": true,
+  "providerProbeSucceeded": true,
+  "productionDeploymentPerformed": false,
+  "allowAppDataReset": true,
+  "candidateRelayRevision": "1.7.1",
+  "candidateRelaySha256": "0100d9f72c42dab20c766013b248973cfec825a19b31c44e5205fbd743854f27",
+  "provider": "fcm",
+  "relayAddresses": [
+    "/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",
+    "/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
+  ]
+}

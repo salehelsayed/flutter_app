@@ -50,14 +50,16 @@ const (
 	introAcceptPushNotificationTitle = "Introduction accepted"
 	introAcceptPushNotificationBody  = "Someone accepted an introduction involving you."
 
-	// maxPushDataBytes caps the assembled FCM `data` payload. FCM rejects any
-	// message whose data exceeds 4096 bytes with "Message is too large. The
-	// maximum is 4K (4096 bytes)"; a media envelope's encrypted descriptor
-	// (ciphertext) plus the ~1.4 KB base64 ML-KEM `kem` pushes a silent
-	// ciphertext-only push past that limit, so an offline media recipient gets
-	// NO notification at all. When the assembled data would exceed this budget
-	// we drop the encrypted fields and emit a visible generic fallback instead.
-	// 4000 leaves headroom under FCM's 4096 for SDK/wire overhead.
+	// maxPushDataBytes caps the assembled FCM `data` payload. FCM's 4096-byte
+	// "Message is too large" enforcement is SERVER-side (the Admin SDK performs
+	// no client-side size validation) and spans a quantity that includes BOTH
+	// platform copies of a dual-copy request — live sends whose data map AND
+	// marshalled per-platform legs each passed these budgets were still
+	// rejected (2026-07-31) until the send sites began projecting a single
+	// platform copy per registered token (projectPushMessageForPlatform).
+	// Per-leg budgets therefore remain necessary but NOT sufficient. When the
+	// assembled data would exceed this budget we drop the encrypted fields and
+	// emit a visible generic fallback instead.
 	maxPushDataBytes = 4000
 	// Measure the complete platform payloads, not only the raw data values.
 	// Keeping a 296-byte margin below the provider's 4096-byte ceiling absorbs
@@ -164,6 +166,7 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	}
 
 	msg := buildPushMessage(entry.Token, fromPeerId, message)
+	msg = projectPushMessageForPlatform(msg, entry.Platform)
 	ps.sendWithRetry(ctx, toPeerId, msg, "chat", "")
 }
 
@@ -191,6 +194,7 @@ func (ps *PushService) SendReactionNotification(
 		pushSentCounter.WithLabelValues("reaction_invalid").Inc()
 		return
 	}
+	msg = projectPushMessageForPlatform(msg, entry.Platform)
 	ps.sendWithRetry(ctx, toPeerID, msg, "reaction", "")
 }
 
@@ -239,6 +243,7 @@ func (ps *PushService) SendGroupNotification(
 		messageID,
 		message,
 	)
+	msg = projectPushMessageForPlatform(msg, entry.Platform)
 	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
@@ -317,9 +322,10 @@ func (ps *PushService) sendWithRetry(
 			if fallbackErr == nil {
 				pushSentCounter.WithLabelValues("success").Inc()
 				pushSentCounter.WithLabelValues("payload_too_large_fallback").Inc()
-				log.Printf("[PUSH] Strict routing fallback sent to %s after provider rejected %s payload size",
+				log.Printf("[PUSH] Strict routing fallback sent to %s after provider rejected %s payload size (provider error: %v)",
 					toPeerId[:min(20, len(toPeerId))],
-					pushKind)
+					pushKind,
+					err)
 				return
 			}
 			if isInvalidTokenError(fallbackErr) {
@@ -746,16 +752,30 @@ func buildStrictMinimalFallbackPushMessage(msg *messaging.Message) *messaging.Me
 	if msg == nil {
 		return nil
 	}
+	// ios-projected messages carry their routing exclusively in the APNs
+	// CustomData copy (the top-level data map was dropped by the platform
+	// projection), so the rescue must read routing keys from either source.
+	routingValue := func(key string) string {
+		if value, ok := msg.Data[key]; ok {
+			return value
+		}
+		if msg.APNS != nil && msg.APNS.Payload != nil {
+			if value, ok := msg.APNS.Payload.CustomData[key].(string); ok {
+				return value
+			}
+		}
+		return ""
+	}
 	data := map[string]string{
-		"type":                msg.Data["type"],
+		"type":                routingValue("type"),
 		"preview_unavailable": "1",
 	}
 	switch data["type"] {
 	case "new_message":
-		data["sender_id"] = msg.Data["sender_id"]
+		data["sender_id"] = routingValue("sender_id")
 	case "group_message":
-		data["groupId"] = msg.Data["groupId"]
-		data["sender_transport_peer_id"] = msg.Data["sender_transport_peer_id"]
+		data["groupId"] = routingValue("groupId")
+		data["sender_transport_peer_id"] = routingValue("sender_transport_peer_id")
 	default:
 		return nil
 	}
@@ -786,6 +806,39 @@ func isPayloadTooLargeError(err error) bool {
 		strings.Contains(message, "maximum is 4k") ||
 		strings.Contains(message, "maximum is 4096") ||
 		strings.Contains(message, "request entity too large")
+}
+
+// projectPushMessageForPlatform removes the platform copy the registered token
+// can never consume, mirroring the group-reaction lane's projection: FCM's
+// server-side 4096-byte enforcement spans a quantity that includes BOTH the
+// top-level data map and the APNs CustomData duplicate, so a dual-copy
+// mid-band envelope passes the per-leg pre-check yet is rejected at send time.
+// android tokens drop the APNS config; ios tokens drop the Android config and,
+// ONLY when an APNs CustomData copy exists, the duplicate top-level data map.
+// Visible-copy routes carry their tap-routing keys exclusively in the data map
+// (no CustomData), which FCM merges into the APNs payload — stripping data
+// there would break iOS notification-open routing, so it is kept. Unknown
+// platform strings fail open to today's dual-copy shape (production cannot
+// register an empty platform; see the register_token handler).
+func projectPushMessageForPlatform(
+	message *messaging.Message,
+	platform string,
+) *messaging.Message {
+	if message == nil {
+		return nil
+	}
+	projected := *message
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "android":
+		projected.APNS = nil
+	case "ios":
+		projected.Android = nil
+		if message.APNS != nil && message.APNS.Payload != nil &&
+			len(message.APNS.Payload.CustomData) > 0 {
+			projected.Data = nil
+		}
+	}
+	return &projected
 }
 
 func apnsCustomDataFromPushData(data map[string]string) map[string]interface{} {

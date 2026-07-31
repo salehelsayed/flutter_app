@@ -187,3 +187,5 @@ graphify-arch/graphify-out/20*/
 
 # Device log captures — large, session-local.
 /docker-ws/iphone13_syslog.txt
+docker-ws/xiaomi-state-guard-backup-*/
+go-relay-server/relay-server-linux-*

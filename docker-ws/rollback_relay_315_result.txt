@@ -1,0 +1,15 @@
+restoring: /usr/local/bin/relay-server.pre-plan315-20260731T222306Z
+--- state after 10s ---
+active
+NRestarts=0
+ActiveEnterTimestamp=Fri 2026-07-31 22:28:05 UTC
+Jul 31 22:28:06 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:06 Starting relay-server v1.6.0
+Jul 31 22:28:06 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:06 Control-plane: backend=redis durable=true prefix=relay:
+--- state after 30s (must still be the same PID / no new start) ---
+active
+NRestarts=0
+Jul 31 22:28:32 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:32 [INBOX] stream handled in 1.607363ms
+Jul 31 22:28:32 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:32 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
+Jul 31 22:28:32 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:32 [GROUP_INBOX] Retrieved 1 authorized message(s) for group 9bc055cc-9a2a-4801-9 peer 12D3KooWRofUkyAuKdsp (since=1785526788097)
+Jul 31 22:28:32 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:32 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
+Jul 31 22:28:32 ip-172-31-34-24 relay-server[645407]: 2026/07/31 22:28:32 [INBOX] stream handled in 1.543091ms

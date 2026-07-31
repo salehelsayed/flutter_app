@@ -1,0 +1,29 @@
+=== 2026-07-31T22:24:08Z ===
+--- start lines since 22:15 UTC (expect exactly one v1.7.1) ---
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: 2026/07/31 22:23:07 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: 2026/07/31 22:23:07 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: 2026/07/31 22:23:07 Starting relay-server v1.7.1
+Jul 31 22:23:07 ip-172-31-34-24 relay-server[644956]: 2026/07/31 22:23:07 Control-plane: backend=redis durable=true prefix=relay:
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 Starting relay-server v1.7.1
+Jul 31 22:23:12 ip-172-31-34-24 relay-server[644974]: 2026/07/31 22:23:12 Control-plane: backend=redis durable=true prefix=relay:
+Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Starting relay-server v1.7.1
+Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Control-plane: backend=redis durable=true prefix=relay:
+Jul 31 22:23:58 ip-172-31-34-24 relay-server[645079]: 2026/07/31 22:23:58 [INBOX] direct reaction push enabled=true (default off; DIRECT_REACTION_PUSH_ENABLED)
+Jul 31 22:23:58 ip-172-31-34-24 relay-server[645079]: 2026/07/31 22:23:58 [GROUP_INBOX] group reaction push enabled=true (default off; GROUP_REACTION_PUSH_ENABLED)
+Jul 31 22:23:58 ip-172-31-34-24 relay-server[645079]: 2026/07/31 22:23:58 Starting relay-server v1.7.1
+Jul 31 22:23:58 ip-172-31-34-24 relay-server[645079]: 2026/07/31 22:23:58 Control-plane: backend=redis durable=true prefix=relay:
+--- durability gauge ---
+# HELP relay_backend_durable 1 when the control-plane backend is durable (redis), 0 when in-memory (wiped on restart).
+# TYPE relay_backend_durable gauge
+relay_backend_durable 1
+--- uptime + restart count ---
+NRestarts=3
+ActiveEnterTimestamp=Fri 2026-07-31 22:23:58 UTC
+--- push token count ---
+# HELP relay_inbox_push_tokens Registered FCM push tokens.
+# TYPE relay_inbox_push_tokens gauge
+relay_inbox_push_tokens 0
