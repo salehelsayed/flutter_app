@@ -3219,6 +3219,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       bridge: bridge,
       localP2PService: localP2PService,
       pushTokenStore: pushTokenStore,
+      // Plan 320 P2: relay-health re-registration reads the LIVE provider token
+      // so a relay-side eviction of a dead token is not undone by replaying the
+      // cached one. Falls back to the cache when the provider read fails.
+      liveFcmTokenReader: () => FirebaseMessaging.instance.getToken(),
       // FDC-09 §12 / CV-14: the send funnel attaches received[toPeerId] on
       // `inbox:store` (1:1 contacts only). Inert until a peer distributes a `wt`.
       receivedWakeTokenStore: receivedWakeTokenStore,

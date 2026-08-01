@@ -247,6 +247,10 @@ func (ps *PushService) SendGroupNotification(
 	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
+// send returns the provider error VERBATIM. Do not wrap it: messaging.Is* uses
+// a bare type assertion on *internal.FirebaseError and does not Unwrap, so a
+// fmt.Errorf("...: %w", err) here would silently disable the typed arm of
+// permanentPushErrorReason (plan 320).
 func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
 	if ps.sender != nil {
 		_, err := ps.sender(ctx, msg)
@@ -294,12 +298,13 @@ func (ps *PushService) sendWithRetry(
 			return
 		}
 
-		if isInvalidTokenError(err) {
+		if reason := permanentPushErrorReason(err); reason != "" {
 			ps.tokenBackend.UnregisterToken(toPeerId)
 			pushSentCounter.WithLabelValues("invalid_token").Inc()
-			log.Printf("[PUSH] Removed invalid token for %s after %s push error: %v",
+			log.Printf("[PUSH] Removed invalid token for %s after %s push error (reason=%s): %v",
 				toPeerId[:min(20, len(toPeerId))],
 				pushKind,
+				reason,
 				err)
 			return
 		}
@@ -328,9 +333,12 @@ func (ps *PushService) sendWithRetry(
 					err)
 				return
 			}
-			if isInvalidTokenError(fallbackErr) {
+			if reason := permanentPushErrorReason(fallbackErr); reason != "" {
 				ps.tokenBackend.UnregisterToken(toPeerId)
 				pushSentCounter.WithLabelValues("invalid_token").Inc()
+				log.Printf("[PUSH] Removed invalid token for %s after strict fallback (reason=%s)",
+					toPeerId[:min(20, len(toPeerId))],
+					reason)
 			} else {
 				pushSentCounter.WithLabelValues("failed").Inc()
 			}
@@ -1118,11 +1126,69 @@ func (ps *PushService) PlatformCounts() map[string]int {
 	return ps.tokenBackend.PlatformCounts()
 }
 
-func isInvalidTokenError(err error) bool {
-	// Firebase returns specific error codes for invalid tokens
+// permanentPushErrorReason classifies a push error as permanently unroutable
+// (the token is dead — retrying can never succeed) and names the arm that
+// decided, so post-deploy evidence is attributable. Empty string = transient.
+//
+// Two arms, deliberately:
+//
+//   - TYPED (authoritative): messaging.IsUnregistered / IsSenderIDMismatch read
+//     the SDK's structured errorCode (Ext["messagingErrorCode"] == UNREGISTERED
+//     / SENDER_ID_MISMATCH). These only fire when FCM returns the FcmError
+//     detail.
+//   - LITERAL (belt-and-braces, and the arm that actually catches today's
+//     production traffic): FCM's error *message* text. The live journal shows
+//     "NotRegistered", and the SAME dead peer logged "Requested entity was not
+//     found." at another time — neither is the errorCode, and neither matches
+//     the legacy hyphenated literals. Without this arm the fix would be inert.
+//
+// Deliberately NOT permanent: messaging.IsInvalidArgument — FCM also returns
+// INVALID_ARGUMENT for oversized payloads, and this check runs BEFORE the
+// payload-too-large branch, so including it would swallow the strict-minimal
+// rescue (plan 316) and evict live tokens.
+func permanentPushErrorReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if messaging.IsUnregistered(err) {
+		return "typed_unregistered"
+	}
+	if messaging.IsSenderIDMismatch(err) {
+		return "typed_sender_mismatch"
+	}
 	errStr := err.Error()
-	return contains(errStr, "registration-token-not-registered") ||
-		contains(errStr, "invalid-registration-token")
+	for _, candidate := range []struct {
+		needle string
+		reason string
+	}{
+		{"registration-token-not-registered", "literal_legacy_not_registered"},
+		{"invalid-registration-token", "literal_legacy_invalid_token"},
+		{"notregistered", "literal_notregistered"},
+		{"requested entity was not found", "literal_entity_not_found"},
+		{"senderid mismatch", "literal_sender_mismatch"},
+		{"mismatched sender", "literal_sender_mismatch"},
+	} {
+		if containsFold(errStr, candidate.needle) {
+			return candidate.reason
+		}
+	}
+	return ""
+}
+
+// containsFold is an ASCII case-insensitive substring test. FCM's message text
+// is not case-stable ("NotRegistered" vs "NOT_REGISTERED" vs lowercase codes).
+func containsFold(s, substr string) bool {
+	return contains(toLowerASCII(s), toLowerASCII(substr))
+}
+
+func toLowerASCII(s string) string {
+	out := []byte(s)
+	for i := 0; i < len(out); i++ {
+		if out[i] >= 'A' && out[i] <= 'Z' {
+			out[i] += 'a' - 'A'
+		}
+	}
+	return string(out)
 }
 
 func contains(s, substr string) bool {
@@ -1555,9 +1621,10 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 		if recognizedReaction && validReaction {
 			groupReactionWakeCounter.WithLabelValues("duplicate_suppressed").Inc()
 			log.Printf(
-				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=%s from=%s",
+				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=%s from=%s transition=%s",
 				groupId[:min(20, len(groupId))],
 				from[:min(20, len(from))],
+				reaction.TransitionID[:min(24, len(reaction.TransitionID))],
 			)
 		}
 		return nil
@@ -1566,6 +1633,16 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 		// Legacy, malformed, REMOVE, incapable, and flag-off reactions are silent
 		// custody. Crucially, none can fall through to group_message fanout.
 		if !validReaction || reaction.Action != "add" || !s.groupReactionPushEnabled {
+			// Plan 320 P3: this decline used to be entirely silent, so a wake lost
+			// here was invisible to every counter and journal line.
+			groupReactionWakeCounter.WithLabelValues("invalid_or_disabled").Inc()
+			log.Printf(
+				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=invalid_or_disabled group=%s valid=%t action=%s enabled=%t",
+				groupId[:min(20, len(groupId))],
+				validReaction,
+				reaction.Action,
+				s.groupReactionPushEnabled,
+			)
 			return nil
 		}
 		s.fanOutGroupReactionPush(groupId, from, message, reaction)
@@ -1587,6 +1664,12 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 	metadata groupReactionPushMetadata,
 ) {
 	if s.push == nil {
+		// Plan 320 P3: previously a silent return.
+		groupReactionWakeCounter.WithLabelValues("push_unavailable").Inc()
+		log.Printf(
+			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=push_unavailable group=%s",
+			groupID[:min(20, len(groupID))],
+		)
 		return
 	}
 	if len(metadata.NotificationRecipientTransportPeerIDs) == 0 {
@@ -1600,6 +1683,10 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 	}
 	for _, peerID := range metadata.NotificationRecipientTransportPeerIDs {
 		if peerID == "" || peerID == from {
+			// Plan 320 P3: the third silent decline. Counting it is what makes the
+			// per-transition accounting identity hold (emitted outcomes ==
+			// len(NotificationRecipientTransportPeerIDs)).
+			groupReactionWakeCounter.WithLabelValues("self_or_empty_skipped").Inc()
 			continue
 		}
 		if !s.push.recipientSupportsCapability(peerID, groupReactionCapability) {
@@ -1613,9 +1700,10 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 		}
 		groupReactionWakeCounter.WithLabelValues("attempted").Inc()
 		log.Printf(
-			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=attempted group=%s recipient=%s",
+			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=dispatched group=%s recipient=%s transition=%s",
 			groupID[:min(20, len(groupID))],
 			peerID[:min(20, len(peerID))],
+			metadata.TransitionID[:min(24, len(metadata.TransitionID))],
 		)
 		go s.push.SendGroupReactionNotification(
 			context.Background(),

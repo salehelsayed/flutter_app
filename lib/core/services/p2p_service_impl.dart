@@ -94,6 +94,12 @@ class P2PServiceImpl
         InboxAttentionSignal {
   final Bridge _bridge;
   final PushTokenStore? _pushTokenStore;
+
+  /// Plan 320 P2: reads the CURRENT provider token. Relay-health re-registration
+  /// must not replay a cached token the provider has already retired — the relay
+  /// evicts dead tokens now (plan 320 P1), and replaying the cached value would
+  /// silently undo that eviction on the next reconnect.
+  final Future<String?> Function()? _liveFcmTokenReader;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   late final _P2PInboxCoordinator _inboxCoordinator;
   late final _P2PPeerTransportCoordinator _peerTransportCoordinator;
@@ -239,6 +245,7 @@ class P2PServiceImpl
     required Bridge bridge,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
+    Future<String?> Function()? liveFcmTokenReader,
     ReceivedWakeTokenStore? receivedWakeTokenStore,
     AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
@@ -261,6 +268,7 @@ class P2PServiceImpl
     String? Function()? activePeerId,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
+       _liveFcmTokenReader = liveFcmTokenReader,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
        _networkChangeSignal = networkChangeSignal {
@@ -2644,9 +2652,34 @@ class P2PServiceImpl
 
   Future<void> _reregisterStoredPushTokenIfAvailable() async {
     await _restorePersistedPushTokenIfNeeded();
-    final token = _lastFcmToken;
     final platform = _lastFcmPlatform;
-    if (token == null || platform == null) {
+    if (platform == null) {
+      return;
+    }
+    // Plan 320 P2: prefer the LIVE provider token. The cached value may be the
+    // very token the relay just evicted as permanently unroutable; re-sending
+    // it would resurrect a dead entry on every relay-health transition.
+    var token = _lastFcmToken;
+    final reader = _liveFcmTokenReader;
+    if (reader != null) {
+      try {
+        final live = (await reader())?.trim();
+        if (live != null && live.isNotEmpty) {
+          token = live;
+        } else {
+          logPushDiagnostic(
+            'live_push_token_unavailable_using_cached',
+            details: {'platform': platform},
+          );
+        }
+      } catch (e) {
+        logPushDiagnostic(
+          'live_push_token_read_failed_using_cached',
+          details: {'platform': platform, 'error': e.toString()},
+        );
+      }
+    }
+    if (token == null) {
       return;
     }
     await registerPushToken(token, platform);
