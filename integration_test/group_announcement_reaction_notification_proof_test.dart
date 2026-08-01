@@ -29,6 +29,17 @@ void main() {
     await _validateScenario('android_announcement_reaction_recipient');
   });
 
+  // Plan 315 TC-12 — the NINTH registration surface for a new scenario id:
+  // the sims driver binds each captured artifact by invoking this file with
+  // --plain-name <scenario id>; a missing block here makes `flutter test`
+  // exit 79 ("No tests match") AFTER the authoritative validator accepted
+  // the artifact.
+  test('android_group_reaction_recipient_background_connected', () async {
+    await _validateScenario(
+      'android_group_reaction_recipient_background_connected',
+    );
+  });
+
   test('ios_announcement_reaction_recipient', () async {
     await _validateScenario('ios_announcement_reaction_recipient');
   });
