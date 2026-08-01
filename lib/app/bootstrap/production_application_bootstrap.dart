@@ -1695,6 +1695,17 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         GroupReactionReplayOutboxRepositoryImpl(
           dbUpsertGroupReactionReplayOutboxEntry: (row) =>
               dbUpsertGroupReactionReplayOutboxEntry(db, row),
+          dbAttachGroupReactionReplayOutboxPayload:
+              ({
+                required reactionId,
+                required inboxRetryPayload,
+                required updatedAt,
+              }) => dbAttachGroupReactionReplayOutboxPayload(
+                db,
+                reactionId: reactionId,
+                inboxRetryPayload: inboxRetryPayload,
+                updatedAt: updatedAt,
+              ),
           dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
               dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
           dbLoadLatestGroupReactionReplayOutboxEntryForTarget:

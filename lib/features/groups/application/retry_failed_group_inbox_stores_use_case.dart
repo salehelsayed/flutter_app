@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
@@ -165,6 +168,9 @@ Future<int> retryFailedGroupInboxStores({
       bridge: bridge,
       repository: reactionReplayOutboxRepo!,
       expected: entry,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      identityRepo: identityRepo,
     );
     final retried = groupRepo == null
         ? await retryCandidate()
@@ -364,10 +370,30 @@ Future<bool> _retryGroupReactionReplayCandidate({
   required Bridge bridge,
   required GroupReactionReplayOutboxRepository repository,
   required GroupReactionReplayOutboxEntry expected,
+  GroupRepository? groupRepo,
+  GroupMessageRepository? msgRepo,
+  IdentityRepository? identityRepo,
 }) async {
-  final current = await repository.getEntry(expected.reactionId);
+  var current = await repository.getEntry(expected.reactionId);
   if (current == null || !_sameReactionReplayCandidate(current, expected)) {
     return false;
+  }
+  // Plan 319: a needs_build row (or any row left with the sentinel-empty
+  // payload by a rolled-back build) carries identity but no envelope — rebuild
+  // it here, reusing the ORIGINAL transition id and deterministic reaction id
+  // so notification-surface dedupe and receiver idempotency both hold.
+  if (current.deliveryStatus == GroupReactionReplayOutboxStatus.needsBuild ||
+      current.inboxRetryPayload.isEmpty) {
+    final rebuilt = await _rebuildGroupReactionReplayPayload(
+      bridge: bridge,
+      repository: repository,
+      row: current,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      identityRepo: identityRepo,
+    );
+    if (rebuilt == null) return false;
+    current = rebuilt;
   }
   if (_hasNoGroupReactionReplayRecipients(current.inboxRetryPayload)) {
     emitFlowEvent(
@@ -449,5 +475,124 @@ Future<bool> _retryGroupReactionReplayCandidate({
       },
     );
     return false;
+  }
+}
+
+
+/// Plan 319: rebuild an abandoned reaction's replay envelope from its durable
+/// outbox identity. Fail-soft — any missing dependency leaves the row in
+/// `needs_build` with `last_error`, so the next retry pass tries again.
+Future<GroupReactionReplayOutboxEntry?> _rebuildGroupReactionReplayPayload({
+  required Bridge bridge,
+  required GroupReactionReplayOutboxRepository repository,
+  required GroupReactionReplayOutboxEntry row,
+  required GroupRepository? groupRepo,
+  required GroupMessageRepository? msgRepo,
+  required IdentityRepository? identityRepo,
+}) async {
+  Future<GroupReactionReplayOutboxEntry?> failSoft(String reason) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_REPLAY_REBUILD_DEFERRED',
+      details: {
+        'reactionId': row.reactionId.length > 8
+            ? row.reactionId.substring(0, 8)
+            : row.reactionId,
+        'reason': reason,
+      },
+    );
+    await repository.updateEntryStatus(
+      row.reactionId,
+      deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
+      lastError: reason,
+    );
+    return null;
+  }
+
+  if (groupRepo == null || msgRepo == null || identityRepo == null) {
+    return failSoft('rebuild_dependencies_unavailable');
+  }
+  try {
+    final identity = await identityRepo.loadIdentity();
+    if (identity == null) return failSoft('identity_unavailable');
+    final member = await groupRepo.getMember(row.groupId, row.senderPeerId);
+    final senderDevice = member?.firstActiveDeviceForSigningKey(
+      identity.publicKey,
+      allowLegacyFallback: true,
+    );
+    if (senderDevice == null) return failSoft('sender_device_unavailable');
+    final target = await msgRepo.getMessage(row.messageId);
+    if (target == null) return failSoft('target_message_unavailable');
+
+    final payload = GroupReactionPayload(
+      id: row.action == GroupReactionPayload.actionAdd
+          ? deterministicGroupAddReactionId(
+              groupId: row.groupId,
+              messageId: row.messageId,
+              senderPeerId: row.senderPeerId,
+              emoji: row.emoji,
+            )
+          : deterministicGroupRemoveReactionId(
+              groupId: row.groupId,
+              messageId: row.messageId,
+              senderPeerId: row.senderPeerId,
+            ),
+      messageId: row.messageId,
+      emoji: row.emoji,
+      action: row.action,
+      senderPeerId: row.senderPeerId,
+      // Anchored to the authored moment, never now(): a rebuilt ADD must not
+      // out-time a REMOVE tombstone written while the row waited.
+      timestamp: row.createdAt,
+      eventId: row.reactionId,
+    );
+    final recipients = await resolveGroupReactionRecipientsForRebuild(
+      groupRepo: groupRepo,
+      groupId: row.groupId,
+      senderTransportPeerId: senderDevice.transportPeerId,
+      reactorPeerId: row.senderPeerId,
+      targetAuthorPeerId: target.senderPeerId,
+    );
+    final inboxRetryPayload = await buildGroupOfflineReplayInboxRetryPayload(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: row.groupId,
+      payloadType: groupOfflineReplayPayloadTypeReaction,
+      plaintext: payload.toInnerJson(),
+      senderPeerId: row.senderPeerId,
+      senderPublicKey: senderDevice.deviceSigningPublicKey,
+      senderPrivateKey: identity.privateKey,
+      messageId: payload.id,
+      senderDeviceId: senderDevice.deviceId,
+      senderTransportPeerId: senderDevice.transportPeerId,
+      senderKeyPackageId: senderDevice.keyPackageId,
+      recipientPeerIds: recipients.replayRecipientTransportPeerIds,
+      reactionNotificationExtension: GroupReactionNotificationExtensionInput(
+        transitionId: row.reactionId,
+        action: row.action,
+        targetMessageId: row.messageId,
+        reactorPeerId: row.senderPeerId,
+        reactorTransportPeerId: senderDevice.transportPeerId,
+        notificationRecipientTransportPeerIds:
+            recipients.notificationRecipientTransportPeerIds,
+      ),
+    );
+    final attached = await repository.attachBuiltPayload(
+      reactionId: row.reactionId,
+      inboxRetryPayload: inboxRetryPayload,
+    );
+    if (!attached) return failSoft('row_vanished_during_rebuild');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_REPLAY_REBUILT',
+      details: {
+        'reactionId': row.reactionId.length > 8
+            ? row.reactionId.substring(0, 8)
+            : row.reactionId,
+      },
+    );
+    return await repository.getEntry(row.reactionId);
+  } catch (e) {
+    return failSoft(e.toString());
   }
 }

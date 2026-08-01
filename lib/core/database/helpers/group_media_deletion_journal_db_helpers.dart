@@ -209,7 +209,7 @@ Future<GroupMediaDeletePrepareResult> dbPrepareGroupMediaDeleteForMe(
     await txn.delete(
       'group_reaction_replay_outbox',
       where:
-          "group_id = ? AND message_id = ? AND delivery_status IN ('pending', 'failed')",
+          "group_id = ? AND message_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
       whereArgs: [groupId, messageId],
     );
     await txn.delete(

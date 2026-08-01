@@ -310,7 +310,10 @@ Future<Map<String, Object?>> prepareExactGroupReactionAddRedrive({
     'FROM group_reaction_replay_outbox o '
     'JOIN groups g ON g.id = o.group_id '
     'JOIN group_messages gm ON gm.id = o.message_id '
-    'WHERE g.name = ? AND gm.text = ? AND o.action = ? '
+    // Plan 319: exclude needs_build rows — their payload is the sentinel
+    // empty string and this probe hard-casts it.
+    "WHERE g.name = ? AND gm.text = ? AND o.action = ? "
+    "AND o.delivery_status != 'needs_build' "
     'ORDER BY o.created_at DESC, o.rowid DESC LIMIT 1',
     <Object?>[request.groupName, request.targetMarker, 'add'],
   );

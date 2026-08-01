@@ -259,6 +259,19 @@ void main() {
   test(
     'EK004 stores signed offline replay envelope for group_reaction remove',
     () async {
+      // Plan 319: a second member makes the replay routable — with a solo
+      // roster the ported unroutable pre-check (correctly) fails the row
+      // before any store is attempted.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
       final result = await removeGroupReaction(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -456,6 +469,19 @@ void main() {
   test(
     'remove replay store failure still returns success and leaves a failed durable row',
     () async {
+      // Plan 319: a second member makes the replay routable — with a solo
+      // roster the ported unroutable pre-check (correctly) fails the row
+      // before any store is attempted.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
       bridge.responses['group:inboxStore'] = {
         'ok': false,
         'errorCode': 'GROUP_INBOX_STORE_FAILED',

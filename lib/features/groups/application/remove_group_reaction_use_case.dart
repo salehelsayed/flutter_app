@@ -37,7 +37,7 @@ enum RemoveGroupReactionResult {
 /// the single reaction a sender holds on a message. Repeated remove re-stages
 /// therefore collapse to one durable row instead of minting a fresh uuid each
 /// time (OQ-2 / INV-R3). Mirrors `_deterministicAddReactionId`.
-String _deterministicRemoveReactionId({
+String deterministicGroupRemoveReactionId({
   required String groupId,
   required String messageId,
   required String senderPeerId,
@@ -105,7 +105,7 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
   );
 
   // 3. Build remove payload (deterministic id ⇒ idempotent re-stage / OQ-2)
-  final reactionId = _deterministicRemoveReactionId(
+  final reactionId = deterministicGroupRemoveReactionId(
     groupId: groupId,
     messageId: messageId,
     senderPeerId: senderPeerId,
@@ -252,6 +252,40 @@ Future<void> _stageRemoveReactionInboxStore({
   required GroupMemberDeviceIdentity? senderDevice,
   required String transitionId,
 }) async {
+  // Plan 319: stage a rescuable needs-build row BEFORE any throwing build
+  // step (mirrors the send lane).
+  final stagedAtIso = DateTime.now().toUtc().toIso8601String();
+  var needsBuildStaged = false;
+  try {
+    needsBuildStaged = await reactionReplayOutboxRepo.saveEntry(
+      GroupReactionReplayOutboxEntry(
+        reactionId: transitionId,
+        groupId: groupId,
+        messageId: payload.messageId,
+        senderPeerId: payload.senderPeerId,
+        emoji: payload.emoji,
+        action: payload.action,
+        inboxRetryPayload: '',
+        deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
+        createdAt: stagedAtIso,
+        updatedAt: stagedAtIso,
+      ),
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
+      details: {'error': e.toString(), 'phase': 'needs_build'},
+    );
+  }
+  if (!needsBuildStaged) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_OUTBOX_STAGE_SKIPPED_PARENT_GONE',
+      details: {'reactionId': transitionId},
+    );
+  }
+
   late final String inboxRetryPayload;
   try {
     final senderTransportPeerId =
@@ -285,37 +319,29 @@ Future<void> _stageRemoveReactionInboxStore({
       ),
     );
   } catch (e) {
+    // The needs-build row staged above survives for the retrier to rebuild.
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
-      details: {'error': e.toString()},
+      details: {'error': e.toString(), 'phase': 'build'},
     );
     return;
   }
-  final nowIso = DateTime.now().toUtc().toIso8601String();
-  final entry = GroupReactionReplayOutboxEntry(
-    reactionId: transitionId,
-    groupId: groupId,
-    messageId: payload.messageId,
-    senderPeerId: payload.senderPeerId,
-    emoji: payload.emoji,
-    action: payload.action,
-    inboxRetryPayload: inboxRetryPayload,
-    deliveryStatus: GroupReactionReplayOutboxStatus.pending,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  );
 
   var staged = false;
-  try {
-    await reactionReplayOutboxRepo.saveEntry(entry);
-    staged = true;
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
-      details: {'error': e.toString()},
-    );
+  if (needsBuildStaged) {
+    try {
+      staged = await reactionReplayOutboxRepo.attachBuiltPayload(
+        reactionId: transitionId,
+        inboxRetryPayload: inboxRetryPayload,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
+        details: {'error': e.toString(), 'phase': 'attach'},
+      );
+    }
   }
 
   unawaited(
@@ -348,6 +374,11 @@ Future<List<String>> _resolveReplayRecipients({
   return recipients.toList()..sort();
 }
 
+/// Plan 319 (GAP 2): the send lane's unroutable pre-check, ported to the
+/// remove choke point. Without it an empty-recipient payload reaches the Go
+/// bridge, which silently no-ops on the config-loaded arm and returns ok —
+/// the row was then falsely marked `stored`. Placed at the choke point so BOTH
+/// call sites (stage and exactRetry) are covered.
 Future<void> _attemptRemoveReactionInboxStore({
   required Bridge bridge,
   required GroupReactionReplayOutboxRepository reactionReplayOutboxRepo,
@@ -355,6 +386,27 @@ Future<void> _attemptRemoveReactionInboxStore({
   required String inboxRetryPayload,
   required bool staged,
 }) async {
+  if (_hasNoReactionInboxStoreRecipients(inboxRetryPayload)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_CUSTODY_UNROUTABLE',
+      details: {
+        'reactionId': reactionId.length > 8
+            ? reactionId.substring(0, 8)
+            : reactionId,
+        'reason': 'empty_recipients',
+        'action': 'remove',
+      },
+    );
+    if (staged) {
+      await reactionReplayOutboxRepo.updateEntryStatus(
+        reactionId,
+        deliveryStatus: GroupReactionReplayOutboxStatus.failed,
+        lastError: 'custody_unroutable_empty_recipients',
+      );
+    }
+    return;
+  }
   try {
     await storeGroupOfflineReplayFromRetryPayload(
       bridge: bridge,
@@ -389,5 +441,19 @@ Future<void> _attemptRemoveReactionInboxStore({
       event: 'GROUP_REACTION_OUTBOX_STORE_MARK_FAILED',
       details: {'error': e.toString()},
     );
+  }
+}
+
+/// Mirror of the send lane's predicate (plan 315/319): an empty or absent
+/// recipient list means the relay store can never route this custody.
+bool _hasNoReactionInboxStoreRecipients(String inboxRetryPayload) {
+  try {
+    final decoded = jsonDecode(inboxRetryPayload);
+    if (decoded is! Map) return false;
+    if (!decoded.containsKey('recipientPeerIds')) return true;
+    final recipients = decoded['recipientPeerIds'];
+    return recipients == null || (recipients is List && recipients.isEmpty);
+  } catch (_) {
+    return false;
   }
 }

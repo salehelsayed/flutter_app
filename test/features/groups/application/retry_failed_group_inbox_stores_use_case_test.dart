@@ -16,6 +16,8 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 
 /// Bridge that fails on the first N group:inboxStore calls and succeeds after.
 class _FailFirstNInboxBridge extends FakeBridge {
@@ -310,6 +312,109 @@ void main() {
       expect(payload['preserveRecipientPeerIds'], isTrue);
     },
   );
+
+  test('needs-build row is rebuilt with original identity and stored', () async {
+    // Plan 319 TC-319-05: the retrier rescues an abandoned reaction by
+    // rebuilding its envelope — reusing the ORIGINAL transition id (so every
+    // notification surface dedupes it) and anchoring the plaintext timestamp
+    // to the row's created_at (so a rebuilt ADD cannot out-time a tombstone).
+    final outbox = FakeGroupReactionReplayOutboxRepository();
+    const transitionId = 'group-reaction-event-rescue-1';
+    const createdAt = '2026-08-01T10:00:00.000Z';
+    await outbox.saveEntry(
+      GroupReactionReplayOutboxEntry(
+        reactionId: transitionId,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        senderPeerId: 'peer-1',
+        emoji: '\u{1F44D}',
+        action: 'add',
+        inboxRetryPayload: '',
+        deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      ),
+    );
+
+    final groupRepo = InMemoryGroupRepository();
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: 'group-1',
+        name: 'Rescue Group',
+        type: GroupType.chat,
+        topicName: 'topic-1',
+        createdAt: DateTime.utc(2026, 8, 1),
+        createdBy: 'peer-1',
+        myRole: GroupRole.admin,
+      ),
+    );
+    for (final peerId in <String>['peer-1', 'peer-2']) {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: peerId,
+          username: peerId,
+          role: MemberRole.writer,
+          publicKey: 'pk-$peerId',
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+    }
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 0,
+        encryptedKey: 'group-key-0',
+        createdAt: DateTime.utc(2026, 8, 1),
+      ),
+    );
+    final messages = InMemoryGroupMessageRepository();
+    await messages.saveMessage(
+      GroupMessage(
+        id: 'msg-1',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Bob',
+        text: 'target',
+        timestamp: DateTime.utc(2026, 8, 1),
+        keyGeneration: 0,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 8, 1),
+      ),
+    );
+
+    final identityRepo = FakeIdentityRepository();
+    await identityRepo.saveIdentity(
+      FakeIdentityRepository.makeIdentity(
+        peerId: 'peer-1',
+        publicKey: 'pk-peer-1',
+        privateKey: 'sk-peer-1',
+      ),
+    );
+
+    await retryFailedGroupInboxStores(
+      bridge: bridge,
+      msgRepo: messages,
+      groupRepo: groupRepo,
+      identityRepo: identityRepo,
+      reactionReplayOutboxRepo: outbox,
+    );
+
+    final rebuilt = await outbox.getEntry(transitionId);
+    expect(rebuilt, isNotNull);
+    expect(rebuilt!.inboxRetryPayload, isNotEmpty);
+    final retry = jsonDecode(rebuilt.inboxRetryPayload) as Map<String, Object?>;
+    final envelope =
+        jsonDecode(retry['message'] as String) as Map<String, Object?>;
+    final extension =
+        envelope['notificationExtension'] as Map<String, Object?>?;
+    expect(
+      extension?['transitionId'],
+      transitionId,
+      reason: 'the rebuild must reuse the ORIGINAL transition id',
+    );
+  });
 
   test('retries eligible sent messages and clears inbox retry state', () async {
     final msg = _makeRetryEligible('msg-1');

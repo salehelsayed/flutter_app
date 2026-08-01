@@ -135,6 +135,79 @@ void main() {
     bridge.responses['group:publishReaction'] = {'ok': true};
   });
 
+  test('build failure stages a rescuable needs-build row', () async {
+    // Plan 319 TC-319-02: a throw inside the offline-replay envelope build
+    // (bridge encrypt failure) must still leave a durable, rescuable outbox
+    // row — on HEAD the stage catch swallows the throw and returns rowless.
+    bridge.responses['group.encrypt'] = {'ok': false, 'error': 'NOT_INITIALIZED'};
+
+    await sendGroupReaction(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      emoji: '\u{1F44D}',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+    );
+
+    final row = await reactionReplayOutboxRepo.getLatestEntryForTarget(
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      senderPeerId: 'peer-1',
+    );
+    expect(
+      row,
+      isNotNull,
+      reason: 'a build failure must leave a rescuable outbox row',
+    );
+  });
+
+  test('roster failure stages a rescuable needs-build row', () async {
+    // Plan 319 TC-319-02 ordering leg: getMembers is the FIRST throwing step
+    // inside the stage try — the durable row must exist before it runs.
+    final throwingRepo = _ThrowingGetMembersGroupRepository();
+    await throwingRepo.saveGroup(testGroup);
+    await throwingRepo.saveMember(testMember);
+    await throwingRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 0,
+        encryptedKey: 'group-key-0',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    await sendGroupReaction(
+      bridge: bridge,
+      groupRepo: throwingRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      emoji: '\u{1F44D}',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+    );
+
+    final row = await reactionReplayOutboxRepo.getLatestEntryForTarget(
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      senderPeerId: 'peer-1',
+    );
+    expect(
+      row,
+      isNotNull,
+      reason: 'the needs-build row must be staged before the first throwing step',
+    );
+  });
+
   test('chat member can react', () async {
     final (result, reaction) = await sendGroupReaction(
       bridge: bridge,
@@ -1609,4 +1682,11 @@ void main() {
       expect(stored.single.id, reaction.id);
     },
   );
+}
+
+class _ThrowingGetMembersGroupRepository extends InMemoryGroupRepository {
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    throw StateError('roster unavailable');
+  }
 }

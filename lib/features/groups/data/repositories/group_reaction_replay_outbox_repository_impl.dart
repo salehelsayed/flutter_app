@@ -5,8 +5,14 @@ import '../../domain/repositories/group_reaction_replay_outbox_repository.dart';
 
 class GroupReactionReplayOutboxRepositoryImpl
     implements GroupReactionReplayOutboxRepository {
-  final Future<void> Function(Map<String, Object?> row)
+  final Future<bool> Function(Map<String, Object?> row)
   dbUpsertGroupReactionReplayOutboxEntry;
+  final Future<bool> Function({
+    required String reactionId,
+    required String inboxRetryPayload,
+    required String updatedAt,
+  })
+  dbAttachGroupReactionReplayOutboxPayload;
   final Future<Map<String, Object?>?> Function(String reactionId)
   dbLoadGroupReactionReplayOutboxEntry;
   final Future<Map<String, Object?>?> Function({
@@ -36,6 +42,7 @@ class GroupReactionReplayOutboxRepositoryImpl
 
   GroupReactionReplayOutboxRepositoryImpl({
     required this.dbUpsertGroupReactionReplayOutboxEntry,
+    required this.dbAttachGroupReactionReplayOutboxPayload,
     required this.dbLoadGroupReactionReplayOutboxEntry,
     required this.dbLoadLatestGroupReactionReplayOutboxEntryForTarget,
     required this.dbLoadRetryableGroupReactionReplayOutboxEntries,
@@ -45,7 +52,7 @@ class GroupReactionReplayOutboxRepositoryImpl
   });
 
   @override
-  Future<void> saveEntry(GroupReactionReplayOutboxEntry entry) async {
+  Future<bool> saveEntry(GroupReactionReplayOutboxEntry entry) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_REPLAY_OUTBOX_REPO_SAVE_START',
@@ -55,7 +62,7 @@ class GroupReactionReplayOutboxRepositoryImpl
             : entry.reactionId,
       },
     );
-    await dbUpsertGroupReactionReplayOutboxEntry(entry.toMap());
+    final inserted = await dbUpsertGroupReactionReplayOutboxEntry(entry.toMap());
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_REPLAY_OUTBOX_REPO_SAVE_SUCCESS',
@@ -65,7 +72,18 @@ class GroupReactionReplayOutboxRepositoryImpl
             : entry.reactionId,
       },
     );
+    return inserted;
   }
+
+  @override
+  Future<bool> attachBuiltPayload({
+    required String reactionId,
+    required String inboxRetryPayload,
+  }) => dbAttachGroupReactionReplayOutboxPayload(
+    reactionId: reactionId,
+    inboxRetryPayload: inboxRetryPayload,
+    updatedAt: DateTime.now().toUtc().toIso8601String(),
+  );
 
   @override
   Future<GroupReactionReplayOutboxEntry?> getEntry(String reactionId) async {

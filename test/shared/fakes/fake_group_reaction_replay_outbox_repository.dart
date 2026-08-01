@@ -8,6 +8,11 @@ class FakeGroupReactionReplayOutboxRepository
   final Map<String, GroupReactionReplayOutboxEntry> _entries = {};
 
   int saveEntryCallCount = 0;
+  int attachBuiltPayloadCallCount = 0;
+  /// Plan 319: models the group-parent write guard's silent zero-row insert.
+  bool guardBlocksInserts = false;
+  /// Plan 319: fails only the needs_build -> pending promotion.
+  bool failAttachBuiltPayload = false;
   int updateEntryStatusCallCount = 0;
   int deleteEntryCallCount = 0;
 
@@ -16,9 +21,33 @@ class FakeGroupReactionReplayOutboxRepository
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
   @override
-  Future<void> saveEntry(GroupReactionReplayOutboxEntry entry) async {
+  Future<bool> saveEntry(GroupReactionReplayOutboxEntry entry) async {
     saveEntryCallCount++;
+    if (guardBlocksInserts) return false;
     _entries[entry.reactionId] = entry;
+    return true;
+  }
+
+  @override
+  Future<bool> attachBuiltPayload({
+    required String reactionId,
+    required String inboxRetryPayload,
+  }) async {
+    attachBuiltPayloadCallCount++;
+    if (failAttachBuiltPayload) {
+      throw StateError('injected attachBuiltPayload failure');
+    }
+    final existing = _entries[reactionId];
+    if (existing == null ||
+        existing.deliveryStatus != GroupReactionReplayOutboxStatus.needsBuild) {
+      return false;
+    }
+    _entries[reactionId] = existing.copyWith(
+      inboxRetryPayload: inboxRetryPayload,
+      deliveryStatus: GroupReactionReplayOutboxStatus.pending,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    return true;
   }
 
   @override
@@ -72,7 +101,10 @@ class FakeGroupReactionReplayOutboxRepository
         .where(
           (entry) =>
               entry.deliveryStatus == GroupReactionReplayOutboxStatus.pending ||
-              entry.deliveryStatus == GroupReactionReplayOutboxStatus.failed,
+              entry.deliveryStatus == GroupReactionReplayOutboxStatus.failed ||
+              // Plan 319: needs_build rows are rebuildable custody.
+              entry.deliveryStatus ==
+                  GroupReactionReplayOutboxStatus.needsBuild,
         )
         .take(limit)
         .toList();

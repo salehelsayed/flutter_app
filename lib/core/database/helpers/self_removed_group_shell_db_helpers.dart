@@ -752,7 +752,7 @@ dbTerminalizeSelfRemovedMembershipInstance(
   }
   pendingRowsDeleted += await txn.delete(
     'group_reaction_replay_outbox',
-    where: "group_id = ? AND delivery_status IN ('pending', 'failed')",
+    where: "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
     whereArgs: <Object?>[groupId],
   );
 
@@ -2990,7 +2990,7 @@ Future<int> _clearMembershipInstancePendingWork(
   }
   deleted += await txn.delete(
     'group_reaction_replay_outbox',
-    where: "group_id = ? AND delivery_status IN ('pending', 'failed')",
+    where: "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
     whereArgs: <Object?>[groupId],
   );
   return deleted;

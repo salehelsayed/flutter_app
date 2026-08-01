@@ -178,8 +178,8 @@ CREATE TABLE identity (
         await stagedDb.insert('group_exit_diagnostics', transferredDiagnostic);
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 104);
-        expect(manifest.databaseVersion, 104);
+        expect(currentIdentityDatabaseVersion, 105);
+        expect(manifest.databaseVersion, 105);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,

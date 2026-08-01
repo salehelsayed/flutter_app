@@ -20,4 +20,4 @@
 // state machine. Its legacy backfill is deliberately empty.
 // 266: DB v104 adds the bounded, opaque `group_exit_diagnostics` history.
 // Its legacy backfill is deliberately empty.
-const int currentIdentityDatabaseVersion = 104;
+const int currentIdentityDatabaseVersion = 105;

@@ -2,6 +2,10 @@ class GroupReactionReplayOutboxStatus {
   static const String pending = 'pending';
   static const String failed = 'failed';
   static const String stored = 'stored';
+
+  /// Plan 319: staged before the envelope build with a sentinel-empty payload;
+  /// the retrier rebuilds the payload from the row's identity fields.
+  static const String needsBuild = 'needs_build';
 }
 
 class GroupReactionReplayOutboxEntry {

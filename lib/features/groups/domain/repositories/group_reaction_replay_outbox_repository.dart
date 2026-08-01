@@ -1,7 +1,20 @@
 import '../models/group_reaction_replay_outbox_entry.dart';
 
 abstract class GroupReactionReplayOutboxRepository {
-  Future<void> saveEntry(GroupReactionReplayOutboxEntry entry);
+  /// Persists (upsert by reaction id) and reports whether a row now exists.
+  ///
+  /// Plan 319: the return value is load-bearing — the group-parent write guard
+  /// silently inserts zero rows for a self-removed parent, and a caller that
+  /// assumed success staged custody that does not exist.
+  Future<bool> saveEntry(GroupReactionReplayOutboxEntry entry);
+
+  /// Plan 319: promotes a `needs_build` row to `pending` with its built
+  /// payload, atomically. Returns false when no such row exists (it was swept
+  /// by a group exit, self-removal, or message deletion mid-build).
+  Future<bool> attachBuiltPayload({
+    required String reactionId,
+    required String inboxRetryPayload,
+  }) async => false;
 
   Future<GroupReactionReplayOutboxEntry?> getEntry(String reactionId);
 

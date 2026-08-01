@@ -1345,7 +1345,11 @@ class MigrationPendingWorkManifestBuilder {
   }
 
   static bool _isGroupReactionReplayStatus(String? status) {
-    return status == 'pending' || status == 'failed';
+    // Plan 319: needs_build rows are rescued custody awaiting a payload
+    // rebuild; dropping them from the Move manifest would silently lose them.
+    return status == 'pending' ||
+        status == 'failed' ||
+        status == 'needs_build';
   }
 
   static bool _isTerminalStatus(String? status) {

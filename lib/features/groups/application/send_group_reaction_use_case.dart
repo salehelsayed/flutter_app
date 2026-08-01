@@ -140,7 +140,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   }
 
   // 4. Build reaction payload
-  final reactionId = _deterministicAddReactionId(
+  final reactionId = deterministicGroupAddReactionId(
     groupId: groupId,
     messageId: messageId,
     senderPeerId: senderPeerId,
@@ -273,7 +273,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   );
 }
 
-String _deterministicAddReactionId({
+String deterministicGroupAddReactionId({
   required String groupId,
   required String messageId,
   required String senderPeerId,
@@ -314,9 +314,46 @@ Future<void> _stageReactionInboxStore({
   required String targetAuthorPeerId,
   required String transitionId,
 }) async {
+  // Plan 319: stage a rescuable needs-build row BEFORE any throwing build
+  // step. A throw below used to abandon custody permanently — no row existed
+  // for the retriers to rescue, while the local reaction and the live publish
+  // proceeded as if replay were queued.
+  final stagedAtIso = DateTime.now().toUtc().toIso8601String();
+  final needsBuildEntry = GroupReactionReplayOutboxEntry(
+    reactionId: transitionId,
+    groupId: groupId,
+    messageId: payload.messageId,
+    senderPeerId: payload.senderPeerId,
+    emoji: payload.emoji,
+    action: payload.action,
+    inboxRetryPayload: '',
+    deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
+    createdAt: stagedAtIso,
+    updatedAt: stagedAtIso,
+  );
+  var needsBuildStaged = false;
+  try {
+    needsBuildStaged = await reactionReplayOutboxRepo.saveEntry(
+      needsBuildEntry,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
+      details: {'error': e.toString(), 'phase': 'needs_build'},
+    );
+  }
+  if (!needsBuildStaged) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_OUTBOX_STAGE_SKIPPED_PARENT_GONE',
+      details: {'reactionId': transitionId},
+    );
+  }
+
   late final String inboxRetryPayload;
   try {
-    final recipients = await _resolveReactionRecipients(
+    final recipients = await resolveGroupReactionRecipientsForRebuild(
       groupRepo: groupRepo,
       groupId: groupId,
       senderTransportPeerId: senderDevice.transportPeerId,
@@ -348,37 +385,30 @@ Future<void> _stageReactionInboxStore({
       ),
     );
   } catch (e) {
+    // The needs-build row staged above survives: the retrier rebuilds the
+    // payload from its identity fields and stores it.
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
-      details: {'error': e.toString()},
+      details: {'error': e.toString(), 'phase': 'build'},
     );
     return;
   }
-  final nowIso = DateTime.now().toUtc().toIso8601String();
-  final entry = GroupReactionReplayOutboxEntry(
-    reactionId: transitionId,
-    groupId: groupId,
-    messageId: payload.messageId,
-    senderPeerId: payload.senderPeerId,
-    emoji: payload.emoji,
-    action: payload.action,
-    inboxRetryPayload: inboxRetryPayload,
-    deliveryStatus: GroupReactionReplayOutboxStatus.pending,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  );
 
   var staged = false;
-  try {
-    await reactionReplayOutboxRepo.saveEntry(entry);
-    staged = true;
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
-      details: {'error': e.toString()},
-    );
+  if (needsBuildStaged) {
+    try {
+      staged = await reactionReplayOutboxRepo.attachBuiltPayload(
+        reactionId: transitionId,
+        inboxRetryPayload: inboxRetryPayload,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_OUTBOX_STAGE_FAILED',
+        details: {'error': e.toString(), 'phase': 'attach'},
+      );
+    }
   }
 
   unawaited(
@@ -448,7 +478,7 @@ Future<
     List<String> notificationRecipientTransportPeerIds,
   })
 >
-_resolveReactionRecipients({
+resolveGroupReactionRecipientsForRebuild({
   required GroupRepository groupRepo,
   required String groupId,
   required String senderTransportPeerId,

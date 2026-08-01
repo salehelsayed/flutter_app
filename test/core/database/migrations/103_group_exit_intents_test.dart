@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/103_group_exit_intents.dart';
-import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -105,9 +104,9 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 104);
-      expect(productionCreateMigrations.last.version, 104);
-      expect(productionUpgradeMigrations.last.version, 104);
+      expect(currentIdentityDatabaseVersion, 105);
+      expect(productionCreateMigrations.last.version, 105);
+      expect(productionUpgradeMigrations.last.version, 105);
       expect(
         productionUpgradeMigrations
             .singleWhere((entry) => entry.version == 103)
@@ -115,12 +114,14 @@ void main() {
         '103_group_exit_intents',
       );
       expect(
-        productionUpgradeMigrations.last.name,
+        productionUpgradeMigrations
+            .singleWhere((entry) => entry.version == 104)
+            .name,
         '104_group_exit_diagnostics',
       );
       expect(
-        productionUpgradeMigrations.last.run,
-        same(runGroupExitDiagnosticsMigration),
+        productionUpgradeMigrations.last.name,
+        '105_reaction_outbox_needs_build',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

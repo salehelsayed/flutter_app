@@ -604,7 +604,7 @@ Future<DbGroupExitIntentMutationResult> dbCleanupOrRetireGroupExitIntent(
     if (await _tableExists(transaction, 'group_reaction_replay_outbox')) {
       await transaction.delete(
         'group_reaction_replay_outbox',
-        where: "group_id = ? AND delivery_status IN ('pending', 'failed')",
+        where: "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
         whereArgs: [groupId],
       );
     }

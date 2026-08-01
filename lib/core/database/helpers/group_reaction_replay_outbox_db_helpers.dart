@@ -28,7 +28,10 @@ bool _sameReactionReplayAuthority(
   return true;
 }
 
-Future<void> dbUpsertGroupReactionReplayOutboxEntry(
+/// Plan 319: returns whether a row now exists. The group-parent write guard
+/// silently inserts zero rows for a self-removed parent; swallowing that made
+/// callers claim custody that was never staged.
+Future<bool> dbUpsertGroupReactionReplayOutboxEntry(
   Database db,
   Map<String, Object?> row,
 ) async {
@@ -45,7 +48,7 @@ Future<void> dbUpsertGroupReactionReplayOutboxEntry(
   );
 
   try {
-    await dbInsertOrdinaryGroupOwnedRow(
+    final inserted = await dbInsertOrdinaryGroupOwnedRow(
       db,
       table: 'group_reaction_replay_outbox',
       row: row,
@@ -59,8 +62,10 @@ Future<void> dbUpsertGroupReactionReplayOutboxEntry(
         'reactionId': reactionId.length > 8
             ? reactionId.substring(0, 8)
             : reactionId,
+        'inserted': inserted,
       },
     );
+    return inserted;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',
@@ -69,6 +74,34 @@ Future<void> dbUpsertGroupReactionReplayOutboxEntry(
     );
     rethrow;
   }
+}
+
+/// Plan 319: atomically promote a `needs_build` row to `pending` with its
+/// freshly built payload. Returns false when the row is gone (swept by a group
+/// exit, self-removal, or message deletion mid-build).
+Future<bool> dbAttachGroupReactionReplayOutboxPayload(
+  Database db, {
+  required String reactionId,
+  required String inboxRetryPayload,
+  required String updatedAt,
+}) async {
+  final updated = await db.update(
+    'group_reaction_replay_outbox',
+    <String, Object?>{
+      'inbox_retry_payload': inboxRetryPayload,
+      'delivery_status': 'pending',
+      'last_error': null,
+      'updated_at': updatedAt,
+    },
+    where: 'reaction_id = ? AND delivery_status = ?',
+    whereArgs: <Object?>[reactionId, 'needs_build'],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_REACTION_REPLAY_OUTBOX_DB_ATTACH_PAYLOAD',
+    details: {'updated': updated},
+  );
+  return updated > 0;
 }
 
 Future<Map<String, Object?>?> dbLoadGroupReactionReplayOutboxEntry(
@@ -127,9 +160,9 @@ dbLoadRetryableGroupReactionReplayOutboxEntries(
     );
     final rows = await db.rawQuery(
       'SELECT * FROM group_reaction_replay_outbox '
-      'WHERE delivery_status IN (?, ?) AND $parent '
+      'WHERE delivery_status IN (?, ?, ?) AND $parent '
       'ORDER BY created_at ASC, reaction_id ASC LIMIT ?',
-      ['pending', 'failed', limit],
+      ['pending', 'failed', 'needs_build', limit],
     );
 
     emitFlowEvent(
