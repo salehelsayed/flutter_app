@@ -10,6 +10,9 @@ export MKNOON_257_RELAY_TARGET='ubuntu@mknoun.xyz'
 export MKNOON_257_RELAY_KEY="$REPO/se.pem"
 export FIREBASE_SERVICE_ACCOUNT="$REPO/mknoon-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json"
 export MKNOON_257_STAGING_MANIFEST="$REPO/docker-ws/group-reaction-staging-manifest-315.json"
+# Devices: 21071FDF600CSC = the physical Google Pixel 6 (scenario RECIPIENT);
+# emulator-5554 = sdk_gphone16k_arm64 (scenario SENDER). Verified via
+# `adb shell getprop ro.product.model` 2026-08-01.
 export SIMS_ANDROID_PHYSICAL_DEVICE_ID='21071FDF600CSC'
 export SIMS_ANDROID_EMULATOR_DEVICE_ID='emulator-5554'
 
