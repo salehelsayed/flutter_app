@@ -20,6 +20,13 @@ const Set<String> groupReactionE2EAndroidScenarios = <String>{
   'android_announcement_message_unread_lifecycle',
   'android_group_reaction_recipient',
   'android_announcement_reaction_recipient',
+  // Plan 315 TC-12: backgrounded-but-connected recipient (process alive, HOME
+  // press, no kill). The harness-side registrations live in the criteria
+  // catalog + capture script + validator id-set; this in-app allow-list is the
+  // SEVENTH registration surface — an id missing here makes the runtime echo a
+  // non-conforming result and the capture fails with
+  // group_reaction_runtime_result_contract_mismatch.
+  'android_group_reaction_recipient_background_connected',
 };
 
 bool isGroupReactionE2EProbeAction(Object? value) =>

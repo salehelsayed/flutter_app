@@ -1,0 +1,6 @@
+=== 2026-08-01T07:43:19Z backup=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ ===
+     114 /tmp/backup_hashes.txt
+     114 /tmp/device_hashes.txt
+--- files whose CONTENT diverges (backup vs device) ---
+--- divergent count ---
+       0

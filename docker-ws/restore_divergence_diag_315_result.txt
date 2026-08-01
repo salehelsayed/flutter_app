@@ -1,0 +1,28 @@
+=== 2026-08-01T07:40:43Z backup=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ ===
+--- backup member list (name size) -> /tmp lists ---
+     137 /tmp/backup_members.txt
+--- current device state via run-as (name size) ---
+       0 /tmp/device_members.txt
+--- entries only in BACKUP (missing/changed-name on device) ---
+app_flutter/
+app_flutter/flutter_assets/
+app_flutter/flutter_assets/isolate_snapshot_data
+app_flutter/flutter_assets/kernel_blob.bin
+app_flutter/flutter_assets/vm_snapshot_data
+app_flutter/media/
+app_flutter/media/8e8f5972-50ab-4849-a3ed-0152be8fccc4/
+app_flutter/media/8e8f5972-50ab-4849-a3ed-0152be8fccc4/4cd51fbd-3118-418a-87a0-05df5945c0bf.jpg
+app_flutter/media/8e8f5972-50ab-4849-a3ed-0152be8fccc4/c80a49d0-e8ad-4e0d-86d6-8293a6d06a79.jpg
+app_flutter/media/avatars/
+app_flutter/pending_uploads/
+app_flutter/res_timestamp-107-1785568519047
+cache/
+cache/b08ffe17-cf7d-4e5a-aed8-29de10e287fc/
+cache/b08ffe17-cf7d-4e5a-aed8-29de10e287fc/IMG-20260731-WA0000.jpg
+cache/b08ffe17-cf7d-4e5a-aed8-29de10e287fc/IMG-20260731-WA0000.jpg_compressed.jpg
+code_cache/
+code_cache/flutter_engine/
+code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/
+code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/
+--- entries only on DEVICE (new files since backup) ---
+--- same-name size mismatches ---

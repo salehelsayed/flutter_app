@@ -1,0 +1,54 @@
+=== 2026-08-01T07:46:16Z backup=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ ===
+--- manifest entries + expected sha ---
+{
+ "schema": "mknoon.android-app-state-recovery.v1",
+ "redacted": true,
+ "packageName": "com.mknoon.app",
+ "devices": [
+  {
+   "device": "21071FDF600CSC",
+   "installed": true,
+   "process": {
+    "running": true,
+    "foreground": true
+   },
+   "runtimePermissions": {
+    "android.permission.ACCESS_COARSE_LOCATION": false,
+    "android.permission.ACCESS_FINE_LOCATION": false,
+    "android.permission.CAMERA": true,
+    "android.permission.POST_NOTIFICATIONS": true,
+    "android.permission.RECORD_AUDIO": false
+   },
+   "apks": [
+    {
+     "file": "installed-0.apk",
+     "bytes": 232653576,
+     "sha256": "18d45b30fe006e82e745bb795ddd24a463b0865cf4d3eb00c3777cd783c0c509"
+    }
+   ],
+   "privateData": {
+    "entries": [
+     "app_flutter",
+     "cache",
+     "code_cache",
+     "databases",
+     "files",
+     "no_backup",
+     "shared_prefs"
+    ],
+    "file": "private-data.tar",
+    "bytes
+top entries: app_flutter cache code_cache databases files no_backup shared_prefs 
+--- rebuild verify tar on device (guard's invocation) ---
+-rw-r--r--@ 1 I560101  wheel  115867136 Aug  1 09:46 /tmp/device_verify.tar
+-rw-r--r--@ 1 I560101  staff  115867136 Aug  1 09:20 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ/21071FDF600CSC/private-data.tar
+--- shas ---
+b66384c8ebf36b687e5848ac2b050f649239a67ea10edadfcb3fe643aee884cc
+39984665072e412aef307f9aa0795773914e582d87dfb6fcb87b07009ac0a559
+--- first divergent offset + header context ---
+sizes: 115867136 115867136
+first divergent offset: 114725489
+nearest header at 114725376
+ backup : {'name': 'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8', 'mode': '9e771a55', 'uid': 'f01d/a9e', 'gid': '95f07341', 'size': '8c7c066d3790', 'mtime': '2b785de34a05', 'uname': '', 'gname': ''}
+ device : {'name': 'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8', 'mode': '9e771a55', 'uid': 'f01d/4f2', 'gid': '31e3cc14', 'size': '8ca3925f695e', 'mtime': '9a666ea79645', 'uname': '', 'gname': ''}
+in-block field offset: 113
