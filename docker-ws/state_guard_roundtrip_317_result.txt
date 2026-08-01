@@ -1,0 +1,19 @@
+=== state_guard_roundtrip_317 2026-08-01T09:49:39.681948Z ===
+pre-existing mknoon-*-state-* dirs: 9
+--- capture (devices: [21071FDF600CSC]) ---
+capture dir: /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-roundtrip-317-state-uUKwts
+private-data.tar bytes: 115867136
+whole-tar sha256 (manifest): cd566d5def3ec5f4b037adf57aefb62f4d6c702fcda4b7430849e8915893ed0a
+canonical digest (backup): 8cdf92c9e8dfa0ba91a3d33a19d0e6d48f771f3f506e0f45da0d31fa9bc68706
+process at capture: {"running":true,"foreground":true}
+--- double-cut probe (evidence, not a gate) ---
+cut A: canonical=8cdf92c9e8dfa0ba91a3d33a19d0e6d48f771f3f506e0f45da0d31fa9bc68706 whole=cd566d5def3ec5f4b037adf57aefb62f4d6c702fcda4b7430849e8915893ed0a
+cut B: canonical=8cdf92c9e8dfa0ba91a3d33a19d0e6d48f771f3f506e0f45da0d31fa9bc68706 whole=cd566d5def3ec5f4b037adf57aefb62f4d6c702fcda4b7430849e8915893ed0a
+canonical A==B: true
+whole-sha A==B: true
+canonical backup==cutA: true
+--- restoreAll (in-place reinstall + clear + re-extract + canonical verify) ---
+restoreAll GREEN in 28s
+backup dir deleted: true
+tmp set-difference after success: empty
+ROUNDTRIP PASS

@@ -416,6 +416,8 @@ final class AndroidAppStateGuard {
     required Directory backupDirectory,
     AndroidHostProcessRunner runner = const SystemAndroidHostProcessRunner(),
     int maximumPrivateBackupBytes = _defaultMaximumPrivateBackupBytes,
+    AndroidPrivateArchiveCapturer? privateArchiveCapturer,
+    AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
   }) async {
     final absoluteBackup = backupDirectory.absolute;
     if (maximumPrivateBackupBytes <= 0) {
@@ -434,8 +436,8 @@ final class AndroidAppStateGuard {
         packageName: recovered.packageName,
         backupDirectory: absoluteBackup,
         runner: runner,
-        privateArchiveCapturer: null,
-        privateArchiveProcessStarter: null,
+        privateArchiveCapturer: privateArchiveCapturer,
+        privateArchiveProcessStarter: privateArchiveProcessStarter,
         maximumPrivateBackupBytes: maximumPrivateBackupBytes,
         privateArchiveTimeout: _defaultHostCommandTimeout,
         processTerminationGrace: _defaultProcessTerminationGrace,
@@ -1119,7 +1121,7 @@ final class AndroidAppStateGuard {
     final remoteMembers = '/data/local/tmp/sims-state-$token.members';
     final privateArchive = '.sims_state_$token.tar';
     final privateMembers = '.sims_state_$token.members';
-    final verifyArchive = '.sims_state_${token}_verify.tar';
+    final expectedCanonical = await canonicalPrivateArchiveDigest(archive);
     File? hostMembers;
     String? expectedMemberListSha256;
 
@@ -1174,12 +1176,7 @@ final class AndroidAppStateGuard {
         restorePlan,
         privateMemberList: hostMembers == null ? null : privateMembers,
       );
-      if (await _privateArchiveMatches(
-        device,
-        snapshot,
-        verifyArchive,
-        expected,
-      )) {
+      if (await _privateArchiveMatches(device, snapshot, expectedCanonical)) {
         return;
       }
       // Some Android installs expose cache/code_cache with an installd-owned
@@ -1199,12 +1196,7 @@ final class AndroidAppStateGuard {
         restorePlan,
         privateMemberList: hostMembers == null ? null : privateMembers,
       );
-      if (!await _privateArchiveMatches(
-        device,
-        snapshot,
-        verifyArchive,
-        expected,
-      )) {
+      if (!await _privateArchiveMatches(device, snapshot, expectedCanonical)) {
         throw StateError('private app-data archive did not restore exactly');
       }
     } finally {
@@ -1216,7 +1208,6 @@ final class AndroidAppStateGuard {
         '-f',
         privateArchive,
         privateMembers,
-        verifyArchive,
       ], allowFailure: true);
       await _adb(device, <String>[
         'shell',
@@ -1273,20 +1264,35 @@ final class AndroidAppStateGuard {
   Future<bool> _privateArchiveMatches(
     String device,
     _PackageSnapshot snapshot,
-    String verifyArchive,
-    String expected,
+    String expectedCanonicalDigest,
   ) async {
-    await _adb(device, <String>[
-      'shell',
-      'run-as',
-      packageName,
-      'tar',
-      '-cf',
-      verifyArchive,
-      '--',
-      ...snapshot.privateEntries,
-    ]);
-    return await _runAsFileSha256(device, verifyArchive) == expected;
+    // The in-place reinstall clears Android's package-stopped state, so a
+    // push can have woken the app since the last stop; a fresh stop shrinks
+    // (but cannot close) that window before the verify cut.
+    await _forceStop(device);
+    final verifyTemp = File(
+      '${backupDirectory.path}${Platform.pathSeparator}'
+      '${_deviceBackupDirectoryName(device)}'
+      '${Platform.pathSeparator}.verify-${_token('verify')}.tar',
+    );
+    try {
+      try {
+        await _capturePrivateArchive(
+          device,
+          snapshot.privateEntries,
+          verifyTemp,
+        );
+      } on AndroidAppStateBlocked {
+        // A failed verify stream is fatal, not a mismatch: it must not
+        // consume the repair/replay, matching the old on-device cut whose
+        // adb call ran without allowFailure.
+        throw StateError('private verification stream failed');
+      }
+      return await canonicalPrivateArchiveDigest(verifyTemp) ==
+          expectedCanonicalDigest;
+    } finally {
+      if (verifyTemp.existsSync()) verifyTemp.deleteSync();
+    }
   }
 
   Future<void> _preparePrivilegedCacheDirectories(
@@ -2126,6 +2132,132 @@ bool _safeTarMemberPath(String path) {
   return segments.every(
     (segment) => segment.isNotEmpty && segment != '.' && segment != '..',
   );
+}
+
+const int _maximumCanonicalPreludeBytes = 1024 * 1024;
+const int _canonicalPayloadChunkBytes = 256 * 1024;
+
+final class _SingleDigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
+}
+
+final class _ChunkedSha256 {
+  _ChunkedSha256() {
+    _conversion = sha256.startChunkedConversion(_sink);
+  }
+
+  final _SingleDigestSink _sink = _SingleDigestSink();
+  late final Sink<List<int>> _conversion;
+
+  void add(List<int> bytes) => _conversion.add(bytes);
+
+  Digest close() {
+    _conversion.close();
+    return _sink.value!;
+  }
+}
+
+final class _CanonicalMemberRecord {
+  _CanonicalMemberRecord(this.path, Digest digest)
+    : digestHex = digest.toString(),
+      digestBytes = digest.bytes;
+
+  final String path;
+  final String digestHex;
+  final List<int> digestBytes;
+}
+
+/// Order-insensitive canonical digest of a private-data tar archive.
+///
+/// Digests each member's full byte span (GNU long-name prelude records, the
+/// 512-byte header, and the zero-padded payload) and hashes the records
+/// sorted by (logical path, record digest), so two cuts of the same tree
+/// state compare equal regardless of on-device directory enumeration order —
+/// re-created directories enumerate differently on some /data filesystems,
+/// which is exactly the false negative a whole-archive digest produces.
+/// Everything after the first all-zero trailer block is ignored. Throws
+/// [FormatException] on malformed input instead of returning a digest.
+Future<String> canonicalPrivateArchiveDigest(File archive) async {
+  final input = archive.openSync();
+  try {
+    final records = <_CanonicalMemberRecord>[];
+    String? pendingPath;
+    _ChunkedSha256? preludeSpan;
+    while (true) {
+      final header = input.readSync(512);
+      if (header.isEmpty || header.every((byte) => byte == 0)) {
+        if (pendingPath != null || preludeSpan != null) {
+          throw const FormatException(
+            'private archive has a dangling long-name record',
+          );
+        }
+        break;
+      }
+      if (header.length != 512) {
+        throw const FormatException('private archive has a partial header');
+      }
+      final size = _tarOctal(header, 124, 12);
+      final type = header[156];
+      final paddedSize = ((size + 511) ~/ 512) * 512;
+      if (type == 76 || type == 120) {
+        if (size > _maximumCanonicalPreludeBytes) {
+          throw const FormatException(
+            'private archive long-name record is oversized',
+          );
+        }
+        final payload = input.readSync(paddedSize);
+        if (payload.length != paddedSize) {
+          throw const FormatException(
+            'private archive has a partial metadata record',
+          );
+        }
+        final value = payload.sublist(0, size);
+        pendingPath = type == 76
+            ? _tarLongPath(value)
+            : (_tarPaxPath(value) ?? pendingPath);
+        (preludeSpan ??= _ChunkedSha256())
+          ..add(header)
+          ..add(payload);
+        continue;
+      }
+      final name = _tarString(header, 0, 100);
+      final prefix = _tarString(header, 345, 155);
+      final path = pendingPath ?? (prefix.isEmpty ? name : '$prefix/$name');
+      pendingPath = null;
+      final span = (preludeSpan ?? _ChunkedSha256())..add(header);
+      preludeSpan = null;
+      var remaining = paddedSize;
+      while (remaining > 0) {
+        final chunk = input.readSync(min(remaining, _canonicalPayloadChunkBytes));
+        if (chunk.isEmpty) {
+          throw const FormatException('private archive has a partial member');
+        }
+        span.add(chunk);
+        remaining -= chunk.length;
+      }
+      records.add(_CanonicalMemberRecord(path, span.close()));
+    }
+    records.sort((left, right) {
+      final byPath = left.path.compareTo(right.path);
+      return byPath != 0 ? byPath : left.digestHex.compareTo(right.digestHex);
+    });
+    final whole = _ChunkedSha256();
+    for (final record in records) {
+      whole
+        ..add(utf8.encode(record.path))
+        ..add(const <int>[0])
+        ..add(record.digestBytes);
+    }
+    return whole.close().toString();
+  } finally {
+    input.closeSync();
+  }
 }
 
 final class _PackageSnapshot {

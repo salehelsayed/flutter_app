@@ -649,6 +649,9 @@ Future<void> main(List<String> arguments) async {
         runner: adb,
         privateArchiveCapturer: (_, _, entries, destination) async {
           expect(entries, <String>['cache', 'code_cache', 'files']);
+          if (!destination.path.endsWith('private-data.tar')) {
+            adb.commands.add('VERIFY_STREAM ${destination.path}');
+          }
           _writePrivateTarFixture(
             destination,
             entries,
@@ -674,12 +677,19 @@ Future<void> main(List<String> arguments) async {
             command.contains('installed-0.apk'),
       );
       final canonicalVerify = adb.commands.lastIndexWhere(
-        (command) =>
-            command.contains(' tar -cf ') && command.contains('_verify.tar'),
+        (command) => command.startsWith('VERIFY_STREAM '),
       );
       expect(extract, greaterThanOrEqualTo(0));
       expect(restoreInstall, lessThan(extract));
       expect(canonicalVerify, greaterThan(extract));
+      expect(adb.commands.join('\n'), isNot(contains('_verify.tar')));
+      expect(
+        adb.commands
+            .where((command) => command.contains('sha256sum .sims_state_'))
+            .length,
+        greaterThanOrEqualTo(2),
+        reason: 'staged archive and member list must both be re-hashed',
+      );
       expect(
         adb.commands,
         contains(
@@ -727,6 +737,9 @@ Future<void> main(List<String> arguments) async {
         backupLabel: 'direct-private-test',
         runner: adb,
         privateArchiveCapturer: (_, _, _, destination) async {
+          if (!destination.path.endsWith('private-data.tar')) {
+            adb.commands.add('VERIFY_STREAM ${destination.path}');
+          }
           _writePrivateTarFixture(destination, const <String>[
             'cache',
             'code_cache',
@@ -750,8 +763,7 @@ Future<void> main(List<String> arguments) async {
         (command) => command.contains(' tar -xf '),
       );
       final verify = adb.commands.indexWhere(
-        (command) =>
-            command.contains(' tar -cf ') && command.contains('_verify.tar'),
+        (command) => command.startsWith('VERIFY_STREAM '),
       );
       expect(restoreInstall, greaterThanOrEqualTo(0));
       expect(extract, greaterThan(restoreInstall));
@@ -779,6 +791,9 @@ Future<void> main(List<String> arguments) async {
         permissions: const <String, bool>{},
         privateEntries: const <String>{'code_cache', 'files'},
         codeCacheNonEmpty: true,
+        // Repurposed as a one-shot drift counter for the verify stream: the
+        // first cut carries a drifted privileged-root gid, the second is
+        // exact — modeling installer metadata the repair reinstall fixes.
         privateRestoreMismatchesRemaining: 1,
       );
       final guard = await AndroidAppStateGuard.capture(
@@ -787,11 +802,19 @@ Future<void> main(List<String> arguments) async {
         backupLabel: 'code-cache-mismatch-test',
         runner: adb,
         privateArchiveCapturer: (_, _, _, destination) async {
+          final verifyCall = !destination.path.endsWith('private-data.tar');
+          final drift =
+              verifyCall && adb.privateRestoreMismatchesRemaining > 0;
+          if (verifyCall) {
+            adb.commands.add('VERIFY_STREAM ${destination.path}');
+            if (drift) adb.privateRestoreMismatchesRemaining -= 1;
+          }
           _writePrivateTarFixture(
             destination,
             const <String>['code_cache', 'files'],
             privilegedCacheDirectories: true,
             includeNestedCodeCacheDirectory: true,
+            driftPrivilegedRootGid: drift,
           );
         },
       );
@@ -803,9 +826,22 @@ Future<void> main(List<String> arguments) async {
       expect(guard.backupDirectory.existsSync(), isFalse);
       expect(adb.originalInstallCount, 2);
       expect(adb.codeCacheNonEmpty, isTrue);
+      final extracts = <int>[
+        for (var index = 0; index < adb.commands.length; index += 1)
+          if (adb.commands[index].contains(' tar -xf ')) index,
+      ];
+      expect(extracts, hasLength(4));
+      final markers = <int>[
+        for (var index = 0; index < adb.commands.length; index += 1)
+          if (adb.commands[index].startsWith('VERIFY_STREAM ')) index,
+      ];
+      expect(markers, hasLength(2));
       expect(
-        adb.commands.where((command) => command.contains(' tar -xf ')),
-        hasLength(4),
+        adb.commands
+            .sublist(extracts[3] + 1, markers[1])
+            .where((command) => command.contains('am force-stop')),
+        isNotEmpty,
+        reason: 'the second verify cut needs its own fresh force-stop',
       );
       expect(adb.commands.join('\n'), isNot(contains('uninstall')));
       expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
@@ -830,19 +866,24 @@ Future<void> main(List<String> arguments) async {
         permissions: const <String, bool>{},
         privateEntries: const <String>{'code_cache', 'files'},
         codeCacheNonEmpty: true,
-        forcePrivateRestoreMismatch: true,
       );
       final guard = await AndroidAppStateGuard.capture(
         devices: const <String>['physical-1'],
         packageName: _packageName,
         backupLabel: 'persistent-mismatch-test',
         runner: adb,
+        // Every verify cut carries the drifted privileged-root gid: the
+        // metadata defect persists through the repair, so the ladder must
+        // fail closed.
         privateArchiveCapturer: (_, _, _, destination) async {
           _writePrivateTarFixture(
             destination,
             const <String>['code_cache', 'files'],
             privilegedCacheDirectories: true,
             includeNestedCodeCacheDirectory: true,
+            driftPrivilegedRootGid: !destination.path.endsWith(
+              'private-data.tar',
+            ),
           );
         },
       );
@@ -870,6 +911,508 @@ Future<void> main(List<String> arguments) async {
       expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
     },
   );
+
+  test(
+    'restore succeeds when the verify stream is member-permuted but content-identical',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-order-permuted-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+      // Models the Pixel 6 false negative: the device re-cut enumerates the
+      // re-created directories in a different readdir order, so the on-device
+      // whole-tar sha mismatches on both ladder attempts while every member is
+      // byte-identical. privateRestoreMismatchesRemaining: 2 reproduces that
+      // double mismatch for the legacy on-device digest path.
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 3, 5, 7],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'cache', 'code_cache', 'files'},
+        codeCacheNonEmpty: true,
+        privateRestoreMismatchesRemaining: 2,
+      );
+
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'order-permuted-verify-test',
+        runner: adb,
+        privateArchiveCapturer: (_, _, entries, destination) async {
+          _writePrivateTarFixture(
+            destination,
+            entries,
+            privilegedCacheDirectories: true,
+            includeNestedCodeCacheDirectory: true,
+            permuteMemberOrder: !destination.path.endsWith('private-data.tar'),
+          );
+        },
+      );
+      await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+      await guard.restoreAll();
+
+      expect(guard.restored, isTrue);
+      expect(guard.backupDirectory.existsSync(), isFalse);
+    },
+  );
+
+  test('canonical archive digest equates member permutations', () async {
+    final root = await Directory.systemTemp.createTemp('state-guard-canon-01-');
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final normal = File('${root.path}/normal.tar');
+    final permuted = File('${root.path}/permuted.tar');
+    for (final variant in <(File, bool)>[(normal, false), (permuted, true)]) {
+      _writePrivateTarFixture(
+        variant.$1,
+        const <String>['cache', 'code_cache', 'files'],
+        privilegedCacheDirectories: true,
+        includeNestedCodeCacheDirectory: true,
+        permuteMemberOrder: variant.$2,
+      );
+    }
+
+    expect(
+      normal.readAsBytesSync(),
+      isNot(permuted.readAsBytesSync()),
+      reason: 'the permutation must actually rearrange archive bytes',
+    );
+    expect(
+      await canonicalPrivateArchiveDigest(normal),
+      await canonicalPrivateArchiveDigest(permuted),
+    );
+  });
+
+  test('canonical archive digest detects payload divergence', () async {
+    final root = await Directory.systemTemp.createTemp('state-guard-canon-02-');
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final baseline = File('${root.path}/baseline.tar');
+    final flipped = File('${root.path}/flipped.tar');
+    for (final variant in <(File, bool)>[(baseline, false), (flipped, true)]) {
+      _writePrivateTarFixture(
+        variant.$1,
+        const <String>['code_cache', 'files'],
+        privilegedCacheDirectories: true,
+        includeNestedCodeCacheDirectory: true,
+        flipShaderPayload: variant.$2,
+      );
+    }
+
+    expect(
+      await canonicalPrivateArchiveDigest(baseline),
+      isNot(await canonicalPrivateArchiveDigest(flipped)),
+    );
+  });
+
+  test('canonical archive digest detects header metadata divergence', () async {
+    final root = await Directory.systemTemp.createTemp('state-guard-canon-03-');
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final baseline = File('${root.path}/baseline.tar');
+    final drifted = File('${root.path}/drifted.tar');
+    for (final variant in <(File, bool)>[(baseline, false), (drifted, true)]) {
+      _writePrivateTarFixture(
+        variant.$1,
+        const <String>['cache', 'files'],
+        privilegedCacheDirectories: true,
+        driftPrivilegedRootGid: variant.$2,
+      );
+    }
+
+    expect(
+      await canonicalPrivateArchiveDigest(baseline),
+      isNot(await canonicalPrivateArchiveDigest(drifted)),
+    );
+  });
+
+  test('canonical archive digest resolves long-name members', () async {
+    final root = await Directory.systemTemp.createTemp('state-guard-canon-04-');
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    // Two >100-char paths sharing an IDENTICAL first-100-char prefix, so the
+    // truncated follower-header names cannot distinguish them — only the
+    // LongLink payload can. Payloads exchanged between the two archives.
+    final shared = 'files/${'c' * 94}';
+    final pathA = '$shared/tailA';
+    final pathB = '$shared/tailB';
+    List<int> member(String path, List<int> contents) => _tarLongFileRecords(
+      path,
+      contents,
+      mode: 0x180,
+      uid: 10000,
+      gid: 10000,
+      mtimeSeconds: 1700000003,
+    );
+    final one = File('${root.path}/one.tar');
+    final two = File('${root.path}/two.tar');
+    _writeRawTarFixture(one, <List<int>>[
+      member(pathA, <int>[1, 1, 1]),
+      member(pathB, <int>[2, 2, 2]),
+    ]);
+    _writeRawTarFixture(two, <List<int>>[
+      member(pathA, <int>[2, 2, 2]),
+      member(pathB, <int>[1, 1, 1]),
+    ]);
+    final permutedTwo = File('${root.path}/permuted-two.tar');
+    _writeRawTarFixture(permutedTwo, <List<int>>[
+      member(pathB, <int>[2, 2, 2]),
+      member(pathA, <int>[1, 1, 1]),
+    ]);
+
+    expect(
+      await canonicalPrivateArchiveDigest(one),
+      await canonicalPrivateArchiveDigest(permutedTwo),
+      reason: 'permuted long-name members must equate',
+    );
+    expect(
+      await canonicalPrivateArchiveDigest(one),
+      isNot(await canonicalPrivateArchiveDigest(two)),
+      reason: 'exchanged payloads behind identical truncated names must differ',
+    );
+  });
+
+  test('canonical archive digest fails closed on malformed input', () async {
+    final root = await Directory.systemTemp.createTemp('state-guard-canon-05-');
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final partialHeader = File('${root.path}/partial.tar')
+      ..writeAsBytesSync(List<int>.filled(300, 0x41), flush: true);
+    final badSize = File('${root.path}/bad-size.tar');
+    final corrupt = _tarFileRecords(
+      'files/ok',
+      <int>[1],
+      mode: 0x180,
+      uid: 10000,
+      gid: 10000,
+      mtimeSeconds: 1700000000,
+    );
+    corrupt[124] = 0x5a; // 'Z' in the octal size field
+    _writeRawTarFixture(badSize, <List<int>>[corrupt]);
+    final danglingPrelude = File('${root.path}/dangling.tar');
+    _writeRawTarFixture(danglingPrelude, <List<int>>[
+      _tarHeader(
+        '././@LongLink',
+        mode: 0,
+        uid: 0,
+        gid: 0,
+        size: 8,
+        mtimeSeconds: 0,
+        type: 76,
+      ),
+      <int>[0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0], // payload block
+      List<int>.filled(504, 0),
+    ]);
+
+    for (final malformed in <File>[partialHeader, badSize, danglingPrelude]) {
+      await expectLater(
+        canonicalPrivateArchiveDigest(malformed),
+        throwsA(isA<FormatException>()),
+        reason: malformed.path,
+      );
+    }
+  });
+
+  test(
+    'canonical archive digest binds paths to content and counts duplicates',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-canon-14-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      List<int> member(String path, List<int> contents) => _tarFileRecords(
+        path,
+        contents,
+        mode: 0x180,
+        uid: 10000,
+        gid: 10000,
+        mtimeSeconds: 1700000000,
+      );
+      final straight = File('${root.path}/straight.tar');
+      final exchanged = File('${root.path}/exchanged.tar');
+      _writeRawTarFixture(straight, <List<int>>[
+        member('files/a', <int>[1, 1]),
+        member('files/b', <int>[2, 2]),
+      ]);
+      _writeRawTarFixture(exchanged, <List<int>>[
+        member('files/a', <int>[2, 2]),
+        member('files/b', <int>[1, 1]),
+      ]);
+      final single = File('${root.path}/single.tar');
+      final doubled = File('${root.path}/doubled.tar');
+      _writeRawTarFixture(single, <List<int>>[
+        member('files/a', <int>[1, 1]),
+      ]);
+      _writeRawTarFixture(doubled, <List<int>>[
+        member('files/a', <int>[1, 1]),
+        member('files/a', <int>[1, 1]),
+      ]);
+
+      expect(
+        await canonicalPrivateArchiveDigest(straight),
+        isNot(await canonicalPrivateArchiveDigest(exchanged)),
+        reason: 'payloads exchanged between paths must change the digest',
+      );
+      expect(
+        await canonicalPrivateArchiveDigest(single),
+        isNot(await canonicalPrivateArchiveDigest(doubled)),
+        reason: 'a duplicated member must change the digest',
+      );
+    },
+  );
+
+  test(
+    'verify streams the private tree after a fresh force-stop and leaves no residue',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-verify-stream-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 3, 5, 7],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'cache', 'code_cache', 'files'},
+        codeCacheNonEmpty: true,
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'verify-stream-test',
+        runner: adb,
+        privateArchiveCapturer: (_, _, entries, destination) async {
+          if (!destination.path.endsWith('private-data.tar')) {
+            adb.commands.add('VERIFY_STREAM ${destination.path}');
+          }
+          _writePrivateTarFixture(
+            destination,
+            entries,
+            privilegedCacheDirectories: true,
+            includeNestedCodeCacheDirectory: true,
+          );
+        },
+      );
+      await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+      await guard.restoreAll();
+
+      expect(guard.restored, isTrue);
+      final commands = adb.commands;
+      final streamIndex = commands.indexWhere(
+        (command) => command.startsWith('VERIFY_STREAM '),
+      );
+      expect(streamIndex, greaterThanOrEqualTo(0));
+      var lastExtractBeforeStream = -1;
+      for (var index = 0; index < streamIndex; index += 1) {
+        if (commands[index].contains(' tar -xf ')) {
+          lastExtractBeforeStream = index;
+        }
+      }
+      expect(lastExtractBeforeStream, greaterThanOrEqualTo(0));
+      final freshStop = commands
+          .sublist(lastExtractBeforeStream + 1, streamIndex)
+          .where((command) => command.contains('am force-stop'));
+      expect(
+        freshStop,
+        isNotEmpty,
+        reason: 'a fresh force-stop must sit between extract and the stream',
+      );
+      expect(commands.join('\n'), isNot(contains('_verify.tar')));
+      final verifyTempPath = commands[streamIndex].substring(
+        'VERIFY_STREAM '.length,
+      );
+      expect(File(verifyTempPath).existsSync(), isFalse);
+      expect(guard.backupDirectory.existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'verify stream failure fails the restore without consuming the replay',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-stream-failure-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 3, 5, 7],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'files'},
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'stream-failure-test',
+        runner: adb,
+        privateArchiveCapturer: (_, _, entries, destination) async {
+          if (!destination.path.endsWith('private-data.tar')) {
+            throw StateError('injected verify stream failure');
+          }
+          _writePrivateTarFixture(destination, entries);
+        },
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+      await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+      await expectLater(
+        guard.restoreAll(),
+        throwsA(isA<AndroidAppStateFailure>()),
+      );
+
+      expect(guard.restored, isFalse);
+      expect(guard.backupDirectory.existsSync(), isTrue);
+      expect(
+        adb.originalInstallCount,
+        1,
+        reason: 'a stream failure is fatal and must not consume the replay',
+      );
+    },
+  );
+
+  test('recovery loader verifies through the canonical digest', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-recovery-canon-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final artifact = File('${root.path}/candidate.apk')
+      ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+    // The knob models the legacy on-device digest double-mismatching; a
+    // recovery restore that still consulted it would fail closed here.
+    final adb = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 3, 5, 7],
+      ],
+      permissions: const <String, bool>{},
+      privateEntries: const <String>{'cache', 'code_cache', 'files'},
+      privateRestoreMismatchesRemaining: 2,
+    );
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'recovery-canon-test',
+      runner: adb,
+      privateArchiveCapturer: (_, _, entries, destination) async {
+        _writePrivateTarFixture(destination, entries);
+      },
+    );
+    final backup = guard.backupDirectory;
+    addTearDown(() async {
+      if (backup.existsSync()) await backup.delete(recursive: true);
+    });
+    await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+    final recovery = await AndroidAppStateGuard.loadRecovery(
+      backupDirectory: backup,
+      runner: adb,
+      privateArchiveCapturer: (_, _, entries, destination) async {
+        _writePrivateTarFixture(
+          destination,
+          entries,
+          permuteMemberOrder: !destination.path.endsWith('private-data.tar'),
+        );
+      },
+    );
+    await recovery.restoreAll();
+
+    expect(recovery.restored, isTrue);
+    expect(backup.existsSync(), isFalse);
+  });
+
+  test('genuine content divergence still fails closed after replay', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'state-guard-content-divergence-',
+    );
+    addTearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+    final artifact = File('${root.path}/candidate.apk')
+      ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+    final adb = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 3, 5, 7],
+      ],
+      permissions: const <String, bool>{},
+      privateEntries: const <String>{'code_cache', 'files'},
+      codeCacheNonEmpty: true,
+    );
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'content-divergence-test',
+      runner: adb,
+      privateArchiveCapturer: (_, _, entries, destination) async {
+        _writePrivateTarFixture(
+          destination,
+          entries,
+          privilegedCacheDirectories: true,
+          includeNestedCodeCacheDirectory: true,
+          flipShaderPayload: !destination.path.endsWith('private-data.tar'),
+        );
+      },
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+    await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+    await expectLater(
+      guard.restoreAll(),
+      throwsA(isA<AndroidAppStateFailure>()),
+    );
+
+    expect(guard.restored, isFalse);
+    expect(guard.backupDirectory.existsSync(), isTrue);
+    expect(
+      adb.commands.where((command) => command.contains(' tar -xf ')),
+      hasLength(4),
+    );
+    expect(adb.originalInstallCount, 2);
+    final residue = guard.backupDirectory
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where(
+          (file) => file.path
+              .split(Platform.pathSeparator)
+              .last
+              .startsWith('.verify-'),
+        );
+    expect(
+      residue,
+      isEmpty,
+      reason: 'failure paths must delete the host temp verify file',
+    );
+  });
 
   test(
     'retained manifest lets a later process restore every state dimension',
@@ -959,6 +1502,9 @@ Future<void> main(List<String> arguments) async {
       final recovery = await AndroidAppStateGuard.loadRecovery(
         backupDirectory: backup,
         runner: adb,
+        privateArchiveCapturer: (_, _, entries, destination) async {
+          _writePrivateTarFixture(destination, entries);
+        },
       );
       await recovery.restoreAll();
 
@@ -1173,18 +1719,21 @@ void _writePrivateTarFixture(
   Iterable<String> entries, {
   bool privilegedCacheDirectories = false,
   bool includeNestedCodeCacheDirectory = false,
+  bool permuteMemberOrder = false,
+  bool driftPrivilegedRootGid = false,
+  bool flipShaderPayload = false,
 }) {
-  final bytes = <int>[];
+  final members = <List<int>>[];
   for (final entry in entries) {
     final privileged =
         privilegedCacheDirectories &&
         (entry == 'cache' || entry == 'code_cache');
-    bytes.addAll(
+    members.add(
       _tarDirectoryHeader(
         entry,
         mode: privileged ? 0x5f9 : 0x1f9,
         uid: 10000,
-        gid: privileged ? 20000 : 10000,
+        gid: privileged ? (driftPrivilegedRootGid ? 21000 : 20000) : 10000,
         mtimeSeconds: 1700000000,
       ),
     );
@@ -1200,7 +1749,7 @@ void _writePrivateTarFixture(
         skiaHash,
         '$skiaHash/sksl',
       ]) {
-        bytes.addAll(
+        members.add(
           _tarDirectoryRecords(
             directory,
             mode: 0x5f9,
@@ -1210,10 +1759,10 @@ void _writePrivateTarFixture(
           ),
         );
       }
-      bytes.addAll(
+      members.add(
         _tarFileRecords(
           '$engine/shader.bin',
-          <int>[1, 2, 3],
+          flipShaderPayload ? <int>[9, 2, 3] : <int>[1, 2, 3],
           mode: 0x180,
           uid: 10000,
           gid: 20000,
@@ -1222,7 +1771,13 @@ void _writePrivateTarFixture(
       );
     }
   }
-  bytes.addAll(List<int>.filled(1024, 0));
+  // A member block (prelude records + header + payload) moves as one unit so a
+  // permuted archive stays structurally valid tar with an identical multiset.
+  final ordered = permuteMemberOrder ? members.reversed : members;
+  final bytes = <int>[
+    for (final member in ordered) ...member,
+    ...List<int>.filled(1024, 0),
+  ];
   destination.writeAsBytesSync(bytes, flush: true);
 }
 
@@ -1295,25 +1850,91 @@ List<int> _tarDirectoryRecords(
       0,
     ),
   ];
+  // Real toybox LongLink shape: zeroed numeric fields on the L-record and the
+  // FIRST 100 path characters in the follower header's name field.
   return <int>[
     ..._tarHeader(
       '././@LongLink',
-      mode: 0x1a4,
+      mode: 0,
       uid: 0,
       gid: 0,
       size: longPath.length,
-      mtimeSeconds: mtimeSeconds,
+      mtimeSeconds: 0,
       type: 76,
     ),
     ...paddedPath,
     ..._tarDirectoryHeader(
-      path.substring(path.length - 100),
+      path.substring(0, 100),
       mode: mode,
       uid: uid,
       gid: gid,
       mtimeSeconds: mtimeSeconds,
     ),
   ];
+}
+
+List<int> _tarLongFileRecords(
+  String path,
+  List<int> contents, {
+  required int mode,
+  required int uid,
+  required int gid,
+  required int mtimeSeconds,
+}) {
+  if (ascii.encode(path).length <= 100) {
+    return _tarFileRecords(
+      path,
+      contents,
+      mode: mode,
+      uid: uid,
+      gid: gid,
+      mtimeSeconds: mtimeSeconds,
+    );
+  }
+  final longPath = <int>[...utf8.encode(path), 0];
+  final paddedPath = <int>[
+    ...longPath,
+    ...List<int>.filled(
+      ((longPath.length + 511) ~/ 512) * 512 - longPath.length,
+      0,
+    ),
+  ];
+  final paddedContents = <int>[
+    ...contents,
+    ...List<int>.filled(
+      ((contents.length + 511) ~/ 512) * 512 - contents.length,
+      0,
+    ),
+  ];
+  return <int>[
+    ..._tarHeader(
+      '././@LongLink',
+      mode: 0,
+      uid: 0,
+      gid: 0,
+      size: longPath.length,
+      mtimeSeconds: 0,
+      type: 76,
+    ),
+    ...paddedPath,
+    ..._tarHeader(
+      path.substring(0, 100),
+      mode: mode,
+      uid: uid,
+      gid: gid,
+      size: contents.length,
+      mtimeSeconds: mtimeSeconds,
+      type: 48,
+    ),
+    ...paddedContents,
+  ];
+}
+
+void _writeRawTarFixture(File destination, List<List<int>> members) {
+  destination.writeAsBytesSync(<int>[
+    for (final member in members) ...member,
+    ...List<int>.filled(1024, 0),
+  ], flush: true);
 }
 
 List<int> _tarHeader(
@@ -1365,7 +1986,6 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       centralInstallLeavesExpectedBytes = false,
       centralInstallExtraPackage = null,
       directPrivateRestoreExact = false,
-      forcePrivateRestoreMismatch = false,
       privateRestoreMismatchesRemaining = 0,
       codeCacheNonEmpty = false,
       _capturedCodeCacheNonEmpty = false,
@@ -1376,7 +1996,6 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     required Map<String, bool> permissions,
     Set<String> privateEntries = const <String>{},
     this.directPrivateRestoreExact = false,
-    this.forcePrivateRestoreMismatch = false,
     this.privateRestoreMismatchesRemaining = 0,
     this.codeCacheNonEmpty = false,
     this.running = false,
@@ -1402,7 +2021,8 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   final String? centralInstallExtraPackage;
   final Set<String> additionalInstalledPackages = <String>{};
   final bool directPrivateRestoreExact;
-  final bool forcePrivateRestoreMismatch;
+  // Legacy on-device digest mismatch knob, repurposed by the canonical-verify
+  // tests as a one-shot drift counter consumed by their verify capturers.
   int privateRestoreMismatchesRemaining;
   bool codeCacheNonEmpty;
   final bool _capturedCodeCacheNonEmpty;
@@ -1610,18 +2230,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     }
     if (_starts(shell, <String>['run-as', _packageName, 'sha256sum'])) {
       final path = shell[3];
-      final verificationMismatch =
-          path.contains('_verify.tar') &&
-          (forcePrivateRestoreMismatch ||
-              !cacheMetadataExact ||
-              privateRestoreMismatchesRemaining > 0);
-      if (path.contains('_verify.tar') &&
-          privateRestoreMismatchesRemaining > 0) {
-        privateRestoreMismatchesRemaining -= 1;
-      }
-      final digest = verificationMismatch
-          ? sha256.convert(<int>[0]).toString()
-          : path.endsWith('.members')
+      final digest = path.endsWith('.members')
           ? _stagedMemberListDigest
           : _stagedArchiveDigest;
       return _result(0, '$digest  $path', '');

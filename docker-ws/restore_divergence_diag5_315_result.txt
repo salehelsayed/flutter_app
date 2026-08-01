@@ -1,0 +1,110 @@
+=== 2026-08-01T09:03:51Z backup=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff ===
+-rw-r--r--@ 1 I560101  wheel  115867136 Aug  1 09:46 /tmp/device_verify.tar
+--- member walk (backup) around divergence ---
+  hdr@114723328 type='L' size=154 mtime=00000000000 uid=0000000 gid=0000000 name=././@LongLink
+    payload[:200]=b'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e89e771a55f01d/403c4e16f758386dcac82e748c603d6f145ef15b\x00'
+  hdr@114724352 type='0' size=4052 mtime=15233316742 uid=0024530 gid=0050150 name=code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8
+  hdr@114728960 type='L' size=154 mtime=00000000000 uid=0000000 gid=0000000 name=././@LongLink
+    payload[:200]=b'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e89e771a55f01d/b1e36eaded90a5055510f300155542548d32a710\x00'
+  hdr@114729984 type='0' size=4660 mtime=15233316720 uid=0024530 gid=0050150 name=code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8
+--- member walk (device-recut) around divergence ---
+  hdr@114724864 type='L' size=154 mtime=00000000000 uid=0000000 gid=0000000 name=././@LongLink
+    payload[:200]=b'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e89e771a55f01d/4f231e3cc148ca3925f695e9a666ea796453d54d\x00'
+  hdr@114725888 type='0' size=4352 mtime=15233316743 uid=0024530 gid=0050150 name=code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8
+  hdr@114731008 type='L' size=154 mtime=00000000000 uid=0000000 gid=0000000 name=././@LongLink
+    payload[:200]=b'code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e89e771a55f01d/3530a672e71b4ea6407c1c6e98b2d243bcdb91b0\x00'
+  hdr@114732032 type='0' size=4440 mtime=15233316753 uid=0024530 gid=0050150 name=code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8
+--- member-order comparison (names only, full walk) ---
+backup members: 224 device members: 224
+identical (name,type,size) sequence: False
+  first sequence divergence at member 165:
+    backup : ('code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8', '0', 7108)
+    device : ('code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8', '0', 4660)
+  names only in backup: []
+  names only in device: []
+  same-name different-size members: [('code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8', 6804, 4052)]
+--- skia dir member list in backup (name, size, mtime) ---
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/ size=0 mtime=1785568520 hdr@114260480
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=0 mtime=1785568747 hdr@114262016
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=0 mtime=1785568520 hdr@114263552
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2120 mtime=1785568528 hdr@114265088
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5428 mtime=1785568528 hdr@114269184
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2580 mtime=1785568528 hdr@114276352
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4012 mtime=1785568528 hdr@114280960
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2604 mtime=1785568528 hdr@114286592
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3572 mtime=1785568528 hdr@114291200
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3012 mtime=1785568528 hdr@114296320
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4152 mtime=1785568528 hdr@114300928
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4020 mtime=1785568528 hdr@114307072
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6104 mtime=1785568529 hdr@114312704
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=9812 mtime=1785568529 hdr@114320384
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5536 mtime=1785568529 hdr@114332160
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2700 mtime=1785568529 hdr@114339328
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3020 mtime=1785568529 hdr@114343936
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4868 mtime=1785568529 hdr@114348544
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6740 mtime=1785568529 hdr@114355200
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2724 mtime=1785568529 hdr@114363904
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4092 mtime=1785568529 hdr@114368512
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3780 mtime=1785568529 hdr@114374144
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2412 mtime=1785568529 hdr@114379776
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3956 mtime=1785568532 hdr@114383872
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=9044 mtime=1785568532 hdr@114389504
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2552 mtime=1785568532 hdr@114400256
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2824 mtime=1785568532 hdr@114404352
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5380 mtime=1785568532 hdr@114408960
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5380 mtime=1785568532 hdr@114416128
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2804 mtime=1785568532 hdr@114423296
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4468 mtime=1785568532 hdr@114427904
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2120 mtime=1785568532 hdr@114434048
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2112 mtime=1785568532 hdr@114438144
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5324 mtime=1785568532 hdr@114442240
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3284 mtime=1785568532 hdr@114449408
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3896 mtime=1785568532 hdr@114454528
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6028 mtime=1785568532 hdr@114460160
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3028 mtime=1785568543 hdr@114467840
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3676 mtime=1785568543 hdr@114472448
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6424 mtime=1785568543 hdr@114478080
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3936 mtime=1785568547 hdr@114486272
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2924 mtime=1785568549 hdr@114491904
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2764 mtime=1785568550 hdr@114496512
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=9656 mtime=1785568550 hdr@114501120
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3056 mtime=1785568550 hdr@114512384
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2936 mtime=1785568551 hdr@114516992
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4400 mtime=1785568551 hdr@114521600
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5660 mtime=1785568551 hdr@114527744
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2600 mtime=1785568560 hdr@114535424
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3064 mtime=1785568560 hdr@114540032
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=7708 mtime=1785568561 hdr@114544640
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3776 mtime=1785568561 hdr@114554368
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3480 mtime=1785568564 hdr@114560000
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6436 mtime=1785568564 hdr@114565120
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6920 mtime=1785568564 hdr@114573312
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3996 mtime=1785568564 hdr@114582016
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4416 mtime=1785568564 hdr@114587648
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4152 mtime=1785568564 hdr@114593792
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4700 mtime=1785568564 hdr@114599936
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3044 mtime=1785568564 hdr@114606592
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=9608 mtime=1785568603 hdr@114611200
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3992 mtime=1785568604 hdr@114622464
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3900 mtime=1785568604 hdr@114628096
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4808 mtime=1785568604 hdr@114633728
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=7324 mtime=1785568605 hdr@114640384
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=5628 mtime=1785568605 hdr@114649600
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6116 mtime=1785568607 hdr@114656768
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6388 mtime=1785568713 hdr@114664448
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6340 mtime=1785568714 hdr@114672640
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3728 mtime=1785568720 hdr@114680832
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4512 mtime=1785568720 hdr@114686464
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2836 mtime=1785568720 hdr@114692608
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6464 mtime=1785568720 hdr@114697216
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=7108 mtime=1785568733 hdr@114705408
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4224 mtime=1785568747 hdr@114714112
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=2496 mtime=1785568738 hdr@114720256
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4052 mtime=1785568738 hdr@114724352
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4660 mtime=1785568720 hdr@114729984
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=3480 mtime=1785568735 hdr@114736640
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4352 mtime=1785568739 hdr@114741760
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4440 mtime=1785568747 hdr@114747904
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=4384 mtime=1785568735 hdr@114754048
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=7040 mtime=1785568732 hdr@114760192
+  code_cache/flutter_engine/e4b8dca3f1b4ede4c30371002441c88c12187ed6/skia/837be28dd21818d2169e1e6789e8 size=6804 mtime=1785568733 hdr@114768896

@@ -1,0 +1,230 @@
+# 317 - Android State-Guard Order-Insensitive Private-Archive Verification
+
+Status: execution-ready (v2, /tdd-review applied 2026-08-01 — 4-worker audit `wf_707851cf-825`, verdict plan-fixes-required → all deltas folded in below; core bet CONFIRMED against toybox tar.c)
+Type: Bug
+Spec: free-text intent (no formal spec) — handover item "state-guard verify false negative", 2026-08-01
+Classification: implementation-ready
+Closure tier: device (host tier proves the comparison logic; the false negative is filesystem-enumeration-order-specific and closes on the pinned Pixel 6)
+
+## Planning Progress
+| Time | Role | Files inspected | Decision/blocker | Next action |
+|---|---|---|---|---|
+| 2026-08-01 (grounding) | Evidence Collector (10-agent verify→refute workflow `wf_67cae0a2-e35` + firsthand source read) | `integration_test/support/android_app_state_guard.dart` (all 2517 lines), `test/integration/android_app_state_guard_test.dart` (all 1687), `run_group_reaction_notification_sims.dart`, `run_test_gates.sh`, `run_host_test_gates.sh`, `docker-ws/restore_divergence_diag[1-6]_315*` | **Initial "volatile skia churn" hypothesis REFUTED by new forensics (diag5/diag6, generated during the refute pass)**; real cause = tar member-ORDER instability after directory re-creation | Build contract around order-insensitive canonical comparison |
+| 2026-08-01 (planning) | Planner | tier-matrix, sufficiency-checklist, AGENTS.md:38-45 | Symmetric host-side canonical member-digest comparison; no manifest change; loadRecovery gains injection seams | Emit plan, /tdd-review |
+
+## Problem And Evidence
+
+- Behavior to improve: after a device campaign, `AndroidAppStateGuard.restoreAll()` deterministically reports "private app-data archive did not restore exactly" on the Pixel 6 even though the restore is provably content- and metadata-perfect. The campaign summary goes red (adapter `_failed`, exit 1) on every run; per-scenario verdicts are unaffected. Four orphaned recovery backups have accumulated in macOS tmp from false-negative restores.
+- Impact: the notification-reliability program's device campaigns (`groups.reaction_notification_campaign` and every other guard-consuming lane) cannot produce a green aggregate on the physical phone; each red also strands a ~333 MB retained backup and forces manual recovery/cleanup.
+- Confirmed root cause: `_privateArchiveMatches` at `integration_test/support/android_app_state_guard.dart:1273-1290` compares one whole-artifact SHA-256 of an on-device re-cut tar (`run-as <pkg> tar -cf <verify> -- <entries>`) against the capture digest (`snapshot.privateArchiveSha256`, host-computed at `:1031`/`:863`) with **byte-exact string equality (`:1289`) and zero tolerance for member ordering**. Restore re-creates directories (clear via `find <root> -mindepth 1 -maxdepth 1 -exec rm -rf` `:1575-1591` / `rm -rf -- <entry>` `:1595-1603`, then extract `:1241-1268`), and on the Pixel 6's /data filesystem a re-created many-entry directory enumerates in a different readdir order than the aged original. Toybox tar emits members in readdir order, so the re-cut tar contains **identical bytes in a different arrangement** — same total size (115,867,136), different SHA-256 — and the single repair/replay (`:1190-1207`) re-creates the directory again, so attempt 2 mismatches identically. Deterministic false negative; fail-closed at `:1208` → aggregate `AndroidAppStateFailure` (`:627-633`) with backup retained.
+- Forensic proof (all in `docker-ws/`, produced 2026-08-01 against retained backup `…-state-CZjnKQ` and the live device):
+  - diag2: backup vs device name lists **137/137 identical**; diag3: **0/114 content-hash divergences** — restore content-perfect.
+  - diag6 (LongLink-resolved member-by-member compare): name multiset identical; **0 size, 0 mtime, 0 uid/gid/mode, 0 payload-SHA differences; ONLY member sequence order differs**, first at members 92–95 (per pair) inside the 87-file long-named skia subdirectory.
+  - diag6 second finding: capture 07:20Z vs capture ~08:08Z (after the app demonstrably ran foreground in TC-12) are per-name content/mtime identical — a real app run did **not** rewrite the shader cache; only enumeration order changed (the failed restore in between had re-created the directory).
+  - diag5: the earlier diag4 "size/mtime header diff" was a decode artifact — the divergent offset sits in the **data payload of a GNU LongLink pseudo-header** (>100-char skia pathname), not in header fields.
+  - Emulator vs Pixel asymmetry: the identical guard path verifies green on `emulator-5554` (ext4 name-hash readdir is stable for a re-created name set) and red on the Pixel — no "live traffic" involvement required.
+- Existing coverage: `test/integration/android_app_state_guard_test.dart` (22 tests) pins the ladder counts (4× `tar -xf`, 2 installs at `:805-808`, `:866-871`), fail-closed retention (`:858-861`, `:1039-1046`), manifest schema (`:917-943`), verify-after-extract ordering by substring (`:676-682`, `:752-758`), and the 12-site consumer census via the source-contract freeze test (`:1049-1108`). The fake models verify **abstractly** (`run-as sha256sum *_verify.tar` interception, `:1611-1628`) — no test exercises real tar bytes through the comparison, which is exactly why the order-sensitivity was never caught at host tier.
+- Missing coverage: no test anywhere asserts that a member-permuted, content-identical archive verifies as equal (the causal gap), nor that genuine content/metadata divergence still fails under whatever comparison is used.
+- Refuted findings (do NOT re-introduce):
+  - **Volatile-path exclusion (`cache/`/`code_cache/`/skia from the digest)** — refuted: nothing volatile was written (diag6); exclusion would mask real divergence and leave the identical order-instability latent for any other large re-created directory (e.g. `app_flutter/media` as usage grows).
+  - **"FCM push cold-start rewrites skia between extract and verify"** — refuted empirically (diag6: zero writes of any kind in the failing window; capture-to-capture across a real foreground run shows no skia rewrite).
+  - **"Guard starts the app before verify"** — refuted by code order: both verify cuts happen inside `_restorePrivateArchive` (`:1073`) before `_restoreProcessState` (`:1082`); the app is force-stopped at `:1035`/`:1336` for every cut.
+  - **Ordering/`-T`/member-list regeneration or adb transport corruption as alternative causes of the *observed* red** — the entry list is enumerated once (`:796`), frozen (`:826`), replayed positionally (`:1287`); the staging re-hash (`:1135`) passed in the forensic run, proving host-Dart and device sha256sum agree on identical bytes. (Order instability *within* toybox's directory walk is the cause — that is the confirmed finding, not an alternative.)
+- Unresolved findings: whether the Pixel's readdir order for a given directory instance is boot-stable (refuter did not double-cut). The fix removes any dependence on it; TC-317-12's double-cut probe records the answer as evidence, not as a gate precondition.
+- Affected production / test / gate files: `integration_test/support/android_app_state_guard.dart` (only production edit), `test/integration/android_app_state_guard_test.dart`, new `docker-ws/state_guard_roundtrip_317.dart` proof script (untracked host-shared dir, diag-script precedent). No manifest/schema, adapter, or gate-script changes.
+
+## Graph Grounding Snapshot
+- Graph fingerprint / freshness: `e0817a5cd54b5e14`, refreshed via `--incremental` this session (stale marker consumed; the stale path was an unrelated probe file).
+- Query / profile: `python3 graphify-arch/tdd_context.py query "AndroidAppStateGuard restoreAll verify private-data.tar sha256 digest mismatch replay ladder; consumers of AndroidAppStateFailure in campaign wrapper; android_app_state_guard.dart android_app_state_guard_test.dart" --profile tdd --budget 700` → `confidence=anchored`.
+- Anchors: `restoreAll` → `integration_test/support/android_app_state_guard.dart:607`; test-file anchor `android_app_state_guard_test.dart:1329`.
+- Surfaced proof/gate files: the graph's "direct proof candidates" were off-target (group-listener tests) — guard coverage mapping is a known graph blind spot for this file.
+- Graph gaps that required raw source search: campaign wrapper is shell (`docker-ws/`, not app-owned); registration facts came from `run_host_test_gates.sh:394`/`run_test_gates.sh:1197` directly; the source-contract freeze test is path-string-based (no import edge — invisible to `affected`).
+- Reuse rule: anchors are search starting points; every conclusion above carries current-source or forensic-file evidence.
+
+## Scope Contract And Guard
+
+In scope:
+- Replace the private-archive **verification comparison** with an order-insensitive canonical member-digest equality, computed host-side by one shared pure function applied symmetrically to (a) the stored backup `private-data.tar` and (b) a verify tar streamed from the device with the capture-identical `exec-out` invocation.
+- An immediate `am force-stop` before each verify-stream cut (shrinks the wake window opened by `install -r` clearing the package-stopped state; defense-in-depth, not the fix).
+- `loadRecovery` gains optional `privateArchiveCapturer`/`privateArchiveProcessStarter` parameters (today it hardcodes null at `:437-438`; without them, recovery-mode host tests would shell out to real `adb` once verify streams through the capturer seam).
+- Test rework for the renegotiated pins (the deliberate contract change the handover named): verify-command shape, fake mismatch injection moving from the abstract sha-knob to real tar bytes through the capturer seam.
+
+Must preserve:
+- Fail-closed on genuine divergence + recovery retention + `restored==false` → TC-317-07 (and existing `:1014` test untouched).
+- Exactly-one repair/replay ladder, 4× `tar -xf` / 2-install counts, installer-metadata repair semantics → TC-317-07/08.
+- Capture flow, manifest schema + digest sidecar byte-identical (no new fields) → existing `:874` pins stay verbatim; TC-317-10.
+- Staging integrity re-hash of pushed archive + member list (`:1135-1152`) → TC-317-11.
+- APK/permission/process restore semantics, no `pm clear`, no uninstall of an originally-installed app → existing tests `:573`, `:167`, `:1049` untouched.
+- Guard source strings frozen by shell contract tests (`private-data.tar`, `original APK bytes did not restore`, `'exec-out',`, `'run-as',`, `'tar',`, `'install-multiple',`, absence of `'clear',`) → keepalive/source-contract gates in Acceptance.
+- All 12 `capture()` call sites and the restore-before-PASS-evidence ordering in the 8 frozen adapters → source-contract test `:1049-1108` (path-string census; lane-only visibility).
+
+Hard `Do not`:
+- Do not add volatile-path/skia/`code_cache` exclusions or any content tolerance to verification (refuted; masks real divergence).
+- Do not change the capture archive format, the manifest schema, or `privateData.sha256` semantics (staging + loadRecovery integrity depend on the full-byte digest; legacy retained backups must stay restorable).
+- Do not touch the sims adapters, campaign scripts, `run_test_gates.sh`, or `run_host_test_gates.sh`.
+- Do not pin or normalize on-device enumeration order (sorted `-T` lists change capture semantics and orphan the four legacy retained backups).
+- Do not run `flutter test -d` against the phones (destroys the stamped release install; the device proof is a host-side `dart run` driving adb).
+
+Deferred / accepted difference:
+- The FCM wake window during a multi-second verify stream cannot be fully closed → accepted; a genuine mid-cut write now fails verify honestly and the ladder retries once. Owner: none needed (correct behavior).
+- **Hardlink residual (review-found, toybox tar.c-verified):** hardlinked pairs inside the private tree would make the canonical digest walk-order-dependent (toybox emits the second-walked path as type-`1` with linkname of the first-walked path, so member bytes flip with walk order). None exist in the corpus (diag6: 0 size diffs across three order-divergent pairs is impossible with a hardlink flip); if one ever appears, verify loud-fails closed with the backup retained and the failure diff names it. Accepted; revisit only on appearance.
+- **Symlink residual (review-found):** toybox `tar -xf` does not restore symlink mtimes, so a symlink in the private tree would red verify deterministically on both attempts — same symptom class as the bug this plan fixes. Corpus is provably symlink-free today (emulator whole-tar byte-exact greens + diag6's 0 mtime diffs would both be impossible otherwise). Accepted loud-fail; revisit only if one appears in a failure diff.
+- `loadRecovery` has no production caller/wrapper (manual recovery is undocumented ops) → owner: notification-reliability program backlog, after F7/309.
+- **Retained-backup hygiene (review-corrected):** default disposition = **archive-then-delete** — keep at most a durable copy of the newest tmp backup beside `docker-ws/pixel6-state-guard-backup-20260801` (itself the renamed `40BlPq` copy), then delete all stale `mknoon-*-state-*` tmp dirs **including the leaked `mknoon-restore-failure-test-state-*` dir the guard test suite itself strands** (test `:1014` retains it by design and never cleans it). **Restoring any retained backup onto the live Pixel is DESTRUCTIVE** (rolls back hours of real app state and force-restarts the captured process state) and pointless — diag2/3/6 prove the original restores were already content-perfect. Restore happens only on an explicit user request, never as a default.
+- Rollback: N/A-by-shape — single-file test-infra change, no schema/wire/data migration; revert = `git revert` of the 317 commit; old and new binaries both read the unchanged backup format (review-verified: the strict `_requireExactKeys` codec makes the no-new-manifest-field design the only compatible option).
+
+Dependencies:
+- Host Flutter 3.41.4 via `/claude-host-bin/flutter` (container Flutter is outdated — repo policy).
+- Pinned devices: physical Pixel 6 `21071FDF600CSC` + `emulator-5554` (both live in `adb devices -l` this session).
+
+## Test Contract
+
+All rows in `test/integration/android_app_state_guard_test.dart` unless stated. That directory is **host-all-only** (glob `run_host_test_gates.sh:394`); the per-plan gate is the direct `flutter test` path below — never a `host-all` sweep. No new test files, so `classify_path`/completeness state is unchanged (`run_test_gates.sh:1197` already classifies the file).
+
+| Case | Behavior | Named test/proof | Tier / fixture | HEAD state → GREEN | Mutation that re-reds | Gate / registration |
+|---|---|---|---|---|---|---|
+| TC-317-01 | Canonical digest is order-insensitive: member-permuted, byte-identical archives produce equal digests | `::canonical archive digest equates member permutations` | unit/host — crafted tar bytes via existing `_tar*` fixture builders | causal RED (`canonicalPrivateArchiveDigest` does not exist — compile RED is the intentional new contract) → equal digests for permuted fixtures | revert the function → compile red | direct `flutter test test/integration/android_app_state_guard_test.dart`; host-all glob (AUTO) |
+| TC-317-02 | Canonical digest is content-exact: one flipped payload byte in a durable member ⇒ different digest | `::canonical archive digest detects payload divergence` | unit/host — crafted tars | causal RED (compile, same missing symbol; distinct obligation) → digests differ | make the member record ignore payload bytes → red | same |
+| TC-317-03 | Canonical digest is metadata-exact: uid/gid/mode/mtime change in any header (incl. `cache/`/`code_cache/` roots — the repair-ladder trigger) ⇒ different digest | `::canonical archive digest detects header metadata divergence` | unit/host — crafted tars | causal RED (compile) → digests differ | exclude header bytes from the member record → red | same |
+| TC-317-04 | GNU LongLink (>100-char paths, the diag5 shape) fold into their member: permuted long-named members equate; divergent long-name payload ⇒ different digest; **and two long-named FILE members whose paths share an identical trailing-100-char segment with payloads exchanged ⇒ different digest** (review add: without it, the declared mutation stays green) | `::canonical archive digest resolves long-name members` | unit/host — `_tarDirectoryRecords`/`_tarFileRecords` long-path builders, **corrected to real toybox shape: header name = FIRST 100 chars (not last), L-record uid/gid/mtime zeroed** (diag5) | causal RED (compile) → all three assertions hold | treat type-76 preludes as standalone members → red (via the trailing-100 exchange case) | same |
+| TC-317-05 | Malformed archive (partial header / non-octal size) throws `FormatException` — never a digest (no false-green on garbage) | `::canonical archive digest fails closed on malformed input` | unit/host — truncated/corrupted fixture | causal RED (compile) → throws | catch-and-return sentinel digest → red | same |
+| TC-317-06 | **HEADLINE**: restore succeeds when the device's re-cut verify tar is member-permuted but content-identical (the Pixel 6 false negative) | `::restore succeeds when the verify stream is member-permuted but content-identical` | integration/host — `_FakeAdbState` + verify stream via capturer seam returning a permuted copy of the capture fixture; `privateRestoreMismatchesRemaining: 2` models HEAD's on-device sha mismatching both attempts (exactly what reorder produces) | **causal RED on HEAD**: `_privateArchiveMatches` compares on-device whole-tar sha (`:1289`); knob mismatches twice → `StateError('private app-data archive did not restore exactly')` → `AndroidAppStateFailure` → GREEN: canonical(streamed permuted tar) == canonical(backup) → `restored==true`, backup dir deleted | revert `_privateArchiveMatches` to the on-device sha compare → red | same |
+| TC-317-07 | Genuine durable divergence still fails closed after the full ladder: payload-flipped `databases/` member in the verify stream on both attempts ⇒ throw, `restored==false`, backup retained, 4× `tar -xf` + 2 installs, **and no host temp verify file remains in the retained backup dir** (review add: failure-path deletion was otherwise unasserted) | `::genuine content divergence still fails closed after replay` | integration/host — capturer emits flipped bytes on every verify call | GREEN sentinel (HEAD also fails closed, via the knob; post-fix it fails for the canonical-diff reason) | post-fix mutation: drop `payloadSha` from the member record (payload-blind canonical) → restore wrongly succeeds → red | same |
+| TC-317-08 | Metadata mismatch is repaired then replayed to success (rework of `:764`): capturer emits a gid-drifted `cache/` root header via a **one-shot drift counter** (repurposed `privateRestoreMismatchesRemaining`: emit drifted bytes while >0, decrement per verify emission); attempt 1 mismatches, repair reinstalls, attempt 2 streams correct bytes → `restored==true`, 4 extracts, 2 installs, **and a force-stop sits between the 4th `tar -xf` and the second verify-stream marker** (review add: covers the attempt-2 adjacency TC-317-09's success-path test cannot reach). REVIEW-REFUTED mechanism, do not use: branching the capturer on `adb.cacheMetadataExact` never fires — restore's `installed-0.apk` install sets the flag true (test `:1441`) before clear/extract/verify, and the preserved-root `find` clear never resets it (`:1652-1654`) | `::mismatched restore repairs metadata then replays nonempty code cache` (reworked in place) | integration/host — drift-counter capturer (fake-fidelity: metadata is visible in tar bytes, repair fixes it) | GREEN sentinel (same observable today via the sha-knob) | post-fix mutation: skip `_repairPackageMetadataAfterPrivateRestore` call → red (counts + failure) | same |
+| TC-317-09 | Verify-stream plumbing: cut strictly after extract; immediately preceded by `am force-stop`; uses the capture-identical `exec-out run-as tar -cf - --` invocation (recorded via the capturer log); **no** on-device `_verify.tar` cut or `run-as sha256sum` of it remains; host temp verify file deleted on success AND on failure | `::verify streams the private tree after a fresh force-stop and leaves no residue` (+ reworked ordering pins in `:625`/`:703` tests) | integration/host — shared command log (fake runner + capturer marker) | causal RED (HEAD cuts `_verify.tar` on device, has no pre-verify force-stop, streams nothing) → all five assertions hold | drop the `finally` temp-file delete → red (residue assertion) | same |
+| TC-317-10 | `loadRecovery` parity: recovery guard accepts injected capturer/starter, restores via canonical verify, and the retained manifest + digest sidecar stay byte-identical (schema `mknoon.android-app-state-recovery.v1`, `privateData.sha256` = full-byte sha — `:917-943` pins verbatim) | `::retained manifest lets a later process restore every state dimension` (reworked: inject seams) + `::recovery loader verifies through the canonical digest` | integration/host | causal RED (`loadRecovery` has no such parameters — compile RED; without them the reworked test would hit real adb) → recovery restore green with zero manifest diffs | revert the `loadRecovery` parameters → compile red | same |
+| TC-317-11 | Staging integrity unchanged: pushed archive and NUL member list still device-rehashed against the full host digest before every extract (order-free file round-trip; `archive changed during staging/restaging` still throws) | staging assertions inside the reworked `:625` test (command presence + staged-sha calls) | integration/host | GREEN sentinel | post-fix mutation: remove the `stagePrivateInputs` sha check → red | same |
+| TC-317-12 | Device proof on the failing boundary: full guard round-trip (capture → in-place reinstall + clear + re-extract → canonical verify) goes GREEN on the Pixel 6, where HEAD deterministically reds; plus a double-cut probe (two back-to-back verify streams, **force-stop before each cut, process kept stopped between cuts**) whose canonical digests are **recorded as evidence, retried once on inequality, never a hard gate** (an FCM wake between cuts is the plan's own accepted residual). **Script safety contract (review-mandated, runs a destructive clear on the LIVE phone):** every adb call pins `-s 21071FDF600CSC`; guard constructed with `devices: [21071FDF600CSC]` only; snapshot the `mknoon-*-state-*` set in host tmp before/after and assert the set-difference is empty on success; record the fresh capture dir's path (and its whole-tar sha as a forensic anchor) to the result file BEFORE invoking `restoreAll`; on any failure print the retained backup path and the exact `loadRecovery` recovery invocation; **run only after E5 is fully green — the success path deletes the backup (guard:636-637), so the host-tier divergence-detection rows are the safety proof for that deletion** | `docker-ws/state_guard_roundtrip_317.dart` → `docker-ws/state_guard_roundtrip_317_result.txt` | device — physical `21071FDF600CSC` (see Device Proof Profile) | manual/device-only proof — HEAD red evidence already on record (retained failure backups; red campaign aggregates; diag2/3/5/6 result files, which E-steps commit to git), no gratuitous pre-fix re-red | N/A — causally guarded by TC-317-06; this row proves the real-toybox/real-fs boundary | `dart run docker-ws/state_guard_roundtrip_317.dart` (host-side, adb only — never `flutter test -d`) |
+| TC-317-13 | Program acceptance: the campaign aggregate goes green end-to-end (scenarios + guard restore). **Review-corrected HEAD state: the latest campaign artifact (`capture-…81313`, verdict recorded 08:26:58Z) PREDATES the `77dc9c034` exit-79 fix (committed 08:32:25Z) and contains one failed scenario verdict — no campaign run has yet proven that fix. Interpretation rule: in the first post-317 run, a scenario/proof-binding red WITH guard-restore green is a 315-scope regression (report it, do not treat as a 317 red); guard-restore red is the 317 signal; full green closes both** | `bash docker-ws/run_reaction_campaign_315.sh` → aggregate `SIMS_RESULT_JSON status PASS`, exit 0 | device — Pixel 6 + emulator-5554 pair | manual/device-only proof (program acceptance; also the first validation of the 315 TC-12 exit-79 fix) | N/A — supporting closure evidence | campaign wrapper (env + manifest baked); monitor via `build/sims/proofs/.../capture-*` dirs, not tailing |
+| TC-317-14 | Canonical digest binds path↔content and counts duplicates (review add — kills path-blind, path-separated, and commutative-combine wrong implementations): two members with payloads exchanged between their paths ⇒ different digest; an archive with a member duplicated vs. without ⇒ different digest | `::canonical archive digest binds paths to content and counts duplicates` | unit/host — crafted tars | causal RED (compile, same missing symbol; distinct obligation) → both assertions hold | serialize sorted record digests without path binding (or combine records with XOR) → red | same |
+| TC-317-15 | A verify-STREAM failure is fatal-not-mismatch (review add — kills swallow-to-true implementations): capturer throws on every verify cut (capture cut succeeds) ⇒ `AndroidAppStateFailure`, `restored==false`, backup retained, zero repair installs (the throw does not consume the replay — HEAD parity: the on-device verify `_adb` call had no `allowFailure` either) | `::verify stream failure fails the restore without consuming the replay` | integration/host — throwing capturer on verify calls only | causal RED (HEAD never calls the capturer at verify, so the test's throw never fires and restore succeeds → assertion that it throws fails on HEAD) | wrap the verify stream in catch-and-return-true → red | same |
+
+### Test Notes
+- TC-317-01..05/14: the canonical function's contract — per member, digest the full byte span (any **type-76 (GNU LongLink) prelude records** + 512-byte header + zero-padded payload); canonical whole = SHA-256 over records sorted by (logical path, record digest), each serialized as `pathBytes 0x00 recordDigest`; trailing zero blocks ignored on both sides. Equality ⇔ identical member multiset including metadata (hardlink/symlink residuals accepted in Scope). Duplicate paths are handled by the digest tiebreak and asserted by TC-317-14. **PAX (type 120) handling: parse-tolerate using the existing `_tarPaxPath` idiom but DEFERRED from the tested contract — Android toybox emits GNU LongLink, never PAX (verified in toybox tar.c; diag5 confirms on the real archive); no fixture generates type 120, so a tested PAX claim would be theater.** ustar prefix-form names (100-155 chars via the offset-345 field) are likewise not emitted by toybox for creates; the symmetric full-record digest makes prefix derivation non-load-bearing (both sides parse identical bytes) — relies on E1's stop-if for any unexpected header form.
+- Fixture realism (review-corrected to the diag5 shape): the long-name builders must write the FIRST 100 chars into the follower header's name field (`substring(0,100)`, not the current last-100 at test `:1310`) and zero the L-record's uid/gid/mtime — real toybox does both.
+- Stream-failure semantics (TC-317-15): a Blocked/thrown verify stream is **fatal, not a mismatch** — it does not consume the repair/replay, matching HEAD where the on-device verify tar cut ran through `_adb` without `allowFailure`. Executors must not "helpfully" catch-and-retry inside the ladder.
+- TC-317-06/07/08: `_FakeAdbState`'s `run-as sha256sum *_verify.tar` interception branch (`:1611-1628`) becomes dead once verify streams — TC-317-09 asserts the command never occurs; the mismatch knobs are repurposed (TC-317-06 keeps `privateRestoreMismatchesRemaining` solely to make HEAD red for the documented mechanism) or retired with the branch. The verify stream reuses `_capturePrivateArchive` (bounded, overflow-guarded, timeout-managed, capturer/starter seams) with a destination under `backupDirectory/<device>/` whose basename distinguishes verify from capture; `AndroidAppStateBlocked` from the stream is translated to a restore-failure `StateError` (fail-closed, not capture-blocked semantics).
+- TC-317-09: existing capturers in green tests are invoked extra times (capture + up to 2 verify cuts per attempt-pair); none of the 22 tests count capturer invocations, and the entries argument is identical — audit performed, no silent breakage.
+- Expected-canonical caching: `canonical(snapshot.privateArchive)` computed once per `_restorePrivateArchive` call, not per attempt.
+
+## Implementation Steps
+1. `git status --short` snapshot. Write **TC-317-06 alone first** and run its RED gate — the file still compiles, so the red is the runtime mechanism (double mismatch → `AndroidAppStateFailure`), not a compile error. THEN add TC-317-01..05 and the TC-317-10 recovery test (their missing-symbol compile-RED is the intentional contract; it necessarily masks further runtime reds in the same file, which is why TC-317-06's red is captured beforehand).
+2. E1 — add `canonicalPrivateArchiveDigest(File archive)` as a public top-level in `android_app_state_guard.dart` (precedent: `androidPackageRestoreAction` `:269`), streaming via `RandomAccessFile` with incremental SHA-256; reuse the `_tarString`/`_tarOctal`/type-76/120 idioms of `_readCacheArchiveMetadata` (`:2001-2102`). Stop-if: any fixture reveals a toybox header form the parser cannot classify — replan the parse, do not special-case silently.
+3. E2 — rework `_privateArchiveMatches` (`:1273-1290`): `_forceStop(device)` → stream verify tar to a host temp file via `_capturePrivateArchive` (translate `AndroidAppStateBlocked` → `StateError('private verification stream failed')`) → compare `canonicalPrivateArchiveDigest(temp)` against the cached expected canonical → `finally` delete temp. Remove the on-device `_verify.tar` cut, its on-device sha, and its `rm` cleanup entry (`:1219`). Keep `snapshot.privateArchiveSha256` untouched for staging/loadRecovery integrity.
+4. E3 — thread optional `privateArchiveCapturer`/`privateArchiveProcessStarter` through `loadRecovery` (`:415-454`) into the reconstructed guard (default null = production adb streaming).
+5. E4 — rework the pinned tests per the contract (TC-317-07..11 rows); delete the dead fake branch; keep every preserved pin verbatim.
+6. E5 — run the full gate ladder below (graph-affected before anything broad; no curated family owns this file — the direct path IS the lane).
+7. E6 — commit the previously untracked forensic pairs `docker-ws/restore_divergence_diag5_315{.sh,_result.txt}` and `diag6` with (or before) the 317 change — they are the durable HEAD-red record (diag1-4 are already tracked; the tmp backup dirs are expendable once E7 runs; the gitignored `docker-ws/pixel6-state-guard-backup-20260801` stays as a disk-only artifact).
+8. E7 — write `docker-ws/state_guard_roundtrip_317.dart` honoring TC-317-12's script safety contract, run it on the Pixel, then the TC-317-13 campaign with its interpretation rule; record both evidence files; then retained-backup hygiene per Scope: archive at most the newest tmp backup durably, delete all stale `mknoon-*-state-*` dirs (incl. the leaked `mknoon-restore-failure-test-state-*`), record dispositions in the result file — restore only on explicit user request (destructive to live phone state).
+
+## Risks And Blind Spots
+- Verify stream bypasses `_runner` in production (direct `Process.start('adb', …)`) so command-ordering pins lose their single observable → guarded by TC-317-09's shared-log design (fake runner + capturer marker into one ordered list).
+- `loadRecovery` null-seam landmine (recovery tests silently hitting real adb) → TC-317-10.
+- Lifecycle / derived-state durability: no new derived state; recovery path re-derives the canonical digest from the retained archive on every load → TC-317-10. 
+- Sibling-surface consistency: the other byte-exact digests (APK files, staged archive, member list, manifest sidecar) compare *files*, not directory walks — order-free by construction; deliberately untouched → TC-317-11 + existing `:874`/`:978` pins. N/A beyond that.
+- Destructive-action side effects: the new host temp verify file is deleted on both paths → TC-317-09; on-device dotfile cleanup list shrinks by exactly the removed verify archive → same row.
+- Invariant re-verification under new transitions: the added pre-verify force-stop re-runs before BOTH attempts; post-repair state assertions unchanged → TC-317-08.
+- Construction/call-site census (re-derived by the review audit): 12 `capture()` sites, 3 test-only `loadRecovery` sites, **6** interface-only importers (`AndroidHostProcessRunner`/`SystemAndroidHostProcessRunner` only — group_media_android_disposable_app, group_media_ios_fixture_driver, android_group_media_reliability_controller, group_media_ios_background_recovery + their two test files) — zero signature changes to `capture()`/`restoreAll()`; `loadRecovery` change is optional-params only. The source-contract test freezes `capture` presence in 7 of the 12 sites' files (the `run_1to1_device_real` trio is pinned via backupLabel strings only; `run_connectivity_restore_media_outbox_sims` is unfrozen) — sufficient here because this plan changes no call-site-visible signature. Gate: those tests in Acceptance.
+- Build-artifact provenance: N/A — no native artifact.
+- Permission/ACL verb symmetry: N/A — no ACL surface.
+- Fake side-effect fidelity: the fake previously modeled verify as an abstract digest; the rework pushes real tar bytes through the real comparison (TC-317-06/07/08) — fidelity strictly increases. The remaining abstraction (extract does not materialize a tree) is compensated by the canonical function being exercised on real bytes at TC-317-01..05 and the real boundary at TC-317-12.
+- Evidence-chain fragility: retained backups live in macOS tmp and can be GC'd; diag baseline selection burned once (diag5 initially compared the wrong dir of four) → device-phase step E7 pins explicit paths, never `ls -td | head -1`.
+
+## Gate Cadence
+- Per-plan closure: the direct guard test file (causal + sentinels, one file), the three shell contract sentinels, graph-affected dependents, analyzer/diff hygiene, then the two device proofs. No curated family array contains this file (verified: `run_host_test_gates.sh:131`, no `GROUP_TESTS`-family entry) — there is no curated lane to run.
+- Graph-affected first: `python3 graphify-arch/tdd_context.py affected integration_test/support/android_app_state_guard.dart --budget 600` after E1-E3 and BEFORE anything broad; run the named test files directly. The source-contract freeze test and shell contract tests have no import edge — they are named explicitly below instead.
+- Full `host-all` is NOT a per-plan gate. Owner of the next full run: the notification-reliability wave closure (after the F7 plan + 309 staged re-land), and again at final release closure — `./scripts/run_host_test_gates.sh host-all --batch-flutter --concurrency 4 --reporter failures-only` when that wave closes.
+- Shared tests outside feature/core globs: exactly `flutter test test/integration/android_app_state_guard_test.dart` (this plan's whole surface).
+
+## Acceptance Gates  (literal — copy/paste; `flutter` = host 3.41.4 shim on PATH)
+```bash
+git status --short                                    # snapshot; expect clean at start
+
+# Causal RED (run with TC-317-06 written and TC-317-01..05 NOT YET added, so the file compiles) —
+# must FAIL via the persistent-mismatch path (AndroidAppStateFailure), not a compile error
+flutter test test/integration/android_app_state_guard_test.dart --plain-name 'restore succeeds when the verify stream is member-permuted but content-identical'
+# TC-317-01..05/10 are then added and fail to compile (missing canonicalPrivateArchiveDigest / loadRecovery params) — the intentional contract RED
+
+# Focused GREEN (after E1-E4) — exit 0, zero failures, all 22+ tests
+flutter test test/integration/android_app_state_guard_test.dart
+
+# Graph-affected dependents BEFORE anything broad — run every named test file directly
+python3 graphify-arch/tdd_context.py affected integration_test/support/android_app_state_guard.dart --budget 600
+
+# Path-string sentinels the graph cannot see — exit 0 each
+bash scripts/test/keepalive_prebuilt_runner_contract_test.sh
+bash scripts/test/voice_message_prebuilt_runner_contract_test.sh
+bash scripts/test/notification_tap_campaign_adapter_contract_test.sh
+
+# Classification/discovery unchanged (no new test paths) — PASS, 0 unmatched
+./scripts/run_test_gates.sh completeness-check
+
+# Hygiene — 0 new issues; clean
+flutter analyze
+git diff --check
+
+# Device proof (pinned physical 21071FDF600CSC; host-side dart, adb only — NEVER flutter test -d)
+dart run docker-ws/state_guard_roundtrip_317.dart     # expect: ROUNDTRIP PASS + tmp-dir set-difference empty; double-cut canonical digests RECORDED (retried once on inequality — evidence, not a hard gate)
+
+# Program closure — aggregate PASS, exit 0; apply the TC-317-13 interpretation rule:
+# scenario red + guard green = 315-scope regression (report, not a 317 red); guard red = 317 signal
+bash docker-ws/run_reaction_campaign_315.sh
+```
+Semantic outcomes: RED must fail via the documented mechanism (assertion on `AndroidAppStateFailure` from the two-mismatch path), not via fixture errors; GREEN = zero failures; `affected` = run its named files, zero failures; contract scripts = exit 0; completeness = `0 unmatched`; roundtrip = its PASS line plus an empty tmp-dir set-difference (double-cut digests recorded as evidence); campaign = `SIMS_RESULT_JSON` status PASS and exit 0 under the interpretation rule.
+
+## Execution Interpretation And Done Criteria
+- Expected RED: TC-317-06 red on HEAD via double on-device-sha mismatch → `AndroidAppStateFailure`; TC-317-01..05 compile-red (intentional missing-symbol contract).
+- GREEN sentinel: TC-317-07/08/11 + every untouched test in the file; the three shell contract scripts.
+- Pre-existing dirty tree / known failure: none — branch clean at `77dc9c034`.
+- Environment blocker (NOT a product blocker): Pixel 6 or emulator offline → TC-317-12/13 wait; host rows close regardless. Hardware beyond the two pinned targets: N/A (target unavailable by project policy).
+- Scope drift (BLOCKING): any red outside this file, the three contract scripts, or the device proofs.
+
+- [ ] Every behavior has a named test or a justified device proof.
+- [ ] Causal RED, focused GREEN, and TC-317-06 revert-re-red recorded.
+- [ ] Preservation sentinels and named gates pass with semantic outcomes.
+- [ ] Registration verified: no new test paths; completeness-check 0 unmatched.
+- [ ] Device round-trip + campaign aggregate green on the pinned pair.
+- [ ] `flutter analyze` no new issues; `git diff --check` clean.
+- [ ] Scope Contract respected; retained-backup hygiene recorded.
+
+## Device/Relay Proof Profile
+- Profile: single-device (physical) + the standard campaign pair for closure.
+- Boundary being proven: real toybox tar member enumeration over a re-created directory on the Pixel 6's /data filesystem — the order instability that host fakes cannot reproduce (and that the ext4 emulator provably does not exhibit).
+- Live availability check: `adb devices -l` (this session) → `21071FDF600CSC` (Pixel 6, USB) + `emulator-5554`, both `device`.
+- Pinned targets: physical Android `21071FDF600CSC`; emulator `emulator-5554` participates only in TC-317-13's campaign. Physical-topology reason for the single-physical leg: the false negative is specific to the physical device's filesystem enumeration behavior; the emulator cannot reproduce it.
+- Automation: `dart run` scripts drive adb end-to-end — no user taps.
+- Closure role: TC-317-12 = required closure evidence; TC-317-13 = program acceptance.
+- `FLUTTER_DEVICE_ID`: not used — scripts pin device IDs explicitly.
+- Registration: none — proof scripts live in untracked `docker-ws/` per diag-script precedent; evidence result files are the record.
+- Discovery command: `adb devices -l` → both pinned IDs listed as `device`.
+- Closure command: the two device gates above → their stated semantic outcomes.
+- Deferred device work: none.
+
+## Handoff
+- First causal RED command: `flutter test test/integration/android_app_state_guard_test.dart --plain-name 'restore succeeds when the verify stream is member-permuted but content-identical'` (after writing the REDs, before E1-E3).
+- Preservation command: `flutter test test/integration/android_app_state_guard_test.dart` + the three shell contract scripts.
+- Manual registration: none (no new test paths).
+- Migration: none.
+- Boundary closure: `dart run docker-ws/state_guard_roundtrip_317.dart` then `bash docker-ws/run_reaction_campaign_315.sh` on the pinned pair.
+- Unresolved evidence: boot-stability of Pixel readdir order (recorded by the double-cut probe; not load-bearing post-fix).
+
+## Reviewer Findings (2026-08-01, `/tdd-review`, 4-worker audit `wf_707851cf-825`)
+
+Verdict on v1: **plan-fixes-required** × apply-plan-fixes; core bet **CONFIRMED** (domain worker verified against live toybox tar.c: GNU LongLink always for >100-char names, exactly-1024-zero-byte trailer with no blocking padding — corroborated by the 115,867,136 = 512×226,303 odd block count — exact second-granularity mtime round-trip, exec-out binary-clean at scale, `_capturePrivateArchive` fail-closed on every path). Every v1 factual claim verified line-for-line by an independent census (root-cause chain, 12 capture sites, 3 test-only loadRecovery sites, host-all-only registration, TC-317-06 RED mechanics, order-immunity of every `privateArchiveSha256` consumer, all three shell-contract scripts, all source-contract freeze assertions, exact 5-test collateral set). No blockers; the direction survived all constructed wrong-implementation attacks.
+
+Plan-fixes found and folded into this v2 (most severe first):
+1. **Canonical serialization's path↔digest binding and duplicate sensitivity were untested** — path-blind / path-separated / XOR-combine wrong implementations passed every v1 row → new TC-317-14 (exchanged payloads ⇒ different digest; duplicated member ⇒ different digest).
+2. **No row exercised a verify-stream failure** — a catch-and-return-true implementation passed the whole v1 contract → new TC-317-15 (throwing capturer ⇒ fail-closed, replay not consumed, HEAD-parity documented).
+3. **TC-317-08's fake mechanism could never fire** (capturer branching on `cacheMetadataExact` — restore's install sets it true at test:1441 before any verify) → drift-counter design, plus an attempt-2 force-stop adjacency assertion.
+4. **TC-317-13's "post-77dc9c034 unconfounded green" premise refuted** — the newest campaign artifact (verdict 08:26:58Z) predates the exit-79 fix commit (08:32:25Z) and contains a failed scenario → HEAD state corrected + interpretation rule added.
+5. **TC-317-12 lacked a safety contract for a destructive operation on the live phone** → pinned-device/tmp-set-difference/durable-copy-before-restore/failure-recovery-print/E5-first contract added; double-cut probe made consistent with the plan's own accepted FCM-wake residual (evidence + retry-once, not a hard gate).
+6. **Retained-backup "restore-or-archive" default was destructive** → archive-then-delete default; restore only on explicit user request; leaked `mknoon-restore-failure-test-state-*` dir included.
+7. **Decisive forensic evidence (diag5/diag6) was untracked** → E6 commits both pairs.
+8. **TC-317-04's declared mutation did not re-red** → trailing-100-exchange case added; fixture realism corrected to the diag5 shape (first-100 header truncation, zeroed L-record metadata).
+9. Documented residuals added: hardlink walk-order dependence (toybox `TT.hlx` type-1 linkname), symlink mtime non-restore — both corpus-absent, both loud-fail closed.
+10. Census wording corrected (6 interface-only importers, not 4; freeze covers 7 of 12 capture-site files); PAX narrowed to parse-tolerated-but-deferred; diag6 "members 92–95".
+
+## Execution Progress
+| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
+|---|---|---|---|---|---|---|
+| - | not started | - | - | - | awaiting accepted plan | contract extraction |

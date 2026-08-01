@@ -1,0 +1,14 @@
+=== state_guard_backup_hygiene_317 2026-08-01T09:51:49Z ===
+--- stale mknoon-*-state-* dirs before ---
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-restore-failure-test-state-Rooi0W
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-order-permuted-verify-test-state-LhVkbf
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-restore-failure-test-state-WQzY3k
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-order-permuted-verify-test-state-DIoske
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-bMQB3u
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-40BlPq
+/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-restore-failure-test-state-wtlEaE
+--- disposition: DELETE (restores would be destructive; content-perfection proven by diag2/3/6; durable copy pixel6-state-guard-backup-20260801 retained) ---
+--- after ---
+(none)
