@@ -199,8 +199,12 @@ Future<int> _validateArtifacts(
       '-d',
       'flutter-tester',
       _proofTest,
-      '--plain-name',
-      scenario.id,
+      // Anchored regex, not --plain-name: substring selection also runs any
+      // scenario whose name nests this id (android_group_reaction_recipient is
+      // a prefix of the TC-12 background_connected scenario) against the wrong
+      // artifact.
+      '--name',
+      '^${RegExp.escape(scenario.id)}\$',
       '--dart-define=MKNOON_257_PROOF_ARTIFACT=${artifact.path}',
     ]);
     _forwardProcessResult(proof);
