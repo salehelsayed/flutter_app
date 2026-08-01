@@ -1747,6 +1747,12 @@ final class NotificationPreviewResolverTests: XCTestCase {
         "reaction_blocked_contact"
       ),
       (
+        "archived",
+        try reactionContactsJSON(username: "Alice", blocked: false, archived: true),
+        try reactionTargetsJSON(),
+        "reaction_archived_contact"
+      ),
+      (
         "not authored for reactor",
         try reactionContactsJSON(username: "Alice", blocked: false),
         try reactionTargetsJSON(peerId: "peer-other"),
@@ -2684,6 +2690,12 @@ final class NotificationPreviewResolverTests: XCTestCase {
       reason: "group_reaction_muted"
     )
     assertRejected(
+      "archived",
+      values: try groupReactionProjectionValues(archived: true),
+      route: validRoute,
+      reason: "group_reaction_archived"
+    )
+    assertRejected(
       "dissolved",
       values: try groupReactionProjectionValues(dissolved: true),
       route: validRoute,
@@ -3193,6 +3205,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
   private func reactionContactsJSON(
     username: String,
     blocked: Bool,
+    archived: Bool = false,
     localAccountPeerId: String = "peer-self"
   ) throws -> String {
     try jsonString([
@@ -3202,7 +3215,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
         "peer-alice": [
           "username": username,
           "blocked": blocked,
-          "archived": false,
+          "archived": archived,
         ],
       ],
     ])
@@ -3316,6 +3329,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
     targetDocumentAccountPeerId: String = "peer-self",
     actorPeerId: String = "peer-alice",
     muted: Bool = false,
+    archived: Bool = false,
     dissolved: Bool = false,
     includeLocalMember: Bool = true,
     includeActor: Bool = true,
@@ -3360,7 +3374,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
           "name": "Garden Announcements",
           "type": "announcement",
           "muted": muted,
-          "archived": false,
+          "archived": archived,
           "dissolved": dissolved,
           "keyEpoch": 7,
           "members": members,

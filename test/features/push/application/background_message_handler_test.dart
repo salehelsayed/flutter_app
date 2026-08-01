@@ -1954,6 +1954,118 @@ void main() {
       );
     });
 
+    test('group reaction local state is ineligible when the group is archived', () {
+      // Plan 309 TC-01: the archived guard exists on the push message path but
+      // not on the reaction resolver — an archived group must not banner.
+      const data = <String, dynamic>{
+        'type': 'group_reaction',
+        'groupId': 'group-team',
+        'reactor_peer_id': 'peer-alice',
+        'event_id': 'transition-arch-1',
+        'target_message_id': 'message-1',
+        'action': 'add',
+        'keyEpoch': '7',
+      };
+      const identity = <String, Object?>{'peer_id': 'peer-bob'};
+      const group = <String, Object?>{
+        'id': 'group-team',
+        'name': 'Team Chat',
+        'is_muted': 0,
+        'is_dissolved': 0,
+        'dissolved_at': null,
+      };
+      final localMember = <String, Object?>{
+        'peer_id': 'peer-bob',
+        'devices_json': jsonEncode(<Map<String, Object?>>[
+          <String, Object?>{
+            'deviceId': 'bob-phone',
+            'transportPeerId': 'transport-bob-phone',
+            'deviceSigningPublicKey': 'bob-device-key',
+            'status': 'active',
+          },
+        ]),
+      };
+      final actorMember = <String, Object?>{
+        'peer_id': 'peer-alice',
+        'username': 'Alice',
+        'devices_json': jsonEncode(<Map<String, Object?>>[
+          <String, Object?>{
+            'deviceId': 'alice-phone',
+            'transportPeerId': 'transport-alice-phone',
+            'deviceSigningPublicKey': 'alice-device-key',
+            'status': 'active',
+          },
+        ]),
+      };
+      const outgoingTarget = <String, Object?>{
+        'id': 'message-1',
+        'group_id': 'group-team',
+        'sender_peer_id': 'peer-bob',
+        'is_incoming': 0,
+      };
+      const groupKey = <String, Object?>{
+        'group_id': 'group-team',
+        'key_generation': 7,
+        'encrypted_key': 'group-key',
+      };
+      const nomination = VerifiedGroupReactionNotificationNomination(
+        reactorTransportPeerId: 'transport-alice-phone',
+        senderPublicKey: 'alice-device-key',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: {...group, 'is_archived': 1},
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+      );
+    });
+
+    test('direct reaction local state is ineligible when the contact is archived', () {
+      // Plan 309 TC-03: same guard on the 1:1 reaction resolver.
+      const data = <String, dynamic>{
+        'type': 'message_reaction',
+        'sender_id': 'peer-alice',
+        'event_id': 'reaction-arch-1',
+        'target_message_id': 'message-1',
+        'action': 'add',
+      };
+      const identity = <String, Object?>{'peer_id': 'peer-bob'};
+      const contact = <String, Object?>{
+        'peer_id': 'peer-alice',
+        'username': 'Alice',
+        'is_blocked': 0,
+      };
+      const outgoingTarget = <String, Object?>{
+        'id': 'message-1',
+        'contact_peer_id': 'peer-alice',
+        'sender_peer_id': 'peer-bob',
+        'is_incoming': 0,
+        'deleted_at': null,
+      };
+
+      expect(
+        directReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          contactRow: {...contact, 'is_archived': 1},
+          targetMessageRow: outgoingTarget,
+          mlKemSecretKey: 'secret',
+        ),
+        isNull,
+      );
+    });
+
     test('reaction local-state policy requires known author and identity', () {
       const data = <String, dynamic>{
         'type': 'message_reaction',

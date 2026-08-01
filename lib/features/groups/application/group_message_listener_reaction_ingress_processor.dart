@@ -350,9 +350,9 @@ final class _GroupReactionIngressProcessor {
     }
 
     final group = await _groupRepo.getGroup(groupId);
-    // Device-local mute suppresses local notifications (mirrors the message
-    // path); a missing group means we can't route, so skip.
-    if (group == null || group.isMuted) return;
+    // Device-local mute and archive suppress local notifications (mirrors the
+    // message path); a missing group means we can't route, so skip.
+    if (group == null || group.isMuted || group.isArchived) return;
 
     // Best-effort reactor display name from the group roster.
     var reactorName = '';

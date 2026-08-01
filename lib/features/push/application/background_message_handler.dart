@@ -1443,6 +1443,7 @@ BackgroundDirectReactionLocalState? directReactionLocalStateFromRows({
   final targetSenderPeerId = _trimToNull(targetMessageRow?['sender_peer_id']);
   final actorUsername = _trimToNull(contactRow?['username']);
   final blocked = (contactRow?['is_blocked'] as num?)?.toInt() == 1;
+  final contactArchived = (contactRow?['is_archived'] as num?)?.toInt() == 1;
   final incoming = (targetMessageRow?['is_incoming'] as num?)?.toInt() != 0;
   final deleted = targetMessageRow?['deleted_at'] != null;
 
@@ -1454,6 +1455,7 @@ BackgroundDirectReactionLocalState? directReactionLocalStateFromRows({
       contactPeerId != senderPeerId ||
       actorUsername == null ||
       blocked ||
+      contactArchived ||
       targetId != targetMessageId ||
       targetContactPeerId != senderPeerId ||
       targetSenderPeerId != localPeerId ||
@@ -1569,6 +1571,7 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   final storedGroupId = _trimToNull(groupRow?['id']);
   final groupName = _trimToNull(groupRow?['name']);
   final groupMuted = (groupRow?['is_muted'] as num?)?.toInt() == 1;
+  final groupArchived = (groupRow?['is_archived'] as num?)?.toInt() == 1;
   final groupDissolved =
       (groupRow?['is_dissolved'] as num?)?.toInt() == 1 ||
       groupRow?['dissolved_at'] != null;
@@ -1619,6 +1622,7 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
       storedGroupId != groupId ||
       groupName == null ||
       groupMuted ||
+      groupArchived ||
       groupDissolved ||
       storedLocalMember != localPeerId ||
       localTransportPeerId == null ||

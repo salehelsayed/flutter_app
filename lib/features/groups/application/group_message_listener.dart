@@ -1171,6 +1171,7 @@ class GroupMessageListener {
             _getAppLifecycleState != null) {
           final group = await _groupRepo.getGroup(groupId);
           final isMuted = group?.isMuted ?? false;
+          final isArchived = group?.isArchived ?? false;
           final groupName = group?.name ?? 'Group';
           // Local notifications + the mute that suppresses them are device-local:
           // muting on one device must never silence another device.
@@ -1182,7 +1183,7 @@ class GroupMessageListener {
           assert(
             isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference),
           );
-          if (!isMuted) {
+          if (!isMuted && !isArchived) {
             await maybeShowNotification(
               notificationService: _notificationService,
               conversationTracker: _groupConversationTracker,

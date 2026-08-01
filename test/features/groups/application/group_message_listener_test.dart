@@ -14314,6 +14314,49 @@ void main() {
     });
 
     test(
+      'does not show a notification for an archived group',
+      () async {
+        // Plan 309 TC-14: the live in-app message banner read only isMuted;
+        // an archived group must be suppressed the same way.
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        await groupRepo.updateGroup(testGroup.copyWith(isArchived: true));
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Archived group message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, isEmpty);
+        expect(msgRepo.count, 1);
+        final latest = await msgRepo.getLatestMessage('group-1');
+        expect(latest, isNotNull);
+        expect(latest!.text, 'Archived group message');
+
+        notifListener.dispose();
+      },
+    );
+
+    test(
       'suppresses local notification for muted groups but still persists the message',
       () async {
         await saveSelfMember();
@@ -14640,6 +14683,49 @@ void main() {
 
         await sub.cancel();
         rxnListener.dispose();
+      },
+    );
+
+    test(
+      'does not show a reaction notification for an archived group',
+      () async {
+        // Plan 309 TC-15: the reaction ingress read only isMuted; an archived
+        // group's reactions must not banner (state still persists).
+        await saveGroupReactionTargetMessage('msg-arch-1');
+        await groupRepo.updateGroup(testGroup.copyWith(isArchived: true));
+        final notifService = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-arch-1',
+            'messageId': 'msg-arch-1',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(reactionRepo.saveReactionCallCount, 1);
+        expect(notifService.shown, isEmpty);
       },
     );
 

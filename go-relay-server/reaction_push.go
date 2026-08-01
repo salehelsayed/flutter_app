@@ -456,7 +456,7 @@ func buildGroupReactionPushMessage(
 		}
 	}
 
-	identity := boundedGroupReactionIdentity(groupID)
+	apnsCollapseIdentity := boundedGroupReactionIdentity(groupID)
 	aps := &messaging.Aps{
 		ContentAvailable: true,
 		MutableContent:   true,
@@ -471,14 +471,21 @@ func buildGroupReactionPushMessage(
 		Token: token,
 		Data:  data,
 		Android: &messaging.AndroidConfig{
-			Priority:    "high",
-			CollapseKey: identity,
+			// Plan 309 D1(b): no CollapseKey. The per-group key silently
+			// discarded concurrent reactions in transit, and per-event keys
+			// hit FCM's four-collapse-key-per-token cap; non-collapsible
+			// messages use the 100-message queue with onDeletedMessages()
+			// on overflow, matching the ordinary group-message builders.
+			Priority: "high",
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{
-				"apns-priority":    "10",
-				"apns-push-type":   "alert",
-				"apns-collapse-id": identity,
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+				// D1b: per-group on purpose (one stable card per group);
+				// the iOS in-transit collapse loss is a documented open
+				// half of C2 while this holds.
+				"apns-collapse-id": apnsCollapseIdentity,
 			},
 			Payload: &messaging.APNSPayload{
 				Aps:        aps,

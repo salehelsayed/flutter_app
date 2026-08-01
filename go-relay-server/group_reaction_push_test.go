@@ -285,8 +285,10 @@ func TestGroupInboxStore_ReactionAddPushesAllAuthorDevicesOnly(t *testing.T) {
 		if message.APNS != nil {
 			t.Fatalf("Android-targeted push retained APNs payload: %#v", message.APNS)
 		}
-		if collapseID := message.Android.CollapseKey; collapseID == "" || len(collapseID) > 64 {
-			t.Fatalf("group collapse identity = %q", collapseID)
+		// Plan 309 D1(b): group reactions are non-collapsible on Android — a
+		// collapse key (per-group OR per-event) discards concurrent reactions.
+		if collapseID := message.Android.CollapseKey; collapseID != "" {
+			t.Fatalf("group reaction Android push must omit CollapseKey; got %q", collapseID)
 		}
 		delete(wantTokens, message.Token)
 	}
@@ -604,5 +606,75 @@ func TestGroupReactionCanonicalRecipientSetIsStable(t *testing.T) {
 	want := []string{"peer-a", "peer-b"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("canonical recipients = %#v, want %#v", got, want)
+	}
+}
+
+// Plan 309 TC-07 (D1(b)): group-reaction pushes must not carry an FCM collapse
+// key at all — the per-group key silently discarded concurrent reactions, and
+// per-event keys hit FCM's four-collapse-key cap. Matches the ordinary
+// group-message builders, which set no CollapseKey.
+func TestRelayNotificationClosure_GroupReactionCollapseKeyOmittedForAndroid(t *testing.T) {
+	envelope := `{"kind":"group_offline_replay","version":1,"payloadType":"group_reaction","keyEpoch":1,"messageId":"m-1","ciphertext":"cipher","nonce":"n"}`
+	build := func(transition string) *messaging.Message {
+		return buildGroupReactionPushMessage(
+			"provider-token",
+			"group-collapse-verbs",
+			envelope,
+			groupReactionPushMetadata{
+				Action:                 "add",
+				TransitionID:           transition,
+				TargetMessageID:        "target-1",
+				ReactorPeerID:          "peer-reactor",
+				ReactorTransportPeerID: "peer-reactor",
+			},
+		)
+	}
+	first := build("group-reaction:1:transition")
+	second := build("group-reaction:2:transition")
+	if first == nil || second == nil {
+		t.Fatal("builder returned nil for a valid add reaction")
+	}
+	if first.Android.CollapseKey != "" || second.Android.CollapseKey != "" {
+		t.Fatalf(
+			"Android.CollapseKey must be omitted for group reactions; got %q / %q",
+			first.Android.CollapseKey,
+			second.Android.CollapseKey,
+		)
+	}
+}
+
+// Plan 309 TC-08 (D1b default): apns-collapse-id stays the per-group identity
+// (Plan 257's one-stable-card display design) and no longer shares a variable
+// with the removed Android key. The iOS half of C2 is deliberately NOT fixed
+// while D1b holds.
+func TestRelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup(t *testing.T) {
+	envelope := `{"kind":"group_offline_replay","version":1,"payloadType":"group_reaction","keyEpoch":1,"messageId":"m-2","ciphertext":"cipher","nonce":"n"}`
+	build := func(transition string) *messaging.Message {
+		return buildGroupReactionPushMessage(
+			"provider-token",
+			"group-collapse-verbs",
+			envelope,
+			groupReactionPushMetadata{
+				Action:                 "add",
+				TransitionID:           transition,
+				TargetMessageID:        "target-1",
+				ReactorPeerID:          "peer-reactor",
+				ReactorTransportPeerID: "peer-reactor",
+			},
+		)
+	}
+	first := build("group-reaction:1:transition")
+	second := build("group-reaction:2:transition")
+	if first == nil || second == nil {
+		t.Fatal("builder returned nil for a valid add reaction")
+	}
+	want := boundedGroupReactionIdentity("group-collapse-verbs")
+	firstID := first.APNS.Headers["apns-collapse-id"]
+	secondID := second.APNS.Headers["apns-collapse-id"]
+	if firstID != want || secondID != want {
+		t.Fatalf("apns-collapse-id must stay the per-group identity %q; got %q / %q", want, firstID, secondID)
+	}
+	if first.Android.CollapseKey == firstID {
+		t.Fatal("Android key and apns-collapse-id must no longer share one identity value")
 	}
 }

@@ -592,6 +592,14 @@ final class NotificationPreviewResolver {
           : "reaction_blocked_contact"
       )
     }
+    guard !contact.archived else {
+      return reactionFallback(
+        threadIdentifier: senderPeerId,
+        eventId: eventId,
+        reason: "reaction_archived_contact",
+        trustedTitle: contact.username
+      )
+    }
     guard projection.authoredTargets[targetMessageId] == senderPeerId else {
       return reactionFallback(
         threadIdentifier: senderPeerId,
@@ -785,6 +793,13 @@ final class NotificationPreviewResolver {
         groupId: groupId,
         eventId: eventId,
         reason: "group_reaction_muted"
+      )
+    }
+    guard !group.archived else {
+      return groupReactionFallback(
+        groupId: groupId,
+        eventId: eventId,
+        reason: "group_reaction_archived"
       )
     }
     guard !group.dissolved else {
