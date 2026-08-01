@@ -485,6 +485,48 @@ void main() {
   });
 
   group('handleIncomingGroupInvite', () {
+    test(
+      // TC-321-09 (plan 321) — drains fire once per regained-key member and
+      // only after the join is fully persisted. The observable is repo state
+      // at drain time: on HEAD drains ran inside the roster loop (before
+      // saveKey), so getLatestKey was still null.
+      'deferred key-distribution drains run once per regained member, after the join is fully persisted',
+      () async {
+        final drainedPeers = <String>[];
+        final keyPersistedAtDrainTime = <bool>[];
+        setDeferredDistributionDrainSink((
+            {required String groupId, required String peerId}) async {
+          drainedPeers.add(peerId);
+          keyPersistedAtDrainTime
+              .add((await groupRepo.getLatestKey(groupId)) != null);
+        });
+        addTearDown(() => setDeferredDistributionDrainSink(null));
+
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.success));
+        expect(
+          drainedPeers.toSet(),
+          {'12D3KooWAlice', '12D3KooWBob'},
+          reason: 'every keyed roster member drains exactly once on a fresh '
+              'join (existing == null passes the regained-key gate)',
+        );
+        expect(drainedPeers.length, 2);
+        expect(
+          keyPersistedAtDrainTime.every((persisted) => persisted),
+          isTrue,
+          reason: 'TC-321-09: drains must run AFTER the join is fully '
+              'persisted (HEAD drains inside the roster loop, before saveKey)',
+        );
+      },
+    );
+
     // --- Cycle 4.1 ---
     test(
       'persists group, members, and key for a valid invite payload',

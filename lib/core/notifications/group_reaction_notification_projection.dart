@@ -132,6 +132,12 @@ class GroupReactionNotificationProjection {
     return _enqueue(_deleteAllDocuments, propagateError: true);
   }
 
+  /// Plan 321: the single public authority on which group types carry a
+  /// notification context. The fresh-join atomic publish MUST consult this
+  /// (never a hand-rolled type check — a chat-only filter would permanently
+  /// blank announcement joiners).
+  bool supportsGroupType(GroupType type) => _supportedGroupType(type);
+
   Future<void> upsertGroup(GroupModel group) {
     final groupId = group.id.trim();
     if (group.selfRemovedAt != null && groupId.isNotEmpty) {

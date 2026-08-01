@@ -324,6 +324,82 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(result.body, "New message")
   }
 
+  // Plan 321 TC-321-10 (ordinary lane) — a projected group whose document is
+  // MISSING keyEpoch is dropped by the snapshot parser, so its pushes render
+  // the sanitized generic fallback (the fresh-join window's user-visible
+  // consequence, test-locked). The push keyEpoch is pinned to 0 with the
+  // shared key seeded under epoch 0 so a guard-deletion mutant (`?? 0`)
+  // DECRYPTS and reds this test instead of surviving via the route epoch check.
+  func testOrdinarySnapshotDropsGroupMissingKeyEpoch() throws {
+    let fixture = try loadFixture("group_text")
+    let plaintext = try fixturePlaintextJSON(fixture)
+    var routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
+    routeData["keyEpoch"] = "0"
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 0):
+        "group-secret",
+      PushSharedKeyNames.groupReactionContexts: try ordinaryGroupContextsJSON(
+        groupId: "group-team",
+        groupName: "Team Chat",
+        groupType: "chat",
+        senderTransportPeerId: "transport-alice",
+        senderRole: "writer",
+        omitKeyEpoch: true
+      ),
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.suppress)
+    XCTAssertFalse(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group_recipient_policy_rejected")
+    XCTAssertEqual(result.title, "Mknoon")
+    XCTAssertEqual(result.body, "New message")
+    XCTAssertEqual(decryptor.groupCalls, 0)
+  }
+
+  // Plan 321 TC-321-10 (reaction lane) — the reaction snapshot parser drops an
+  // epoch-less group doc identically: the push resolves as unknown-group. A
+  // guard-deletion mutant parses the group with epoch 0 and instead fails the
+  // exact epoch-parity check, changing the reason — the exact-reason assertion
+  // discriminates.
+  func testReactionSnapshotDropsGroupMissingKeyEpoch() throws {
+    let decryptor = MemoryPushDecryptor(
+      groupPlaintext: try groupReactionPlaintextJSON(
+        eventId: "missing-epoch-event",
+        stateId: "missing-epoch-state"
+      )
+    )
+    let resolver = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader(
+        try groupReactionProjectionValues(omitGroupKeyEpoch: true)
+      ),
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: try groupReactionRoute(eventId: "missing-epoch-event"),
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.suppress)
+    XCTAssertFalse(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group_reaction_unknown_group")
+    XCTAssertEqual(decryptor.groupCalls, 0)
+  }
+
   // 04-P0 SI-2 NSE (security core) — a removed member's device deletes its
   // group-key mirror (GroupRepositoryImpl.removeAllKeys -> _deleteGroupKeyMirror),
   // so the out-of-process NSE has no key: it must keep the generic fallback and
@@ -3335,6 +3411,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
     includeActor: Bool = true,
     includeTarget: Bool = true,
     targetKeyEpoch: Int = 7,
+    omitGroupKeyEpoch: Bool = false,
     localDeviceId: String = "device-self",
     localTransportPeerId: String = "transport-self",
     localMemberDeviceIds: [String] = ["device-self"],
@@ -3364,21 +3441,26 @@ final class NotificationPreviewResolverTests: XCTestCase {
         ],
       ]
     }
+    var reactionGroupDoc: [String: Any] = [
+      "name": "Garden Announcements",
+      "type": "announcement",
+      "muted": muted,
+      "archived": archived,
+      "dissolved": dissolved,
+      "keyEpoch": 7,
+      "members": members,
+    ]
+    if omitGroupKeyEpoch {
+      // Plan 321 TC-321-10: the fresh-join window's document shape.
+      reactionGroupDoc.removeValue(forKey: "keyEpoch")
+    }
     var contextDocument: [String: Any] = [
       "version": 1,
       "localAccountPeerId": contextAccountPeerId,
       "localDeviceId": localDeviceId,
       "localTransportPeerId": localTransportPeerId,
       "groups": [
-        "group-team": [
-          "name": "Garden Announcements",
-          "type": "announcement",
-          "muted": muted,
-          "archived": archived,
-          "dissolved": dissolved,
-          "keyEpoch": 7,
-          "members": members,
-        ],
+        "group-team": reactionGroupDoc,
       ],
     ]
     if legacyLocalInstallationUnion {
@@ -3434,6 +3516,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
     senderTransportPeerId: String,
     senderRole: String,
     keyEpoch: Int = 7,
+    omitKeyEpoch: Bool = false,
     muted: Bool = false,
     archived: Bool = false,
     dissolved: Bool = false,
@@ -3468,21 +3551,26 @@ final class NotificationPreviewResolverTests: XCTestCase {
         "transportPeerIds": [senderTransportPeerId],
       ]
     }
+    var groupDoc: [String: Any] = [
+      "name": groupName,
+      "type": groupType,
+      "muted": muted,
+      "archived": archived,
+      "dissolved": dissolved,
+      "keyEpoch": keyEpoch,
+      "members": members,
+    ]
+    if omitKeyEpoch {
+      // Plan 321 TC-321-10: the fresh-join window's document shape.
+      groupDoc.removeValue(forKey: "keyEpoch")
+    }
     return try jsonString([
       "version": 1,
       "localAccountPeerId": "peer-self",
       "localDeviceId": localDeviceId,
       "localTransportPeerId": localTransportPeerId,
       "groups": [
-        groupId: [
-          "name": groupName,
-          "type": groupType,
-          "muted": muted,
-          "archived": archived,
-          "dissolved": dissolved,
-          "keyEpoch": keyEpoch,
-          "members": members,
-        ],
+        groupId: groupDoc,
       ],
     ])
   }

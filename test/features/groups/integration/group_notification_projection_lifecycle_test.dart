@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -9,15 +11,54 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/bridge/fake_bridge.dart';
+
+/// Captures [FLOW] log lines emitted during [action] (plan 321 event
+/// discriminators: PUBLISHED must appear only on an actual write, DEFERRED
+/// only on a caught publish failure).
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 void main() {
   const oldAccount = 'peer-old-account';
@@ -1412,6 +1453,647 @@ void main() {
       );
     },
   );
+
+  test(
+    // TC-321-01 (plan 321, C3 hardened) — the fresh-join atomicity headline.
+    'fresh accepted join publishes exactly one complete context and never an epoch-less document',
+    () async {
+      const joiner = '12D3KooWBob';
+      const inviter = '12D3KooWAlice';
+      const freshGroupId = 'grp-fresh-join-321';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      // Without ownership every projection write silently no-ops
+      // (_ownsContexts) and this test would pass vacuously on HEAD.
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      // Publish-precedes-drain observable: at each drain call, snapshot
+      // whether the store already holds the COMPLETE (epoch-bearing) context.
+      final drainSnapshots = <bool>[];
+      setDeferredDistributionDrainSink((
+          {required String groupId, required String peerId}) async {
+        var complete = false;
+        final raw = store.values[sharedGroupReactionContextsKey];
+        if (raw != null) {
+          final decoded = jsonDecode(raw) as Map<String, dynamic>;
+          final groups = decoded['groups'] as Map<String, dynamic>? ?? const {};
+          final doc = groups[freshGroupId];
+          complete = doc is Map<String, dynamic> && doc['keyEpoch'] is int;
+        }
+        drainSnapshots.add(complete);
+      });
+      addTearDown(() => setDeferredDistributionDrainSink(null));
+
+      final payload = GroupInvitePayload(
+        id: 'invite-321-01',
+        groupId: freshGroupId,
+        groupKey: 'base64GroupKey==',
+        keyEpoch: 1,
+        groupConfig: const {
+          'name': 'Fresh Join 321',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': inviter,
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            {
+              'peerId': joiner,
+              'username': 'Bob',
+              'role': 'writer',
+              'publicKey': 'bobPubKey64',
+              'mlKemPublicKey': 'bobMlKem64',
+            },
+          ],
+          'createdBy': inviter,
+          'createdAt': '2026-03-02T00:00:00.000Z',
+        },
+        senderPeerId: inviter,
+        senderUsername: 'Alice',
+        timestamp: DateTime.utc(2026, 8, 1).toIso8601String(),
+        recipientPeerId: joiner,
+        invitePolicy: GroupInvitePolicy(
+          expiresAt: DateTime.utc(2099, 3, 9, 12),
+          allowedDevices: const [joiner],
+          assignedRole: 'writer',
+          canInviteOthers: false,
+          joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+          keyEpoch: 1,
+        ),
+      );
+
+      final (result, materializedGroupId) =
+          await materializeAcceptedGroupInvitePayload(
+        payload: payload,
+        groupRepo: repo,
+        bridge: bridge,
+        ownPeerId: joiner,
+      );
+
+      // RED-reason guard: the causal RED must come from the projection
+      // invariant below, never from a rejected payload.
+      expect(
+        result,
+        HandleGroupInviteResult.success,
+        reason: 'fixture guard: the fresh join itself must succeed — a red via '
+            'invalidPayload means the fixture is wrong, not the window proven',
+      );
+      expect(materializedGroupId, freshGroupId);
+
+      final groupBearing = store.writeLog
+          .where((entry) => entry.$1 == sharedGroupReactionContextsKey)
+          .map((entry) => jsonDecode(entry.$2) as Map<String, dynamic>)
+          .where((doc) {
+        final groups = doc['groups'] as Map<String, dynamic>? ?? const {};
+        return groups.containsKey(freshGroupId);
+      }).toList();
+
+      expect(
+        groupBearing,
+        isNotEmpty,
+        reason: 'the join must project the group',
+      );
+      for (final doc in groupBearing) {
+        final entry = (doc['groups'] as Map<String, dynamic>)[freshGroupId]
+            as Map<String, dynamic>;
+        expect(
+          entry['keyEpoch'],
+          isA<int>(),
+          reason: 'TC-321-01: no captured contexts document may carry the '
+              'group without keyEpoch (HEAD publishes the first doc '
+              'epoch-less for the whole roster loop)',
+        );
+      }
+      expect(
+        groupBearing.length,
+        1,
+        reason: 'TC-321-01: exactly one COMPLETE publish (HEAD writes the '
+            'group across N+2 incremental documents)',
+      );
+
+      final only = (groupBearing.single['groups']
+          as Map<String, dynamic>)[freshGroupId] as Map<String, dynamic>;
+      expect(only['name'], 'Fresh Join 321');
+      expect(only['type'], 'chat');
+      expect(only['muted'], false);
+      expect(only['archived'], false);
+      expect(only['dissolved'], false);
+      expect(only['keyEpoch'], 1);
+      final members = only['members'] as Map<String, dynamic>;
+      expect(members.keys.toSet(), {inviter, joiner});
+      final alice = members[inviter] as Map<String, dynamic>;
+      expect(alice['username'], 'Alice');
+      expect(alice['role'], 'admin');
+      expect(alice['deviceIds'], isA<List<dynamic>>());
+      expect(alice['transportPeerIds'], isA<List<dynamic>>());
+      expect((members[joiner] as Map<String, dynamic>)['role'], 'writer');
+
+      // Capability-branch tail: the topic join and the drains must survive
+      // the suppression scope, and every drain must observe the publish.
+      expect(
+        bridge.commandLog,
+        contains('group:join'),
+        reason: 'the capability branch must still join the group topic',
+      );
+      expect(
+        drainSnapshots,
+        isNotEmpty,
+        reason: 'deferred-distribution drains must still fire',
+      );
+      expect(
+        drainSnapshots.every((sawCompleteDoc) => sawCompleteDoc),
+        isTrue,
+        reason: 'every drain must run AFTER the complete-context publish',
+      );
+    },
+  );
+
+  GroupInvitePayload freshJoinPayload({
+    required String groupId,
+    String groupType = 'chat',
+  }) => GroupInvitePayload(
+    id: 'invite-321-$groupId',
+    groupId: groupId,
+    groupKey: 'base64GroupKey==',
+    keyEpoch: 1,
+    groupConfig: {
+      'name': 'Fresh Join 321',
+      'groupType': groupType,
+      'members': const [
+        {
+          'peerId': '12D3KooWAlice',
+          'username': 'Alice',
+          'role': 'admin',
+          'publicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+        },
+        {
+          'peerId': '12D3KooWBob',
+          'username': 'Bob',
+          'role': 'writer',
+          'publicKey': 'bobPubKey64',
+          'mlKemPublicKey': 'bobMlKem64',
+        },
+      ],
+      'createdBy': '12D3KooWAlice',
+      'createdAt': '2026-03-02T00:00:00.000Z',
+    },
+    senderPeerId: '12D3KooWAlice',
+    senderUsername: 'Alice',
+    timestamp: DateTime.utc(2026, 8, 1).toIso8601String(),
+    recipientPeerId: '12D3KooWBob',
+    invitePolicy: GroupInvitePolicy(
+      expiresAt: DateTime.utc(2099, 3, 9, 12),
+      allowedDevices: const ['12D3KooWBob'],
+      assignedRole: 'writer',
+      canInviteOthers: false,
+      joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+      keyEpoch: 1,
+    ),
+  );
+
+  List<Map<String, Object?>> groupDocsIn(
+    _MemorySecureKeyStore store,
+    String groupId,
+  ) => store.writeLog
+      .where((entry) => entry.$1 == sharedGroupReactionContextsKey)
+      .map((entry) => jsonDecode(entry.$2) as Map<String, dynamic>)
+      .where((doc) {
+        final groups = doc['groups'] as Map<String, dynamic>? ?? const {};
+        return groups.containsKey(groupId);
+      })
+      .map(
+        (doc) =>
+            ((doc['groups'] as Map<String, dynamic>)[groupId]
+                    as Map<String, dynamic>)
+                .cast<String, Object?>(),
+      )
+      .toList(growable: false);
+
+  test(
+    // TC-321-02 (plan 321) — KILL-1 guard.
+    'mid-join updateGroup neither exposes a partial context nor loses its committed change',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc02';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      persistence.armMemberInsertBarrier();
+      final materializeFuture = materializeAcceptedGroupInvitePayload(
+        payload: freshJoinPayload(groupId: freshGroupId),
+        groupRepo: repo,
+        bridge: bridge,
+        ownPeerId: joiner,
+      );
+      await persistence.memberInsertCaptured.future;
+      // Enqueued on the group's mutation tail while the join is paused inside
+      // its first saveMember — deterministically lands mid-scope on release.
+      final muteFuture = repo.updateGroup(
+        GroupModel(
+          id: freshGroupId,
+          name: 'Fresh Join 321',
+          type: GroupType.chat,
+          topicName: '/mknoon/groups/$freshGroupId',
+          createdAt: DateTime.utc(2026, 3, 2),
+          createdBy: '12D3KooWAlice',
+          myRole: GroupRole.member,
+          isMuted: true,
+        ),
+      );
+      persistence.releaseMemberInsert();
+      final (result, _) = await materializeFuture;
+      await muteFuture;
+
+      expect(result, HandleGroupInviteResult.success);
+      final docs = groupDocsIn(store, freshGroupId);
+      expect(
+        docs.length,
+        1,
+        reason: 'TC-321-02: the mid-join updateGroup must publish NOTHING for '
+            'the joining group (HEAD publishes an epoch-less members-less doc)',
+      );
+      expect(docs.single['keyEpoch'], 1);
+      expect(
+        docs.single['muted'],
+        true,
+        reason: 'the suppressed mirror must not LOSE the mute — the publish '
+            'read-back carries the committed row',
+      );
+    },
+  );
+
+  test(
+    // TC-321-03 (plan 321) — KILL-2 guard: latest-committed key wins.
+    'mid-join key rotation is never downgraded by the fresh-join publish',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc03';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      persistence.armMemberInsertBarrier();
+      final materializeFuture = materializeAcceptedGroupInvitePayload(
+        payload: freshJoinPayload(groupId: freshGroupId),
+        groupRepo: repo,
+        bridge: bridge,
+        ownPeerId: joiner,
+      );
+      await persistence.memberInsertCaptured.future;
+      // A concurrent 1:1 rotation lands INSIDE the scope: its mirror is
+      // suppressed, so only a latest-read publish can carry generation 2.
+      final rotationFuture = repo.saveKey(
+        GroupKeyInfo(
+          groupId: freshGroupId,
+          keyGeneration: 2,
+          encryptedKey: 'base64RotatedKey==',
+          createdAt: DateTime.utc(2026, 8, 1, 1),
+        ),
+      );
+      persistence.releaseMemberInsert();
+      final (result, _) = await materializeFuture;
+      await rotationFuture;
+
+      expect(result, HandleGroupInviteResult.success);
+      final docs = groupDocsIn(store, freshGroupId);
+      expect(docs, isNotEmpty);
+      for (final doc in docs) {
+        expect(
+          doc['keyEpoch'],
+          isA<int>(),
+          reason: 'no epoch-less intermediate (HEAD exposes one)',
+        );
+      }
+      expect(
+        docs.last['keyEpoch'],
+        2,
+        reason: 'TC-321-03: the publish must read the LATEST committed '
+            'generation — pinning the join generation would downgrade the '
+            'mid-scope rotation',
+      );
+    },
+  );
+
+  test(
+    // TC-321-03 race case (plan 321) — the _runGroupMutation wrap is
+    // test-locked: a deletion racing the publish read-back must win.
+    'a group deletion racing the fresh-join publish is never resurrected',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc03-race';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+
+      // Committed join state, seeded through the normal writers.
+      await repo.saveGroup(
+        GroupModel(
+          id: freshGroupId,
+          name: 'Fresh Join 321',
+          type: GroupType.chat,
+          topicName: '/mknoon/groups/$freshGroupId',
+          createdAt: DateTime.utc(2026, 3, 2),
+          createdBy: '12D3KooWAlice',
+          myRole: GroupRole.member,
+        ),
+      );
+      await repo.saveMember(
+        GroupMember(
+          groupId: freshGroupId,
+          peerId: joiner,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bobPubKey64',
+          mlKemPublicKey: 'bobMlKem64',
+          joinedAt: DateTime.utc(2026, 3, 2),
+        ),
+      );
+      await repo.saveKey(
+        GroupKeyInfo(
+          groupId: freshGroupId,
+          keyGeneration: 1,
+          encryptedKey: 'base64GroupKey==',
+          createdAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+
+      persistence.armMemberLoadBarrier();
+      final publishFuture = (repo as FreshJoinProjectionAtomicity)
+          .projectCommittedFreshJoin(freshGroupId);
+      await persistence.memberLoadCaptured.future;
+      // With the publish inside _runGroupMutation this deletion QUEUES until
+      // the publish completes and then removes the doc; an unwrapped publish
+      // would let it interleave and then resurrect the group from its stale
+      // read-back.
+      final deleteFuture = repo.deleteGroup(freshGroupId);
+      persistence.releaseMemberLoad();
+      await publishFuture;
+      await deleteFuture;
+
+      final raw = store.values[sharedGroupReactionContextsKey];
+      final groups = raw == null
+          ? const <String, dynamic>{}
+          : (jsonDecode(raw) as Map<String, dynamic>)['groups']
+                    as Map<String, dynamic>? ??
+                const <String, dynamic>{};
+      expect(
+        groups.containsKey(freshGroupId),
+        isFalse,
+        reason: 'TC-321-03 race: the deletion must win — a resurrected doc '
+            'means the publish ran outside _runGroupMutation',
+      );
+    },
+  );
+
+  test(
+    // TC-321-04 (plan 321) — removals pass through the suppression scope.
+    'failure-branch and rollback removals pass through the suppression scope',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc04';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      // The realistic stale state: a prior attempt left a doc behind. Without
+      // this seed, "no doc after failure" is satisfied by a wrong
+      // (removal-suppressing) implementation too — nothing was ever written.
+      await projection.upsertGroup(
+        GroupModel(
+          id: freshGroupId,
+          name: 'Stale Prior Attempt',
+          type: GroupType.chat,
+          topicName: '/mknoon/groups/$freshGroupId',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: '12D3KooWAlice',
+          myRole: GroupRole.member,
+        ),
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      // Authority flips INSIDE saveKey's own window: the post-insert re-read
+      // sees a removed shell and the failure branch must remove the doc even
+      // though the suppression scope is active.
+      persistence.onGroupKeyInsert = () {
+        persistence.groups[freshGroupId]?['self_removed_at'] =
+            DateTime.utc(2026, 8, 1, 2).toIso8601String();
+      };
+
+      await expectLater(
+        materializeAcceptedGroupInvitePayload(
+          payload: freshJoinPayload(groupId: freshGroupId),
+          groupRepo: repo,
+          bridge: bridge,
+          ownPeerId: joiner,
+        ),
+        throwsStateError,
+      );
+
+      final raw = store.values[sharedGroupReactionContextsKey];
+      final groups = raw == null
+          ? const <String, dynamic>{}
+          : (jsonDecode(raw) as Map<String, dynamic>)['groups']
+                    as Map<String, dynamic>? ??
+                const <String, dynamic>{};
+      expect(
+        groups.containsKey(freshGroupId),
+        isFalse,
+        reason: 'TC-321-04: the authority-flip removal must fire under '
+            'suppression — a surviving seeded doc means removals were '
+            'suppressed',
+      );
+    },
+  );
+
+  test(
+    // TC-321-05 (plan 321) — unsupported type parity + event honesty.
+    'unsupported group type join produces no context and no projection error',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc05';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      final events = await _captureFlowEvents(() async {
+        final (result, _) = await materializeAcceptedGroupInvitePayload(
+          payload: freshJoinPayload(groupId: freshGroupId, groupType: 'qa'),
+          groupRepo: repo,
+          bridge: bridge,
+          ownPeerId: joiner,
+        );
+        expect(result, HandleGroupInviteResult.success);
+      });
+
+      expect(groupDocsIn(store, freshGroupId), isEmpty);
+      expect(
+        events.where(
+          (e) =>
+              e['event'] == 'GROUP_FRESH_JOIN_PROJECTION_PUBLISHED' ||
+              e['event'] == 'GROUP_FRESH_JOIN_PROJECTION_DEFERRED',
+        ),
+        isEmpty,
+        reason: 'TC-321-05: a qa join is a clean no-op — PUBLISHED would be a '
+            'false signal and DEFERRED means the ArgumentError fired',
+      );
+    },
+  );
+
+  test(
+    // TC-321-05 sibling (plan 321) — announcement is projectable: a chat-only
+    // pre-filter would permanently blank announcement joiners.
+    'announcement group join publishes a complete context',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc05b';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      final events = await _captureFlowEvents(() async {
+        final (result, _) = await materializeAcceptedGroupInvitePayload(
+          payload: freshJoinPayload(
+            groupId: freshGroupId,
+            groupType: 'announcement',
+          ),
+          groupRepo: repo,
+          bridge: bridge,
+          ownPeerId: joiner,
+        );
+        expect(result, HandleGroupInviteResult.success);
+      });
+
+      final docs = groupDocsIn(store, freshGroupId);
+      expect(docs.length, 1);
+      expect(docs.single['type'], 'announcement');
+      expect(docs.single['keyEpoch'], 1);
+      expect(
+        events.where(
+          (e) => e['event'] == 'GROUP_FRESH_JOIN_PROJECTION_PUBLISHED',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    // TC-321-06 (plan 321) — publish failure contained + TC-321-11 heal tail.
+    'a failed fresh-join publish defers with a flow event and never breaks the join',
+    () async {
+      const joiner = '12D3KooWBob';
+      const freshGroupId = 'grp-321-tc06';
+      final store = _MemorySecureKeyStore();
+      final projection = GroupReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      final persistence = _MemoryGroupPersistence();
+      final repo = persistence.repository(projection);
+      final bridge = FakeBridge();
+
+      // The suppressed save scope performs no projection writes, so the next
+      // contexts write IS the publish — arm the failure for exactly it.
+      store.failNextWriteKeys.add(sharedGroupReactionContextsKey);
+
+      final events = await _captureFlowEvents(() async {
+        final (result, _) = await materializeAcceptedGroupInvitePayload(
+          payload: freshJoinPayload(groupId: freshGroupId),
+          groupRepo: repo,
+          bridge: bridge,
+          ownPeerId: joiner,
+        );
+        expect(
+          result,
+          HandleGroupInviteResult.success,
+          reason: 'TC-321-06: the join NEVER fails because of the projection',
+        );
+      });
+
+      expect(
+        events.where(
+          (e) => e['event'] == 'GROUP_FRESH_JOIN_PROJECTION_DEFERRED',
+        ),
+        hasLength(1),
+      );
+      // Honest posture: the queued failure wiped the store (fail-closed).
+      expect(store.values[sharedGroupReactionContextsKey], isNull);
+
+      // TC-321-11 heal tail: the next launch re-establishes identity and the
+      // authoritative rebuild restores the group WITH its epoch.
+      await projection.replaceLocalIdentity(
+        accountPeerId: joiner,
+        deviceId: 'bob-device',
+        transportPeerId: 'bob-transport',
+      );
+      await repo.mirrorAllGroupReactionNotificationContexts();
+      final healedRaw = store.values[sharedGroupReactionContextsKey];
+      expect(healedRaw, isNotNull);
+      final healedGroups =
+          (jsonDecode(healedRaw!) as Map<String, dynamic>)['groups']
+              as Map<String, dynamic>;
+      final healedDoc =
+          healedGroups[freshGroupId] as Map<String, dynamic>?;
+      expect(healedDoc, isNotNull, reason: 'launch heal must restore the doc');
+      expect(
+        healedDoc!['keyEpoch'],
+        1,
+        reason: 'the heal must restore the epoch too',
+      );
+    },
+  );
 }
 
 class _MemorySecureKeyStore implements SecureKeyStore {
@@ -1462,7 +2144,12 @@ class _MemorySecureKeyStore implements SecureKeyStore {
       throw StateError('injected projection failure');
     }
     values[key] = value;
+    // Plan 321: committed-write log so per-write document CONTENT can be
+    // asserted (writeKeys records keys only).
+    writeLog.add((key, value));
   }
+
+  final List<(String, String)> writeLog = <(String, String)>[];
 }
 
 class _MemoryGroupPersistence {
@@ -1484,6 +2171,41 @@ class _MemoryGroupPersistence {
   void releaseGroupLoad() {
     if (!_releaseGroupLoad.isCompleted) _releaseGroupLoad.complete();
   }
+
+  // Plan 321: in-scope interleave barrier — pauses inside dbInsertGroupMember
+  // so a concurrent writer can be enqueued on the group's mutation tail
+  // deterministically mid-join (armGroupLoadBarrier gates only
+  // dbLoadAllGroups, which the fresh join never calls).
+  Completer<void> memberInsertCaptured = Completer<void>();
+  Completer<void> _releaseMemberInsert = Completer<void>()..complete();
+
+  void armMemberInsertBarrier() {
+    memberInsertCaptured = Completer<void>();
+    _releaseMemberInsert = Completer<void>();
+  }
+
+  void releaseMemberInsert() {
+    if (!_releaseMemberInsert.isCompleted) _releaseMemberInsert.complete();
+  }
+
+  // Plan 321: publish read-back barrier — pauses inside dbLoadAllGroupMembers
+  // so a concurrent repo mutation can be raced against the atomic publish
+  // (test-locks the _runGroupMutation wrap).
+  Completer<void> memberLoadCaptured = Completer<void>();
+  Completer<void> _releaseMemberLoad = Completer<void>()..complete();
+
+  void armMemberLoadBarrier() {
+    memberLoadCaptured = Completer<void>();
+    _releaseMemberLoad = Completer<void>();
+  }
+
+  void releaseMemberLoad() {
+    if (!_releaseMemberLoad.isCompleted) _releaseMemberLoad.complete();
+  }
+
+  // Plan 321 (TC-321-04): deterministic authority flip fired synchronously
+  // inside dbInsertGroupKey, i.e. inside saveKey's own window.
+  void Function()? onGroupKeyInsert;
 
   GroupRepositoryImpl repository(
     GroupReactionNotificationProjection projection,
@@ -1518,16 +2240,24 @@ class _MemoryGroupPersistence {
       final row = groups[id];
       if (row != null) row['is_archived'] = 0;
     },
-    dbInsertGroupMember: (row) async =>
-        members[_memberKey(
-          row['group_id']! as String,
-          row['peer_id']! as String,
-        )] = Map<String, Object?>.from(
-          row,
-        ),
-    dbLoadAllGroupMembers: (groupId) async => members.values
-        .where((row) => row['group_id'] == groupId)
-        .toList(growable: false),
+    dbInsertGroupMember: (row) async {
+      if (!memberInsertCaptured.isCompleted) memberInsertCaptured.complete();
+      await _releaseMemberInsert.future;
+      members[_memberKey(
+        row['group_id']! as String,
+        row['peer_id']! as String,
+      )] = Map<String, Object?>.from(
+        row,
+      );
+    },
+    dbLoadAllGroupMembers: (groupId) async {
+      final snapshot = members.values
+          .where((row) => row['group_id'] == groupId)
+          .toList(growable: false);
+      if (!memberLoadCaptured.isCompleted) memberLoadCaptured.complete();
+      await _releaseMemberLoad.future;
+      return snapshot;
+    },
     dbLoadGroupMember: (groupId, peerId) async =>
         members[_memberKey(groupId, peerId)],
     dbUpdateGroupMemberRole: (groupId, peerId, role) async {
@@ -1537,13 +2267,15 @@ class _MemoryGroupPersistence {
         members.remove(_memberKey(groupId, peerId)),
     dbDeleteAllGroupMembers: (groupId) async =>
         members.removeWhere((_, row) => row['group_id'] == groupId),
-    dbInsertGroupKey: (row) async =>
-        keys[_keyKey(
-          row['group_id']! as String,
-          row['key_generation']! as int,
-        )] = Map<String, Object?>.from(
-          row,
-        ),
+    dbInsertGroupKey: (row) async {
+      keys[_keyKey(
+        row['group_id']! as String,
+        row['key_generation']! as int,
+      )] = Map<String, Object?>.from(
+        row,
+      );
+      onGroupKeyInsert?.call();
+    },
     dbLoadLatestGroupKey: (groupId) async {
       final rows =
           keys.values
@@ -1560,6 +2292,10 @@ class _MemoryGroupPersistence {
         keys[_keyKey(groupId, generation)],
     dbDeleteAllGroupKeys: (groupId) async =>
         keys.removeWhere((_, row) => row['group_id'] == groupId),
+    // Plan 321: the impl THROWS on a null floor fn and materialize swallows
+    // that into invalidPayload BEFORE saveGroup — the fresh-join path needs an
+    // explicit absent-floor answer.
+    dbLoadSelfRemovedGroupFreshnessFloorFn: (_) async => null,
     groupReactionProjection: projection,
   );
 

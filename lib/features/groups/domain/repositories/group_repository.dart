@@ -345,6 +345,31 @@ class SelfRemovedAcceptedNativeRetryResult {
       group != null;
 }
 
+/// Plan 321 (C3 hardened): fresh-join projection atomicity.
+///
+/// A fresh accepted join must never publish the group into the notification
+/// projection epoch-less (the N+2 incremental mirrors expose it for the whole
+/// roster loop, and the iOS NSE drops epoch-less docs). The owning repository
+/// suppresses its per-write projection mirror UPSERTS for the join scope
+/// (removals always pass through) and then publishes ONE complete context from
+/// committed rows. Discovered via an `is`-check like the shell capability —
+/// never added to [GroupRepository] (large fake-implementor population).
+abstract class FreshJoinProjectionAtomicity {
+  /// Runs [action] with the group's projection mirror upserts suppressed.
+  /// Refcounted per groupId: overlapping scopes only release at depth zero.
+  Future<T> runWithSuppressedGroupProjectionMirrors<T>(
+    String groupId,
+    Future<T> Function() action,
+  );
+
+  /// Publishes the group's COMPLETE notification context from committed rows
+  /// (authoritative group, full roster, LATEST committed key — never a caller
+  /// pinned generation). Returns true only when a context document was
+  /// actually written; unsupported types and missing authority return false.
+  /// Storage failures throw — the caller owns the log-and-no-op decision.
+  Future<bool> projectCommittedFreshJoin(String groupId);
+}
+
 /// Optional fail-closed capability owning every durable removed-shell
 /// transition and its strict terminal external cleanup.
 abstract class SelfRemovedGroupShellRepository {

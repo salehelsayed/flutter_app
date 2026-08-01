@@ -1078,31 +1078,88 @@ materializeAcceptedGroupInvitePayload({
     return result;
   }
 
-  await groupRepo.saveGroup(groupModel);
+  // Plan 321: the incremental projection mirrors would expose the group
+  // epoch-less for the whole roster loop (the iOS NSE drops epoch-less docs),
+  // so on a capability-bearing repository the save scope runs with mirror
+  // upserts suppressed and ONE complete context is published from committed
+  // rows afterwards. Drains are collected during the loop and run after the
+  // publish (the reentry precedent) so the save scope holds no await-driven
+  // interleave surface beyond the persistence calls themselves.
+  final projectionAtomicity = groupRepo is FreshJoinProjectionAtomicity
+      ? groupRepo as FreshJoinProjectionAtomicity
+      : null;
+  final drainPeerIds = <String>[];
 
-  // 7. Persist members from config
-  for (final member in acceptedRoster) {
-    final priorMember = await groupRepo.getMember(
-      payload.groupId,
-      member.peerId,
-    );
-    await groupRepo.saveMember(member);
-    // G-A: if materializing this accepted invite first lands a member's usable
-    // ML-KEM key, drain any deferred key distribution owed to it. Gated so a
-    // keyless member never burns a deferred-distribution attempt.
-    if (groupMemberRegainedDeliverableKey(
-      existing: priorMember,
-      saved: member,
-    )) {
-      await triggerDeferredDistributionDrainForPeer(
-        groupId: payload.groupId,
-        peerId: member.peerId,
+  Future<void> persistJoinAuthority() async {
+    await groupRepo.saveGroup(groupModel);
+
+    // 7. Persist members from config
+    for (final member in acceptedRoster) {
+      final priorMember = await groupRepo.getMember(
+        payload.groupId,
+        member.peerId,
       );
+      await groupRepo.saveMember(member);
+      // G-A: if materializing this accepted invite first lands a member's
+      // usable ML-KEM key, drain any deferred key distribution owed to it.
+      // Gated so a keyless member never burns a deferred-distribution attempt.
+      if (groupMemberRegainedDeliverableKey(
+        existing: priorMember,
+        saved: member,
+      )) {
+        drainPeerIds.add(member.peerId);
+      }
     }
+
+    // 8. Persist GroupKeyInfo
+    await groupRepo.saveKey(keyInfo);
   }
 
-  // 8. Persist GroupKeyInfo
-  await groupRepo.saveKey(keyInfo);
+  if (projectionAtomicity != null) {
+    await projectionAtomicity.runWithSuppressedGroupProjectionMirrors(
+      payload.groupId,
+      persistJoinAuthority,
+    );
+    // The join NEVER fails because of the projection (the 07-31
+    // non-negotiable): failures defer to the next launch's authoritative
+    // rebuild and are observable via the flow event.
+    try {
+      final published = await projectionAtomicity.projectCommittedFreshJoin(
+        payload.groupId,
+      );
+      if (published) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_FRESH_JOIN_PROJECTION_PUBLISHED',
+          details: {
+            'groupId': payload.groupId.length > 8
+                ? payload.groupId.substring(0, 8)
+                : payload.groupId,
+          },
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FRESH_JOIN_PROJECTION_DEFERRED',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+          'error': e.toString(),
+        },
+      );
+    }
+  } else {
+    await persistJoinAuthority();
+  }
+
+  for (final peerId in drainPeerIds) {
+    await triggerDeferredDistributionDrainForPeer(
+      groupId: payload.groupId,
+      peerId: peerId,
+    );
+  }
 
   await _downloadAcceptedAvatarIfCurrent(
     payload: payload,

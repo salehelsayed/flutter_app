@@ -40,7 +40,8 @@ class GroupRepositoryImpl
         GroupKeyRotationDraftRepository,
         GroupMembershipWatermarkRepository,
         GroupExitCleanupRepository,
-        SelfRemovedGroupShellRepository {
+        SelfRemovedGroupShellRepository,
+        FreshJoinProjectionAtomicity {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
@@ -1123,7 +1124,7 @@ class GroupRepositoryImpl
         await groupReactionProjection?.removeGroup(member.groupId);
         throw StateError('Group membership authority changed during save.');
       }
-      if (stored != null) {
+      if (stored != null && !_projectionMirrorsSuppressed(member.groupId)) {
         await groupReactionProjection?.upsertMember(
           GroupMember.fromMap(stored),
         );
@@ -1163,7 +1164,7 @@ class GroupRepositoryImpl
           groupId: groupId,
           peerId: peerId,
         );
-      } else {
+      } else if (!_projectionMirrorsSuppressed(groupId)) {
         await groupReactionProjection?.upsertMember(GroupMember.fromMap(row));
       }
     });
@@ -1321,7 +1322,9 @@ class GroupRepositoryImpl
         await groupReactionProjection?.removeGroup(key.groupId);
         throw StateError('Group key authority changed during save.');
       }
-      await groupReactionProjection?.upsertKeyEpoch(key);
+      if (!_projectionMirrorsSuppressed(key.groupId)) {
+        await groupReactionProjection?.upsertKeyEpoch(key);
+      }
       final hydratedKey = await _hydrateGroupKey(key);
       if (hydratedKey != null) {
         await _mirrorGroupKeyForPush(hydratedKey);
@@ -1690,6 +1693,7 @@ class GroupRepositoryImpl
       await projection.removeGroupStrict(groupId);
       return;
     }
+    if (_projectionMirrorsSuppressed(groupId)) return;
     await projection.upsertGroup(group);
   }
 
@@ -1782,11 +1786,81 @@ class GroupRepositoryImpl
     final projection = groupReactionProjection;
     final authoritative = await _loadGroupModel(groupId);
     if (authoritative == null || authoritative.selfRemovedAt != null) {
+      // Removals are NEVER suppressed (plan 321): a failure-branch or rollback
+      // removal must fire even inside a fresh-join suppression scope.
       await projection?.removeGroupStrict(groupId);
       return authoritative;
     }
+    if (_projectionMirrorsSuppressed(groupId)) return authoritative;
     await projection?.upsertGroup(authoritative);
     return authoritative;
+  }
+
+  /// Plan 321: per-groupId refcounted suppression of projection mirror
+  /// UPSERTS. A fresh join publishes once, atomically, at the end of its save
+  /// scope; the incremental mirrors would otherwise expose the group
+  /// epoch-less for the whole roster loop. Removal paths never consult this.
+  final Map<String, int> _suppressedProjectionMirrorDepths = <String, int>{};
+
+  bool _projectionMirrorsSuppressed(String groupId) =>
+      (_suppressedProjectionMirrorDepths[groupId] ?? 0) > 0;
+
+  @override
+  Future<T> runWithSuppressedGroupProjectionMirrors<T>(
+    String groupId,
+    Future<T> Function() action,
+  ) async {
+    _suppressedProjectionMirrorDepths[groupId] =
+        (_suppressedProjectionMirrorDepths[groupId] ?? 0) + 1;
+    try {
+      return await action();
+    } finally {
+      final depth = (_suppressedProjectionMirrorDepths[groupId] ?? 1) - 1;
+      if (depth <= 0) {
+        _suppressedProjectionMirrorDepths.remove(groupId);
+      } else {
+        _suppressedProjectionMirrorDepths[groupId] = depth;
+      }
+    }
+  }
+
+  @override
+  Future<bool> projectCommittedFreshJoin(String groupId) {
+    // Same _runGroupMutation wrap as every _projectAcceptedReentry call site:
+    // an unwrapped read-back could interleave with a concurrent removal and
+    // resurrect its rows in the queued strict replace.
+    return _runGroupMutation(groupId, () async {
+      final projection = groupReactionProjection;
+      if (projection == null) return false;
+      final authoritative = await _loadGroupModel(groupId);
+      if (authoritative == null || authoritative.selfRemovedAt != null) {
+        return false;
+      }
+      if (!projection.supportsGroupType(authoritative.type)) {
+        // Unsupported types (qa) carry no notification context by design —
+        // parity with the incremental mirrors' benign no-op, and the strict
+        // replace's ArgumentError must never fire for them.
+        return false;
+      }
+      final memberRows = await dbLoadAllGroupMembers(groupId);
+      // LATEST committed generation — never a caller-pinned one: a rotation
+      // landing inside the suppressed scope must win the publish.
+      final keyRow = await dbLoadLatestGroupKey(groupId);
+      if (keyRow == null) return false;
+      final hydratedKey = await _groupKeyFromRow(keyRow);
+      if (hydratedKey == null) return false;
+      final members = memberRows
+          .map(GroupMember.fromMap)
+          .toList(growable: false);
+      await projection.replaceAcceptedGroupContextStrict(
+        group: authoritative,
+        members: members,
+        key: hydratedKey,
+      );
+      await _mirrorGroupKeyForPush(hydratedKey);
+      await _mirrorGroupMutedForPush(groupId, authoritative.isMuted);
+      return true;
+    });
   }
 
   Future<void> _pruneObsoleteKeys(String groupId) async {
