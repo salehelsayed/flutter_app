@@ -1,0 +1,5 @@
+PROVENANCE sha=23ea69632 dirty_files=3 build_name=1.0.0-23ea69632.d3.t260801162654 date=2026-08-01 16:26:54
+STAGE1 21071FDF600CSC OK 1.0.0-23ea69632.d3.t260801162654 (verified)
+SMOKE launch-load OK
+SMOKE background-reopen-load OK (07-31 repro passes)
+STAGE1 PASS
