@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
@@ -263,6 +264,52 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
     reactionReplayOutboxRepo = FakeGroupReactionReplayOutboxRepository();
   });
+
+  test(
+    'replays the frozen staged recipient set even when the roster is wider',
+    () async {
+      // Plan 318 TC-318-14: envelope byte-identity feeds relay dedup/merge, so
+      // the retriever must replay the persisted inboxRetryPayload set verbatim
+      // and never recompute from the (post-318 wider) live roster.
+      final msg = _makeRetryEligible('msg-frozen-1');
+      await msgRepo.saveMessage(msg);
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: msg.groupId,
+          name: 'Frozen Group',
+          type: GroupType.chat,
+          topicName: 'topic-frozen',
+          createdAt: DateTime.utc(2026, 6, 1),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+        ),
+      );
+      for (final peerId in <String>['peer-2', 'peer-extra-incumbent']) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: msg.groupId,
+            peerId: peerId,
+            role: MemberRole.writer,
+            publicKey: 'pk-$peerId',
+            joinedAt: DateTime.utc(2026, 6, 1),
+          ),
+        );
+      }
+
+      final retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+        groupRepo: groupRepo,
+      );
+
+      expect(retried, 1);
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['recipientPeerIds'], equals(['peer-2']));
+      expect(payload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
 
   test('retries eligible sent messages and clears inbox retry state', () async {
     final msg = _makeRetryEligible('msg-1');

@@ -3088,7 +3088,7 @@ void main() {
   );
 
   test(
-    'INV-106 excludes missing invite-attempt rows once joined evidence exists',
+    'missing invite-attempt rows are included once joined evidence exists (F7)',
     () async {
       final joinedAt = DateTime.utc(2026, 6, 5, 8);
       const bobPeerId = 'peer-accepted-missing-row-bob';
@@ -3154,9 +3154,8 @@ void main() {
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
       expect(
         (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>[bobPeerId],
+        unorderedEquals(<String>[bobPeerId, charliePeerId]),
       );
-      expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
 
       final reliablePayload = _groupSendReliablePayloadForMessage(
         bridge,
@@ -3164,61 +3163,61 @@ void main() {
       );
       expect(
         (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>[bobPeerId],
-      );
-      expect(
-        reliablePayload['recipientPeerIds'],
-        isNot(contains(charliePeerId)),
+        unorderedEquals(<String>[bobPeerId, charliePeerId]),
       );
       expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
     },
   );
 
   test(
-    'INV-106 falls back to member-joined timeline evidence when invite repo is absent',
+    'later-joined admin with witnessed joins includes unevidenced incumbents',
     () async {
-      final joinedAt = DateTime.utc(2026, 6, 5, 10, 18, 10);
-      const bobPeerId = 'peer-accepted-timeline-bob';
-      const charliePeerId = 'peer-pending-timeline-charlie';
+      // F7 repro geometry (plan 318 TC-318-01, the dual-variant killer): the
+      // sender is an admin AND holds one joined row, so both legacy tracker
+      // arms fire; eve joined before this device existed, so no local invite
+      // row and no witnessed join-timeline entry can exist for her.
+      final joinedAt = DateTime.utc(2026, 6, 5, 8);
+      const frankPeerId = 'peer-witnessed-frank';
+      const evePeerId = 'peer-incumbent-eve';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
 
       await groupRepo.saveGroup(
         testGroup.copyWith(
           createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+          myRole: GroupRole.admin,
         ),
       );
       await groupRepo.saveMember(
         GroupMember(
           groupId: 'group-1',
-          peerId: bobPeerId,
-          username: 'Bob',
+          peerId: evePeerId,
+          username: 'Eve',
           role: MemberRole.writer,
-          publicKey: 'pk-bob-timeline',
+          publicKey: 'pk-eve-incumbent',
           joinedAt: joinedAt,
         ),
       );
       await groupRepo.saveMember(
         GroupMember(
           groupId: 'group-1',
-          peerId: charliePeerId,
-          username: 'Charlie',
+          peerId: frankPeerId,
+          username: 'Frank',
           role: MemberRole.writer,
-          publicKey: 'pk-charlie-timeline',
-          joinedAt: joinedAt,
+          publicKey: 'pk-frank-witnessed',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
         ),
       );
-      await msgRepo.saveMessage(
-        buildMemberJoinedTimelineMessage(
-          groupId: 'group-1',
-          joinedPeerId: bobPeerId,
-          joinedUsername: 'Bob',
-          eventAt: joinedAt,
-        ),
+      await attemptRepo.markJoined(
+        groupId: 'group-1',
+        peerId: frankPeerId,
+        username: 'Frank',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
       );
 
       bridge.responses['group:publish'] = {
         'ok': true,
-        'messageId': 'inv106-timeline-repo-absent',
-        'topicPeers': 1,
+        'messageId': 'f7-admin-witnessed-joins',
+        'topicPeers': 2,
       };
 
       final (result, message) = await sendGroupMessage(
@@ -3226,13 +3225,14 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         groupId: 'group-1',
-        text: 'INV-106 timeline fallback must not notify Charlie',
+        text: 'custody must include every unevidenced incumbent',
         senderPeerId: 'peer-1',
         senderPublicKey: 'pk-1',
         senderPrivateKey: 'sk-1',
-        senderUsername: 'Alice',
-        messageId: 'inv106-timeline-repo-absent',
-        timestamp: joinedAt.add(const Duration(seconds: 12)),
+        senderUsername: 'Dave',
+        messageId: 'f7-admin-witnessed-joins',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
       );
 
       expect(result, SendGroupMessageResult.success);
@@ -3241,23 +3241,237 @@ void main() {
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
       expect(
         (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>[bobPeerId],
+        unorderedEquals(<String>[frankPeerId, evePeerId]),
       );
-      expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
 
       final reliablePayload = _groupSendReliablePayloadForMessage(
         bridge,
-        'inv106-timeline-repo-absent',
+        'f7-admin-witnessed-joins',
       );
       expect(
         (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>[bobPeerId],
-      );
-      expect(
-        reliablePayload['recipientPeerIds'],
-        isNot(contains(charliePeerId)),
+        unorderedEquals(<String>[frankPeerId, evePeerId]),
       );
       expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
+
+  test(
+    'witnessed-join tracker member includes earlier incumbents',
+    () async {
+      // F7 widened class (plan 318 TC-318-03): a NON-admin member whose only
+      // joined row came from witnessing a later join was still a "tracker"
+      // under the legacy predicate and dropped earlier incumbents.
+      final joinedAt = DateTime.utc(2026, 6, 5, 8);
+      const carolPeerId = 'peer-late-carol';
+      const evePeerId = 'peer-earlier-eve';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: evePeerId,
+          username: 'Eve',
+          role: MemberRole.writer,
+          publicKey: 'pk-eve-earlier',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: carolPeerId,
+          username: 'Carol',
+          role: MemberRole.writer,
+          publicKey: 'pk-carol-late',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await attemptRepo.markJoined(
+        groupId: 'group-1',
+        peerId: carolPeerId,
+        username: 'Carol',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'f7-witness-arm',
+        'topicPeers': 2,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'witnessing a join must not shrink custody',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Late Member',
+        messageId: 'f7-witness-arm',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        unorderedEquals(<String>[carolPeerId, evePeerId]),
+      );
+    },
+  );
+
+  test(
+    'later-joined announcement admin includes unevidenced incumbents',
+    () async {
+      // Plan 318 TC-318-08: announcements share the send path and every
+      // announcement sender is an admin — the headline F7 surface.
+      final joinedAt = DateTime.utc(2026, 6, 5, 8);
+      const frankPeerId = 'peer-ann-frank';
+      const evePeerId = 'peer-ann-eve';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+          type: GroupType.announcement,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: evePeerId,
+          username: 'Eve',
+          role: MemberRole.reader,
+          publicKey: 'pk-eve-ann',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: frankPeerId,
+          username: 'Frank',
+          role: MemberRole.reader,
+          publicKey: 'pk-frank-ann',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await attemptRepo.markJoined(
+        groupId: 'group-1',
+        peerId: frankPeerId,
+        username: 'Frank',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'f7-announcement',
+        'topicPeers': 2,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'announcement custody must include incumbents',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Dave',
+        messageId: 'f7-announcement',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        unorderedEquals(<String>[frankPeerId, evePeerId]),
+      );
+    },
+  );
+
+  test(
+    'later-joined admin without invite rows includes incumbents',
+    () async {
+      // F7 branch 1 (plan 318 TC-318-02): admin sender, EMPTY invite rows —
+      // the legacy admin arm made this device a tracker and its own
+      // sys-member_joined timeline entry supplied the joined-evidence that
+      // dropped every unevidenced incumbent.
+      final joinedAt = DateTime.utc(2026, 6, 5, 8);
+      const evePeerId = 'peer-incumbent-no-rows-eve';
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: evePeerId,
+          username: 'Eve',
+          role: MemberRole.writer,
+          publicKey: 'pk-eve-no-rows',
+          joinedAt: joinedAt,
+        ),
+      );
+      await msgRepo.saveMessage(
+        buildMemberJoinedTimelineMessage(
+          groupId: 'group-1',
+          joinedPeerId: 'peer-1',
+          joinedUsername: 'Dave',
+          eventAt: joinedAt.add(const Duration(seconds: 30)),
+        ),
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'f7-admin-no-rows',
+        'topicPeers': 1,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'no invite rows must not mean no recipients',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Dave',
+        messageId: 'f7-admin-no-rows',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: _InMemoryInviteDeliveryAttemptRepository(),
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[evePeerId],
+      );
     },
   );
 

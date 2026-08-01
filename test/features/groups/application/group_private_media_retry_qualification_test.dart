@@ -5,6 +5,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -177,6 +178,49 @@ MediaAttachment _privateAttachment(String messageId) => MediaAttachment(
 );
 
 void main() {
+  test(
+    'private media qualification recipient set includes unevidenced incumbents',
+    () async {
+      // Plan 318 TC-318-09: qualification shares the F7 seam. On HEAD the
+      // admin-tracker arm plus this device's own join-timeline entry dropped
+      // the unevidenced incumbent eve from the private-media recipient set.
+      final parent = _privateParent(id: 'f7-qualification-parent');
+      final groupRepo = await _qualifiedRepo();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-incumbent-eve',
+          role: MemberRole.reader,
+          publicKey: 'pk-eve-incumbent',
+          joinedAt: DateTime.utc(2026, 7, 11),
+        ),
+      );
+      final msgRepo = InMemoryGroupMessageRepository();
+      await msgRepo.saveMessage(parent);
+      await msgRepo.saveMessage(
+        buildMemberJoinedTimelineMessage(
+          groupId: 'group-1',
+          joinedPeerId: 'peer-self',
+          joinedUsername: 'Self',
+          eventAt: DateTime.utc(2026, 7, 12, 9),
+        ),
+      );
+
+      final qualification = await qualifyCurrentPrivateGroupMediaSend(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        expectedParent: parent,
+        senderPeerId: 'peer-self',
+      );
+
+      expect(qualification, isNotNull);
+      expect(
+        qualification!.recipientPeerIds,
+        unorderedEquals(<String>['peer-incumbent-eve']),
+      );
+    },
+  );
+
   test(
     'GPL-03E private requalification rejects every changed dispatch-bearing durable field',
     () async {

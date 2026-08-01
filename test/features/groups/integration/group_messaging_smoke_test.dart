@@ -13676,7 +13676,7 @@ void main() {
     );
 
     test(
-      'INV-106 mixed journey excludes unknown invite row from bridge recipients',
+      'mixed journey includes members without invite rows in bridge recipients (F7)',
       () async {
         final inviteRepo = _InMemoryGroupInviteDeliveryAttemptRepository();
         final alice = GroupTestUser.create(
@@ -13771,11 +13771,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          inboxPayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
 
         final reliableRaw = alice.bridge.sentMessages.lastWhere(
@@ -13788,11 +13784,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          reliablePayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
         expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
 
@@ -13812,7 +13804,7 @@ void main() {
     );
 
     test(
-      'INV-106 manual-route fallback uses joined timeline when invite repo is absent',
+      'manual-route send without invite repo includes every deliverable member (F7)',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'inv106-manual-alice-peer',
@@ -13907,11 +13899,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          inboxPayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
 
         final reliableRaw = alice.bridge.sentMessages.lastWhere(
@@ -13924,11 +13912,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          reliablePayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
         expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
 

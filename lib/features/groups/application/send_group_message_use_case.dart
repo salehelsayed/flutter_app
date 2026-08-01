@@ -96,78 +96,28 @@ enum SendGroupMessageResult {
 Future<({List<GroupMember> members, List<String> recipientPeerIds})>
 _loadGroupSendMembership({
   required GroupRepository groupRepo,
-  required GroupMessageRepository msgRepo,
   required String groupId,
   required String senderPeerId,
-  String? creatorPeerId,
-  GroupRole? senderRole,
   DateTime? membershipCutoff,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final inviteStatuses = inviteDeliveryAttemptRepo == null
       ? const <String, GroupInviteDeliveryStatus>{}
       : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
-  final hasJoinedStatusEvidence = inviteStatuses.values.any(
-    (status) => status == GroupInviteDeliveryStatus.joined,
-  );
-  // The not-yet-joined-invitee exclusion below is only meaningful on a device
-  // that actually tracks invites it issued (the inviter/admin). A joiner has no
-  // pending-invitee state to protect — its roster came from a signed group
-  // config snapshot of confirmed-or-staged members it cannot distinguish — so
-  // it must include every deliverable incumbent rather than silently drop the
-  // ones it never witnessed joining (REG-119b). Keep the admin branch so the
-  // inviter still excludes genuine pending invitees (INV-106).
-  final isInviterTrackerDevice =
-      inviteStatuses.isNotEmpty || senderRole == GroupRole.admin;
-  final joinedTimelinePeerIds = hasJoinedStatusEvidence
-      ? const <String>{}
-      : await _loadMemberJoinedTimelinePeerIds(
-          msgRepo: msgRepo,
-          groupId: groupId,
-          membershipCutoff: membershipCutoff,
-        );
-  final hasJoinedInviteEvidence =
-      hasJoinedStatusEvidence || joinedTimelinePeerIds.isNotEmpty;
-  if (inviteDeliveryAttemptRepo == null && joinedTimelinePeerIds.isNotEmpty) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_SEND_MSG_INVITE_REPO_ABSENT_USING_JOIN_TIMELINE',
-      details: {
-        'groupId': _diagnosticPrefix(groupId),
-        'memberJoinedTimelineCount': joinedTimelinePeerIds.length,
-      },
-    );
-  }
   // Keep the live roster read last. Private-media callers use this helper as
-  // their final async authority snapshot; reading members before invite/timeline
-  // awaits would let a demotion race through with a stale writer/admin role.
+  // their final async authority snapshot; reading members before the invite
+  // await would let a demotion race through with a stale writer/admin role.
   final members = await groupRepo.getMembers(groupId);
   final normalizedCutoff = membershipCutoff?.toUtc();
   final normalizedSenderPeerId = senderPeerId.trim();
-  final normalizedCreatorPeerId = creatorPeerId?.trim();
   final recipientPeerIds = members
       .where((member) {
         final peerId = member.peerId.trim();
-        final inviteStatus = inviteStatuses[peerId];
-        final hasJoinedTimelineEvidence = joinedTimelinePeerIds.contains(
-          peerId,
-        );
-        final isGroupCreator =
-            normalizedCreatorPeerId != null &&
-            normalizedCreatorPeerId.isNotEmpty &&
-            peerId == normalizedCreatorPeerId;
         return (normalizedCutoff == null ||
                 !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
             hasDeliverableGroupMemberIdentity(member) &&
             peerId != normalizedSenderPeerId &&
-            !_isPersistedNonJoinedInviteStatus(inviteStatus) &&
-            !_isMissingInviteStatusInTrackedGroup(
-              inviteStatus: inviteStatus,
-              isInviterTrackerDevice: isInviterTrackerDevice,
-              hasJoinedInviteEvidence: hasJoinedInviteEvidence,
-              hasJoinedTimelineEvidence: hasJoinedTimelineEvidence,
-              isGroupCreator: isGroupCreator,
-            );
+            !_isPersistedNonJoinedInviteStatus(inviteStatuses[peerId]);
       })
       .map((member) => member.peerId.trim())
       .toSet()
@@ -226,106 +176,28 @@ bool sameGroupPrivateMediaRecipientPeerIds(
       normalizedLeft.containsAll(normalizedRight);
 }
 
-Future<Set<String>> _loadMemberJoinedTimelinePeerIds({
-  required GroupMessageRepository msgRepo,
-  required String groupId,
-  DateTime? membershipCutoff,
-}) async {
-  const pageSize = 500;
-  final joinedPeerIds = <String>{};
-  final normalizedCutoff = membershipCutoff?.toUtc();
-  var offset = 0;
-  while (true) {
-    final page = await msgRepo.getMessagesPage(
-      groupId,
-      limit: pageSize,
-      offset: offset,
-    );
-    for (final message in page) {
-      if (normalizedCutoff != null &&
-          message.timestamp.toUtc().isAfter(normalizedCutoff)) {
-        continue;
-      }
-      final peerId = _memberJoinedTimelinePeerId(
-        messageId: message.id,
-        groupId: groupId,
-      );
-      if (peerId != null) {
-        joinedPeerIds.add(peerId);
-      }
-    }
-    if (page.length < pageSize) {
-      break;
-    }
-    offset += page.length;
-  }
-  return joinedPeerIds;
-}
 
-String? _memberJoinedTimelinePeerId({
-  required String messageId,
-  required String groupId,
-}) {
-  final prefix = 'sys-member_joined:$groupId:';
-  if (!messageId.startsWith(prefix)) {
-    return null;
-  }
-  final suffix = messageId.substring(prefix.length);
-  final timestampSeparator = suffix.lastIndexOf(':');
-  if (timestampSeparator <= 0) {
-    return null;
-  }
-  final peerId = suffix.substring(0, timestampSeparator).trim();
-  return peerId.isEmpty || peerId == 'unknown' ? null : peerId;
-}
-
+/// Exclusion by affirmative local evidence only (plan 318): a roster member is
+/// dropped from the recipient set iff THIS device holds a persisted invite row
+/// in a non-joined state for them. The add-member flow writes rows at stage
+/// time ([recordPendingGroupInviteFanoutAttempts]) and the create flow at
+/// invite-send-result time, so a null status can only mean the member predates
+/// this device's observation (an incumbent) or was staged by another device —
+/// both are included. Inferring "pending invitee" from a MISSING row lost
+/// messages (F7: a later-joined admin silently excluded incumbents from relay
+/// custody, which is the retrieval ACL), and include-on-doubt is the tradeoff
+/// already accepted for non-tracker joiners (REG-119b) and the reaction lane.
+/// `unknown` is a persisted row in an indeterminate state
+/// (resend_group_invite_use_case writes it) — affirmative evidence,
+/// conservatively excluded. Creator and joiner inclusion (REG-119/REG-119b)
+/// are structural now: no inference arm exists to except them from. Do NOT
+/// re-introduce a null-status inference here.
 bool _isPersistedNonJoinedInviteStatus(GroupInviteDeliveryStatus? status) {
   return status == GroupInviteDeliveryStatus.sent ||
       status == GroupInviteDeliveryStatus.queued ||
       status == GroupInviteDeliveryStatus.needsResend ||
-      status == GroupInviteDeliveryStatus.cannotSend;
-}
-
-/// Whether a roster member should be excluded from the recipient set as a
-/// not-yet-joined invitee: in a group where we have joined-evidence (an
-/// invite-attempt `joined` status, or — when the invite repo is absent — a
-/// member-joined timeline entry), a member with no invite status and no
-/// join-timeline entry is treated as still pending and dropped (INV-106, to
-/// avoid sending/notifying invitees who never accepted).
-///
-/// GATE — [isInviterTrackerDevice]: this inference is only valid on a device
-/// that actually tracks invites it issued (it holds invite-attempt rows, or the
-/// sender is an admin). On a joiner there is no pending-invitee state to protect
-/// — its roster came from a signed config snapshot of confirmed-or-staged
-/// members it cannot distinguish — so it must include every deliverable
-/// incumbent, never silently drop one it didn't witness joining (REG-119b).
-///
-/// EXCEPTION — the group creator ([isGroupCreator]) is definitionally a joined
-/// member and is NEVER dropped here. A freshly joined member holds no invite
-/// record and no join-timeline entry for the creator (the creator never emits a
-/// `sys-member_joined` entry), yet its OWN join sets [hasJoinedInviteEvidence];
-/// without this exception the creator was excluded from every send by a joiner,
-/// yielding expectedRecipientCount:0, no relay custody, and a vacuous "sent"
-/// while the message was silently lost if the creator was offline (REG-119).
-bool _isMissingInviteStatusInTrackedGroup({
-  required GroupInviteDeliveryStatus? inviteStatus,
-  required bool isInviterTrackerDevice,
-  required bool hasJoinedInviteEvidence,
-  required bool hasJoinedTimelineEvidence,
-  required bool isGroupCreator,
-}) {
-  if (!isInviterTrackerDevice) {
-    return false;
-  }
-  if (isGroupCreator) {
-    return false;
-  }
-  if (inviteStatus == GroupInviteDeliveryStatus.unknown) {
-    return true;
-  }
-  return inviteStatus == null &&
-      hasJoinedInviteEvidence &&
-      !hasJoinedTimelineEvidence;
+      status == GroupInviteDeliveryStatus.cannotSend ||
+      status == GroupInviteDeliveryStatus.unknown;
 }
 
 String _classifyGroupPublishLiveFanout({
@@ -1038,11 +910,8 @@ qualifyCurrentPrivateGroupMediaSend({
         : null;
     final membership = await _loadGroupSendMembership(
       groupRepo: groupRepo,
-      msgRepo: msgRepo,
       groupId: expectedParent.groupId,
       senderPeerId: senderPeerId,
-      creatorPeerId: currentGroup.createdBy,
-      senderRole: currentGroup.myRole,
       membershipCutoff: membershipCutoff,
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     );
@@ -1416,11 +1285,8 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
   final latestKeyFuture = groupRepo.getLatestKey(groupId);
   final sendMembershipFuture = _loadGroupSendMembership(
     groupRepo: groupRepo,
-    msgRepo: msgRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
-    creatorPeerId: group.createdBy,
-    senderRole: group.myRole,
     membershipCutoff: membershipCutoff,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );

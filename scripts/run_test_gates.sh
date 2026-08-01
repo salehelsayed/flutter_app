@@ -553,6 +553,7 @@ readonly GROUP_TESTS=(
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
   "test/features/share/presentation/share_target_picker_wired_test.dart"
   "test/features/groups/application/send_group_message_use_case_test.dart"
+  "test/features/groups/application/send_group_message_recipient_eligibility_test.dart"
   "test/features/groups/application/retry_failed_group_messages_use_case_test.dart"
   "test/features/groups/integration/external_share_group_media_liveness_test.dart"
   "test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart"
