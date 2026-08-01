@@ -1,0 +1,19 @@
+=== 316 TC-08 residual — relay observation window (closed 2026-08-01, session 317) ===
+
+Window: v1.7.2 deploy 2026-07-31T23:18:33Z → 2026-08-01T~10:50Z (~35.5h of production traffic).
+
+PRIMARY regression signature (per plan 316 TC-08, journal-primary):
+- service: active, "Starting relay-server v1.7.2" @ 23:18:33Z
+- sudo journalctl -u relay-server --since "2026-07-31 23:18" | grep -c "Refusing oversized"  -> 0   (PASS: must be 0)
+- curl -s localhost:2112/metrics | grep -i payload_too_large                                 -> (no lines: counter never incremented since deploy; PASS: flat)
+- journal grep -c "payload_too_large_fallback" since deploy                                  -> 0   (no rescues needed at all)
+
+Bonus telemetry (315 wake observability, same check):
+- relay_group_reaction_wake_total{outcome="attempted"} 24
+- relay_group_reaction_wake_total{outcome="duplicate_suppressed"} 11
+- relay_group_reaction_wake_total{outcome="no_wake_recipients"} 2   <- first-ever observed empty-nomination outcomes (F1-class path now visible)
+
+DEVICE-PREVIEW LEG (mid-band media 1:1 -> backgrounded iPhone renders decrypted preview): NOT closed this session — blocked on user-owned inputs:
+- Topology: no drivable sender shares a 1:1 with either app-carrying iPhone. Pixel 6 = seeded "Bob" (sole chat: Alice), emulator = "Alice" (sole chat: Bob); iPhone 13 (93B4C4D0, app build 260801091231 + xctrunner) and iPhone 11 (5763A494) rosters unknown; iPhone 17 Pro Max carries no app (untouched).
+- Observation channels: devicectl has no screenshot subcommand; idevicesyslog exits immediately on attach ("Exiting...", probe docker-ws/ios_identity_probe_317.sh); XCUITest springboard channel (NotificationTapUITests + installed xctrunner) needs an xctestrun build/signing session; provider-driver path (docker-ws/sims-ios-notification) requires APNS_AUTH_KEY/.p8 + signing identity (user-held secrets) and would bypass the real relay->FCM leg anyway.
+- NSE discriminator identified for whenever the observation runs: syslog "PUSH_NSE_CONTENT_HANDOFF" with authorized=true (NotificationService.swift) = decrypted preview applied; PUSH_NSE_TIMEOUT / authorized=false = generic banner.
