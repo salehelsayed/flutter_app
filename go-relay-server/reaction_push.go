@@ -406,10 +406,6 @@ func verifyGroupReactionSignature(publicKeyBase64, signedPayload, signatureBase6
 	return ed25519.Verify(ed25519.PublicKey(publicKey), []byte(signedPayload), signature)
 }
 
-func boundedGroupReactionIdentity(groupID string) string {
-	digest := sha256.Sum256([]byte(groupID))
-	return "group-reaction:" + hex.EncodeToString(digest[:])[:reactionIdentityDigestHexBytes]
-}
 
 func buildGroupReactionPushMessage(
 	token,
@@ -456,7 +452,11 @@ func buildGroupReactionPushMessage(
 		}
 	}
 
-	apnsCollapseIdentity := boundedGroupReactionIdentity(groupID)
+	// Plan 309 D1b (resolved 2026-08-01, industry practice): discrete reaction
+	// events are delivered per-event and visually grouped by ThreadID; the
+	// per-EVENT collapse id only dedupes provider retries of the same event,
+	// never merges distinct reactions — mirroring the 1:1 reaction lane.
+	apnsCollapseIdentity := boundedReactionEventIdentity(metadata.TransitionID)
 	aps := &messaging.Aps{
 		ContentAvailable: true,
 		MutableContent:   true,

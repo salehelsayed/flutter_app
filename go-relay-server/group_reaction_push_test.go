@@ -643,10 +643,11 @@ func TestRelayNotificationClosure_GroupReactionCollapseKeyOmittedForAndroid(t *t
 	}
 }
 
-// Plan 309 TC-08 (D1b default): apns-collapse-id stays the per-group identity
-// (Plan 257's one-stable-card display design) and no longer shares a variable
-// with the removed Android key. The iOS half of C2 is deliberately NOT fixed
-// while D1b holds.
+// Plan 309 TC-08, INVERTED per the resolved D1b (2026-08-01, industry
+// practice): apns-collapse-id is per-EVENT — distinct reactions are never
+// merged in transit (closing the iOS half of C2); the id only dedupes
+// provider retries of the same event, and ThreadID keeps the visual grouping.
+// Mirrors the 1:1 reaction lane's boundedReactionEventIdentity.
 func TestRelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup(t *testing.T) {
 	envelope := `{"kind":"group_offline_replay","version":1,"payloadType":"group_reaction","keyEpoch":1,"messageId":"m-2","ciphertext":"cipher","nonce":"n"}`
 	build := func(transition string) *messaging.Message {
@@ -668,13 +669,21 @@ func TestRelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup(t *
 	if first == nil || second == nil {
 		t.Fatal("builder returned nil for a valid add reaction")
 	}
-	want := boundedGroupReactionIdentity("group-collapse-verbs")
 	firstID := first.APNS.Headers["apns-collapse-id"]
 	secondID := second.APNS.Headers["apns-collapse-id"]
-	if firstID != want || secondID != want {
-		t.Fatalf("apns-collapse-id must stay the per-group identity %q; got %q / %q", want, firstID, secondID)
+	if firstID != boundedReactionEventIdentity("group-reaction:1:transition") ||
+		secondID != boundedReactionEventIdentity("group-reaction:2:transition") {
+		t.Fatalf("apns-collapse-id must be the per-event identity; got %q / %q", firstID, secondID)
 	}
-	if first.Android.CollapseKey == firstID {
-		t.Fatal("Android key and apns-collapse-id must no longer share one identity value")
+	if firstID == secondID {
+		t.Fatal("distinct reaction events must never share an apns-collapse-id")
+	}
+	for _, id := range []string{firstID, secondID} {
+		if id == "" || len(id) > 64 {
+			t.Fatalf("apns-collapse-id out of bounds: %q", id)
+		}
+	}
+	if first.Android.CollapseKey != "" {
+		t.Fatal("Android reaction pushes must stay non-collapsible")
 	}
 }
