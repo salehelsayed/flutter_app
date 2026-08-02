@@ -520,6 +520,7 @@ class _MountedPipelineFixture {
       groupMessageRepository: groupMessages,
       mediaAttachmentRepository: mediaAttachments,
       reactionRepository: reactions,
+      groupPendingReactionRepository: null,
       selfPeerId: _localPeerId,
       warmPeer: p2pService.warmPeer,
     );

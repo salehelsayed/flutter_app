@@ -1510,6 +1510,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
+      groupPendingReactionRepository: widget.groupPendingReactionRepository,
       accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
         authorityRepository: SecureKeyStoreAccountMigrationAuthorityRepository(
           secureKeyStore: widget.secureKeyStore,
@@ -1770,6 +1771,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         requestGroupKeyRepair: widget.requestGroupKeyRepair,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
+        pendingReactionRepo: widget.groupPendingReactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
         retryPendingPostMediaUploads:
             widget.pendingPostMediaUploadRetrier.retryNow,
@@ -2233,6 +2235,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           conversationTracker: widget.conversationTracker,
           reactionRepository: widget.reactionRepository,
           reactionListener: widget.reactionListener,
+          groupPendingReactionRepository: widget.groupPendingReactionRepository,
           groupRepository: widget.groupRepository,
           groupMessageRepository: widget.groupMessageRepository,
           groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,

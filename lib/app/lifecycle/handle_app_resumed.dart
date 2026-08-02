@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -71,6 +72,9 @@ Future<bool?> handleAppResumed({
   RequestGroupKeyRepair? requestGroupKeyRepair,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  // Plan 322: without this the drain DROPS a reaction whose target message has
+  // not landed yet (unknownMessage), and the relay entry is already consumed.
+  GroupPendingReactionRepository? pendingReactionRepo,
   NearbyLocationService? nearbyLocationService,
   Future<int> Function()? retryPendingPostMediaUploads,
   Future<int> Function()? retryPendingPostDeliveries,
@@ -407,6 +411,7 @@ Future<bool?> handleAppResumed({
           groupMessageListener: groupMessageListener,
           mediaAttachmentRepo: mediaAttachmentRepo,
           reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
           pendingKeyRepairRepo: pendingKeyRepairRepo,
           historyGapRepairRepo: historyGapRepairRepo,
           requestGroupKeyRepair: requestGroupKeyRepair,
@@ -486,6 +491,7 @@ Future<bool?> handleAppResumed({
             groupMessageListener: groupMessageListener,
             mediaAttachmentRepo: mediaAttachmentRepo,
             reactionRepo: reactionRepo,
+            pendingReactionRepo: pendingReactionRepo,
             pendingKeyRepairRepo: pendingKeyRepairRepo,
             historyGapRepairRepo: historyGapRepairRepo,
             requestGroupKeyRepair: requestGroupKeyRepair,

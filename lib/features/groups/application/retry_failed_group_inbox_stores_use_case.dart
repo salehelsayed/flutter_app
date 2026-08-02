@@ -38,21 +38,56 @@ List<String>? _privateRetryRecipientPeerIds(String retryPayload) {
   }
 }
 
+/// Mirrors the fail-closed normalization of
+/// [sameGroupPrivateMediaRecipientPeerIds] (an empty or duplicate entry poisons
+/// the whole set) WITHOUT reusing it. That helper has three other production
+/// callers — the media-ACL drift check, private requalification, and the
+/// capability-fallback path — where EXACT equality is the intended semantics;
+/// relaxing it there would widen a blob ACL (plan 323 reviewer finding B4).
+Set<String>? _normalizedRetryRecipientSet(Iterable<String> values) {
+  final result = <String>{};
+  for (final value in values) {
+    final peerId = value.trim();
+    if (peerId.isEmpty || !result.add(peerId)) return null;
+  }
+  return result;
+}
+
+/// Plan 323 (318 deferral B): a persisted private-media recipient snapshot stays
+/// replayable while every peer it names is still qualified today.
+///
+/// Exact-set equality denied these rows permanently once plan 318 WIDENED the
+/// send qualification (`send_group_message_use_case.dart:111-120`) — the frozen
+/// pre-318 set can no longer equal the wider current one. The retry replays the
+/// FROZEN payload (`storeGroupOfflineReplayFromRetryPayload`), never the current
+/// set, so this predicate only decides store-vs-no-store and can never widen the
+/// relay ACL.
+///
+/// SUBSET, not superset: `persisted ⊆ current` is safe because every persisted
+/// peer is still entitled today. A persisted peer ABSENT from current (departed,
+/// demoted, key-rotated) must still DENY — that direction is a real exposure.
+/// An empty persisted set is denied outright: `{} ⊆ anything` would make this a
+/// tautology, and the relay rejects empty recipient sets anyway, so allowing it
+/// would only buy a doomed bridge round-trip on every retrier tick.
 bool _matchesCurrentPrivateRetryRecipients({
   required List<String> persisted,
   required List<String> currentRemoteRecipients,
   required String senderPeerId,
 }) {
-  if (sameGroupPrivateMediaRecipientPeerIds(
-    persisted,
-    currentRemoteRecipients,
-  )) {
-    return true;
+  final normalizedPersisted = _normalizedRetryRecipientSet(persisted);
+  if (normalizedPersisted == null || normalizedPersisted.isEmpty) return false;
+
+  bool contains(List<String> candidate) {
+    final normalizedCandidate = _normalizedRetryRecipientSet(candidate);
+    return normalizedCandidate != null &&
+        normalizedCandidate.containsAll(normalizedPersisted);
   }
-  return sameGroupPrivateMediaRecipientPeerIds(persisted, [
-    ...currentRemoteRecipients,
-    senderPeerId,
-  ]);
+
+  // Second arm: the send lane may omit the sender from the durable recipient
+  // set (`includeSenderPeerIdInDurableRecipients` defaults false), so a
+  // sender-inclusive persisted set is legitimate and must stay replayable.
+  return contains(currentRemoteRecipients) ||
+      contains([...currentRemoteRecipients, senderPeerId]);
 }
 
 bool _hasNoGroupReactionReplayRecipients(String inboxRetryPayload) {

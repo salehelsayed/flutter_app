@@ -24,6 +24,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagn
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -302,6 +303,10 @@ class StartupRouter extends StatefulWidget {
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
 
+  /// Plan 322: durable buffer for a drained reaction whose target message has
+  /// not landed yet. Without it the drain DROPS the reaction permanently.
+  final GroupPendingReactionRepository? groupPendingReactionRepository;
+
   /// The group message listener for incoming group messages.
   final GroupMessageListener? groupMessageListener;
   final GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator;
@@ -411,6 +416,7 @@ class StartupRouter extends StatefulWidget {
     this.requestGroupKeyRepair,
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
+    this.groupPendingReactionRepository,
     this.groupMessageListener,
     this.groupMediaDownloadCoordinator,
     this.canRejoinForExitIntent,
@@ -969,6 +975,7 @@ class _StartupRouterState extends State<StartupRouter> {
                   groupMessageListener: widget.groupMessageListener,
                   mediaAttachmentRepo: widget.mediaAttachmentRepository,
                   reactionRepo: widget.reactionRepository,
+                  pendingReactionRepo: widget.groupPendingReactionRepository,
                   pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
                   historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
                   requestGroupKeyRepair:
@@ -1313,6 +1320,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
+      groupPendingReactionRepository: widget.groupPendingReactionRepository,
       selfPeerId: identity?.peerId,
       ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
     );
@@ -1392,6 +1400,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository:
           widget.groupReactionReplayOutboxRepository,
+      groupPendingReactionRepository: widget.groupPendingReactionRepository,
       groupMessageListener: widget.groupMessageListener,
       canRejoinForExitIntent: widget.canRejoinForExitIntent,
       processExitIntent: widget.processExitIntent,

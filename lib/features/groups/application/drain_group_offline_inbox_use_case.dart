@@ -655,23 +655,41 @@ Future<void> _drainGroupInbox({
         final reactionJson = payload['reaction'] as String? ?? '';
         if (reactionRepo != null && reactionJson.isNotEmpty) {
           if (!await hasFreshRouteAuthority(groupId)) return;
-          await handleIncomingGroupReaction(
-            groupRepo: groupRepo,
-            reactionRepo: reactionRepo,
-            msgRepo: msgRepo,
-            // Buffer a relay-delivered reaction whose target message has not
-            // drained yet, so it replays when the message lands (INV-R4).
-            pendingReactionRepo: pendingReactionRepo,
-            groupId: groupId,
-            senderId:
-                payload['senderId'] as String? ??
-                (msg['from'] as String? ?? ''),
-            senderDeviceId: payload['senderDeviceId'] as String?,
-            transportPeerId:
-                payload['transportPeerId'] as String? ?? msg['from'] as String?,
-            senderPublicKey: payload['senderPublicKey'] as String?,
-            reactionJson: reactionJson,
-          );
+          // Plan 322: this call is made OUTSIDE the decode try/catch above (the
+          // catch at the decode site wraps only _decodeActiveGroupInboxMessage),
+          // so a throw here would propagate to drainNextGroup's handler, raise
+          // errorCount, and cost the whole group its recovery ack AND its cursor
+          // advance. Buffering now writes durably on five more lanes (the resume
+          // continuation and the notif-tap drain run outside the recovery gate),
+          // and dbUpsertGroupPendingReaction is a non-transactional
+          // read-then-insert that can collide on UNIQUE under concurrent drains.
+          // One reaction must never cost the page.
+          try {
+            await handleIncomingGroupReaction(
+              groupRepo: groupRepo,
+              reactionRepo: reactionRepo,
+              msgRepo: msgRepo,
+              // Buffer a relay-delivered reaction whose target message has not
+              // drained yet, so it replays when the message lands (INV-R4).
+              pendingReactionRepo: pendingReactionRepo,
+              groupId: groupId,
+              senderId:
+                  payload['senderId'] as String? ??
+                  (msg['from'] as String? ?? ''),
+              senderDeviceId: payload['senderDeviceId'] as String?,
+              transportPeerId:
+                  payload['transportPeerId'] as String? ??
+                  msg['from'] as String?,
+              senderPublicKey: payload['senderPublicKey'] as String?,
+              reactionJson: reactionJson,
+            );
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_DRAIN_OFFLINE_INBOX_REACTION_ERROR',
+              details: {'groupId': _safeId(groupId), 'error': e.toString()},
+            );
+          }
         }
         return;
       }

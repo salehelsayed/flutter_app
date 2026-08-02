@@ -43,6 +43,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -301,6 +302,19 @@ class _KeyBoundCursorInboxBridge extends _CursorInboxBridge {
     if (cmd != null) {
       commandLog.add(cmd);
     }
+  }
+}
+
+/// Plan 322 TC-322-03: a durable buffer whose write fails (UNIQUE collision
+/// under concurrent drains, or any storage error). The drain must absorb it.
+class _ThrowingGroupPendingReactionRepository
+    extends InMemoryGroupPendingReactionRepository {
+  @override
+  Future<GroupPendingReaction> savePendingReaction(
+    GroupPendingReaction reaction,
+  ) async {
+    savePendingReactionCallCount++;
+    throw StateError('pending reaction buffer unavailable');
   }
 }
 
@@ -13377,6 +13391,53 @@ void main() {
       // Not applied to visible state, and not stored as a message.
       expect(reactionRepo.saveReactionCallCount, 0);
       expect(msgRepo.count, 0);
+    },
+  );
+
+  test(
+    'TC-322-03 a throwing pending-reaction buffer costs the reaction, not the page',
+    () async {
+      // Plan 322: the reaction branch runs OUTSIDE the decode try/catch, so a
+      // buffer write that throws would propagate to drainNextGroup, raise
+      // errorCount, and cost the group its recovery ack AND its cursor advance.
+      // dbUpsertGroupPendingReaction is a non-transactional read-then-insert
+      // that can collide on UNIQUE under concurrent drains, and this plan wires
+      // buffering onto lanes that run outside the recovery gate.
+      final reactionRepo = FakeReactionRepository();
+      final pendingReactionRepo = _ThrowingGroupPendingReactionRepository();
+
+      final innerReaction = jsonEncode({
+        'id': 'rxn-drain-throws',
+        'messageId': 'late-msg-throws',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+      final inboxMessage = jsonEncode({
+        'type': 'group_reaction',
+        'senderId': 'peer-sender',
+        'reaction': innerReaction,
+      });
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        pendingReactionRepo: pendingReactionRepo,
+      );
+
+      // The buffer attempt happened and threw...
+      expect(pendingReactionRepo.savePendingReactionCallCount, 1);
+      // ...but the drain still completed cleanly, so the recovery ack and the
+      // cursor advance are preserved for every other envelope in the page.
+      expect(result.errorCount, 0);
+      expect(result.isSuccessful, isTrue);
     },
   );
 

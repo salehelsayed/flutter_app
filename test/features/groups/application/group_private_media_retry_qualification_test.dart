@@ -64,7 +64,10 @@ class _GatedPrivateAttachmentReadRepository
   }
 }
 
-GroupMessage _privateParent({String id = 'private-parent'}) {
+GroupMessage _privateParent({
+  String id = 'private-parent',
+  List<String> recipientPeerIds = const ['peer-other'],
+}) {
   final timestamp = DateTime.utc(2026, 7, 12, 10);
   return GroupMessage(
     id: id,
@@ -97,7 +100,7 @@ GroupMessage _privateParent({String id = 'private-parent'}) {
         'ciphertext': 'ciphertext',
         'nonce': 'nonce',
       }),
-      'recipientPeerIds': ['peer-other'],
+      'recipientPeerIds': recipientPeerIds,
     }),
   );
 }
@@ -122,6 +125,7 @@ Future<InMemoryGroupRepository> _qualifiedRepo({
   bool includeSelf = true,
   bool includeKey = true,
   bool includeOther = false,
+  bool includeIncumbent = false,
   bool dissolved = false,
 }) async {
   final repo = InMemoryGroupRepository();
@@ -144,6 +148,19 @@ Future<InMemoryGroupRepository> _qualifiedRepo({
         peerId: 'peer-other',
         role: MemberRole.reader,
         publicKey: 'pk-peer-other',
+        joinedAt: DateTime.utc(2026, 7, 12),
+      ),
+    );
+  }
+  if (includeIncumbent) {
+    // Plan 318 widened the qualification to include unevidenced incumbents, so
+    // this member lands in `current` but never in a pre-318 persisted set.
+    await repo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-incumbent',
+        role: MemberRole.reader,
+        publicKey: 'pk-peer-incumbent',
         joinedAt: DateTime.utc(2026, 7, 12),
       ),
     );
@@ -395,6 +412,172 @@ void main() {
       );
       expect(currentCount, 1);
       expect(currentBridge.commandLog, contains('group:inboxStore'));
+    },
+  );
+
+  test(
+    'TC-323-02 subset persisted recipients are retry-eligible and replay frozen',
+    () async {
+      // Plan 323 (318 deferral B): plan 318 WIDENED the send qualification, so a
+      // row staged before that upgrade holds a strict subset of today's set and
+      // exact equality denied it forever. Subset containment restores it — and
+      // the replay must still carry the FROZEN set, never the wider current one.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'peer-self',
+            publicKey: 'pk-peer-self',
+            privateKey: 'sk-peer-self',
+          ),
+        );
+      final messages = InMemoryGroupMessageRepository();
+      await messages.saveMessage(_privateParent(id: 'subset-recipient'));
+      final bridge = FakeBridge();
+
+      final count = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: messages,
+        groupRepo: await _qualifiedRepo(
+          includeOther: true,
+          includeIncumbent: true,
+        ),
+        identityRepo: identityRepo,
+        privateMediaAvailability:
+            const GroupPrivateMediaAvailability.enabledForTesting(),
+      );
+
+      expect(count, 1);
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      // Frozen, NOT widened: `peer-incumbent` is in the current qualification
+      // but must never enter the stored ACL.
+      expect(payload['recipientPeerIds'], equals(['peer-other']));
+      expect(payload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
+
+  test(
+    'TC-323-03 a persisted peer absent from the current set still denies retry',
+    () async {
+      // Direction pin. Subset must be checked persisted-in-current; the inverted
+      // predicate (current subset-of persisted) would allow this and hand relay
+      // custody of private media to a peer who is no longer qualified.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'peer-self',
+            publicKey: 'pk-peer-self',
+            privateKey: 'sk-peer-self',
+          ),
+        );
+      final messages = InMemoryGroupMessageRepository();
+      await messages.saveMessage(
+        _privateParent(
+          id: 'departed-recipient',
+          recipientPeerIds: const ['peer-other', 'peer-gone'],
+        ),
+      );
+      final bridge = FakeBridge();
+
+      final count = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: messages,
+        groupRepo: await _qualifiedRepo(includeOther: true),
+        identityRepo: identityRepo,
+        privateMediaAvailability:
+            const GroupPrivateMediaAvailability.enabledForTesting(),
+      );
+
+      expect(count, 0);
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'TC-323-04 an empty persisted recipient set never becomes retry-eligible',
+    () async {
+      // `{} subset-of anything` would make the predicate a tautology. Both arms:
+      // a non-empty current set (the tautology case) and an empty one (which
+      // exact equality MATCHED today, buying a bridge call the relay rejects).
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'peer-self',
+            publicKey: 'pk-peer-self',
+            privateKey: 'sk-peer-self',
+          ),
+        );
+
+      final wideMessages = InMemoryGroupMessageRepository();
+      await wideMessages.saveMessage(
+        _privateParent(id: 'empty-vs-wide', recipientPeerIds: const []),
+      );
+      final wideBridge = FakeBridge();
+      final wideCount = await retryFailedGroupInboxStores(
+        bridge: wideBridge,
+        msgRepo: wideMessages,
+        groupRepo: await _qualifiedRepo(includeOther: true),
+        identityRepo: identityRepo,
+        privateMediaAvailability:
+            const GroupPrivateMediaAvailability.enabledForTesting(),
+      );
+      expect(wideCount, 0);
+      expect(wideBridge.commandLog, isNot(contains('group:inboxStore')));
+
+      final emptyMessages = InMemoryGroupMessageRepository();
+      await emptyMessages.saveMessage(
+        _privateParent(id: 'empty-vs-empty', recipientPeerIds: const []),
+      );
+      final emptyBridge = FakeBridge();
+      final emptyCount = await retryFailedGroupInboxStores(
+        bridge: emptyBridge,
+        msgRepo: emptyMessages,
+        groupRepo: await _qualifiedRepo(),
+        identityRepo: identityRepo,
+        privateMediaAvailability:
+            const GroupPrivateMediaAvailability.enabledForTesting(),
+      );
+      expect(emptyCount, 0);
+      expect(emptyBridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'TC-323-B5 a sender-inclusive persisted set stays retry-eligible',
+    () async {
+      // Sentinel for the second matcher arm. The send lane omits the sender from
+      // the durable set by default, so a sender-inclusive persisted set is
+      // legitimate; a rewrite keeping only `persisted subset-of current` would
+      // silently deny every such legacy row with no other test going red.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'peer-self',
+            publicKey: 'pk-peer-self',
+            privateKey: 'sk-peer-self',
+          ),
+        );
+      final messages = InMemoryGroupMessageRepository();
+      await messages.saveMessage(
+        _privateParent(
+          id: 'sender-inclusive',
+          recipientPeerIds: const ['peer-other', 'peer-self'],
+        ),
+      );
+      final bridge = FakeBridge();
+
+      final count = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: messages,
+        groupRepo: await _qualifiedRepo(includeOther: true),
+        identityRepo: identityRepo,
+        privateMediaAvailability:
+            const GroupPrivateMediaAvailability.enabledForTesting(),
+      );
+
+      expect(count, 1);
+      expect(bridge.commandLog, contains('group:inboxStore'));
     },
   );
 

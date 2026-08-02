@@ -419,4 +419,82 @@ void main() {
       );
     },
   );
+
+  test(
+    'TC-322-02 every production group-inbox drain forwards pendingReactionRepo',
+    () {
+      // Plan 322: `handleIncomingGroupReaction` buffers a reaction whose target
+      // message has not landed ONLY when `pendingReactionRepo != null`
+      // (handle_incoming_group_reaction_use_case.dart:182-202). Otherwise it
+      // emits GROUP_REACTION_RECEIVE_UNKNOWN_MESSAGE and returns `unknownMessage`
+      // with no persistence — and the relay entry is already consumed by the
+      // drain that dropped it, so nothing ever re-delivers it.
+      //
+      // Five production entry points omitted the argument, including the
+      // app-resume drain. This census is the fix's causal pin: a unit test can
+      // only prove one wiring, and the defect IS the wiring.
+      const sites = <String, String>{
+        'lib/app/lifecycle/handle_app_resumed.dart': 'drainGroupOfflineInbox(',
+        'lib/features/identity/presentation/startup_router.dart':
+            'drainGroupOfflineInbox(',
+        'lib/app/bootstrap/production_application_bootstrap.dart':
+            'drainGroupOfflineInbox(',
+        'lib/features/push/application/prepare_notification_route_target_use_case.dart':
+            'drainGroupOfflineInboxForGroup(',
+        'lib/app/application_root.dart': 'drainGroupOfflineInboxForGroup(',
+      };
+
+      sites.forEach((path, token) {
+        final source = File(path).readAsStringSync();
+        final invocations = _balancedInvocations(source, token)
+            // Skip the continuation/forwarding declarations — only real
+            // invocations carry a `bridge:` argument.
+            .where((invocation) => invocation.contains('bridge:'))
+            .toList();
+
+        expect(
+          invocations,
+          isNotEmpty,
+          reason: '$path no longer invokes $token — re-derive this census',
+        );
+
+        for (final invocation in invocations) {
+          expect(
+            _compactDart(invocation),
+            contains('pendingReactionRepo:'),
+            reason:
+                '$path invokes $token without pendingReactionRepo — a drained '
+                'reaction whose target has not arrived would be dropped '
+                'permanently on that lane',
+          );
+        }
+      });
+    },
+  );
+
+  test(
+    'TC-322-02b the restarted startup router forwards the pending-reaction repo',
+    () {
+      // `_buildRestartedStartupRouter` hand-forwards 60+ fields. Omitting one is
+      // silent — the field is nullable, so the analyzer stays quiet and the
+      // account-migration restart path would drain with a null buffer.
+      final source = File(
+        'lib/features/identity/presentation/startup_router.dart',
+      ).readAsStringSync();
+      final rebuilds = _balancedInvocations(source, 'StartupRouter(')
+          .where((invocation) => invocation.contains('groupRepository:'))
+          .toList();
+
+      expect(rebuilds, isNotEmpty);
+      for (final rebuild in rebuilds) {
+        expect(
+          _compactDart(rebuild),
+          contains('groupPendingReactionRepository:'),
+          reason:
+              'the restarted StartupRouter drops the pending-reaction repo, so '
+              'post-migration drains would silently discard buffered reactions',
+        );
+      }
+    },
+  );
 }

@@ -3,6 +3,7 @@ import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -23,6 +24,7 @@ Future<void> prepareNotificationRouteTarget({
   GroupMessageListener? groupMessageListener,
   required MediaAttachmentRepository mediaAttachmentRepository,
   required ReactionRepository? reactionRepository,
+  required GroupPendingReactionRepository? groupPendingReactionRepository,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
   String? selfPeerId,
@@ -63,6 +65,9 @@ Future<void> prepareNotificationRouteTarget({
         groupMessageListener: groupMessageListener,
         mediaAttachmentRepo: mediaAttachmentRepository,
         reactionRepo: reactionRepository,
+        // Plan 322: a notif-tap drain runs outside the recovery gate; without
+        // this a reaction whose target has not landed is dropped for good.
+        pendingReactionRepo: groupPendingReactionRepository,
         pendingKeyRepairRepo: pendingKeyRepairRepository,
         historyGapRepairRepo: historyGapRepairRepository,
         requestGroupKeyRepair: emitGroupKeyRepairRequest,

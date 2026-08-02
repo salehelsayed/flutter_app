@@ -27,6 +27,7 @@ void main() {
           groupMessageRepository: null,
           mediaAttachmentRepository: FakeMediaAttachmentRepository(),
           reactionRepository: null,
+          groupPendingReactionRepository: null,
           warmPeer: (pid) async {
             warmed.add(pid);
           },
@@ -48,6 +49,7 @@ void main() {
           groupMessageRepository: null,
           mediaAttachmentRepository: FakeMediaAttachmentRepository(),
           reactionRepository: null,
+          groupPendingReactionRepository: null,
         );
         await expectLater(result, completes);
       },
