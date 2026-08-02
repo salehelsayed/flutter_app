@@ -410,6 +410,25 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
       ]);
       await Future<void>.delayed(Duration(milliseconds: 650 + (attempt * 250)));
 
+      // A silent MKnoon card can be below a full page of unrelated alerting
+      // notifications on a physical test phone. Reopening the shade without
+      // scrolling merely captures the same first page on every retry. Scroll
+      // progressively instead of clearing unrelated user notifications.
+      final scrollCount = attempt - 1;
+      for (var scroll = 0; scroll < scrollCount; scroll++) {
+        await _adb(const <String>[
+          'shell',
+          'input',
+          'swipe',
+          '540',
+          '1800',
+          '540',
+          '650',
+          '300',
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+
       final remoteDump =
           '/data/local/tmp/nsmoke_notification_${scenarioId.toLowerCase()}_'
           '$attempt.xml';
@@ -441,6 +460,7 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
           const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
             'scenarioId': scenarioId,
             'attempt': attempt,
+            'scrollCount': scrollCount,
             'dumpExitCode': dumpResult.exitCode,
             'readExitCode': ui?.exitCode,
             'titleVisible': attemptTitleVisible,
@@ -452,6 +472,7 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
       }
       uiHierarchyAttempts.add(<String, dynamic>{
         'attempt': attempt,
+        'scrollCount': scrollCount,
         'dumpExitCode': dumpResult.exitCode,
         'readExitCode': ui?.exitCode,
         'titleVisible': attemptTitleVisible,

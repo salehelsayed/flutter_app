@@ -98,8 +98,9 @@ Future<List<Map<String, Object?>>> dbLoadGroupPendingReactions(
   );
 }
 
-/// Deletes a buffered reaction by id. Returns the number of rows removed so a
-/// flusher can atomically "claim" a row and never double-emit (INV-R5).
+/// Deletes a buffered reaction by id after terminal handling succeeds. Returns
+/// the number of rows removed; the application-layer in-process claim prevents
+/// overlapping flushes without sacrificing crash retryability (INV-R5).
 Future<int> dbDeleteGroupPendingReaction(Database db, String id) {
   return db.delete('group_pending_reactions', where: 'id = ?', whereArgs: [id]);
 }

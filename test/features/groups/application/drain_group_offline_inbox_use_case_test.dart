@@ -39,6 +39,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_history_ga
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -305,8 +306,8 @@ class _KeyBoundCursorInboxBridge extends _CursorInboxBridge {
   }
 }
 
-/// Plan 322 TC-322-03: a durable buffer whose write fails (UNIQUE collision
-/// under concurrent drains, or any storage error). The drain must absorb it.
+/// A durable buffer whose write fails. The page must remain retryable rather
+/// than advancing past a reaction that has no durable representation.
 class _ThrowingGroupPendingReactionRepository
     extends InMemoryGroupPendingReactionRepository {
   @override
@@ -3127,6 +3128,70 @@ void main() {
     expect(result.isSuccessful, isTrue);
     expect(await msgRepo.getMessage('p2single'), isNotNull);
   });
+
+  test(
+    'full drain reports hasMorePages when the safety page cap leaves a cursor',
+    () async {
+      bridge.addPage('group-1', '', const [], 'cap-cursor-2');
+      bridge.addPage('group-1', 'cap-cursor-2', const [], 'cap-cursor-3');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        drainAllPages: true,
+        maxPages: 2,
+      );
+
+      expect(result.isSuccessful, isTrue);
+      expect(result.hasMorePages, isTrue);
+      expect(await msgRepo.getInboxCursor('group-1'), 'cap-cursor-3');
+    },
+  );
+
+  test(
+    'full drain retains a missing-key reaction without durable representation',
+    () async {
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'reaction-replay-key-1',
+          createdAt: DateTime.utc(2026, 8, 2, 9),
+        ),
+      );
+      final reaction = jsonEncode({
+        'id': 'reaction-missing-key-2',
+        'messageId': 'message-missing-key-2',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': DateTime.utc(2026, 8, 2, 10).toIso8601String(),
+      });
+      bridge.addPage('group-1', '', [
+        {
+          'from': 'peer-sender',
+          'message': await signedReplayEnvelope(
+            payloadType: groupOfflineReplayPayloadTypeReaction,
+            keyGeneration: 2,
+            plaintext: reaction,
+            messageId: 'reaction-missing-key-2',
+          ),
+          'timestamp': DateTime.utc(2026, 8, 2, 10).millisecondsSinceEpoch,
+        },
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        drainAllPages: true,
+      );
+
+      expect(result.hasMorePages, isTrue);
+      expect(await msgRepo.getInboxCursor('group-1'), isNull);
+    },
+  );
 
   test(
     'IR-002 cursor drain resumes after restart and delivers every page exactly once',
@@ -13352,6 +13417,88 @@ void main() {
   });
 
   test(
+    'drained group reaction uses listener stream and contextual notification',
+    () async {
+      final reactionRepo = FakeReactionRepository();
+      final notificationService = FakeNotificationService();
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        getSelfPeerId: () async => 'peer-local',
+        notificationService: notificationService,
+        groupConversationTracker: ActiveConversationTracker(),
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+      );
+      final changes = <ReactionChange>[];
+      final subscription = listener.groupReactionChangeStream.listen(
+        changes.add,
+      );
+      addTearDown(() async {
+        await subscription.cancel();
+        listener.dispose();
+      });
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-drained-reaction-notify',
+          groupId: 'group-1',
+          senderPeerId: 'peer-local',
+          senderUsername: 'Local',
+          text: 'Authored target',
+          timestamp: DateTime.utc(2026, 8, 2, 18),
+          createdAt: DateTime.utc(2026, 8, 2, 18),
+          isIncoming: false,
+        ),
+      );
+      final innerReaction = jsonEncode({
+        'id': 'rxn-drained-notify',
+        'eventId': 'transition-drained-notify',
+        'messageId': 'msg-drained-reaction-notify',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': DateTime.utc(2026, 8, 2, 18, 1).toIso8601String(),
+      });
+      bridge.addPage('group-1', '', [
+        {
+          'from': 'peer-sender',
+          'message': jsonEncode({
+            'type': 'group_reaction',
+            'senderId': 'peer-sender',
+            'reaction': innerReaction,
+          }),
+          'timestamp': 123,
+        },
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        groupMessageListener: listener,
+        selfPeerId: 'peer-local',
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 1));
+      while (notificationService.shown.isEmpty &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(result.isSuccessful, isTrue);
+      expect(changes, hasLength(1));
+      expect(changes.single.messageId, 'msg-drained-reaction-notify');
+      expect(notificationService.shown, hasLength(1));
+      expect(notificationService.shown.single.contactPeerId, 'group:group-1');
+      expect(
+        notificationService.shown.single.messageText,
+        'Sender reacted \u{1F44D} to your message',
+      );
+    },
+  );
+
+  test(
     'INV-R4 buffers a drained reaction whose target message is absent',
     () async {
       final reactionRepo = FakeReactionRepository();
@@ -13395,16 +13542,20 @@ void main() {
   );
 
   test(
-    'TC-322-03 a throwing pending-reaction buffer costs the reaction, not the page',
+    'full drain retains a reaction when pending-reaction persistence throws',
     () async {
-      // Plan 322: the reaction branch runs OUTSIDE the decode try/catch, so a
-      // buffer write that throws would propagate to drainNextGroup, raise
-      // errorCount, and cost the group its recovery ack AND its cursor advance.
-      // dbUpsertGroupPendingReaction is a non-transactional read-then-insert
-      // that can collide on UNIQUE under concurrent drains, and this plan wires
-      // buffering onto lanes that run outside the recovery gate.
+      // Target is absent, so the reaction can converge only by entering the
+      // durable pending-reaction buffer.
       final reactionRepo = FakeReactionRepository();
       final pendingReactionRepo = _ThrowingGroupPendingReactionRepository();
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        pendingReactionRepo: pendingReactionRepo,
+      );
+      addTearDown(listener.dispose);
 
       final innerReaction = jsonEncode({
         'id': 'rxn-drain-throws',
@@ -13430,14 +13581,14 @@ void main() {
         msgRepo: msgRepo,
         reactionRepo: reactionRepo,
         pendingReactionRepo: pendingReactionRepo,
+        groupMessageListener: listener,
       );
 
-      // The buffer attempt happened and threw...
       expect(pendingReactionRepo.savePendingReactionCallCount, 1);
-      // ...but the drain still completed cleanly, so the recovery ack and the
-      // cursor advance are preserved for every other envelope in the page.
-      expect(result.errorCount, 0);
-      expect(result.isSuccessful, isTrue);
+      expect(result.errorCount, 1);
+      expect(result.isSuccessful, isFalse);
+      expect(result.hasMorePages, isTrue);
+      expect(await msgRepo.getInboxCursor('group-1'), isNull);
     },
   );
 

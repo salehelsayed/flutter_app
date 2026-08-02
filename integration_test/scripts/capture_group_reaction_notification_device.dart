@@ -110,6 +110,44 @@ Future<bool> waitForCreatorSendableReadiness({
   return false;
 }
 
+/// Opens a fresh group-mutation window after the current process completes a
+/// newly observed canonical group-inbox drain, plus a small settle interval.
+///
+/// A stale completion already in logcat is deliberately insufficient. Group
+/// creation adds members after persisting the group, so a recovery pass that
+/// begins mid-create can activate the mutation guard and leave a partial
+/// fixture with no invite. Waiting immediately before the final create tap
+/// keeps this proof setup out of that periodic recovery window.
+Future<bool> waitForCreatorGroupRecoveryQuiescentWindow({
+  required Future<String> Function() readCurrentProcessLog,
+  int maximumPolls = 60,
+  Duration pollInterval = const Duration(seconds: 1),
+  Duration settleDelay = const Duration(seconds: 2),
+}) async {
+  if (maximumPolls <= 0) {
+    throw ArgumentError.value(maximumPolls, 'maximumPolls');
+  }
+  final completed = RegExp(r'"event"\s*:\s*"GROUP_DRAIN_OFFLINE_INBOX_TIMING"');
+  final baselineCount = completed
+      .allMatches(await readCurrentProcessLog())
+      .length;
+  for (var poll = 0; poll < maximumPolls; poll++) {
+    final currentCount = completed
+        .allMatches(await readCurrentProcessLog())
+        .length;
+    if (currentCount > baselineCount) {
+      if (settleDelay > Duration.zero) {
+        await Future<void>.delayed(settleDelay);
+      }
+      return true;
+    }
+    if (poll + 1 < maximumPolls && pollInterval > Duration.zero) {
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+  return false;
+}
+
 /// Waits for a real pending-group projection, not Orbit's empty review remnant.
 ///
 /// A non-empty review dock is opened at most once per observed label. Recovery
@@ -1883,6 +1921,7 @@ class _Plan257Capture {
       'text',
       _groupName,
     ], environmentFailure: true);
+    await _waitForCreatorGroupRecoveryQuiescentWindow(creator.deviceId);
     await _tapText(creator.deviceId, 'Start group chat');
     await _waitForUiText(
       creator.deviceId,
@@ -1940,6 +1979,41 @@ class _Plan257Capture {
       throw _CaptureFailure.capture(
         stage,
         'creator_sendable_readiness_timeout_on_${deviceId}_pid_$pid',
+      );
+    }
+  }
+
+  Future<void> _waitForCreatorGroupRecoveryQuiescentWindow(
+    String deviceId,
+  ) async {
+    final rawPid = await _adbShell(deviceId, <String>[
+      'pidof',
+      appPackage,
+    ], environmentFailure: true);
+    final pid = RegExp(r'\b[1-9][0-9]*\b').firstMatch(rawPid)?.group(0);
+    if (pid == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'creator_process_missing_before_recovery_window_on_$deviceId',
+      );
+    }
+
+    final ready = await waitForCreatorGroupRecoveryQuiescentWindow(
+      readCurrentProcessLog: () async {
+        final output = await _adb(deviceId, <String>[
+          'logcat',
+          '-d',
+          '--pid=$pid',
+          '-v',
+          'brief',
+        ], allowFail: true);
+        return output.stdout;
+      },
+    );
+    if (!ready) {
+      throw _CaptureFailure.capture(
+        stage,
+        'creator_group_recovery_quiescent_window_timeout_on_${deviceId}_pid_$pid',
       );
     }
   }

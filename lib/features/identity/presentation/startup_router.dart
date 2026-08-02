@@ -381,6 +381,11 @@ class StartupRouter extends StatefulWidget {
   // — and losing to — the home's pushReplacement).
   final VoidCallback? onStartupHomeReady;
 
+  /// Authoritative cold-start poll for Android's durable dropped-FCM marker.
+  /// Invoked only after the P2P node reports successful startup.
+  final Future<void> Function()? recoverDroppedPushes;
+  final Future<bool> Function()? hasPendingDroppedPushRecovery;
+
   /// FDC-09 §12 / CV-14 (217 §A1): once-per-cycle wake-token mint+register.
   /// Invoked EXACTLY ONCE with all active contact peerIds after a successful
   /// node start (INV-5: never per-contact / per-send). Null in tests that don't
@@ -454,6 +459,8 @@ class StartupRouter extends StatefulWidget {
     this.accountMigrationReceiverEvents,
     this.onAccountMigrationReceiverActivated,
     this.onStartupHomeReady,
+    this.recoverDroppedPushes,
+    this.hasPendingDroppedPushRecovery,
     this.issueWakeTokensForContacts,
   });
 
@@ -936,81 +943,126 @@ class _StartupRouterState extends State<StartupRouter> {
         }());
       }
 
+      var droppedPushRecoveryOwnsInbox = false;
+      final hasPendingDroppedPushRecovery =
+          widget.hasPendingDroppedPushRecovery;
+      if (hasPendingDroppedPushRecovery != null) {
+        try {
+          droppedPushRecoveryOwnsInbox = await hasPendingDroppedPushRecovery();
+        } catch (error) {
+          droppedPushRecoveryOwnsInbox = true;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DROPPED_PUSH_RECOVERY_COLD_OWNERSHIP_ERROR',
+            details: {'error': error.runtimeType.toString()},
+          );
+        }
+      }
+
       // Now that the Go node is running (pubsub initialized), rejoin group
       // topics and drain offline inboxes. Fire-and-forget — errors are logged
       // inside each function and don't block startup.
       final groupRepo = widget.groupRepository;
       final groupMsgRepo = widget.groupMessageRepository;
+      Future<void>? startupGroupRecovery;
       if (groupRepo != null) {
-        unawaited(
-          runWithGroupRecoveryGate(() async {
-            IdentityModel? identity;
-            try {
-              identity = await widget.repository.loadIdentity();
-              await rejoinGroupTopics(
-                bridge: widget.bridge,
-                groupRepo: groupRepo,
-                canRejoinForExitIntent: widget.canRejoinForExitIntent,
-                processExitIntent: widget.processExitIntent,
-              );
-              // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
-              // group dissolved while we were offline converges (and is left)
-              // instead of staying live. Runs AFTER rejoin so active groups
-              // re-subscribe immediately — the cursor-independent inbox scan must
-              // not delay live-message reception (see IR-018).
-              final groupMsgListener = widget.groupMessageListener;
-              if (groupMsgListener != null) {
-                await reconcileMissedGroupDissolves(
-                  bridge: widget.bridge,
-                  groupRepo: groupRepo,
-                  groupMessageListener: groupMsgListener,
-                  selfPeerId: identity?.peerId,
-                );
-              }
-              if (groupMsgRepo != null) {
-                await drainGroupOfflineInbox(
-                  bridge: widget.bridge,
-                  groupRepo: groupRepo,
-                  msgRepo: groupMsgRepo,
-                  groupMessageListener: widget.groupMessageListener,
-                  mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                  reactionRepo: widget.reactionRepository,
-                  pendingReactionRepo: widget.groupPendingReactionRepository,
-                  pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
-                  historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-                  requestGroupKeyRepair:
-                      widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
-                  selfPeerId: identity?.peerId,
-                );
-              }
-            } catch (error) {
-              emitFlowEvent(
-                layer: 'FL',
-                event: 'GROUP_STARTUP_NETWORK_RECOVERY_ERROR',
-                details: {'error': error.toString()},
-              );
-              return;
-            } finally {
-              // PB264-18: a fresh launch cannot depend on an initial resumed
-              // callback. Recovery is independent of discovery/rejoin/drain
-              // success so local terminal/cleanup phases cannot be stranded.
-              await _recoverGroupExitIntentsAtStartup();
-            }
-            // R1 (B1b): if this is a freshly-restored device, announce its new
-            // per-device identity to its groups so a sibling/admin can admit it
-            // and re-distribute the current key. One-shot (marker-gated) and
-            // inert unless kMultiDeviceSyncEnabled is on. Never blocks startup.
-            await maybeAnnounceRestoredDeviceOnStartup(
-              secureKeyStore: widget.secureKeyStore,
+        startupGroupRecovery = runWithGroupRecoveryGate(() async {
+          IdentityModel? identity;
+          try {
+            identity = await widget.repository.loadIdentity();
+            await rejoinGroupTopics(
               bridge: widget.bridge,
               groupRepo: groupRepo,
-              identity: identity,
-              transportPeerId: widget.p2pService.currentState.peerId,
+              canRejoinForExitIntent: widget.canRejoinForExitIntent,
+              processExitIntent: widget.processExitIntent,
             );
-          }),
-        );
+            // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
+            // group dissolved while we were offline converges (and is left)
+            // instead of staying live. Runs AFTER rejoin so active groups
+            // re-subscribe immediately — the cursor-independent inbox scan must
+            // not delay live-message reception (see IR-018).
+            final groupMsgListener = widget.groupMessageListener;
+            if (groupMsgListener != null) {
+              await reconcileMissedGroupDissolves(
+                bridge: widget.bridge,
+                groupRepo: groupRepo,
+                groupMessageListener: groupMsgListener,
+                selfPeerId: identity?.peerId,
+              );
+            }
+            if (groupMsgRepo != null && !droppedPushRecoveryOwnsInbox) {
+              await drainGroupOfflineInbox(
+                bridge: widget.bridge,
+                groupRepo: groupRepo,
+                msgRepo: groupMsgRepo,
+                groupMessageListener: widget.groupMessageListener,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                reactionRepo: widget.reactionRepository,
+                pendingReactionRepo: widget.groupPendingReactionRepository,
+                pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+                historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+                requestGroupKeyRepair:
+                    widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
+                selfPeerId: identity?.peerId,
+              );
+            } else if (droppedPushRecoveryOwnsInbox) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_STARTUP_INBOX_DRAIN_REPLACED',
+                details: {'owner': 'dropped_push_recovery'},
+              );
+            }
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_STARTUP_NETWORK_RECOVERY_ERROR',
+              details: {'error': error.toString()},
+            );
+            return;
+          } finally {
+            // PB264-18: a fresh launch cannot depend on an initial resumed
+            // callback. Recovery is independent of discovery/rejoin/drain
+            // success so local terminal/cleanup phases cannot be stranded.
+            await _recoverGroupExitIntentsAtStartup();
+          }
+          // R1 (B1b): if this is a freshly-restored device, announce its new
+          // per-device identity to its groups so a sibling/admin can admit it
+          // and re-distribute the current key. One-shot (marker-gated) and
+          // inert unless kMultiDeviceSyncEnabled is on. Never blocks startup.
+          await maybeAnnounceRestoredDeviceOnStartup(
+            secureKeyStore: widget.secureKeyStore,
+            bridge: widget.bridge,
+            groupRepo: groupRepo,
+            identity: identity,
+            transportPeerId: widget.p2pService.currentState.peerId,
+          );
+        });
+        unawaited(startupGroupRecovery);
       } else {
         unawaited(_recoverGroupExitIntentsAtStartup());
+      }
+
+      final recoverDroppedPushes = widget.recoverDroppedPushes;
+      final shouldRecoverDroppedPushes =
+          recoverDroppedPushes != null &&
+          (hasPendingDroppedPushRecovery == null ||
+              droppedPushRecoveryOwnsInbox);
+      if (shouldRecoverDroppedPushes) {
+        unawaited(() async {
+          try {
+            final groupRecovery = startupGroupRecovery;
+            if (groupRecovery != null) {
+              await groupRecovery;
+            }
+            await recoverDroppedPushes();
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'DROPPED_PUSH_RECOVERY_COLD_START_ERROR',
+              details: {'error': error.runtimeType.toString()},
+            );
+          }
+        }());
       }
     } else {
       // Node startup can fail while cleanup_pending work is entirely local.
@@ -1094,9 +1146,9 @@ class _StartupRouterState extends State<StartupRouter> {
                   );
                 }
                 // The shared app-root coordinator assigns the ordinal here,
-                // before either clear or preparation can yield.
+                // before route preparation can yield. Android dismisses the
+                // selected remote card; unrelated cards must remain delivered.
                 preparedContext = createContext(resolvedRouteTarget);
-                await widget.clearDeliveredNotifications?.call();
                 await _prepareNotificationRouteTarget(resolvedRouteTarget);
               },
               onRouteTarget: (resolvedRouteTarget) async {
@@ -1439,6 +1491,8 @@ class _StartupRouterState extends State<StartupRouter> {
       onAccountMigrationReceiverActivated:
           widget.onAccountMigrationReceiverActivated,
       issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
+      recoverDroppedPushes: widget.recoverDroppedPushes,
+      hasPendingDroppedPushRecovery: widget.hasPendingDroppedPushRecovery,
     );
   }
 

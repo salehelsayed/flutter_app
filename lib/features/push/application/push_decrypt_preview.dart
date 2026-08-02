@@ -741,6 +741,16 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     body: localizedNotificationMessage(locale: locale),
     payload: fallback.payload,
   );
+  final trustedPreviewUnavailableFallback = BackgroundPushNotificationFallback(
+    title: _trimToNull(context?.groupName) ?? 'Mknoon',
+    body: _groupUserPreviewBody(
+      text: '',
+      media: null,
+      senderUsername: _trimToNull(context?.senderUsername),
+      locale: locale,
+    ),
+    payload: fallback.payload,
+  );
   final groupId =
       _trimToNull(data['groupId']?.toString()) ??
       _trimToNull(data['group_id']?.toString());
@@ -784,7 +794,9 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
       details: {'kind': 'group', 'reason': 'missing_group_decrypt_input'},
     );
-    if (context != null && previewUnavailable) return trustedFallback;
+    if (context != null && previewUnavailable) {
+      return trustedPreviewUnavailableFallback;
+    }
     throw const OrdinaryMessageNotificationIntegrityException(
       'missing_group_decrypt_input',
     );

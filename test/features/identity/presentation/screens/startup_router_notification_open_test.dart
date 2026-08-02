@@ -53,6 +53,7 @@ void main() {
   late Future<RemoteMessage?> Function() getInitialRemoteMessage;
   late int clearDeliveredNotificationsCount;
   late int startupHomeReadyCount;
+  late int droppedPushRecoveryCount;
 
   final identity = IdentityModel(
     peerId: 'peer-self',
@@ -111,6 +112,7 @@ void main() {
     getInitialRemoteMessage = () async => null;
     clearDeliveredNotificationsCount = 0;
     startupHomeReadyCount = 0;
+    droppedPushRecoveryCount = 0;
 
     contactRequestListener = ContactRequestListener(
       contactRequestStream: const Stream<ChatMessage>.empty(),
@@ -178,6 +180,9 @@ void main() {
           routedTargets.add(context.routeTarget);
         },
         onStartupHomeReady: () => startupHomeReadyCount += 1,
+        recoverDroppedPushes: () async {
+          droppedPushRecoveryCount += 1;
+        },
       ),
     );
   }
@@ -203,7 +208,7 @@ void main() {
     // (before routing) plus FeedWired's belt-and-suspenders drain when the Feed
     // home becomes active. Both coalesce/defer in the real P2PService.
     expect(p2pService.drainOfflineInboxCallCount, 2);
-    expect(clearDeliveredNotificationsCount, 1);
+    expect(clearDeliveredNotificationsCount, 0);
     expect(
       contactRequestPresentationGate.shouldSuppress('peer-request-123'),
       isFalse,
@@ -224,7 +229,7 @@ void main() {
     expect(p2pService.startNodeCallCount, 1);
     // 141: notif-open prepare drain + FeedWired belt-and-suspenders drain.
     expect(p2pService.drainOfflineInboxCallCount, 2);
-    expect(clearDeliveredNotificationsCount, 1);
+    expect(clearDeliveredNotificationsCount, 0);
   });
 
   testWidgets('invalid cold-start push falls back cleanly without route', (
@@ -259,4 +264,14 @@ void main() {
       expect(startupHomeReadyCount, greaterThanOrEqualTo(1));
     },
   );
+
+  testWidgets('cold node success polls durable dropped-push recovery', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildRouterApp());
+    await pumpFrames(tester);
+
+    expect(p2pService.startNodeCallCount, 1);
+    expect(droppedPushRecoveryCount, 1);
+  });
 }

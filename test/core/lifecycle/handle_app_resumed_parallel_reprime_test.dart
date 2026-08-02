@@ -112,6 +112,21 @@ void main() {
       );
     });
 
+    test(
+      'dropped-wake ownership suppresses the ordinary direct drain',
+      () async {
+        final result = await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          skipDirectInboxDrain: true,
+        );
+
+        expect(result, isTrue);
+        expect(fakeP2PService.performImmediateHealthCheckCallCount, 1);
+        expect(fakeP2PService.drainOfflineInboxCallCount, 0);
+      },
+    );
+
     // TC-05-02 — re-prime and drain OVERLAP (not strictly serial).
     test('inbox drain fires before performImmediateHealthCheck resolves', () async {
       final reprimeEntered = Completer<void>();
@@ -139,7 +154,8 @@ void main() {
       expect(
         fakeP2PService.drainOfflineInboxCallCount,
         1,
-        reason: 'drain overlaps the still-pending re-prime; on HEAD it is 0 '
+        reason:
+            'drain overlaps the still-pending re-prime; on HEAD it is 0 '
             'because the drain only fires after the awaited health check',
       );
       expect(holdReprime.isCompleted, isFalse);
@@ -147,10 +163,7 @@ void main() {
 
     // TC-05-03 — distinct parallel-shape flow event emitted.
     test('emits APP_LIFECYCLE_RESUME_REPRIME_PARALLEL', () async {
-      await handleAppResumed(
-        bridge: fakeBridge,
-        p2pService: fakeP2PService,
-      );
+      await handleAppResumed(bridge: fakeBridge, p2pService: fakeP2PService);
 
       expect(
         eventsNamed('APP_LIFECYCLE_RESUME_REPRIME_PARALLEL'),
@@ -251,10 +264,7 @@ void main() {
         callOrder.add('drainOfflineInbox');
       };
 
-      await handleAppResumed(
-        bridge: fakeBridge,
-        p2pService: fakeP2PService,
-      );
+      await handleAppResumed(bridge: fakeBridge, p2pService: fakeP2PService);
 
       expect(callOrder, isNotEmpty);
       expect(callOrder.first, 'checkHealth');

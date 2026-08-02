@@ -314,8 +314,10 @@ abstract class P2PService {
   /// Bounded on-demand local discovery at send time. Returns true if the peer
   /// became visible on the LAN within [timeout]. Default no-op for non-local
   /// implementations (fakes/mocks) so they never report `local`.
-  Future<bool> discoverLocalPeer(String peerId, {required Duration timeout}) async =>
-      false;
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async => false;
 
   /// FDC-04: eager LAN-aware warm of a single peer (the open/active one — never
   /// the roster, PS-4). Overlaps connection setup with reading/typing so the
@@ -381,8 +383,24 @@ abstract class P2PService {
   void dispose();
 }
 
+/// Truthful result of a full direct-inbox drain.
+///
+/// A failed or incomplete drain keeps the canonical inbox state for a later
+/// recovery attempt, so [hasMore] remains true whenever more work may remain.
+class DirectInboxDrainOutcome {
+  const DirectInboxDrainOutcome({
+    required this.isSuccessful,
+    required this.hasMore,
+    this.failureReason,
+  });
+
+  final bool isSuccessful;
+  final bool hasMore;
+  final String? failureReason;
+}
+
 /// Optional capability for flows that must not proceed until all currently
 /// available offline inbox pages have been replayed.
 abstract class P2PFullInboxDrain {
-  Future<void> drainOfflineInboxFully();
+  Future<DirectInboxDrainOutcome> drainOfflineInboxFully();
 }

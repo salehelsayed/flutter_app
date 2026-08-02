@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 180: WifiManager.MulticastLock (jmDNS multicast reception) needs ACCESS_WIFI_STATE. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -106,6 +107,16 @@
             android:name=".MigrationKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
+            tools:node="remove" />
+        <service
+            android:name=".MknoonFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter android:priority="500">
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <provider
             android:name=".ReceivedMediaEgressProvider"
             android:authorities="${applicationId}.received-media"

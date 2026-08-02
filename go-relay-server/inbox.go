@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -270,6 +271,13 @@ func (ps *PushService) sendWithRetry(
 	pushKind string,
 	groupId string,
 ) {
+	if ps.sender == nil && ps.client == nil {
+		pushSentCounter.WithLabelValues("provider_unavailable").Inc()
+		log.Printf("[PUSH] Skip %s push to %s: provider unavailable",
+			pushKind,
+			toPeerId[:min(20, len(toPeerId))])
+		return
+	}
 	if msg == nil {
 		pushSentCounter.WithLabelValues("invalid_payload").Inc()
 		log.Printf("[PUSH] Refusing %s push to %s: required routing cannot fit provider budget",
@@ -425,7 +433,17 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		if metadata.MessageID != "" {
 			data["message_id"] = metadata.MessageID
 		}
-		addChatEncryptedPushData(data, message)
+		if !addChatEncryptedPushData(data, message) {
+			fallback := map[string]string{
+				"type":                "new_message",
+				"sender_id":           fromPeerId,
+				"preview_unavailable": "1",
+			}
+			if metadata.MessageID != "" {
+				fallback["message_id"] = metadata.MessageID
+			}
+			return buildUnusableEnvelopeFallbackPushMessage(token, fallback, fromPeerId)
+		}
 		message := buildCiphertextOnlyPushMessage(token, data, fromPeerId)
 		if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(message) {
 			// Oversized media envelope: FCM would reject the silent ciphertext-only
@@ -549,7 +567,18 @@ func buildGroupPushMessage(
 	if messageID != "" {
 		data["message_id"] = messageID
 	}
-	addGroupEncryptedPushData(data, message)
+	if !addGroupEncryptedPushData(data, message) {
+		fallback := map[string]string{
+			"type":                     "group_message",
+			"groupId":                  groupId,
+			"sender_transport_peer_id": senderTransportPeerID,
+			"preview_unavailable":      "1",
+		}
+		if messageID != "" {
+			fallback["message_id"] = messageID
+		}
+		return buildUnusableEnvelopeFallbackPushMessage(token, fallback, groupId)
+	}
 	pushMessage := buildCiphertextOnlyPushMessage(token, data, groupId)
 	if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(pushMessage) {
 		// Oversized group media envelope: same as the 1:1 path — drop the encrypted
@@ -673,6 +702,19 @@ func messageFitsProviderBudgets(msg *messaging.Message) bool {
 // ciphertext was removed: the NSE still owns recipient policy, dedupe, tone,
 // and trusted routing-copy selection for this routing-only fallback.
 func buildOversizedFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+	return buildRoutingFallbackPushMessage(token, data, threadID, "oversized_fallback")
+}
+
+func buildUnusableEnvelopeFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+	return buildRoutingFallbackPushMessage(token, data, threadID, "unusable_envelope_fallback")
+}
+
+func buildRoutingFallbackPushMessage(
+	token string,
+	data map[string]string,
+	threadID string,
+	fallbackReason string,
+) *messaging.Message {
 	routing := cloneStringMap(data)
 	if !hasRequiredFallbackRouting(routing) {
 		return nil
@@ -684,7 +726,7 @@ func buildOversizedFallbackPushMessage(token string, data map[string]string, thr
 	for {
 		msg := newOversizedFallbackPushMessage(token, routing, threadID)
 		if messageFitsProviderBudgets(msg) {
-			pushSentCounter.WithLabelValues("oversized_fallback").Inc()
+			pushFallbackCounter.WithLabelValues(fallbackReason).Inc()
 			return msg
 		}
 		if _, ok := routing["message_id"]; ok {
@@ -890,6 +932,9 @@ func addGroupEncryptedPushData(data map[string]string, message string) bool {
 		addTrimmedData(data, "payloadType", envelope["type"])
 	}
 	addJSONScalarData(data, "keyEpoch", envelope["keyEpoch"])
+	if !isCanonicalPositiveInteger(data["keyEpoch"]) {
+		return false
+	}
 	if encrypted, ok := envelope["encrypted"].(map[string]interface{}); ok {
 		addTrimmedData(data, "ciphertext", encrypted["ciphertext"])
 		addTrimmedData(data, "nonce", encrypted["nonce"])
@@ -909,6 +954,11 @@ func addGroupEncryptedPushData(data map[string]string, message string) bool {
 	return data["keyEpoch"] != "" &&
 		data["ciphertext"] != "" &&
 		data["nonce"] != ""
+}
+
+func isCanonicalPositiveInteger(value string) bool {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return err == nil && parsed > 0 && strconv.FormatInt(parsed, 10) == value
 }
 
 func addTrimmedData(data map[string]string, key string, raw interface{}) {

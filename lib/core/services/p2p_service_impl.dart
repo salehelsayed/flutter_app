@@ -786,6 +786,7 @@ class P2PServiceImpl
     futures.add(
       _inboxCoordinator
           ._drainOfflineInbox()
+          .then<void>((_) {})
           .timeout(warmTaskTimeout)
           .catchError((_) {}),
     );
@@ -2832,7 +2833,7 @@ class P2PServiceImpl
   Future<void> drainOfflineInbox() => _inboxCoordinator.drainOfflineInbox();
 
   @override
-  Future<void> drainOfflineInboxFully() =>
+  Future<DirectInboxDrainOutcome> drainOfflineInboxFully() =>
       _inboxCoordinator.drainOfflineInboxFully();
 
   @override

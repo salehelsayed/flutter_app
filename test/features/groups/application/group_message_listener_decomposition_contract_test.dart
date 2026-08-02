@@ -314,10 +314,16 @@ const _expectedPublicMembers = <String>{
   // threading it separately through four widget public APIs. Exposing it is a
   // deliberate, second exception to DTR-16's no-collaborator rule.
   'getter|pendingReactionRepository|GroupPendingReactionRepository?|',
+  // Plan 329: an offline reaction may use the stable listener facade only when
+  // its canonical reaction dependencies are composed. This exposes capability,
+  // not collaborator state.
+  'getter|canHandleReplayReactions|bool|',
   'method|handleReplayEnvelope|Future<void>|'
       '(Map<String, dynamic> data, {GroupMessageRepository? msgRepoOverride, '
       'bool rethrowOnError = false, bool allowMembershipBuffer = false, '
       'bool membershipPhaseHeld = false})',
+  'method|handleReplayReaction|Future<void>|'
+      '(Map<String, dynamic> data, {bool rethrowOnError = false})',
   'method|start|void|'
       '(Stream<Map<String, dynamic>> incomingGroupMessages, '
       '{Stream<Map<String, dynamic>>? incomingGroupReactions})',
@@ -478,7 +484,7 @@ void _expectPublicFacadeContract(
     publicMembers,
     _expectedPublicMembers,
     reason:
-        'the five overridable getters and replay/start/flush/retry/reserve/'
+        'the six overridable getters and replay/start/flush/retry/reserve/'
         'stop/dispose public methods are the complete stable facade API',
   );
 

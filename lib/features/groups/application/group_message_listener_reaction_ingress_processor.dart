@@ -45,6 +45,7 @@ final class _GroupReactionIngressProcessor {
   final Future<DurableNotificationToneLease?> Function()
   _resolveDurableNotificationCoordinator;
   final void Function(ReactionChange) _emitReactionChange;
+  final Set<String> _pendingReactionClaims = <String>{};
 
   bool _samePendingReaction(
     GroupPendingReaction current,
@@ -61,8 +62,10 @@ final class _GroupReactionIngressProcessor {
       current.receivedAt.toUtc().isAtSameMomentAs(loaded.receivedAt.toUtc());
 
   /// Replays buffered reactions whose target [message] has just been persisted
-  /// (INV-R4). Each row is DELETED before its [ReactionChange] is emitted, so
-  /// an overlapping startup + live flush can never double-emit (INV-R5).
+  /// (INV-R4). An in-process claim serializes overlapping startup/live flushes,
+  /// while the durable row is deleted only after reaction handling succeeds.
+  /// A crash or repository exception therefore leaves retryable custody rather
+  /// than deleting the only copy before applying it (INV-R5).
   Future<void> _flushPendingReactionsForMessage(
     GroupMessage message, {
     bool membershipPhaseHeld = false,
@@ -136,10 +139,7 @@ final class _GroupReactionIngressProcessor {
       return;
     }
 
-    // Atomically claim the exact row before emitting; if another flush already
-    // took it, skip so the ReactionChange is emitted exactly once.
-    final claimed = await repo.deletePendingReaction(pending.id);
-    if (claimed == 0) return;
+    if (!_pendingReactionClaims.add(pending.id)) return;
     try {
       final (result, change) = await handleIncomingGroupReaction(
         groupRepo: _groupRepo,
@@ -171,6 +171,7 @@ final class _GroupReactionIngressProcessor {
           );
         }
       }
+      await repo.deletePendingReaction(pending.id);
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REACTION_BUFFER_FLUSHED',
@@ -190,6 +191,8 @@ final class _GroupReactionIngressProcessor {
         event: 'GROUP_REACTION_BUFFER_FLUSH_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      _pendingReactionClaims.remove(pending.id);
     }
   }
 
@@ -221,12 +224,16 @@ final class _GroupReactionIngressProcessor {
   }
 
   /// Handles an incoming group reaction event from the bridge.
-  Future<void> _handleReaction(Map<String, dynamic> data) async {
+  Future<void> _handleReaction(
+    Map<String, dynamic> data, {
+    bool rethrowOnError = false,
+  }) async {
     try {
       final groupId = data['groupId'] as String? ?? '';
       final senderId = data['senderId'] as String? ?? '';
       final senderDeviceId = data['senderDeviceId'] as String?;
       final transportPeerId = data['transportPeerId'] as String?;
+      final senderPublicKey = data['senderPublicKey'] as String?;
       final reactionJson = data['reaction'] as String? ?? '';
       final wireReaction = GroupReactionPayload.fromDecryptedJson(reactionJson);
 
@@ -253,6 +260,7 @@ final class _GroupReactionIngressProcessor {
         senderId: senderId,
         senderDeviceId: senderDeviceId,
         transportPeerId: transportPeerId,
+        senderPublicKey: senderPublicKey,
         reactionJson: reactionJson,
       );
 
@@ -281,6 +289,7 @@ final class _GroupReactionIngressProcessor {
         event: 'GROUP_REACTION_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
   }
 

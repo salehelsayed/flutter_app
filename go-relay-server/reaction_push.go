@@ -406,7 +406,6 @@ func verifyGroupReactionSignature(publicKeyBase64, signedPayload, signatureBase6
 	return ed25519.Verify(ed25519.PublicKey(publicKey), []byte(signedPayload), signature)
 }
 
-
 func buildGroupReactionPushMessage(
 	token,
 	groupID,

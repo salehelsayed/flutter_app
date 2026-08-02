@@ -82,6 +82,7 @@ import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -224,6 +225,7 @@ class MyApp extends StatefulWidget {
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
+  final DroppedPushRecoveryCoordinator? droppedPushRecoveryCoordinator;
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
   final ActiveConversationTracker conversationTracker;
@@ -337,6 +339,7 @@ class MyApp extends StatefulWidget {
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
+    this.droppedPushRecoveryCoordinator,
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.conversationTracker,
@@ -385,6 +388,8 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
+  final DroppedPushRecoveryRepollLatch _droppedPushRecoveryRepollLatch =
+      DroppedPushRecoveryRepollLatch();
   // 164 (cold-start-1 regression #1): unconditional idempotence latch so the
   // initState _setupPushListeners() call and the post-runtime-ready re-arm cannot
   // double-register onMessage / onMessageOpenedApp.
@@ -576,6 +581,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       }
     });
     _setupNotificationTapHandler();
+    widget.droppedPushRecoveryCoordinator?.registerNativeAcceleration(
+      _handleNativeDroppedPushRecoverySignal,
+    );
     _setupIosApnsNotificationOpenBridge();
     _setupShareIntentHandling();
     _initialShareIntentCapture = _captureInitialShareIntent();
@@ -602,6 +610,55 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _ensureRuntimeServicesReady() {
     return runtimeStartupLatch.ensureStarted();
+  }
+
+  Future<bool> _hasPendingDroppedPushRecovery() async {
+    final coordinator = widget.droppedPushRecoveryCoordinator;
+    if (coordinator == null) return false;
+    try {
+      await _ensureRuntimeServicesReady();
+      return await coordinator.hasPendingRecovery();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DROPPED_PUSH_RECOVERY_OWNERSHIP_POLL_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+      return true;
+    }
+  }
+
+  Future<void> _recoverDroppedPushes() async {
+    final coordinator = widget.droppedPushRecoveryCoordinator;
+    if (coordinator == null) return;
+    try {
+      await _ensureRuntimeServicesReady();
+      await coordinator.recoverIfPending();
+    } catch (error) {
+      // The coordinator is deliberately total, but retain an application-root
+      // boundary so lifecycle delivery can never surface an uncaught error.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DROPPED_PUSH_RECOVERY_ROOT_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<void> _handleNativeDroppedPushRecoverySignal() async {
+    if (_isResuming) {
+      // The durable marker remains authoritative. The active resume pass made
+      // its ownership decision before ordinary drains, so a newer signal waits
+      // for the next poll instead of racing that pass.
+      _droppedPushRecoveryRepollLatch.request();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DROPPED_PUSH_RECOVERY_NATIVE_SIGNAL_DEFERRED',
+        details: {'reason': 'resume_in_progress'},
+      );
+      return;
+    }
+    await _recoverDroppedPushes();
   }
 
   Future<void> _ingestStagedPushEnvelopes({required String source}) async {
@@ -800,7 +857,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     'Remote notification route context was not validated.',
                   );
                 }
-                await widget.notificationService.clearDeliveredNotifications();
                 await _prepareNotificationRouteTarget(context.routeTarget);
               },
               onRouteTarget: (target) async {
@@ -1560,6 +1616,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // 183: cancel the ~8s keepalive Timer (no leak).
     _keepAliveUseCase.dispose();
     widget.pushRegistrationCoordinator?.dispose();
+    widget.droppedPushRecoveryCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
     widget.messageRouter.dispose();
@@ -1708,6 +1765,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       privateMediaRecovery = Future<void>.error(error, stackTrace);
     }
     if (_isResuming) {
+      _droppedPushRecoveryRepollLatch.request();
       debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
       if (privateMediaRecovery != null) {
         try {
@@ -1729,6 +1787,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
     _isResuming = true;
     debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
+    var droppedPushRecoveryOwnsInbox = false;
 
     try {
       widget.p2pService.markResumeStarted();
@@ -1739,6 +1798,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // can never fire while suspended).
       _keepAliveUseCase.onForegrounded();
       unawaited(_ingestStagedPushEnvelopes(source: 'app_resumed'));
+      droppedPushRecoveryOwnsInbox = await _hasPendingDroppedPushRecovery();
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
@@ -1753,6 +1813,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             ? null
             : () => privateMediaRecovery!,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
+        skipDirectInboxDrain: droppedPushRecoveryOwnsInbox,
+        skipGroupInboxDrain: droppedPushRecoveryOwnsInbox,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
         retryIncompleteKeyExchangesFn: () =>
@@ -1891,6 +1953,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       widget.p2pService.checkResumeAlreadyOnline();
     } finally {
+      if (droppedPushRecoveryOwnsInbox) {
+        // The ownership preflight suppressed both ordinary inbox legs, so this
+        // is the only canonical full direct+group drain for the pending wake.
+        await _recoverDroppedPushes();
+      }
+      await _droppedPushRecoveryRepollLatch.drain(
+        hasPendingRecovery: _hasPendingDroppedPushRecovery,
+        recoverIfPending: _recoverDroppedPushes,
+      );
       widget.p2pService.clearResumeStarted();
       _isResuming = false;
       debugPrint('[LIFECYCLE] _onResumed() finished');
@@ -2290,6 +2361,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           createNotificationRouteContext: _createNotificationOpenRouteContext,
           onNotificationRouteContext: _beginStartupNotificationRouteContext,
           onStartupHomeReady: _onStartupHomeReady,
+          recoverDroppedPushes: _recoverDroppedPushes,
+          hasPendingDroppedPushRecovery: _hasPendingDroppedPushRecovery,
         ),
         debugShowCheckedModeBanner: false,
       ),

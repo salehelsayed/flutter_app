@@ -603,6 +603,19 @@ class _GateableReactionRepository extends FakeReactionRepository {
   }
 }
 
+class _FailOnceReactionRepository extends FakeReactionRepository {
+  int failureCount = 0;
+
+  @override
+  Future<void> saveReaction(MessageReaction reaction) async {
+    if (failureCount == 0) {
+      failureCount += 1;
+      throw StateError('forced pending-reaction apply failure');
+    }
+    await super.saveReaction(reaction);
+  }
+}
+
 /// Records the completion order of [saveReaction], optionally delaying a
 /// specific message's save. Used to prove the live reaction pipeline is
 /// serialized: if the slow save completes before the fast one starts, the two
@@ -4994,7 +5007,8 @@ void main() {
         expect(await groupRepo.getMember('group-1', 'peer-ghost'), isNull);
         await msgRepo.saveMessage(
           GroupMessage(
-            id: 'sys-member_removed:group-1:peer-ghost:'
+            id:
+                'sys-member_removed:group-1:peer-ghost:'
                 '${removedAt.microsecondsSinceEpoch}',
             groupId: 'group-1',
             senderPeerId: 'peer-admin',
@@ -5038,8 +5052,9 @@ void main() {
           groupConfig: groupConfig,
         );
         expect(
-          (normalizedConfig['members'] as List<dynamic>)
-              .map((member) => (member as Map<String, dynamic>)['peerId']),
+          (normalizedConfig['members'] as List<dynamic>).map(
+            (member) => (member as Map<String, dynamic>)['peerId'],
+          ),
           contains('peer-ghost'),
           reason: 'fixture must actually offer the ghost to the snapshot',
         );
@@ -5077,7 +5092,8 @@ void main() {
         expect(
           await groupRepo.getMember('group-1', 'peer-ghost'),
           isNull,
-          reason: 'a metadata snapshot older than the removal re-added the '
+          reason:
+              'a metadata snapshot older than the removal re-added the '
               'member, restoring their custody and key eligibility',
         );
 
@@ -5090,14 +5106,17 @@ void main() {
           return parsed['cmd'] == 'group:updateConfig';
         });
         final syncedConfig =
-            ((jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+            ((jsonDecode(updateConfigMessage)
+                        as Map<String, dynamic>)['payload']
                     as Map<String, dynamic>)['groupConfig']
                 as Map<String, dynamic>;
         expect(
-          (syncedConfig['members'] as List<dynamic>)
-              .map((member) => (member as Map<String, dynamic>)['peerId']),
+          (syncedConfig['members'] as List<dynamic>).map(
+            (member) => (member as Map<String, dynamic>)['peerId'],
+          ),
           isNot(contains('peer-ghost')),
-          reason: "Go's dial/discovery allow-list received the author's stale "
+          reason:
+              "Go's dial/discovery allow-list received the author's stale "
               'roster, so the removed member stays a dial target',
         );
       },
@@ -14463,48 +14482,45 @@ void main() {
       notifListener.dispose();
     });
 
-    test(
-      'does not show a notification for an archived group',
-      () async {
-        // Plan 309 TC-14: the live in-app message banner read only isMuted;
-        // an archived group must be suppressed the same way.
-        await saveSelfMember();
-        final notifService = FakeNotificationService();
-        final tracker = ActiveConversationTracker();
+    test('does not show a notification for an archived group', () async {
+      // Plan 309 TC-14: the live in-app message banner read only isMuted;
+      // an archived group must be suppressed the same way.
+      await saveSelfMember();
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
 
-        await groupRepo.updateGroup(testGroup.copyWith(isArchived: true));
+      await groupRepo.updateGroup(testGroup.copyWith(isArchived: true));
 
-        final notifListener = GroupMessageListener(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          bridge: bridge,
-          getSelfPeerId: () async => 'peer-self',
-          notificationService: notifService,
-          groupConversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-        );
-        notifListener.start(sourceController.stream);
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      notifListener.start(sourceController.stream);
 
-        sourceController.add({
-          'groupId': 'group-1',
-          'senderId': 'peer-sender',
-          'senderUsername': 'Sender',
-          'keyEpoch': 0,
-          'text': 'Archived group message',
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-        });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Archived group message',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
 
-        await Future.delayed(const Duration(milliseconds: 50));
+      await Future.delayed(const Duration(milliseconds: 50));
 
-        expect(notifService.shown, isEmpty);
-        expect(msgRepo.count, 1);
-        final latest = await msgRepo.getLatestMessage('group-1');
-        expect(latest, isNotNull);
-        expect(latest!.text, 'Archived group message');
+      expect(notifService.shown, isEmpty);
+      expect(msgRepo.count, 1);
+      final latest = await msgRepo.getLatestMessage('group-1');
+      expect(latest, isNotNull);
+      expect(latest!.text, 'Archived group message');
 
-        notifListener.dispose();
-      },
-    );
+      notifListener.dispose();
+    });
 
     test(
       'suppresses local notification for muted groups but still persists the message',
@@ -15521,6 +15537,86 @@ void main() {
           'messageId': 'late-msg',
         });
         await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(changes, hasLength(1));
+      },
+    );
+
+    test(
+      'pending reaction remains durable when apply fails and retries on restart',
+      () async {
+        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final failOnceRepo = _FailOnceReactionRepository();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: failOnceRepo,
+          pendingReactionRepo: pendingReactionRepo,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+        addTearDown(sub.cancel);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-buffered-fail-once',
+            'messageId': 'late-msg-fail-once',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-06-05T12:04:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(pendingReactionRepo.reactions, hasLength(1));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Late target with first apply failure',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'messageId': 'late-msg-fail-once',
+        });
+        final failureDeadline = DateTime.now().add(const Duration(seconds: 1));
+        while (failOnceRepo.failureCount == 0 &&
+            DateTime.now().isBefore(failureDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(failOnceRepo.failureCount, 1);
+        expect(pendingReactionRepo.reactions, hasLength(1));
+        expect(
+          await failOnceRepo.getReactionsForMessage('late-msg-fail-once'),
+          isEmpty,
+        );
+        expect(changes, isEmpty);
+
+        await rxnListener.stop();
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        final retryDeadline = DateTime.now().add(const Duration(seconds: 1));
+        while (pendingReactionRepo.reactions.isNotEmpty &&
+            DateTime.now().isBefore(retryDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(pendingReactionRepo.reactions, isEmpty);
+        expect(
+          await failOnceRepo.getReactionsForMessage('late-msg-fail-once'),
+          hasLength(1),
+        );
         expect(changes, hasLength(1));
       },
     );

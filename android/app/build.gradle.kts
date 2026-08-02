@@ -258,6 +258,10 @@ android {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // Plan 329: the app-owned FCM service subclasses FlutterFire's service.
+    // firebase_messaging keeps this dependency non-transitive at the app
+    // compile boundary, so declare the already-resolved SDK version directly.
+    implementation("com.google.firebase:firebase-messaging:24.1.2")
     // 180: pure-Java mDNS resolver. NsdManager intermittently never completes an
     // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
     // interface + does its own SRV/TXT/A resolution. See MdnsResolver.kt.

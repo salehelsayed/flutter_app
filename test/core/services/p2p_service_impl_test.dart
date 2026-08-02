@@ -4585,8 +4585,10 @@ void main() {
         final messages = <ChatMessage>[];
         final sub = service.messageStream.listen(messages.add);
 
+        DirectInboxDrainOutcome? outcome;
         var fullDrainReturned = false;
-        final fullDrain = service.drainOfflineInboxFully().then((_) {
+        final fullDrain = service.drainOfflineInboxFully().then((value) {
+          outcome = value;
           fullDrainReturned = true;
         });
         await Future<void>.delayed(Duration.zero);
@@ -4612,11 +4614,294 @@ void main() {
 
         await fullDrain;
         expect(fullDrainReturned, isTrue);
+        expect(outcome?.isSuccessful, isTrue);
+        expect(outcome?.hasMore, isFalse);
         expect(messages.length, 2);
 
         await sub.cancel();
       },
     );
+
+    test(
+      'drainOfflineInboxFully coalesces with an ordinary drain continuation',
+      () async {
+        var retrieveCallCount = 0;
+        final secondPage = Completer<String>();
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        bridge.whenCommand('inbox:retrieve_pending', (_) {
+          retrieveCallCount += 1;
+          if (retrieveCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'messages': <Map<String, dynamic>>[
+                _pendingInboxRow(
+                  entryId: 'entry-ordinary-first',
+                  from: 'sender-first',
+                  message: 'message-first',
+                  timestamp: 1700000000000,
+                ),
+              ],
+              'hasMore': true,
+            });
+          }
+          return secondPage.future;
+        });
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        await service.drainOfflineInbox();
+        await _waitForCondition(
+          () => retrieveCallCount == 2,
+          reason: 'ordinary drain should start its background continuation',
+        );
+        expect(retrieveCallCount, 2);
+
+        var fullDrainReturned = false;
+        final fullDrain = service.drainOfflineInboxFully().then((outcome) {
+          fullDrainReturned = true;
+          return outcome;
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        expect(fullDrainReturned, isFalse);
+        expect(
+          retrieveCallCount,
+          2,
+          reason: 'the full drain must join the existing continuation',
+        );
+
+        secondPage.complete(
+          jsonEncode({
+            'ok': true,
+            'messages': <Map<String, dynamic>>[
+              _pendingInboxRow(
+                entryId: 'entry-ordinary-second',
+                from: 'sender-second',
+                message: 'message-second',
+                timestamp: 1700000001000,
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        final outcome = await fullDrain;
+        expect(outcome.isSuccessful, isTrue);
+        expect(outcome.hasMore, isFalse);
+        expect(retrieveCallCount, 2);
+      },
+    );
+
+    test(
+      'drainOfflineInboxFully reports a first-page retrieval failure',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': false,
+            'errorCode': 'relay_unavailable',
+            'errorMessage': 'relay unavailable',
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final outcome = await service.drainOfflineInboxFully();
+
+        expect(outcome.isSuccessful, isFalse);
+        expect(outcome.hasMore, isTrue);
+        expect(outcome.failureReason, contains('relay unavailable'));
+      },
+    );
+
+    test(
+      'drainOfflineInboxFully retains recovery when relay acknowledgement fails',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': <Map<String, dynamic>>[
+              _pendingInboxRow(
+                entryId: 'entry-ack-failure',
+                from: 'sender-ack-failure',
+                message: 'message-ack-failure',
+                timestamp: 1700000000000,
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({
+            'ok': false,
+            'errorCode': 'relay_unavailable',
+            'errorMessage': 'relay ack unavailable',
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final outcome = await service.drainOfflineInboxFully();
+
+        expect(outcome.isSuccessful, isFalse);
+        expect(outcome.hasMore, isTrue);
+        expect(outcome.failureReason, contains('relay ack unavailable'));
+      },
+    );
+
+    test(
+      'drainOfflineInboxFully retains recovery when relay acknowledgement is partial',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': <Map<String, dynamic>>[
+              _pendingInboxRow(
+                entryId: 'entry-partial-ack-1',
+                from: 'sender-partial-ack',
+                message: 'message-partial-ack-1',
+                timestamp: 1700000000000,
+              ),
+              _pendingInboxRow(
+                entryId: 'entry-partial-ack-2',
+                from: 'sender-partial-ack',
+                message: 'message-partial-ack-2',
+                timestamp: 1700000000001,
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final outcome = await service.drainOfflineInboxFully();
+
+        expect(outcome.isSuccessful, isFalse);
+        expect(outcome.hasMore, isTrue);
+        expect(outcome.failureReason, contains('inbox_ack_incomplete'));
+      },
+    );
+
+    test(
+      'drainOfflineInboxFully retains recovery for an unstageable relay row',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': <Map<String, dynamic>>[
+              <String, dynamic>{'entryId': 'malformed-relay-row'},
+            ],
+            'hasMore': false,
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final outcome = await service.drainOfflineInboxFully();
+
+        expect(outcome.isSuccessful, isFalse);
+        expect(outcome.hasMore, isTrue);
+        expect(outcome.failureReason, contains('malformed'));
+        expect(bridge.calledCommands, isNot(contains('inbox:ack')));
+      },
+    );
+
+    test('drainOfflineInboxFully reports page-cap remainder', () async {
+      var retrieveCallCount = 0;
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        }),
+      );
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        retrieveCallCount += 1;
+        return jsonEncode({
+          'ok': true,
+          'messages': <Map<String, dynamic>>[
+            _pendingInboxRow(
+              entryId: 'entry-$retrieveCallCount',
+              from: 'sender-$retrieveCallCount',
+              message: 'message-$retrieveCallCount',
+              timestamp: 1700000000000 + retrieveCallCount,
+            ),
+          ],
+          'hasMore': true,
+        });
+      });
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      final outcome = await service.drainOfflineInboxFully();
+
+      expect(retrieveCallCount, P2PServiceImpl.maxInboxPages);
+      expect(outcome.isSuccessful, isFalse);
+      expect(outcome.hasMore, isTrue);
+      expect(outcome.failureReason, 'page_cap_reached');
+    });
 
     test(
       'fast circuit fallback poll updates online state when push event is delayed',

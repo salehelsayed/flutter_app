@@ -94,6 +94,8 @@ Future<bool?> handleAppResumed({
   Future<int> Function()?
   retryAllPendingGroupKeyRepairsFn, // Finding 02 UDM-B (Step 8i)
   Future<void> Function()? retryPushRegistrationFn,
+  bool skipDirectInboxDrain = false,
+  bool skipGroupInboxDrain = false,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
 
@@ -296,16 +298,26 @@ Future<bool?> handleAppResumed({
     // sweep. The drain keeps its 141 defer-when-!isStarted guard and single-
     // in-flight coalescing internally; streamed delivery + the conversation
     // surface's own 'catching up…' affordance cover the now-background drain.
-    debugPrint('[RESUME] Step 3: drainOfflineInbox() starting (unawaited)...');
-    unawaited(
-      p2pService.drainOfflineInbox().catchError((Object e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
-          details: {'error': e.toString()},
-        );
-      }),
-    );
+    if (skipDirectInboxDrain) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_DIRECT_DRAIN_REPLACED',
+        details: {'owner': 'dropped_push_recovery'},
+      );
+    } else {
+      debugPrint(
+        '[RESUME] Step 3: drainOfflineInbox() starting (unawaited)...',
+      );
+      unawaited(
+        p2pService.drainOfflineInbox().catchError((Object e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
+            details: {'error': e.toString()},
+          );
+        }),
+      );
+    }
 
     // Observable discriminator that the parallel shape ran (vs HEAD's serial
     // re-prime → push → awaited drain). Both shapes still end with
@@ -402,32 +414,46 @@ Future<bool?> handleAppResumed({
           );
         }
 
-        final groupDrainStart = DateTime.now();
-        debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
-        final groupDrainResult = await drainGroupOfflineInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: groupMsgRepo,
-          groupMessageListener: groupMessageListener,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          reactionRepo: reactionRepo,
-          pendingReactionRepo: pendingReactionRepo,
-          pendingKeyRepairRepo: pendingKeyRepairRepo,
-          historyGapRepairRepo: historyGapRepairRepo,
-          requestGroupKeyRepair: requestGroupKeyRepair,
-          selfPeerId: identity?.peerId,
-          // Phase 2: fast first page on the resume budget; feeds ack
-          // eligibility. Remaining pages drain in the background after the gate.
-          drainAllPages: false,
-        );
-        drainHasMorePages = groupDrainResult.hasMorePages;
-        final groupDrainMs = DateTime.now()
-            .difference(groupDrainStart)
-            .inMilliseconds;
-        debugPrint(
-          '[RESUME] Step 3c: drainGroupOfflineInbox done '
-          '(errors=${groupDrainResult.errorCount}, took ${groupDrainMs}ms)',
-        );
+        final GroupOfflineInboxDrainResult groupDrainResult;
+        if (skipGroupInboxDrain) {
+          groupDrainResult = const GroupOfflineInboxDrainResult(
+            groupCount: 0,
+            errorCount: 1,
+            hasMorePages: true,
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_RESUME_GROUP_DRAIN_REPLACED',
+            details: {'owner': 'dropped_push_recovery'},
+          );
+        } else {
+          final groupDrainStart = DateTime.now();
+          debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
+          groupDrainResult = await drainGroupOfflineInbox(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+            groupMessageListener: groupMessageListener,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            reactionRepo: reactionRepo,
+            pendingReactionRepo: pendingReactionRepo,
+            pendingKeyRepairRepo: pendingKeyRepairRepo,
+            historyGapRepairRepo: historyGapRepairRepo,
+            requestGroupKeyRepair: requestGroupKeyRepair,
+            selfPeerId: identity?.peerId,
+            // Phase 2: fast first page on the resume budget; feeds ack
+            // eligibility. Remaining pages drain after the recovery gate.
+            drainAllPages: false,
+          );
+          drainHasMorePages = groupDrainResult.hasMorePages;
+          final groupDrainMs = DateTime.now()
+              .difference(groupDrainStart)
+              .inMilliseconds;
+          debugPrint(
+            '[RESUME] Step 3c: drainGroupOfflineInbox done '
+            '(errors=${groupDrainResult.errorCount}, took ${groupDrainMs}ms)',
+          );
+        }
 
         // 269: duplicate replay enrichment commits attachment rows during the
         // inbox drain. Run the shared durable download coordinator only after

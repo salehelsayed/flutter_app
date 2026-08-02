@@ -53,10 +53,12 @@ class GroupOfflineInboxDrainResult {
   final int groupCount;
   final int errorCount;
 
-  /// True when at least one group stopped at the first page (`drainAllPages:
-  /// false`) with more pages still on the relay — i.e. a
-  /// [drainGroupOfflineInboxContinuation] is worth scheduling. Always false
-  /// for a full (`drainAllPages: true`) drain.
+  /// True when at least one group did not fully converge in this pass.
+  ///
+  /// This covers a retained cursor, a first-page-only pass, a full pass stopped
+  /// by its stale-cursor or maximum-page safety bound, and unrepresentable work
+  /// that must remain retryable even when the relay returned an empty cursor.
+  /// A caller must not acknowledge dropped-wake recovery while this is true.
   final bool hasMorePages;
 
   bool get isSuccessful => errorCount == 0;
@@ -116,7 +118,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
 
   final groups = await groupRepo.getAllGroups();
   final groupSucceeded = List<bool>.filled(groups.length, false);
-  var anyFirstPageStopped = false;
+  var anyPagesRemaining = false;
   var nextGroupIndex = 0;
   final workerCount = min(maxConcurrentGroupDrains, groups.length);
 
@@ -148,10 +150,14 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
           drainAllPages: drainAllPages,
           pageSize: pageSize,
           maxPages: maxPages,
-          onFirstPageStopped: () => anyFirstPageStopped = true,
+          onPagesRemaining: () => anyPagesRemaining = true,
         );
         groupSucceeded[groupIndex] = true;
       } catch (e) {
+        // A group-level exception means convergence is unknown even when the
+        // relay cursor on the failed page was empty. Keep dropped-push recovery
+        // fail-closed and retryable.
+        anyPagesRemaining = true;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
@@ -204,7 +210,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   return GroupOfflineInboxDrainResult(
     groupCount: groups.length,
     errorCount: errorCount,
-    hasMorePages: anyFirstPageStopped,
+    hasMorePages: anyPagesRemaining,
   );
 }
 
@@ -378,10 +384,10 @@ Future<void> _drainGroupInbox({
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
-  // Phase 2: invoked once if this group stops at the first page
-  // (drainAllPages: false) with more pages still on the relay, so the caller
-  // can decide whether a background continuation is worth scheduling.
-  void Function()? onFirstPageStopped,
+  // Invoked if this pass returns while a non-empty relay cursor remains. The
+  // caller uses it both to schedule first-page continuation and to withhold a
+  // dropped-wake acknowledgement after a bounded full drain.
+  void Function()? onPagesRemaining,
 }) async {
   final drainStopwatch = Stopwatch()..start();
   final retentionCutoff = groupBacklogRetentionCutoff(
@@ -557,7 +563,7 @@ Future<void> _drainGroupInbox({
           'placeholderSaved': placeholderSaved,
         },
       );
-      return true;
+      return placeholderSaved;
     }
 
     Future<bool> shouldSkipPreJoinReplay(Map<String, dynamic> msg) async {
@@ -649,61 +655,12 @@ Future<void> _drainGroupInbox({
         );
       }
 
-      // Route by type: group_reaction payloads are terminal even when this
-      // drain was not wired with reaction persistence.
-      if (payload['type'] == 'group_reaction') {
-        final reactionJson = payload['reaction'] as String? ?? '';
-        if (reactionRepo != null && reactionJson.isNotEmpty) {
-          if (!await hasFreshRouteAuthority(groupId)) return;
-          // Plan 322: this call is made OUTSIDE the decode try/catch above (the
-          // catch at the decode site wraps only _decodeActiveGroupInboxMessage),
-          // so a throw here would propagate to drainNextGroup's handler, raise
-          // errorCount, and cost the whole group its recovery ack AND its cursor
-          // advance. Buffering now writes durably on five more lanes (the resume
-          // continuation and the notif-tap drain run outside the recovery gate),
-          // and dbUpsertGroupPendingReaction is a non-transactional
-          // read-then-insert that can collide on UNIQUE under concurrent drains.
-          // One reaction must never cost the page.
-          try {
-            await handleIncomingGroupReaction(
-              groupRepo: groupRepo,
-              reactionRepo: reactionRepo,
-              msgRepo: msgRepo,
-              // Buffer a relay-delivered reaction whose target message has not
-              // drained yet, so it replays when the message lands (INV-R4).
-              pendingReactionRepo: pendingReactionRepo,
-              groupId: groupId,
-              senderId:
-                  payload['senderId'] as String? ??
-                  (msg['from'] as String? ?? ''),
-              senderDeviceId: payload['senderDeviceId'] as String?,
-              transportPeerId:
-                  payload['transportPeerId'] as String? ??
-                  msg['from'] as String?,
-              senderPublicKey: payload['senderPublicKey'] as String?,
-              reactionJson: reactionJson,
-            );
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_DRAIN_OFFLINE_INBOX_REACTION_ERROR',
-              details: {'groupId': _safeId(groupId), 'error': e.toString()},
-            );
-          }
-        }
-        return;
-      }
-
-      final mediaRaw = payload['media'] as List<dynamic>?;
-      final media = mediaRaw?.cast<Map<String, dynamic>>();
       final resolvedGroupId = payload['groupId'] as String? ?? groupId;
       final transportSenderId = msg['from'] as String? ?? '';
       final senderId =
           payload['senderId'] as String? ?? (msg['from'] as String? ?? '');
       final payloadTransportPeerId = payload['transportPeerId'] as String?;
       final senderDeviceId = payload['senderDeviceId'] as String?;
-      final senderUsername = payload['senderUsername'] as String? ?? '';
-      final keyEpoch = payload['keyEpoch'] as int? ?? 0;
       if (payloadTransportPeerId != null &&
           payloadTransportPeerId.isNotEmpty &&
           transportSenderId.isNotEmpty &&
@@ -723,6 +680,70 @@ Future<void> _drainGroupInbox({
           payloadTransportPeerId?.isNotEmpty == true
           ? payloadTransportPeerId!
           : transportSenderId;
+
+      // Route by type. A reaction is terminal only after it has been applied,
+      // durably buffered, or deliberately rejected by the reaction use case.
+      // Unexpected persistence failures must escape this page so its cursor
+      // and any dropped-push recovery generation remain retryable.
+      if (payload['type'] == 'group_reaction') {
+        final reactionJson = payload['reaction'] as String? ?? '';
+        if (reactionRepo != null && reactionJson.isNotEmpty) {
+          if (!await hasFreshRouteAuthority(resolvedGroupId)) return;
+          try {
+            final listenerCanOwnReplay =
+                groupMessageListener?.canHandleReplayReactions == true &&
+                (pendingReactionRepo == null ||
+                    identical(
+                      groupMessageListener!.pendingReactionRepository,
+                      pendingReactionRepo,
+                    ));
+            if (listenerCanOwnReplay) {
+              await groupMessageListener!.handleReplayReaction({
+                'groupId': resolvedGroupId,
+                'senderId': senderId,
+                if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+                  'senderDeviceId': senderDeviceId,
+                if (effectiveTransportPeerId.isNotEmpty)
+                  'transportPeerId': effectiveTransportPeerId,
+                if (payload['senderPublicKey'] is String)
+                  'senderPublicKey': payload['senderPublicKey'],
+                'reaction': reactionJson,
+              }, rethrowOnError: true);
+            } else {
+              await handleIncomingGroupReaction(
+                groupRepo: groupRepo,
+                reactionRepo: reactionRepo,
+                msgRepo: msgRepo,
+                // Buffer a relay-delivered reaction whose target message has
+                // not drained yet, so it replays when the message lands.
+                pendingReactionRepo: pendingReactionRepo,
+                groupId: resolvedGroupId,
+                senderId: senderId,
+                senderDeviceId: senderDeviceId,
+                transportPeerId: effectiveTransportPeerId,
+                senderPublicKey: payload['senderPublicKey'] as String?,
+                reactionJson: reactionJson,
+              );
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_DRAIN_OFFLINE_INBOX_REACTION_ERROR',
+              details: {
+                'groupId': _safeId(resolvedGroupId),
+                'error': e.toString(),
+              },
+            );
+            rethrow;
+          }
+        }
+        return;
+      }
+
+      final mediaRaw = payload['media'] as List<dynamic>?;
+      final media = mediaRaw?.cast<Map<String, dynamic>>();
+      final senderUsername = payload['senderUsername'] as String? ?? '';
+      final keyEpoch = payload['keyEpoch'] as int? ?? 0;
 
       if (groupMessageListener != null && text.startsWith('{"__sys":')) {
         if (!await hasFreshRouteAuthority(resolvedGroupId)) return;
@@ -954,7 +975,15 @@ Future<void> _drainGroupInbox({
         }
         payload = guardedPayload.value!;
       } catch (e) {
-        await handleDecodeError(e, msg, allowUnknownSenderDeferral: true);
+        final represented = await handleDecodeError(
+          e,
+          msg,
+          allowUnknownSenderDeferral: true,
+        );
+        if (!represented) {
+          stopGroupDrain = true;
+          break;
+        }
         continue;
       }
       await processDecodedPayload(payload, msg);
@@ -981,7 +1010,15 @@ Future<void> _drainGroupInbox({
           }
           payload = guardedPayload.value!;
         } catch (e) {
-          await handleDecodeError(e, msg, allowUnknownSenderDeferral: false);
+          final represented = await handleDecodeError(
+            e,
+            msg,
+            allowUnknownSenderDeferral: false,
+          );
+          if (!represented) {
+            stopGroupDrain = true;
+            break;
+          }
           continue;
         }
         await processDecodedPayload(payload, msg);
@@ -989,7 +1026,10 @@ Future<void> _drainGroupInbox({
       }
     }
 
-    if (stopGroupDrain) return;
+    if (stopGroupDrain) {
+      onPagesRemaining?.call();
+      return;
+    }
 
     // ── Phase 2a ── persist detected history-gap stubs BEFORE the cursor
     // advances. The relay-side gap detector only emits a gap on the first
@@ -1092,7 +1132,7 @@ Future<void> _drainGroupInbox({
           'drainAllPages': false,
         },
       );
-      onFirstPageStopped?.call();
+      onPagesRemaining?.call();
       return;
     }
 
@@ -1134,6 +1174,7 @@ Future<void> _drainGroupInbox({
           'drainAllPages': drainAllPages,
         },
       );
+      onPagesRemaining?.call();
       return;
     }
 
@@ -1169,6 +1210,7 @@ Future<void> _drainGroupInbox({
           'maxPages': maxPages,
         },
       );
+      onPagesRemaining?.call();
       return;
     }
   } while (cursor.isNotEmpty);

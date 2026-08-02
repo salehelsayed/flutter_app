@@ -75,8 +75,9 @@ class _P2PInboxCoordinator {
   final int _maxConcurrentInboxDecrypts;
   final Duration _foregroundInboxTimeout;
 
-  Completer<void>? _drainInProgress;
+  Completer<DirectInboxDrainOutcome>? _drainInProgress;
   bool _drainInProgressWaitsAllPages = false;
+  Future<DirectInboxDrainOutcome>? _backgroundDrainInProgress;
   bool _pendingStartupDrain = false;
   bool _pendingStartupDrainWaitForAllPages = false;
 
@@ -976,7 +977,7 @@ class _P2PInboxCoordinator {
       return (
         replayed: 0,
         staged: 0,
-        hasMore: false,
+        hasMore: response['hasMore'] == true,
         retrieveSucceeded: true,
         failureReason: null,
         retrieveMs: retrieveSw.elapsedMilliseconds,
@@ -1007,6 +1008,18 @@ class _P2PInboxCoordinator {
       );
     }
     if (entries.isEmpty) {
+      if (skippedMalformed > 0) {
+        return (
+          replayed: 0,
+          staged: 0,
+          hasMore: true,
+          retrieveSucceeded: false,
+          failureReason: 'malformed_inbox_rows:$skippedMalformed',
+          retrieveMs: retrieveSw.elapsedMilliseconds,
+          ackMs: 0,
+          replayMs: 0,
+        );
+      }
       return (
         replayed: 0,
         staged: 0,
@@ -1032,9 +1045,9 @@ class _P2PInboxCoordinator {
       return (
         replayed: 0,
         staged: ackableEntryIds.length,
-        hasMore: false,
-        retrieveSucceeded: true,
-        failureReason: null,
+        hasMore: true,
+        retrieveSucceeded: false,
+        failureReason: 'account_network_side_effects_blocked',
         retrieveMs: retrieveSw.elapsedMilliseconds,
         ackMs: 0,
         replayMs: 0,
@@ -1047,10 +1060,24 @@ class _P2PInboxCoordinator {
     replaySw.stop();
 
     final ackSw = Stopwatch();
+    String? ackFailureReason;
     if (ackableEntryIds.isNotEmpty) {
       ackSw.start();
       try {
         final ackResponse = await _port.ackInbox(entryIds: ackableEntryIds);
+        if (ackResponse['ok'] != true) {
+          ackFailureReason =
+              ackResponse['errorMessage']?.toString() ??
+              ackResponse['errorCode']?.toString() ??
+              'inbox_ack_failed';
+        } else {
+          final acked = (ackResponse['acked'] as num?)?.toInt();
+          if (acked != ackableEntryIds.length) {
+            ackFailureReason =
+                'inbox_ack_incomplete:${acked ?? 'missing'}/'
+                '${ackableEntryIds.length}';
+          }
+        }
         emitFlowEvent(
           layer: 'FL',
           event: ackResponse['ok'] == true
@@ -1064,6 +1091,7 @@ class _P2PInboxCoordinator {
           },
         );
       } catch (e) {
+        ackFailureReason = e.toString();
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_EXCEPTION',
@@ -1073,20 +1101,48 @@ class _P2PInboxCoordinator {
       ackSw.stop();
     }
 
+    final pageFailureReason =
+        ackFailureReason ??
+        (skippedMalformed > 0
+            ? 'malformed_inbox_rows:$skippedMalformed'
+            : null);
+
     return (
       replayed: replayed,
       staged: ackableEntryIds.length,
-      hasMore: response['hasMore'] == true,
-      retrieveSucceeded: true,
-      failureReason: null,
+      hasMore: pageFailureReason != null || response['hasMore'] == true,
+      retrieveSucceeded: pageFailureReason == null,
+      failureReason: pageFailureReason,
       retrieveMs: retrieveSw.elapsedMilliseconds,
       ackMs: ackSw.elapsedMilliseconds,
       replayMs: replaySw.elapsedMilliseconds,
     );
   }
 
-  Future<void> _drainOfflineInbox({bool waitForAllPages = false}) async {
+  Future<DirectInboxDrainOutcome> _drainOfflineInbox({
+    bool waitForAllPages = false,
+  }) async {
     while (true) {
+      final backgroundDrain = _backgroundDrainInProgress;
+      if (backgroundDrain != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_DRAIN_COALESCED',
+          details: {
+            'waitForAllPages': waitForAllPages,
+            'owner': 'background_continuation',
+          },
+        );
+        if (!waitForAllPages) {
+          return const DirectInboxDrainOutcome(
+            isSuccessful: false,
+            hasMore: true,
+            failureReason: 'continuation_in_progress',
+          );
+        }
+        return _verifyFullDrainOutcome(await backgroundDrain);
+      }
+
       final inFlight = _drainInProgress;
       if (inFlight == null) break;
       final inFlightCoversUs =
@@ -1096,23 +1152,77 @@ class _P2PInboxCoordinator {
         event: 'P2P_SERVICE_INBOX_DRAIN_COALESCED',
         details: {'waitForAllPages': waitForAllPages},
       );
-      await inFlight.future;
-      if (inFlightCoversUs) return;
+      final outcome = await inFlight.future;
+      if (inFlightCoversUs) return outcome;
+      if (outcome.isSuccessful && !outcome.hasMore) {
+        return _verifyFullDrainOutcome(outcome);
+      }
     }
 
-    final completer = Completer<void>();
+    final completer = Completer<DirectInboxDrainOutcome>();
     _drainInProgress = completer;
     _drainInProgressWaitsAllPages = waitForAllPages;
+    var outcome = const DirectInboxDrainOutcome(
+      isSuccessful: false,
+      hasMore: true,
+      failureReason: 'drain_exception',
+    );
     try {
-      await _drainOfflineInboxDurably(waitForAllPages: waitForAllPages);
+      outcome = await _drainOfflineInboxDurably(
+        waitForAllPages: waitForAllPages,
+      );
+      if (waitForAllPages) {
+        outcome = await _verifyFullDrainOutcome(outcome);
+      }
+    } catch (e) {
+      outcome = DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: e.toString(),
+      );
     } finally {
       _drainInProgress = null;
       _drainInProgressWaitsAllPages = false;
-      completer.complete();
+      completer.complete(outcome);
+    }
+    return outcome;
+  }
+
+  Future<DirectInboxDrainOutcome> _verifyFullDrainOutcome(
+    DirectInboxDrainOutcome outcome,
+  ) async {
+    if (!outcome.isSuccessful || outcome.hasMore) return outcome;
+    try {
+      final recoverable = await _inboxStagingRepository.getRecoverableEntries(
+        limit: 1,
+      );
+      if (recoverable.isEmpty) return outcome;
+      return const DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'staged_replay_pending',
+      );
+    } catch (error) {
+      return DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'staged_replay_check_failed:${error.runtimeType}',
+      );
     }
   }
 
-  Future<void> _continueDrainingOfflineInboxDurably({
+  void _trackBackgroundDrain(Future<DirectInboxDrainOutcome> drain) {
+    _backgroundDrainInProgress = drain;
+    unawaited(
+      drain.whenComplete(() {
+        if (identical(_backgroundDrainInProgress, drain)) {
+          _backgroundDrainInProgress = null;
+        }
+      }),
+    );
+  }
+
+  Future<DirectInboxDrainOutcome> _continueDrainingOfflineInboxDurably({
     required String toPeerId,
     required int totalReplayed,
     required int totalStaged,
@@ -1130,17 +1240,22 @@ class _P2PInboxCoordinator {
             event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_GATED',
             details: {'page': page + 1, 'staged': staged},
           );
-          break;
+          return const DirectInboxDrainOutcome(
+            isSuccessful: false,
+            hasMore: true,
+            failureReason: 'account_network_side_effects_blocked',
+          );
         }
         final result = await _retrievePendingInboxPage(toPeerId: toPeerId);
         replayed += result.replayed;
         staged += result.staged;
 
         if (!result.retrieveSucceeded) {
-          break;
-        }
-        if (result.staged == 0) {
-          break;
+          return DirectInboxDrainOutcome(
+            isSuccessful: false,
+            hasMore: true,
+            failureReason: result.failureReason ?? 'retrieve_pending_failed',
+          );
         }
 
         emitFlowEvent(
@@ -1149,10 +1264,37 @@ class _P2PInboxCoordinator {
           details: {'page': page + 1, 'staged': staged, 'replayed': replayed},
         );
         if (!result.hasMore) {
-          break;
+          return const DirectInboxDrainOutcome(
+            isSuccessful: true,
+            hasMore: false,
+          );
+        }
+        if (result.staged == 0) {
+          return const DirectInboxDrainOutcome(
+            isSuccessful: false,
+            hasMore: true,
+            failureReason: 'page_no_progress',
+          );
         }
       }
 
+      return const DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'page_cap_reached',
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+      return DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: e.toString(),
+      );
+    } finally {
       if (staged > 0 || replayed > 0) {
         emitFlowEvent(
           layer: 'FL',
@@ -1160,16 +1302,12 @@ class _P2PInboxCoordinator {
           details: {'staged': staged, 'replayed': replayed},
         );
       }
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_EXCEPTION',
-        details: {'error': e.toString()},
-      );
     }
   }
 
-  Future<void> _drainOfflineInboxDurably({bool waitForAllPages = false}) async {
+  Future<DirectInboxDrainOutcome> _drainOfflineInboxDurably({
+    bool waitForAllPages = false,
+  }) async {
     try {
       final toPeerId = _port.readNodeState().peerId ?? '';
       final replayExistingSw = Stopwatch()..start();
@@ -1182,18 +1320,41 @@ class _P2PInboxCoordinator {
 
       final totalReplayed = replayedExisting + firstPage.replayed;
       final totalStaged = firstPage.staged;
+      DirectInboxDrainOutcome outcome;
 
-      if (firstPage.hasMore && totalStaged > 0) {
+      if (!firstPage.retrieveSucceeded) {
+        outcome = DirectInboxDrainOutcome(
+          isSuccessful: false,
+          hasMore: true,
+          failureReason: firstPage.failureReason ?? 'retrieve_pending_failed',
+        );
+      } else if (firstPage.hasMore && totalStaged > 0) {
         final continuation = _continueDrainingOfflineInboxDurably(
           toPeerId: toPeerId,
           totalReplayed: totalReplayed,
           totalStaged: totalStaged,
         );
         if (waitForAllPages) {
-          await continuation;
+          outcome = await continuation;
         } else {
-          unawaited(continuation);
+          _trackBackgroundDrain(continuation);
+          outcome = const DirectInboxDrainOutcome(
+            isSuccessful: false,
+            hasMore: true,
+            failureReason: 'continuation_scheduled',
+          );
         }
+      } else if (firstPage.hasMore) {
+        outcome = const DirectInboxDrainOutcome(
+          isSuccessful: false,
+          hasMore: true,
+          failureReason: 'page_no_progress',
+        );
+      } else {
+        outcome = const DirectInboxDrainOutcome(
+          isSuccessful: true,
+          hasMore: false,
+        );
       }
 
       if (replayedExisting > 0) {
@@ -1219,7 +1380,8 @@ class _P2PInboxCoordinator {
           },
         );
       }
-      if (firstPage.retrieveSucceeded) {
+      if (firstPage.retrieveSucceeded &&
+          (!waitForAllPages || outcome.isSuccessful)) {
         _port.recordSuccessfulInboxProof(
           source: 'drain_offline_inbox',
           trigger: 'system_action',
@@ -1228,9 +1390,10 @@ class _P2PInboxCoordinator {
         _port.recordInboxProofFailure(
           source: 'drain_offline_inbox',
           trigger: 'system_action',
-          failureReason: firstPage.failureReason,
+          failureReason: outcome.failureReason,
         );
       }
+      return outcome;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1240,6 +1403,11 @@ class _P2PInboxCoordinator {
       _port.recordInboxProofFailure(
         source: 'drain_offline_inbox',
         trigger: 'system_action',
+        failureReason: e.toString(),
+      );
+      return DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
         failureReason: e.toString(),
       );
     }
@@ -1711,15 +1879,23 @@ class _P2PInboxCoordinator {
     await _drainOfflineInbox();
   }
 
-  Future<void> drainOfflineInboxFully() async {
+  Future<DirectInboxDrainOutcome> drainOfflineInboxFully() async {
     if (!_port.readNodeState().isStarted) {
       _scheduleStartupDrain(waitForAllPages: true);
-      return;
+      return const DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'node_not_started',
+      );
     }
     if (!await _port.allowsAccountNetworkSideEffects(
       'p2p_drain_offline_inbox_full',
     )) {
-      return;
+      return const DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'account_network_side_effects_blocked',
+      );
     }
 
     emitFlowEvent(
@@ -1727,7 +1903,7 @@ class _P2PInboxCoordinator {
       event: 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_FULL_BEGIN',
       details: {},
     );
-    await _drainOfflineInbox(waitForAllPages: true);
+    return _drainOfflineInbox(waitForAllPages: true);
   }
 
   void _scheduleStartupDrain({required bool waitForAllPages}) {
@@ -1757,7 +1933,10 @@ class _P2PInboxCoordinator {
       event: 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
       details: {'waitForAllPages': waitForAllPages},
     );
-    return waitForAllPages ? drainOfflineInboxFully() : drainOfflineInbox();
+    if (waitForAllPages) {
+      return drainOfflineInboxFully().then<void>((_) {});
+    }
+    return drainOfflineInbox();
   }
 
   Future<int> countNeedsAttentionInboxEntries() async {

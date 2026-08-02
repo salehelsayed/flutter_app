@@ -176,6 +176,7 @@ import 'package:flutter_app/features/groups/data/repositories/group_exit_diagnos
 import 'package:flutter_app/features/groups/data/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
@@ -219,6 +220,8 @@ import 'package:flutter_app/core/notifications/durable_notification_tone_lease.d
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
+import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
@@ -4971,6 +4974,52 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             p2pService: p2pService,
           );
 
+      final droppedPushRecoveryCoordinator = DroppedPushRecoveryCoordinator(
+        gateway: DroppedPushRecoveryBridge(),
+        ensureRuntimeReady: () async {
+          // All production entry points route through ApplicationRoot's
+          // AccountMigrationRuntimeStartupLatch before reaching this guard.
+          if (!liveServicesStarted) {
+            throw StateError('runtime services are not ready');
+          }
+        },
+        ensureTransportHealthy: p2pService.performImmediateHealthCheck,
+        drainDirectInboxFully: p2pService.drainOfflineInboxFully,
+        drainGroupInboxFully: () async {
+          final result = await runWithGroupRecoveryGate(() {
+            return runAccountRuntimeNetworkAction<GroupOfflineInboxDrainResult>(
+              operation: 'dropped_push_group_inbox_recovery',
+              blockedValue: const GroupOfflineInboxDrainResult(
+                groupCount: 0,
+                errorCount: 1,
+                hasMorePages: true,
+              ),
+              action: () async {
+                final identity = await repository.loadIdentity();
+                return drainGroupOfflineInbox(
+                  bridge: bridge,
+                  groupRepo: groupRepository,
+                  msgRepo: groupMessageRepository,
+                  groupMessageListener: groupMessageListener,
+                  mediaAttachmentRepo: mediaAttachmentRepository,
+                  reactionRepo: reactionRepository,
+                  pendingReactionRepo: groupPendingReactionRepository,
+                  pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+                  historyGapRepairRepo: groupHistoryGapRepairRepository,
+                  requestGroupKeyRepair: requestGroupKeyRepairViaSender,
+                  selfPeerId: identity?.peerId,
+                  drainAllPages: true,
+                );
+              },
+            );
+          });
+          return DroppedPushGroupDrainOutcome(
+            isSuccessful: result.isSuccessful,
+            hasMorePages: result.hasMorePages,
+          );
+        },
+      );
+
       return MyApp(
         repository: repository,
         contactRepository: contactRepository,
@@ -5027,6 +5076,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         reactionRepository: reactionRepository,
         isDesktop: isDesktop,
         notificationService: notificationService,
+        droppedPushRecoveryCoordinator: droppedPushRecoveryCoordinator,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         conversationTracker: conversationTracker,

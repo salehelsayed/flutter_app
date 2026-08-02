@@ -35,6 +35,7 @@ const _constructorParameters = <String>[
   'required Bridge bridge',
   'LocalP2PService? localP2PService',
   'PushTokenStore? pushTokenStore',
+  'Future<String?> Function()? liveFcmTokenReader',
   'ReceivedWakeTokenStore? receivedWakeTokenStore',
   'AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver',
   'AccountMigrationNetworkGate accountMigrationNetworkGate = '
@@ -582,7 +583,7 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 
 // Token/AST fingerprint of the complete public/static facade declaration. It
 // excludes bodies, so moving decisions behind coordinators does not change it.
-const _expectedFacadeApiFingerprint = 'ce4a5147';
+const _expectedFacadeApiFingerprint = '09b4df2b';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -826,7 +827,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(19));
+      expect(constructor.parameters.parameters, hasLength(20));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,

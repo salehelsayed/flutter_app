@@ -349,6 +349,8 @@ class GroupMessageListener {
   GroupPendingReactionRepository? get pendingReactionRepository =>
       _pendingReactionRepo;
 
+  bool get canHandleReplayReactions => _reactionRepo != null;
+
   /// Replays one already-decoded group envelope through the live listener path.
   ///
   /// Offline inbox recovery uses this so replayed system payloads can trigger
@@ -373,6 +375,28 @@ class GroupMessageListener {
       allowMembershipBuffer: allowMembershipBuffer,
       deliverySource: 'replay',
       membershipPhaseHeld: membershipPhaseHeld,
+    );
+  }
+
+  /// Replays one verified offline reaction through the same persistence,
+  /// stream, notification-policy, and durable notification-claim path as live
+  /// reaction ingress.
+  Future<void> handleReplayReaction(
+    Map<String, dynamic> data, {
+    bool rethrowOnError = false,
+  }) async {
+    if (!await _allowsInboundAccountSideEffects(
+      operation: 'group_replay_reaction',
+      data: data,
+    )) {
+      if (rethrowOnError) {
+        throw StateError('group replay reaction side effects are blocked');
+      }
+      return;
+    }
+    return _reactionIngressProcessor._handleReaction(
+      data,
+      rethrowOnError: rethrowOnError,
     );
   }
 

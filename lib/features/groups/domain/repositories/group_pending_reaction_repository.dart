@@ -16,8 +16,9 @@ abstract class GroupPendingReactionRepository {
   /// All buffered reactions, oldest-first (used by the startup flush).
   Future<List<GroupPendingReaction>> getPendingReactions({int limit = 200});
 
-  /// Deletes a buffered reaction by id, returning the number of rows removed so
-  /// a flusher can atomically claim it (exactly-once / INV-R5).
+  /// Deletes a buffered reaction by id after terminal handling succeeds.
+  /// Returns the number of rows removed; in-process flush ownership prevents
+  /// overlap while apply-before-delete preserves crash retryability (INV-R5).
   Future<int> deletePendingReaction(String id);
 
   /// Evicts oldest rows beyond [maxRows] for a group (per-group cap).

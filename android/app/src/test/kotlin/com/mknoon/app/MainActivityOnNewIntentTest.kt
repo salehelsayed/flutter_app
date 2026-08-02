@@ -59,4 +59,42 @@ class MainActivityOnNewIntentTest {
             current.action,
         )
     }
+
+    @Test
+    fun onNewIntent_recoveryTapAcceleratesFlutterWithoutConsumingMarker() {
+        val activity = Robolectric
+            .buildActivity(MainActivity::class.java)
+            .get()
+        activity.getSharedPreferences(
+            DroppedPushRecoveryStore.PREFERENCES_NAME,
+            android.content.Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+        val store = DroppedPushRecoveryStore(activity)
+        assertEquals(1L, store.recordDeletion())
+        val signalled = mutableListOf<Long>()
+        val bridge = DroppedPushRecoveryBridge(
+            activity,
+            messenger = null,
+            recoverySignal = { generation -> signalled.add(generation) },
+        )
+        MainActivity::class.java
+            .getDeclaredField("droppedPushRecoveryBridge")
+            .apply { isAccessible = true }
+            .set(activity, bridge)
+        val recoveryIntent = Intent(
+            MknoonFirebaseMessagingService.RECOVERY_INTENT_ACTION,
+        ).putExtra(
+            MknoonFirebaseMessagingService.RECOVERY_GENERATION_EXTRA,
+            1L,
+        )
+
+        MainActivity::class.java
+            .getDeclaredMethod("onNewIntent", Intent::class.java)
+            .apply { isAccessible = true }
+            .invoke(activity, recoveryIntent)
+
+        assertEquals(listOf(1L), signalled)
+        assertEquals(1L, store.pendingGeneration())
+        assertEquals(recoveryIntent, activity.intent)
+    }
 }

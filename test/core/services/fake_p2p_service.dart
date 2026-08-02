@@ -28,6 +28,7 @@ class FakeP2PService
   bool registerPushTokenResult;
   bool throwOnHealthCheck;
   bool throwOnDrainInbox;
+  DirectInboxDrainOutcome fullInboxDrainOutcome;
   String? recoveryMethod;
   Future<void> Function()? onDrainOfflineInbox;
 
@@ -101,6 +102,10 @@ class FakeP2PService
     this.registerPushTokenResult = true,
     this.throwOnHealthCheck = false,
     this.throwOnDrainInbox = false,
+    this.fullInboxDrainOutcome = const DirectInboxDrainOutcome(
+      isSuccessful: true,
+      hasMore: false,
+    ),
     this.recoveryMethod,
     this.onDrainOfflineInbox,
   }) : _currentState = initialState ?? NodeState.stopped,
@@ -164,7 +169,9 @@ class FakeP2PService
 
   @override
   Future<bool> sendMessage(String peerId, String message) async {
-    if (sendMessageDelay > Duration.zero) await Future.delayed(sendMessageDelay);
+    if (sendMessageDelay > Duration.zero) {
+      await Future.delayed(sendMessageDelay);
+    }
     sendMessageCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
@@ -264,9 +271,10 @@ class FakeP2PService
   }
 
   @override
-  Future<void> drainOfflineInboxFully() async {
+  Future<DirectInboxDrainOutcome> drainOfflineInboxFully() async {
     drainOfflineInboxFullyCallCount++;
     await drainOfflineInbox();
+    return fullInboxDrainOutcome;
   }
 
   @override

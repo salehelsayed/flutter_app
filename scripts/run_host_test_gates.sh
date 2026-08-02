@@ -208,6 +208,7 @@ readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedE
 # the auto-discovered Dart contract stays fast, while this leg performs the
 # profile/release manifest preparation only once per core-host-all invocation.
 readonly ANDROID_RENDERER_MANIFEST_CONTRACT="scripts/check_android_renderer_manifest_contract.sh"
+readonly ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT="scripts/check_dropped_push_recovery_manifest_contract.sh"
 
 usage() {
   cat <<'EOF'
@@ -413,6 +414,7 @@ case "$scope" in
       rg --files test/unit -g '*_test.dart'
       if [ "$dart_only" -ne 1 ]; then
         printf '%s\n' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+        printf '%s\n' "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
       fi
     } | sort -u >"$plan_file"
     ;;
@@ -511,6 +513,10 @@ is_android_renderer_manifest_contract() {
   [ "$1" = "$ANDROID_RENDERER_MANIFEST_CONTRACT" ]
 }
 
+is_android_dropped_push_manifest_contract() {
+  [ "$1" = "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT" ]
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -549,6 +555,10 @@ print_command_for_path() {
   fi
   if is_android_renderer_manifest_contract "$path"; then
     printf './%s' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    return
+  fi
+  if is_android_dropped_push_manifest_contract "$path"; then
+    printf './%s' "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -590,6 +600,10 @@ run_path() {
   fi
   if is_android_renderer_manifest_contract "$path"; then
     "./$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    return
+  fi
+  if is_android_dropped_push_manifest_contract "$path"; then
+    "./$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
     return
   fi
   flutter test "$path"

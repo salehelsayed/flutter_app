@@ -13,44 +13,36 @@ void main() {
   });
   tearDown(setGroupExitIntentAccessSinks);
 
-  test(
-    'application root keeps local opens exact while remote opens retain clear-all',
-    () {
-      final source = File('lib/app/application_root.dart').readAsStringSync();
-      final initialLocal = _between(
-        source,
-        'Future<void> _handleInitialLocalNotificationLaunch() async {',
-        'Future<void> _onNotificationTap(String payload) async {',
-      );
-      final warmLocal = _between(
-        source,
-        'Future<void> _onNotificationTap(String payload) async {',
-        'Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(',
-      );
-      final remote = _between(
-        source,
-        'Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {',
-        'Future<T> _withContactRequestPresentationSuppressed<T>({',
-      );
+  test('application root keeps local and remote opens surgical', () {
+    final source = File('lib/app/application_root.dart').readAsStringSync();
+    final initialLocal = _between(
+      source,
+      'Future<void> _handleInitialLocalNotificationLaunch() async {',
+      'Future<void> _onNotificationTap(String payload) async {',
+    );
+    final warmLocal = _between(
+      source,
+      'Future<void> _onNotificationTap(String payload) async {',
+      'Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(',
+    );
+    final remote = _between(
+      source,
+      'Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {',
+      'Future<T> _withContactRequestPresentationSuppressed<T>({',
+    );
 
-      expect(
-        initialLocal,
-        contains('routeAppRootInitialLocalNotificationOpen('),
-      );
-      expect(initialLocal, isNot(contains('clearDeliveredNotifications')));
-      expect(initialLocal, isNot(contains('cancelAll')));
-      expect(warmLocal, contains('routeAppRootLocalNotificationTap('));
-      expect(warmLocal, isNot(contains('clearDeliveredNotifications')));
-      expect(warmLocal, isNot(contains('cancelAll')));
+    expect(initialLocal, contains('routeAppRootInitialLocalNotificationOpen('));
+    expect(initialLocal, isNot(contains('clearDeliveredNotifications')));
+    expect(initialLocal, isNot(contains('cancelAll')));
+    expect(warmLocal, contains('routeAppRootLocalNotificationTap('));
+    expect(warmLocal, isNot(contains('clearDeliveredNotifications')));
+    expect(warmLocal, isNot(contains('cancelAll')));
 
-      expect(remote, contains('routeAppRootRemoteNotificationOpenWithResult('));
-      expect(remote, isNot(contains('onBeforeOpen:')));
-      expect(
-        remote,
-        contains('widget.notificationService.clearDeliveredNotifications'),
-      );
-    },
-  );
+    expect(remote, contains('routeAppRootRemoteNotificationOpenWithResult('));
+    expect(remote, isNot(contains('onBeforeOpen:')));
+    expect(remote, isNot(contains('clearDeliveredNotifications')));
+    expect(remote, isNot(contains('cancelAll')));
+  });
 
   test('cold warm and remote opens build one immutable pair after validation', () {
     final source = File('lib/app/application_root.dart').readAsStringSync();
@@ -442,13 +434,9 @@ void _expectEarlyRemoteContextWiring(String source) {
     'onBeforeRouteTarget: (target) async {',
     prevalidated,
   );
-  final clear = source.indexOf(
-    'await widget.notificationService.clearDeliveredNotifications();',
-    beforeTarget,
-  );
   final prepare = source.indexOf(
     'await _prepareNotificationRouteTarget(context.routeTarget);',
-    clear,
+    beforeTarget,
   );
   final onRoute = source.indexOf('onRouteTarget: (target) async {', prepare);
   final dispatch = source.indexOf(
@@ -463,8 +451,7 @@ void _expectEarlyRemoteContextWiring(String source) {
   expect(route, greaterThan(recentAnnouncementIo));
   expect(prevalidated, greaterThan(route));
   expect(beforeTarget, greaterThan(prevalidated));
-  expect(clear, greaterThan(beforeTarget));
-  expect(prepare, greaterThan(clear));
+  expect(prepare, greaterThan(beforeTarget));
   expect(onRoute, greaterThan(prepare));
   expect(dispatch, greaterThan(onRoute));
 }

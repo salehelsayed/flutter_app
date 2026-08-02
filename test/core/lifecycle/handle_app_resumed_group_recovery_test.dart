@@ -449,6 +449,30 @@ void main() {
     );
 
     test(
+      'dropped-wake ownership preserves rejoin but suppresses ordinary group drain',
+      () async {
+        await seedRecoveryGroup(
+          groupId: 'group-dropped-wake-owner',
+          latestEpoch: 4,
+          latestKey: 'latest-key-dropped-wake-owner',
+          createdAt: DateTime.utc(2026, 8, 2, 10),
+        );
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          skipGroupInboxDrain: true,
+        );
+
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+        expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
+      },
+    );
+
+    test(
       'BB-011 acknowledges recovery only after every persisted group rejoin succeeds',
       () async {
         final trace = <String>[];

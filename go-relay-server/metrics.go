@@ -196,6 +196,11 @@ var pushSentCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Push notifications attempted.",
 }, []string{"result"})
 
+var pushFallbackCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_push_fallback_total",
+	Help: "Push routing fallbacks constructed by reason.",
+}, []string{"reason"})
+
 var groupReactionWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "relay_group_reaction_wake_total",
 	Help: "Group reaction wake decisions by outcome.",

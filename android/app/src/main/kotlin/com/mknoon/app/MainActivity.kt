@@ -21,6 +21,7 @@ class MainActivity : FlutterActivity() {
     private var privateMediaProtectionHandler: PrivateMediaProtectionHandler? = null
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
+    private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
     // 180: native jmDNS resolver for the Android-discovers-iOS `.local` wall.
     private var mdnsResolver: MdnsResolver? = null
 
@@ -54,6 +55,10 @@ class MainActivity : FlutterActivity() {
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
         goBridge = GoBridge(flutterEngine, applicationContext)
+        droppedPushRecoveryBridge = DroppedPushRecoveryBridge(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
         // Move Account transfer keep-alive: Dart holds/releases a dataSync
         // foreground service so backgrounding mid-transfer cannot freeze the
         // segment upload or the local receiver (audit gap G7).
@@ -147,6 +152,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        droppedPushRecoveryBridge?.onWarmIntent(intent)
     }
 
     override fun onResume() {
@@ -162,6 +168,8 @@ class MainActivity : FlutterActivity() {
         )
         PictureInPictureEngineCleanupCoordinator.cleanUpFlutterEngine()
         pictureInPictureHandler = null
+        droppedPushRecoveryBridge?.dispose()
+        droppedPushRecoveryBridge = null
         privateMediaProtectionRegistry.detach(
             engineIdentity = flutterEngine,
             activity = this,

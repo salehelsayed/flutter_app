@@ -78,6 +78,53 @@ void main() {
   );
 
   test(
+    'group fixture waits for a newly completed recovery pass before create',
+    () async {
+      const completed = '[FLOW] {"event":"GROUP_DRAIN_OFFLINE_INBOX_TIMING"}';
+      final observations = <String>[
+        completed,
+        completed,
+        '$completed\n$completed',
+      ];
+      var reads = 0;
+
+      final ready = await fixture_driver
+          .waitForCreatorGroupRecoveryQuiescentWindow(
+            readCurrentProcessLog: () async => observations[reads++],
+            maximumPolls: 3,
+            pollInterval: Duration.zero,
+            settleDelay: Duration.zero,
+          );
+
+      expect(ready, isTrue);
+      expect(reads, 3);
+    },
+  );
+
+  test(
+    'group fixture recovery wait rejects stale and diagnostic-only text',
+    () async {
+      var reads = 0;
+
+      final ready = await fixture_driver
+          .waitForCreatorGroupRecoveryQuiescentWindow(
+            readCurrentProcessLog: () async {
+              reads += 1;
+              return reads == 1
+                  ? '[FLOW] {"event":"GROUP_DRAIN_OFFLINE_INBOX_TIMING"}'
+                  : 'diagnostic GROUP_DRAIN_OFFLINE_INBOX_TIMING';
+            },
+            maximumPolls: 2,
+            pollInterval: Duration.zero,
+            settleDelay: Duration.zero,
+          );
+
+      expect(ready, isFalse);
+      expect(reads, 3);
+    },
+  );
+
+  test(
     'invite wait discriminates an empty review from a pending invite',
     () async {
       final dumps = <String>[

@@ -48,25 +48,26 @@ void main() {
   });
 
   test(
-    'production wires requestGroupKeyRepairViaSender at all ~6 foreground sites',
+    'production wires requestGroupKeyRepairViaSender at all 7 foreground sites',
     () async {
       final source = await readSource(productionPath);
 
-      // 5 listener/use-case wiring sites + 1 MyApp(...) thread = 6 occurrences
+      // 6 listener/use-case wiring sites + 1 MyApp(...) thread = 7 occurrences
       // of the sender-capable token. The listed sites are:
       //   - GroupMessageListener
       //   - GroupKeyUpdateListener
       //   - GroupMembershipUpdateListener
       //   - drainGroupOfflineInbox (dispatcher-overflow recovery)
       //   - drainGroupOfflineInbox (pending-retrier drain)
+      //   - drainGroupOfflineInbox (dropped-push full recovery)
       //   - MyApp(...) DI thread
       final count = senderToken.allMatches(source).length;
       expect(
         count,
-        6,
+        7,
         reason:
-            'expected exactly 6 sender-capable "$senderToken" wiring sites in '
-            'the production bootstrap (5 listener/use-case sites + the MyApp '
+            'expected exactly 7 sender-capable "$senderToken" wiring sites in '
+            'the production bootstrap (6 listener/use-case sites + the MyApp '
             'DI thread). Got $count. A partial swap to the log-only '
             'emitGroupKeyRepairRequest, or an added/removed site, would change '
             'this count — update the lock ONLY for an intentional wiring change.',

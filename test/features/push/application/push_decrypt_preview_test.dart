@@ -1383,7 +1383,7 @@ void main() {
         );
 
         expect(resolved.title, 'Trusted Team');
-        expect(resolved.body, 'Nachricht');
+        expect(resolved.body, 'Trusted Admin: Nachricht');
         expect(
           resolved.payload,
           'group:group-team|message:msg-oversized-group',

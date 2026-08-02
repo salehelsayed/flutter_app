@@ -59,6 +59,10 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
   "test/core/inbox/inbox_staging_repository_impl_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
+  # 329: Android dropped-FCM generation bridge + canonical direct/group
+  # convergence coordinator are shared by both messaging families.
+  "test/core/notifications/dropped_push_recovery_bridge_test.dart"
+  "test/core/notifications/dropped_push_recovery_coordinator_test.dart"
   # 295 DTR-17: exact P2P facade/component ownership and callback boundaries.
   "test/core/services/p2p_service_impl_composition_contract_test.dart"
   # FDC-07: cold-start early mDNS discovery hoist + idempotent/move-gated seam.
@@ -374,6 +378,11 @@ readonly INTRO_TESTS=(
 
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  # 329: a deleted FCM batch recovers both canonical inbox families before the
+  # native generation is acknowledged; keep all shared seams in this lane too.
+  "test/core/notifications/dropped_push_recovery_bridge_test.dart"
+  "test/core/notifications/dropped_push_recovery_coordinator_test.dart"
+  "test/core/services/p2p_service_impl_test.dart"
   # 282: the duplicate Dart GroupMessagePayload is retired while the live Go
   # v3 envelope/parser/publish/receive boundary remains protected.
   "test/features/groups/domain/models/group_message_payload_removal_contract_test.dart"
