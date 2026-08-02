@@ -21,6 +21,14 @@ printf 'host debug keystore\n' >"${tmp_dir}/host-home/.android/debug.keystore"
 
 grep -Fxq 'FROM node:22-bullseye' "${DOCKERFILE}" ||
   fail 'Claude Code image must use Node 22 or newer'
+grep -Fxq 'FROM golang:1.25.0-bookworm AS go' "${DOCKERFILE}" ||
+  fail 'Claude Code image must include a Go 1.25 toolchain stage for relay/FCM tests'
+grep -Fxq 'COPY --from=go /usr/local/go /usr/local/go' "${DOCKERFILE}" ||
+  fail 'Claude Code image must copy the Go toolchain into the runtime image'
+grep -Fq 'GOMODCACHE=/claude-home/go/pkg/mod' "${DOCKERFILE}" ||
+  fail 'Claude Code image must persist the Go module cache in mounted Claude home'
+grep -Fq 'GOCACHE=/claude-home/.cache/go-build' "${DOCKERFILE}" ||
+  fail 'Claude Code image must persist the Go build cache in mounted Claude home'
 grep -Fxq 'RUN npm install -g @anthropic-ai/claude-code@latest' "${DOCKERFILE}" ||
   fail 'Claude Code image must resolve the latest package during an explicit update'
 
@@ -74,8 +82,8 @@ fi
 grep -Fxq $'ARG\t--version' "${docker_log}" || fail 'normal CLI arguments were not forwarded'
 grep -Fxq $'ARG\tDISABLE_AUTOUPDATER=1' "${docker_log}" ||
   fail 'normal launch did not disable the in-container auto-updater'
-grep -Fq $'ARG\tPATH=/claude-host-bin:' "${docker_log}" ||
-  fail 'normal launch did not put host shims first on PATH'
+grep -Fq $'ARG\tPATH=/claude-host-bin:/usr/local/go/bin:' "${docker_log}" ||
+  fail 'normal launch did not put host shims before the Go-enabled container PATH'
 for clipboard_shim in xclip wl-paste wl-copy xsel pbpaste pbcopy; do
   [ -x "${tmp_dir}/claude-home/host-bin/${clipboard_shim}" ] ||
     fail "missing executable clipboard shim: ${clipboard_shim}"

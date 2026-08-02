@@ -1,4 +1,13 @@
+FROM golang:1.25.0-bookworm AS go
+
 FROM node:22-bullseye
+
+COPY --from=go /usr/local/go /usr/local/go
+
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOPATH=/claude-home/go \
+    GOMODCACHE=/claude-home/go/pkg/mod \
+    GOCACHE=/claude-home/.cache/go-build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

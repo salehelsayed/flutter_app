@@ -1,6 +1,6 @@
 # 322 - Drain Reaction Custody (D4 resolution)
 
-Status: execution-ready
+Status: **IMPLEMENTED (host-green) 2026-08-02** — committed `6d52d2d3b`; groups lane 3342+/LANE_EXIT=0. D4's notify half closed WON'T-BUILD; the custody fix shipped at 4 of 5 drain sites (the 5th is plan 325).
 Type: Bug
 Spec: free-text intent — D4 deferred from plan 309 (`309-…:127,144`); no formal spec
 Classification: implementation-ready

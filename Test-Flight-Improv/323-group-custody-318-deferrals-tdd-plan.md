@@ -1,6 +1,6 @@
 # 323 - Group Custody: the three plan-318 deferrals
 
-Status: execution-ready
+Status: **PARTIALLY IMPLEMENTED 2026-08-02** — committed `6d52d2d3b`. Deferral A closed WON'T-BUILD (verdict only); deferral B shipped as B2 (subset containment + empty-set denial); deferral C classified and returned to design (see plan 326).
 Type: Bug
 Spec: free-text intent — the three deferrals recorded at `318-…:222`; no formal spec
 Classification: implementation-ready (deferrals B and C) + one source-proven WON'T-BUILD verdict (deferral A)

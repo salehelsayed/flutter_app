@@ -12,7 +12,7 @@ HOST_TMP_DIR="${REPO_ROOT}/.claude-host-tmp"
 HOST_BRIDGE_PID=""
 HOST_BRIDGE_PORT=""
 HOST_BRIDGE_TOKEN=""
-CONTAINER_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CONTAINER_PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 HOST_TOOL_SHIMS=(
   flutter
   dart
