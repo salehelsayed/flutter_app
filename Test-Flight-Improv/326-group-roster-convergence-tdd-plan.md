@@ -274,3 +274,100 @@ Proposal: on hash MATCH suppress the omission-prune; on MISMATCH stop dropping t
 **Safe, narrow fix:** suppress the omitted-member prune when the pre-transition hash MATCHED. In that case the rosters provably agreed, so any omission is the filter, never a removal. It is conservative — it only ever declines to delete — and it cannot take the stale-admin branch (see killer #2). It does NOT close the headline stale-admin prune, which stays open.
 
 **Net U1 status:** four candidates refuted (config:request, per-member guard, soft-delete, cursor freshness) plus two more here (membership sequence, hash divergence). One genuinely safe partial fix identified (hash-match prune suppression, closing the deliverability-filter flavour). The stale-admin flavour remains open and still has no sound detector.
+
+# Stage 1b — suppress the omitted-member prune when the pre-transition hash MATCHED
+
+Status: **DROPPED — premise REFUTED by /tdd-review 2026-08-02 (`wf_ea887005-b7e`). Do NOT implement.**
+Classification: not-ready · disposition replan
+Closure tier: host (Dart feature tier). No migration, no relay, no deploy.
+
+## Problem And Evidence (Stage 1b)
+
+- **Behavior to improve:** a group member with no key material — no `publicKey` and no deliverable device — that **both** devices hold is silently deleted from the receiver's roster by an ordinary metadata edit, role change or ban. Since plan 318 the local roster is the sole custody authority (`send_group_message_use_case.dart:96-125`), so this is silent custody loss on a **fully converged pair**.
+- **Confirmed root cause — an asymmetry between what is hashed and what is sent:**
+  - `buildGroupTransitionStateHash` hashes the **unfiltered** `groupRepo.getMembers()` list (`signed_group_transition_audit.dart:438-440`, serialized sorted at `:457-458`/`:479-481` via `member.toConfigJson()`).
+  - The embedded snapshot's member list goes through `normalizeGroupConfigMembers`, which **silently drops** every member failing `hasDeliverableGroupMemberIdentity` — `if (!hasDeliverableGroupMemberIdentity(candidate)) continue;` (`group_config_payload.dart:77-78`; predicate at `:153-161`: a member survives only with a deliverable device or a non-empty `publicKey`).
+  - ⇒ A keyless member is **inside both pre-transition hashes** (so the hash MATCHES and the audit passes) and **absent from the snapshot**, so the prune at `:3703-3708` (`removeMember` → `dbDeleteGroupMember`) deletes them.
+- **This is a THIRD, distinct flavour** of the 326 custody loss, isolated by the U1 refute pass (`wf_731b393b-545`). It is **not** the stale-admin flavour: no staleness is involved and it fires on a converged pair.
+- **The signal is already computed and free.** At `:384-388` `preTransitionStateHash` is `null` iff a relaxation applies (`relaxSnapshotBackedPreTransitionHash`, `relaxTerminalDissolvePreTransitionHash` for `group_dissolved`), else it is computed. At `:404-411` a failed audit `return`s. **Therefore, past `:411`, `preTransitionStateHash != null` means exactly "the hash was checked AND matched."** No new comparison, no new state, no new wire field.
+- **Plumbing is in scope already:** `signedTransitionAudit` is declared at `:293`, the same scope as all three dispatch sites (`:592` ban, `:642` role-update, `:682` metadata-update), so a sibling flag reaches them without threading.
+- **Why this is safe, structurally:** it only ever DECLINES to delete. And it cannot take the stale-admin branch: a stale admin computes `preTransitionStateHash` from `widget.groupRepo` (`group_info_wired.dart:1884-1886`) and builds the config from the SAME repo (`:1934-1938`), so a stale admin's omission necessarily coincides with a hash MISmatch — which is dropped at `:404-411` and never reaches the prune.
+- **Existing coverage:** none. `grep -rn pruneOmittedMembers test/` returns nothing.
+- **Refuted (do NOT re-introduce):** accepting mismatching events / treating a mismatch as licence to prune — refuted in the U1 section above; it would convert today's drop into unconditional data loss and is attacker-selectable because `preTransitionStateHash` is a caller-supplied string (`signed_group_transition_audit.dart:128-132`, `:151`).
+- **Affected files:** `group_message_listener_system_transition_processor.dart`; `group_message_listener_test.dart`.
+
+## Scope Contract And Guard (Stage 1b)
+
+In scope: pass `pruneOmittedMembers: !preTransitionStateHashVerified` at the three default-`true` sites (`:2389` ban, `:2642` role-update, `:2736` metadata-update), where `preTransitionStateHashVerified` is set once at the audit site.
+
+Must preserve:
+- The relaxed paths keep today's prune behaviour (the backstop) → TC-326-08 sentinel.
+- The dissolve prune at `:1949` (`snapshotHasNoActiveMembers`) untouched → TC-326-09 sentinel.
+- `:1528`/`:1690`'s explicit `false` untouched.
+
+Hard `Do not`:
+- Do not relax the hash check, and do not accept mismatching events (refuted).
+- Do not claim this closes the headline stale-admin prune — it does not, and it cannot.
+- Do not touch Stage 1's S1/S2 edits.
+
+## Test Contract (Stage 1b)
+| Case | Behavior | Named test/proof | Tier / fixture | HEAD state → GREEN | Mutation that re-reds | Gate / registration |
+|---|---|---|---|---|---|---|
+| TC-326-07 | A keyless member both devices hold survives a hash-verified metadata update | `group_message_listener_test.dart::326-1b hash-verified metadata update does not prune a member the deliverability filter dropped` | unit / fakes; member with empty `publicKey` and no devices, present locally AND in the author's pre-hash roster | causal RED (HEAD prunes them: the snapshot's normalized member list omits them) → member still present; metadata still applied | revert `pruneOmittedMembers: !preTransitionStateHashVerified` at `:2736` → TC-326-07 red | `flutter test test/features/groups/application/group_message_listener_test.dart`; AUTO (`GROUP_TESTS` `:566`) |
+| TC-326-08 | On a relaxed (hash-unverified) path the prune still fires | `group_message_listener_test.dart::326-1b an unverified-hash snapshot still prunes an omitted member` | unit / fakes; drive a relaxed path so `preTransitionStateHash` is null | GREEN sentinel (today's backstop) → omitted member still removed | hard-code `preTransitionStateHashVerified = true` → TC-326-08 red | same |
+| TC-326-09 | The dissolve prune still works | `group_message_listener_test.dart::(existing GM-032 sentinel `:7602`)` | unit / fakes; `members: []` | GREEN sentinel → roster cleared | force `pruneOmittedMembers: false` at `:1949` → GM-032 reds | same |
+| TC-326-10 | The retained member is still a send recipient (relationship) | `send_group_message_recipient_eligibility_test.dart::326-1b a member retained through a hash-verified snapshot stays a recipient` | unit / fakes; drive public `sendGroupMessage` | causal RED (pruned ⇒ absent from `recipientPeerIds`) → present | revert the Stage 1b edit → TC-326-10 red | `flutter test test/features/groups/application/send_group_message_recipient_eligibility_test.dart`; AUTO (`GROUP_TESTS` `:556`) |
+
+### Test Notes (Stage 1b)
+- TC-326-07's fixture invariant: assert on the **normalized** config that the keyless member is genuinely ABSENT from the snapshot (that is the precondition), and that they ARE in the local roster before the event. Otherwise the row can pass because nothing was omitted.
+- TC-326-07 must also assert the metadata fields applied, so a fix that skipped the whole snapshot cannot pass.
+- TC-326-08 is what stops this becoming a blanket prune removal; without it, hard-coding the flag would look correct.
+
+## Implementation Steps (Stage 1b)
+1. Add TC-326-07/08/10; confirm 07/10 red and 08 green.
+2. Declare `var preTransitionStateHashVerified = false;` beside `signedTransitionAudit` (`:293`); set it immediately after the audit passes (`:411`) as `preTransitionStateHashVerified = preTransitionStateHash != null;`.
+3. Pass `pruneOmittedMembers: !preTransitionStateHashVerified` at `:2389`, `:2642`, `:2736` (thread one bool into the three handlers).
+   Stop-if: the flag cannot reach a handler without widening more than one parameter per handler → stop and reconsider.
+4. Run focused GREEN → sentinels → graph-affected → the `groups` lane.
+
+## Acceptance Gates (Stage 1b)
+```bash
+flutter test test/features/groups/application/group_message_listener_test.dart \
+  --plain-name '326-1b hash-verified metadata update does not prune a member the deliverability filter dropped'
+flutter test test/features/groups/application/group_message_listener_test.dart
+flutter test test/features/groups/application/send_group_message_recipient_eligibility_test.dart
+python3 graphify-arch/tdd_context.py affected \
+  lib/features/groups/application/group_message_listener_system_transition_processor.dart --budget 600
+./scripts/run_test_gates.sh groups
+flutter analyze
+git diff --check
+```
+
+## Stage 1b — Reviewer Findings: DROPPED (2026-08-02, `wf_ea887005-b7e`)
+**Verdict: not-ready · disposition: replan. The premise is refuted; the recommendation is to DROP Stage 1b, not to fix it.**
+
+### BLOCKER 1 — "silent custody loss" is FALSE; the cited proof is the refutation
+Stage 1b justified itself with `send_group_message_use_case.dart:96-125` as evidence that a pruned member loses custody. That function **filters recipients with the very same predicate** that omits the member from the snapshot:
+```dart
+final recipientPeerIds = members.where((member) {
+      ... && hasDeliverableGroupMemberIdentity(member) && ...   // :118
+```
+So a keyless member is **already excluded from `recipientPeerIds`** whether or not they are in the roster, and `_durableGroupRecipientPeerIds` (`:128-151`) consumes only that filtered list — relay-inbox custody too. Pruning them costs no custody; retaining them grants none. **Verified by the lead in source.**
+⇒ TC-326-10 is RED before AND after the edit — unbuildable as specified. What retention actually buys is **roster/UI parity**, which is a real but far smaller benefit and does not support the plan's framing.
+A retained keyless member also cannot be re-armed later: `device_announce` resolves the ACCOUNT key (`:1223-1234`), which is exactly what is missing.
+
+### BLOCKER 2 — Stage 1b would CREATE a new geometry it does not mention
+`_handleMemberRoleUpdated` writes a member straight from `parsed['member']` with **no key-material or deliverability gate** (`:2596-2611` → `saveMember`). Today the same handler's snapshot prune at `:2642` deletes such a row. **Stage 1b would make that keyless write permanent** — a self-inflicted hazard, on the exact path it edits.
+
+### BLOCKER 3 — reachability is largely gated in current code
+The main producers all reject or normalize keyless members: `add_group_member_use_case.dart:233`; `_handleMemberAdded` `:1467`; `_handleMembersAdded` `:1640`; the snapshot path `:3662-3665`. Only two thin ungated paths remain — `_handleMemberRoleUpdated:2596` (see BLOCKER 2) and `handle_incoming_group_invite_use_case.dart:1006-1023`, which needs a **non-conformant inviter** since every in-app producer goes through `buildGroupConfigPayload`. Plus legacy rows written before `55857a26b` (2026-05-14), which converge one-shot on the first post-upgrade snapshot.
+⇒ This is hardening against a hostile or legacy config, **not** a converged-pair custody bug.
+
+### Corrections to record regardless (they outlive Stage 1b)
+- **The stale-admin argument was right for the WRONG reason.** `group_info_wired.dart:1884-1887` and `:1934-1938` are two SEPARATE `getMembers` reads, so "same repo" proves nothing on its own. What actually holds the line is fail-closed re-checking: `currentAuthorityCheck: currentEditAuthorityMatches` (`:2016`) evaluated under the membership lock after `beforePersist` (`update_group_metadata_use_case.dart:86`, `:88-103`) with a fingerprint over full `toConfigJson()` rows (`group_membership_effect_authority.dart:38-66`); the role path re-computes and compares the pre-hash before its first local write (`change_group_member_role_and_broadcast_use_case.dart:262-265`).
+- **`member_banned` has no author anywhere in `lib/`** — only tests synthesize it. Any edit at `:2389` is unexercisable by traffic this app can emit.
+- **Line drift (Stage 1's own edits caused it):** the prune body is `:3751-3757`, not `:3703-3708`; `_applyAuthoritativeGroupConfigSnapshot` starts `:3649`; the GM-032 sentinel is at `group_message_listener_test.dart:7753`, not `:7602`.
+- **Fixture correction:** a keyless member must be `publicKey: null`, NOT `''`. Empty string is equivalent for `hasDeliverableGroupMemberIdentity` (`group_config_payload.dart:154-160`) but is REJECTED as `invalid_public_key` by the key-material validator (`group_member.dart:843-847`), while `null` is accepted (`_optionalKeyMaterialRejectReason:794-800`).
+- **The signal claim CONFIRMED** and is reusable if this is ever revived: past `:404-411` a non-null `preTransitionStateHash` means checked-and-matched (`verifyGroupTransitionAudit` skips on null or empty, `signed_group_transition_audit.dart:253`; a sha256 hex is never empty). Note `preTransitionStateHash` is declared INSIDE the `if` at `:294`, so a flag would need declaring at `:293`; and when `_shouldRequireSignedTransitionAudit` (`:1205-1214`) is false the flag stays false — conservative.
+
+**Disposition:** Stage 1b is dropped. The deliverability-filter flavour is real as a *roster/UI* defect but not a custody defect, and fixing it properly means touching the send-side filter (`send_group_message_use_case.dart:118`) — a different and larger change with its own custody implications. The headline stale-admin prune remains the open U1 problem.
