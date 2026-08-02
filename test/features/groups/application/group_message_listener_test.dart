@@ -684,6 +684,9 @@ void main() {
     String? description = 'Fresh description',
     String? avatarBlobId,
     String? avatarMime,
+    // Plan 326: lets a test author a metadata snapshot whose roster differs
+    // from the receiver's (e.g. still listing a locally-removed member).
+    List<GroupMember>? members,
   }) {
     return buildGroupConfigPayload(
       testGroup.copyWith(
@@ -693,24 +696,25 @@ void main() {
         avatarMime: avatarMime,
         lastMetadataEventAt: updatedAt,
       ),
-      [
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-admin',
-          username: 'Admin',
-          role: MemberRole.admin,
-          publicKey: 'pk-admin',
-          joinedAt: initialGroupCreatedAt,
-        ),
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-sender',
-          username: 'Sender',
-          role: MemberRole.writer,
-          publicKey: 'pk-sender',
-          joinedAt: initialMemberJoinedAt,
-        ),
-      ],
+      members ??
+          [
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: MemberRole.admin,
+              publicKey: 'pk-admin',
+              joinedAt: initialGroupCreatedAt,
+            ),
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-sender',
+              username: 'Sender',
+              role: MemberRole.writer,
+              publicKey: 'pk-sender',
+              joinedAt: initialMemberJoinedAt,
+            ),
+          ],
     );
   }
 
@@ -4950,6 +4954,152 @@ void main() {
         expect(verifyPayload['data'], actorEvent['signedPayload']);
         expect(verifyPayload['signature'], actorEvent['signature']);
         expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
+      'TC-326-01/02 group_metadata_updated does not resurrect a member removed '
+      'after the snapshot, and syncs the local roster to the bridge',
+      () async {
+        // Plan 326 Stage 1. Two independent defects on the same two lines:
+        //  S1 — :2706 passed NEITHER eventAt NOR msgRepo, so the member-removed
+        //       recency guard (:3660-3671) was inert and the snapshot re-added
+        //       ("resurrected") a member this device had already removed.
+        //  S2 — :2707 forwarded the AUTHOR's config to Go's dial/discovery
+        //       allow-list, so even with S1 fixed the ghost stayed a dial
+        //       target. S2 is load-bearing FOR S1, not a truncation fix.
+        //
+        // Geometry that S1 actually closes (out-of-order, NOT stale-author):
+        // the removal is at-or-AFTER the snapshot's eventAt, so last-writer-
+        // wins says the removal should win. Reachable because one metadata edit
+        // ships over three channels with different latencies while eventAt is
+        // frozen in the signed actor payload.
+        await saveTrustedAdminMember();
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
+
+        final updatedAt = DateTime.parse('2026-04-05T12:20:00.000Z');
+        // The removal is NEWER than the snapshot — the guard must honour it.
+        final removedAt = updatedAt.add(const Duration(minutes: 5));
+
+        // This device already removed peer-ghost: absent locally, with a
+        // durable member_removed system row the guard can find. Seeded BEFORE
+        // signing, because the pre-transition state hash is computed from the
+        // live repo.
+        expect(await groupRepo.getMember('group-1', 'peer-ghost'), isNull);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'sys-member_removed:group-1:peer-ghost:'
+                '${removedAt.microsecondsSinceEpoch}',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Admin removed Ghost',
+            timestamp: removedAt,
+            isIncoming: true,
+            createdAt: removedAt,
+          ),
+        );
+
+        // The author's roster is STALE — it still lists peer-ghost. A non-empty
+        // publicKey is required or normalizeGroupConfigMemberEntries drops the
+        // member silently and the test would pass for the wrong reason.
+        final groupConfig = buildMetadataConfig(
+          updatedAt: updatedAt,
+          members: [
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: MemberRole.admin,
+              publicKey: 'pk-admin',
+              joinedAt: initialGroupCreatedAt,
+            ),
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-ghost',
+              username: 'Ghost',
+              role: MemberRole.writer,
+              publicKey: 'pk-ghost',
+              joinedAt: initialMemberJoinedAt,
+            ),
+          ],
+        );
+        // Fixture invariant, asserted on the NORMALIZED config: the snapshot
+        // really does carry peer-ghost. Without this the row passes trivially
+        // if normalization dropped them.
+        final normalizedConfig = normalizeGroupConfigPayload(
+          groupId: 'group-1',
+          groupConfig: groupConfig,
+        );
+        expect(
+          (normalizedConfig['members'] as List<dynamic>)
+              .map((member) => (member as Map<String, dynamic>)['peerId']),
+          contains('peer-ghost'),
+          reason: 'fixture must actually offer the ghost to the snapshot',
+        );
+
+        final metadataPayload = signedMetadataSystemPayload(
+          updatedAt: updatedAt,
+          groupConfig: groupConfig,
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-ghost-1',
+          eventAt: updatedAt,
+          systemPayload: metadataPayload,
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'metadata-ghost-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        // The metadata itself still applied — otherwise a fix that skipped the
+        // whole snapshot would pass.
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'Renamed Group');
+        expect(updatedGroup.lastMetadataEventAt, updatedAt.toUtc());
+
+        // S1: the removed member is NOT resurrected.
+        expect(
+          await groupRepo.getMember('group-1', 'peer-ghost'),
+          isNull,
+          reason: 'a metadata snapshot older than the removal re-added the '
+              'member, restoring their custody and key eligibility',
+        );
+
+        // S2: the roster handed to Go EXCLUDES the ghost the author still
+        // lists. (The inverse relationship: Stage 1 cannot demonstrate the
+        // truncation case, because the prune deletes omitted members before
+        // :2707 reads getMembers.)
+        final updateConfigMessage = bridge.sentMessages.lastWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:updateConfig';
+        });
+        final syncedConfig =
+            ((jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+                    as Map<String, dynamic>)['groupConfig']
+                as Map<String, dynamic>;
+        expect(
+          (syncedConfig['members'] as List<dynamic>)
+              .map((member) => (member as Map<String, dynamic>)['peerId']),
+          isNot(contains('peer-ghost')),
+          reason: "Go's dial/discovery allow-list received the author's stale "
+              'roster, so the removed member stays a dial target',
+        );
       },
     );
 

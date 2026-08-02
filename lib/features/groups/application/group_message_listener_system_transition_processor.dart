@@ -2390,10 +2390,25 @@ final class _GroupMessageSystemTransitionProcessor {
         groupId,
         groupConfig,
         eventAt: event.eventAt,
+        // Plan 326 S1: the guard needs BOTH; without msgRepo it is inert
+        // and this snapshot resurrects an already-removed member.
+        msgRepo: msgRepo,
+      );
+      // Plan 326 S2: override ONLY the roster with ours — otherwise a member
+      // the S1 guard just kept out of the local DB is still handed to Go as a
+      // dial/discovery target. Deliberately NOT the whole local snapshot
+      // (the member_removed precedent's shape): that also swaps configVersion
+      // for our own, which regresses the cross-delivery monotonicity contract
+      // GM-029 pins. Only `members` is ours; every other field stays the
+      // author's.
+      final syncGroupConfig = _withLocalRoster(
+        groupId,
+        groupConfig,
+        await _buildLocalGroupConfigSnapshot(groupId),
       );
       final synced = await _syncGroupConfig(
         groupId,
-        groupConfig,
+        syncGroupConfig,
         emitFailureEvent: true,
       );
       if (!synced) {
@@ -2628,10 +2643,25 @@ final class _GroupMessageSystemTransitionProcessor {
         groupId,
         groupConfig,
         eventAt: eventAt,
+        // Plan 326 S1: the guard needs BOTH; without msgRepo it is inert
+        // and this snapshot resurrects an already-removed member.
+        msgRepo: msgRepo,
+      );
+      // Plan 326 S2: override ONLY the roster with ours — otherwise a member
+      // the S1 guard just kept out of the local DB is still handed to Go as a
+      // dial/discovery target. Deliberately NOT the whole local snapshot
+      // (the member_removed precedent's shape): that also swaps configVersion
+      // for our own, which regresses the cross-delivery monotonicity contract
+      // GM-029 pins. Only `members` is ours; every other field stays the
+      // author's.
+      final syncGroupConfig = _withLocalRoster(
+        groupId,
+        groupConfig,
+        await _buildLocalGroupConfigSnapshot(groupId),
       );
       final synced = await _syncGroupConfig(
         groupId,
-        groupConfig,
+        syncGroupConfig,
         emitFailureEvent: true,
       );
       if (!synced) {
@@ -2703,10 +2733,28 @@ final class _GroupMessageSystemTransitionProcessor {
       return;
     }
 
-    await _applyAuthoritativeGroupConfigSnapshot(groupId, groupConfig);
-    final synced = await _syncGroupConfig(
+    await _applyAuthoritativeGroupConfigSnapshot(
       groupId,
       groupConfig,
+      // Plan 326 S1: without BOTH of these the member-removed recency guard
+      // is inert and this snapshot resurrects a member already removed here.
+      eventAt: eventAt,
+      msgRepo: msgRepo,
+      // Keeps _resolveAuthoritativeSnapshotJoinedAt bit-identical to HEAD:
+      // an empty non-null set falls through to groupCreatedAt, which is what
+      // a null eventAt produced before. joinedAt feeds the signed-transition
+      // state hash, so shifting it would risk the very freeze we avoid.
+      eventMemberPeerIds: const <String>{},
+    );
+    // Plan 326 S2: override ONLY the roster with ours (see above).
+    final syncGroupConfig = _withLocalRoster(
+      groupId,
+      groupConfig,
+      await _buildLocalGroupConfigSnapshot(groupId),
+    );
+    final synced = await _syncGroupConfig(
+      groupId,
+      syncGroupConfig,
       emitFailureEvent: true,
     );
     if (!synced) {
@@ -3823,6 +3871,22 @@ final class _GroupMessageSystemTransitionProcessor {
         }
       }
     }
+  }
+
+  /// Plan 326 S2: returns [authorConfig] with its `members` list replaced by the
+  /// LOCAL roster, so a member this device has removed is never handed to Go's
+  /// dial/discovery allow-list — while every other field (notably
+  /// `configVersion`) stays the author's, preserving the cross-delivery
+  /// monotonicity contract. Falls back to the author's config untouched when the
+  /// local snapshot is unavailable.
+  Map<String, dynamic> _withLocalRoster(
+    String groupId,
+    Map<String, dynamic> authorConfig,
+    Map<String, dynamic>? localSnapshot,
+  ) {
+    final localMembers = localSnapshot?['members'];
+    if (localMembers is! List) return authorConfig;
+    return <String, dynamic>{...authorConfig, 'members': localMembers};
   }
 
   Future<Map<String, dynamic>?> _buildLocalGroupConfigSnapshot(

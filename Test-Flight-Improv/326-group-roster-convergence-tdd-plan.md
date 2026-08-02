@@ -1,6 +1,6 @@
 # 326 - Group Roster Convergence
 
-Status: planning-draft — **Stage 1 execution-ready; Stage 2 blocked**
+Status: **Stage 1 IMPLEMENTED (host-green) 2026-08-02; Stage 2 still blocked on U1**
 Type: Bug
 Spec: free-text intent — deferral C returned to design by plan 323's `/tdd-review` (`wf_d8df3c95-e44`)
 Classification: **prerequisite-blocked** — the headline fix cannot ship until a roster-reconciliation channel exists. Two independent defects on the same lines ARE shippable now (Stage 1).
@@ -192,3 +192,50 @@ The broadcast fails to reach a member in exactly two cases, both relay-retention
 - **The prune's problem is its TRIGGER, not its existence.** A backstop for "I missed a removal while offline >7d" is legitimate. What is wrong is that it fires on *every* metadata edit, role change and ban — using a roster that carries no membership authority — rather than only when reconciliation is actually warranted.
 - **U1 is therefore narrower than recorded above.** The open question is no longer "design a reconciliation channel from scratch" (one exists: the removal broadcast). It is: *what should the backstop do for a member who was offline past the relay's retention window?* Candidates now worth weighing: bound the prune to genuine membership events; or detect the >7d/>500 condition explicitly and reconcile only then; or accept the gap and let such a device re-derive on rejoin.
 - **Stage 1 is unaffected** — S1 (resurrection) and S2 (Go allow-list truncation) remain correct and shippable exactly as written.
+
+## Reviewer Findings (2026-08-02, `wf_4f79a3b4-10e`) — Stage 1
+**Verdict: plan-fixes-required · disposition: apply-plan-fixes.** The S1/S2 code edits are correct and on-target; the *claims around them* were wrong in three places, and the scope was too narrow in a fourth that the review did not catch.
+
+### D1 — S1's claim was OVERSTATED (design-affecting)
+The guard skips iff `!latestRemovalAt.isBefore(eventAt)` (`:3667-3668`) — i.e. **only when the removal is at-or-after the snapshot's `eventAt`**. The plan's problem statement described the opposite geometry (a *stale* admin editing **after** a removal), and that case is **NOT fixed by S1**: `eventAt > latestRemovalAt` ⇒ guard does not fire ⇒ the member is still re-added.
+**What S1 actually fixes: out-of-order resurrection** — a snapshot *older* than the removal re-adding the removed member. That is correct last-writer-wins semantics and it is genuinely reachable: one metadata edit is delivered over three channels with different latencies (live pubsub `group_info_wired.dart:2075`, relay inbox `:2136`, fire-and-forget direct P2P `:2145-2158`), while `eventAt` is frozen inside the signed actor payload and cannot be re-stamped on redelivery.
+**Applied:** the Problem section is corrected; the stale-author resurrection is recorded as still open alongside the headline prune defect.
+
+### D2 — passing `eventAt` has a side effect that trips the plan's own Stop-if (design-affecting)
+`eventAt` has a **second** consumer: `_resolveAuthoritativeSnapshotJoinedAt(eventAt:)` at `:3677-3683`. For a member with **no local row**, `:3859-3863` returns `eventAt?.toUtc() ?? groupCreatedAtUtc` when `eventMemberPeerIds == null` — so passing `eventAt` alone flips `joinedAt` from `groupCreatedAt` to `eventAt`. `joinedAt` is load-bearing in the **signed-transition state hash** (`signed_group_transition_audit.dart:479-481` serializes `toConfigJson()`, which includes it), the incoming-message visibility cutoff, the membership buffer, and the send custody cutoff. A shifted `joinedAt` ⇒ divergent hash ⇒ the exact freeze this plan exists to avoid.
+**Applied fix (verified myself):** also pass `eventMemberPeerIds: const <String>{}`. An empty non-null set makes `:3850` and `:3860` both false, so resolution falls to `groupCreatedAtUtc` at `:3863` — bit-identical to HEAD — while the removal guard still activates. (I initially suspected this fix was wrong and checked it: today `eventMemberPeerIds == null` makes `:3860` true and returns `eventAt ?? groupCreatedAt`; with an empty set `:3860` is false and `:3863` returns `groupCreatedAt`. The review is right.)
+
+### D3 — S2's stated Stage-1 benefit is REFUTED; its real justification is different (design-affecting)
+TC-326-02 claimed the bridge would receive a config *including a member the author omitted*. **Unreachable in Stage 1**: the prune at `:3703-3708` runs inside `_applyAuthoritativeGroupConfigSnapshot` (awaited at `:2706`) and hard-deletes exactly those omitted members **before** `:2707` reads `getMembers`. For the omission scenario the local snapshot equals the author's. S2 buys nothing for truncation until the prune stops — which is Stage 2.
+**S2's genuine Stage-1 value: it is load-bearing for S1.** Without it, S1 keeps the ghost out of the local DB but Go is still handed the author's config listing that ghost, so it remains a dial/discovery target (`pubsub.go:1998-2007`, `:2159+`). A member the S1 guard skipped is present in the author's config and absent locally — and is **not** pruned, because `snapshotPeerIds.add(peerId)` at `:3654` runs before the guard's `continue`.
+**Applied:** TC-326-02 restated as the inverse relationship — the bridge receives a config that **excludes** a member the author's config still lists.
+
+### D4 — SCOPE TOO NARROW (found by the lead, not the review)
+The guard requires **both** `eventAt != null && msgRepo != null` (`:3660`). The plan treated `:2706` as the only inert site because it passes neither — but `:2389` (ban) and `:2627` (role update) pass **`eventAt` only**, so `msgRepo` is null and **the guard is inert at all three**. Likewise all three forward the author's `groupConfig` to `_syncGroupConfig` (`:2394`, `:2632`, `:2707`) while the `member_removed` precedent builds the local snapshot first (`:1956-1958`).
+**Applied:** S1 and S2 both extend to **all three sites**. Stage 1 is six edits, not two.
+
+### Plan-fixes (applied)
+- **TC-326-01 fixture constraints, all previously unstated:** `buildMetadataConfig` (`group_message_listener_test.dart:681-712`) hard-codes its member list and takes no `members:` parameter — the test must parameterize it or call `buildGroupConfigPayload` directly; the fixture must remove the member locally **and** seed the `sys-member_removed` row **before** signing, because `signedAuditSystemPayload` computes the pre-transition hash from the live fake repo; and the removed member must carry a non-empty `publicKey` or `normalizeGroupConfigMemberEntries` (`group_config_payload.dart:112-148`) silently drops them.
+- **TC-326-01 can pass as a no-op three ways** — config never contained the member, normalization dropped them, or the snapshot early-returned on `groupConfigMemberKeyMaterialRejectReason` (`:3622-3633`). Assert the fixture invariant on the **normalized** config.
+- **Risk (new):** `getLatestSystemEventTimestampForTarget` pages the entire group message history in 500-row pages **per member per snapshot** (`group_message_repository_impl.dart:812-834`). S1 puts that cost on every metadata edit, not just membership events. Precedented at `:1528`/`:1690`/`:1949`.
+
+### Confirmed as written (keep these)
+The S1 mechanism (`:2706` passes neither arg; guard needs both; falls through to `saveMember:3686`, which also fires `triggerDeferredDistributionDrainForPeer:3696` for a resurrected member); `_buildLocalGroupConfigSnapshot` shape and its null-fallback; the `:1956-1958` precedent (three prior sites use it); S1→S2 ordering (both inside the same serialized `_enqueueGroupConfigWork` block, so the local snapshot carries S1's result); Go's `UpdateGroupConfig` is a blind overwrite with no version monotonicity, so a locally-derived `configVersion` introduces no regression class; the six-site prune census, unchanged by Stage 1.
+
+## Execution Result — Stage 1 (2026-08-02)
+
+**CLOSED, host tier.** `groups` lane **3361/3361, LANE_EXIT=0**, zero failures; analyzer clean.
+
+**Scope corrected before execution — six edits, not two.** The guard at `:3660` needs BOTH `eventAt` and `msgRepo`. The plan treated `:2706` as the only inert site because it passes neither, but `:2389` (ban) and `:2627` (role update) pass `eventAt` **only**, so the guard was inert at all three; likewise all three forwarded the author's config to `_syncGroupConfig`. Stage 1 therefore fixes resurrection and the Go allow-list on the ban and role-change paths too.
+
+**S1 shipped as:** `msgRepo:` added at all three sites, `eventAt:` added at `:2706`, plus `eventMemberPeerIds: const <String>{}` at `:2706` ONLY. That last argument keeps `_resolveAuthoritativeSnapshotJoinedAt` bit-identical (empty non-null set ⇒ `:3860` false ⇒ `groupCreatedAt`, which is what a null `eventAt` produced before). It is deliberately NOT added at `:2389`/`:2627`, because those already pass a non-null `eventAt` — adding it there would itself shift `joinedAt` from `eventAt` to `groupCreatedAt`. The review did not draw that distinction; it only examined `:2706`.
+
+**S2 shipped NARROWER than planned, because the planned shape regressed a real contract.** The first lane run failed `GM-029 config version monotonicity converges across A/B/C shuffled delivery` (`group_membership_smoke_test.dart:11429`): expected `configVersion` `12:00:04`, got `12:00:01`. Replacing the whole config with `_buildLocalGroupConfigSnapshot` also swaps in OUR `configVersion`, breaking cross-delivery monotonicity. The `member_removed` precedent at `:1956-1958` gets away with the full-snapshot shape only because that path advances its own watermark first.
+**Corrected design:** a new `_withLocalRoster(groupId, authorConfig, localSnapshot)` helper overrides **only** `members`, leaving `configVersion` and every other field as the author's — delivering S2's actual purpose (the removed member never reaches Go's dial/discovery allow-list) with zero version semantics change. Falls back to the author's config untouched when the local snapshot is unavailable.
+**Note the audit gap:** both review passes cleared this area, having verified that Go's `UpdateGroupConfig` is a blind overwrite with no version monotonicity. That was true of Go and irrelevant — the monotonicity contract is client-side. The lane caught what two audits did not.
+
+**Mutations verified (four):** remove `msgRepo` at `:2706` → resurrection assertion reds; force `_withLocalRoster` to return the author's config → dial-target assertion reds; plus the two originals re-verified against the narrowed design.
+
+**Lane-flake triage:** the second lane run failed `group_conversation_wired_test.dart :: voice terminal send keeps failed bubble instead of deleting` at +888 with an unhandled exception — unrelated to roster snapshots. Full-file isolation ran **231/231**, the same file and identical count recorded for the plan-320 lane flake. No code was touched; the quiescent rerun was clean.
+
+**What Stage 1 does NOT fix (unchanged):** the headline omitted-member prune, and the stale-author resurrection (an edit NEWER than the removal still re-adds). Both remain open pending U1.
