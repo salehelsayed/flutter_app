@@ -201,3 +201,12 @@ git diff --check
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | - | not started (planned only, user decision 2026-08-02) | - | - | - | Stage A awaits go-ahead; Stage B awaits U3; Stage C awaits U1 spike | user picks a stage |
+
+## User Decisions (2026-08-02)
+
+- **U3 RESOLVED — the relay may hold the token↔identity mapping.** Rationale accepted: the relay already knows sender, group and message because it routes them, so holding the codebook reveals nothing new to it while hiding the social graph from APNs/FCM, which is the actual threat model. **Stage B is therefore UNBLOCKED** and needs a design pass (token mint/resolve contract, rotation policy, and what happens when a client sees a token it cannot resolve).
+- **PRIVACY WINS over tap latency.** Plan 148 (minimum-parity encrypted push spool) is **CLOSED — superseded by 327**. It wanted a richer push payload for instant tap render; 327 shrinks the payload. The two are mutually exclusive and 148 was never executed (it stayed blocked on its own Phase-0 evidence gate), so nothing is discarded. Do not revive 148 without explicitly reopening this decision — reviving it would silently undo Stage A and Stage B.
+- **U1 (Stage C / NSE fetch) remains open.** Unaffected by the above; still needs a feasibility spike.
+- **U2 (first-contact display-name copy) remains open** — a product decision on what a `contact_request` or `group_invite` banner says when the name is not locally resolvable.
+
+Execution order now: **Stage A → Stage B → (Stage C only if U1's spike succeeds).**

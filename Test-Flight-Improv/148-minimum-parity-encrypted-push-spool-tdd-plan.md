@@ -568,3 +568,15 @@ Files changed: plan document only.
 Tests run: reliability-sim 1to1 dry-run list during review; no implementation tests should be run for closure yet.
 Blocking: 145 TestFlight telemetry, 146 landed, 147 landed, residual-delay readout.
 QA verdict: not applicable until execution is authorized.
+
+---
+
+## CLOSED — superseded by plan 327 (user decision, 2026-08-02)
+
+**Status: CLOSED. Do not execute. Never executed — it remained blocked on its own Phase-0 evidence gate above, so no work is discarded by this closure.**
+
+Plan 148 wanted to spool a **richer** push payload so a notification tap renders instantly. Plan 327 (content-free push) shrinks the push payload to stop leaking routing metadata and display names to APNs/FCM. **The two are mutually exclusive** — more payload means faster taps and more provider-visible metadata; less payload means better privacy and a short fetch after the tap.
+
+The user chose **privacy** on 2026-08-02. 148 is closed in favour of 327.
+
+Reopening 148 would silently undo 327's Stage A and Stage B, so it must not be revived without explicitly reversing that decision. If the tap-latency concern returns, raise it against 327 rather than restoring this plan — 327's Stage C (NSE fetch) is the shape that could serve both goals, and it is tracked there.

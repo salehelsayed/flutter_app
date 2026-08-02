@@ -172,3 +172,23 @@ git diff --check
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | - | not started | - | - | - | Stage 1 awaiting go-ahead; Stage 2 blocked on U1 | user decision |
+
+## Correction — the broadcast IS the source of truth (user challenge, 2026-08-02, source-verified)
+
+The user challenged the framing above, and the challenge is **correct**. Verified:
+
+- **Voluntary leave broadcasts durably to every remaining member.** `broadcast_voluntary_leave_use_case.dart:209-211` builds `recipientPeerIds` from the remaining roster and `:418-422` calls `callGroupInboxStore(... recipientPeerIds: recipients)` — so offline members get it from the relay inbox, not just live pubsub. Transition type `member_removed` (`:222`, `:234`).
+- **Admin removal broadcasts the same event** — `change_group_member_role_and_broadcast_use_case.dart:533` (`eventType: 'member_removed'`).
+
+So roster convergence **does** have a designed primary mechanism, and it is the removal broadcast. The blind snapshot prune is a **backstop**, not the primary path. The earlier framing ("the prune is the only convergence path") was **overstated** and is corrected here.
+
+### The actual gap is narrow and bounded
+The broadcast fails to reach a member in exactly two cases, both relay-retention limits (`go-relay-server/inbox.go:30-34`):
+1. **Offline longer than 7 days** — `groupMessageTTL = 7 * 24h` expires the event before the member drains it.
+2. **More than 500 group messages accumulate after the event** — `maxMessagesPerGroup = 500`, and eviction is oldest-first (`backend_redis.go:672-678`, cap eviction takes from the front), so the leave notice is dropped before newer traffic.
+
+### What this changes about the plan
+- **The freeze risk is much smaller than stated.** A diverged device normally re-converges from the next `member_removed` broadcast. The permanent-freeze scenario requires the device to have *also* missed that broadcast — i.e. it must already be in one of the two edge cases above.
+- **The prune's problem is its TRIGGER, not its existence.** A backstop for "I missed a removal while offline >7d" is legitimate. What is wrong is that it fires on *every* metadata edit, role change and ban — using a roster that carries no membership authority — rather than only when reconciliation is actually warranted.
+- **U1 is therefore narrower than recorded above.** The open question is no longer "design a reconciliation channel from scratch" (one exists: the removal broadcast). It is: *what should the backstop do for a member who was offline past the relay's retention window?* Candidates now worth weighing: bound the prune to genuine membership events; or detect the >7d/>500 condition explicitly and reconcile only then; or accept the gap and let such a device re-derive on rejoin.
+- **Stage 1 is unaffected** — S1 (resurrection) and S2 (Go allow-list truncation) remain correct and shippable exactly as written.
