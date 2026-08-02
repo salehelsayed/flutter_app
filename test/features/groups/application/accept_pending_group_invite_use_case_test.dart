@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
@@ -2081,6 +2082,119 @@ void main() {
         expect(reactions, hasLength(1));
         expect(reactions.single.senderPeerId, '12D3KooWAlice');
         expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    test(
+      'TC-325-01 accept buffers a target-absent reaction and delivers it when '
+      'the target lands',
+      () async {
+        // Plan 325: the accept lane drained WITHOUT a pending-reaction buffer,
+        // so a reaction whose target message had not landed was dropped
+        // permanently (handle_incoming_group_reaction_use_case.dart:204-214)
+        // while the cursor committed regardless, so the relay never re-serves
+        // it.
+        //
+        // Two phases in one test, because retention is NOT the behaviour this
+        // fix promises — delivery is. The flush DELETES the buffered row before
+        // applying it (group_message_listener_reaction_ingress_processor.dart
+        // :141), so asserting "a row still exists" after the target lands would
+        // go red against a correct fix.
+        final reactionTimestamp = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 4))
+            .toIso8601String();
+        final reactionRepo = FakeReactionRepository();
+        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
+        );
+        addTearDown(listener.dispose);
+
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+
+        // The reaction's target is deliberately NOT in this page.
+        final signedReactionMessage = await signedReplayInboxMessage(
+          payloadType: groupOfflineReplayPayloadTypeReaction,
+          messageId: 'reaction-late-1',
+          plaintextPayload: {
+            'id': 'reaction-late-1',
+            'messageId': 'offline-msg-late',
+            'emoji': '\u{1F389}',
+            'action': 'add',
+            'senderPeerId': '12D3KooWAlice',
+            'timestamp': reactionTimestamp,
+          },
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [signedReactionMessage],
+          'cursor': '',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          reactionRepo: reactionRepo,
+          groupMessageListener: listener,
+        );
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+
+        // Phase (a) — retained, not discarded. The discriminator is the ABSENCE
+        // of the drop event: both paths otherwise leave the drain looking fine.
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_REACTION_RECEIVE_UNKNOWN_MESSAGE')),
+          reason: 'the reaction was dropped instead of buffered',
+        );
+        expect(pendingReactionRepo.reactions, hasLength(1));
+        expect(pendingReactionRepo.reactions.single.id, 'reaction-late-1');
+        expect(
+          pendingReactionRepo.reactions.single.messageId,
+          'offline-msg-late',
+        );
+        expect(
+          await reactionRepo.getReactionsForMessage('offline-msg-late'),
+          isEmpty,
+        );
+
+        // Phase (b) — the target lands, and the reaction is DELIVERED.
+        await listener.handleReplayEnvelope({
+          'groupId': 'grp-abc123',
+          'senderId': '12D3KooWAlice',
+          'senderUsername': 'Alice',
+          'keyEpoch': 1,
+          'text': 'the target',
+          'timestamp': DateTime.now()
+              .toUtc()
+              .subtract(const Duration(minutes: 5))
+              .toIso8601String(),
+          'messageId': 'offline-msg-late',
+        });
+
+        final delivered = await reactionRepo.getReactionsForMessage(
+          'offline-msg-late',
+        );
+        expect(delivered, hasLength(1));
+        expect(delivered.single.emoji, '\u{1F389}');
+        expect(delivered.single.senderPeerId, '12D3KooWAlice');
+        // Drained, not merely retained: processor:141 claims the row before
+        // emitting, so a delivered reaction leaves an EMPTY buffer.
+        expect(pendingReactionRepo.reactions, isEmpty);
       },
     );
 

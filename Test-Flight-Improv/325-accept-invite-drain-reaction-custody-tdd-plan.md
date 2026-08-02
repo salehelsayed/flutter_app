@@ -1,6 +1,6 @@
 # 325 - Accept-Invite Drain Reaction Custody
 
-Status: execution-ready
+Status: **IMPLEMENTED (host-green) 2026-08-02**
 Type: Bug
 Spec: free-text intent — the 5th drain site dropped from plan 322 by `/tdd-review`; no formal spec
 Classification: implementation-ready
@@ -169,4 +169,43 @@ git diff --check
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-08-02 | IMPLEMENTED (host-green) | `group_message_listener.dart`, `accept_pending_group_invite_use_case.dart`, `accept_pending_group_invite_use_case_test.dart`, `group_media_reliability_wiring_test.dart`, `group_message_listener_decomposition_contract_test.dart` | `groups` lane **3359/3359, LANE_EXIT=0**, zero failures; analyzer clean | TC-325-01 causal RED (`GROUP_REACTION_RECEIVE_UNKNOWN_MESSAGE` present) -> GREEN; TC-325-03 causal RED (frozen public-member set) -> GREEN after amending the set + its reason string; TC-325-02 census GREEN + mutation-verified (dropping the arg reds it naming the file); TC-325-04 GREEN + mutation-verified (removing the listener from the accept invocation reds it) | Review's 3 blockers applied before execution; see Reviewer Findings | closed |
+
+## Reviewer Findings (2026-08-02, `wf_4ecbfc6c-2f4`)
+**Verdict: plan-fixes-required · disposition: apply-plan-fixes. Core bet CONFIRMED SOUND** — the defect, the seam (`accept_…:1230`), and the getter design are all verified correct, and one edit at `:1230` provably covers all three accept-lane drain sites (`:434`, `:507`, `:849` → `:1272` → `:1230`). The defects are entirely in the Test Contract.
+
+### B1 (BLOCKER) — TC-325-01's assertion contradicts its own fixture
+When the target message lands, the flush **deletes** the buffered row before applying it: `group_message_listener_reaction_ingress_processor.dart:141` `final claimed = await repo.deletePendingReaction(pending.id);` (the "claim before emitting" invariant documented at `:139-140`). So *"1 buffered row with matching id/messageId"* is **0 rows** at end of drain — TC-325-01 would go RED **after the correct fix**. The row only survives if the target never lands, which the plan's own Deferred section forbids as proving the wrong thing.
+**Applied fix:** TC-325-01 becomes two-phase in one test — (a) target absent → assert buffered (1 row + `GROUP_REACTION_BUFFERED`, and NO `GROUP_REACTION_RECEIVE_UNKNOWN_MESSAGE`); (b) land the target → assert the reaction is **visible in `reactionRepo`** and the buffer is **empty**. Terminal state is the behaviour the Problem statement promises, not retention.
+
+### B2 (BLOCKER) — the mandated reordering fixture cannot make the target land
+`GI-021` (`drain_group_offline_inbox_use_case_test.dart:7452-7531`) proves the opposite of the plan's assumption: a deferred unknown-sender message is **SKIPPED in pass 2**, not replayed. Pass 2 re-runs the decode with `allowUnknownSenderDeferral: false` (`drain_…:984`) → `_shouldSkipDeferredUnknownSenderReplay` (`:478-489`) emits `…_UNKNOWN_SENDER_REPLAY_SKIPPED` and drops it. In a two-entry `[M(unknown), R]` page nothing mutates the roster between passes, so **M never lands**.
+**Applied fix:** the test no longer reproduces the deferral at all. It seeds a page whose reaction's target is simply absent, then lands the target directly. **The unknown-sender deferral stays in the plan as *reachability* evidence for why the window opens in production — it is not a fixture requirement.** That was a category error: the mechanism explains the bug's frequency, the test only needs its precondition.
+
+### B3 (BLOCKER) — "this plan emits nothing" is REFUTED; TC-325-06 is a tautology
+The fix **does** open a notification path: buffer → target lands via `handleReplayEnvelope` → `group_message_listener.dart:1118` `_flushPendingReactionsForMessage` → `processor:165 _maybeNotifyGroupReaction` → `:376 maybeShowNotification`. Production is wired for it (`production_application_bootstrap.dart:3746` block supplies `notificationService`, `groupConversationTracker`, `getAppLifecycleState`). At HEAD this is unreachable from the accept lane because the drain calls `handleIncomingGroupReaction` directly and that use case has **no notification dependency at all** (`handle_incoming_group_reaction_use_case.dart:47-59`).
+Meanwhile TC-325-06 cannot fail: `accept_pending_group_invite_use_case_test.dart` constructs **zero** `NotificationService`, and the stated mutation ("add a notify to the drain's reaction branch") is a dependency addition, not a source mutation.
+**Applied fix:** TC-325-06 is **deleted**, and the scope contract now states the truth — the flush path can notify, gated by `processor:345-350` on the target being **self-authored and `!isIncoming`**. On the accept lane the drained target is an incoming message from another member, so that gate fails and no notification fires in practice; a self-delivery re-arrival is the only shape that would. This is disclosed, not suppressed, and it is governed by the same durable claim as every other reaction notification.
+
+### Plan-fixes (applied)
+- **TC-325-04 pins the wrong level.** The listener side is already un-breakable by accident (one construction, `final` field). The real unpinned runtime-null path is one level up: `acceptPendingGroupInvite`'s own `groupMessageListener` parameter is **nullable** (`accept_…:61`, `:139`, `:626`), so a future caller omitting it nulls the repo while the textual census stays green. TC-325-04 is **retargeted** onto that.
+- **The two "independent reorderings" are one mechanism.** Both flushes at `accept_…:429` and `:448` are the *same* call (`_flushAcceptedBufferedMessagesBestEffort` → `flushPendingMembershipDependentMessagesForGroup`), and the drain cannot self-buffer the target (`handleReplayEnvelope` is called without `allowMembershipBuffer`, default `false`). Reduced to one mechanism in the evidence section.
+- Line drift: buffer block is `:182-203` and the drop path `:204-214` (plan said `:182-202`/`:203-214`) — substance exact.
+- The frozen-contract reason string at `decomposition_contract_test.dart:476` says *"the four overridable getters"* → becomes five; amend it with the set.
+
+### Confirmed as written (keep these)
+Defect and permanence (both drain entrypoints converge on `_drainGroupInbox`, cursor committed unconditionally at `:1020-1026`); the caller census; the getter precedent and that a getter **is** a `MethodDeclaration` in the AST walk (`:467-471`, `_publicMemberShape:405-410`), so TC-325-03's causal RED is real; the census omission and that its `bridge:` filter matches the accept invocation (`:1231`); GROUP_TESTS registration for all three files (`:466`, `:567`, `:587`).
+
+## Execution Result (2026-08-02)
+
+**CLOSED, host tier.** Production change is exactly the two lines the design predicted:
+- `group_message_listener.dart` — public `pendingReactionRepository` getter beside the `appendGroupEventLogEntry` precedent.
+- `accept_pending_group_invite_use_case.dart:1230` — `pendingReactionRepo: groupMessageListener?.pendingReactionRepository`. One edit; all three accept-lane drain sites funnel through it.
+
+All three reviewer blockers were applied **before** execution, and each proved real in practice:
+- **B1** — the original assertion ("1 buffered row survives") would indeed have gone red against the correct fix. The shipped TC-325-01 is two-phase: buffered while the target is absent, then **delivered with an empty buffer** once it lands.
+- **B2** — the mandated unknown-sender fixture was dropped from the test entirely; it stays in the evidence section as *reachability*, which is what it actually is. The shipped fixture simply seeds a reaction whose target is absent.
+- **B3** — TC-325-06 was deleted as a tautology (that test file constructs no `NotificationService`, and `handleIncomingGroupReaction` has no notification dependency). The flush-path notification the fix opens is disclosed in the scope contract rather than falsely denied; on this lane the drained target is incoming, so `processor:345-350` gates it off in practice.
+- **TC-325-04 retargeted** onto the real runtime-null path — every `acceptPendingGroupInvite` caller must supply a listener, since that parameter is nullable and the token census cannot see a null.
+
+**Gate honesty:** the `groups` lane ran before TC-325-04 was added. TC-325-04 is a test-only addition to `group_media_reliability_wiring_test.dart`, which is already lane-registered; that file was run focused afterwards (6/6 green) and the row was mutation-verified. No production code changed after the lane.

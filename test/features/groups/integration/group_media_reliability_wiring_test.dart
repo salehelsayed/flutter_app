@@ -442,6 +442,11 @@ void main() {
         'lib/features/push/application/prepare_notification_route_target_use_case.dart':
             'drainGroupOfflineInboxForGroup(',
         'lib/app/application_root.dart': 'drainGroupOfflineInboxForGroup(',
+        // Plan 325: this lane's ABSENCE from the census is the mechanical
+        // reason plan 322 missed it. All three accept-lane drain sites funnel
+        // through the single invocation in this file.
+        'lib/features/groups/application/accept_pending_group_invite_use_case.dart':
+            'drainGroupOfflineInboxForGroup(',
       };
 
       sites.forEach((path, token) {
@@ -469,6 +474,50 @@ void main() {
           );
         }
       });
+    },
+  );
+
+  test(
+    'TC-325-04 every acceptPendingGroupInvite caller supplies a listener',
+    () {
+      // Plan 325 forwards the pending-reaction repo off the listener
+      // (`groupMessageListener?.pendingReactionRepository`). That makes
+      // correctness depend on the listener actually being supplied — and
+      // acceptPendingGroupInvite's parameter is NULLABLE
+      // (accept_pending_group_invite_use_case.dart:61). A caller that omits it
+      // silently reopens the drop, and the per-call-site token census stays
+      // GREEN because the argument text is still present at the drain site.
+      // This is the row that closes that hole.
+      const callerPaths = <String>[
+        'lib/features/orbit/presentation/screens/orbit_wired.dart',
+        'lib/debug/debug_e2e_composition_root.dart',
+      ];
+
+      for (final path in callerPaths) {
+        final source = File(path).readAsStringSync();
+        final invocations = _balancedInvocations(
+          source,
+          'acceptPendingGroupInvite(',
+        ).where((invocation) => invocation.contains('groupId:')).toList();
+
+        expect(
+          invocations,
+          isNotEmpty,
+          reason: '$path no longer calls acceptPendingGroupInvite — re-derive '
+              'this census',
+        );
+
+        for (final invocation in invocations) {
+          expect(
+            _compactDart(invocation),
+            contains('groupMessageListener:'),
+            reason:
+                '$path calls acceptPendingGroupInvite without a listener, so '
+                'the accept lane would drain with a null pending-reaction '
+                'buffer and drop target-absent reactions permanently',
+          );
+        }
+      }
     },
   );
 

@@ -339,6 +339,16 @@ class GroupMessageListener {
   AppendGroupEventLogEntry? get appendGroupEventLogEntry =>
       _appendGroupEventLogEntry;
 
+  /// Plan 325: the durable buffer for a reaction whose target message has not
+  /// arrived yet. Exposed so a drain lane that already receives this listener
+  /// can forward the SAME repository instance rather than threading it
+  /// separately through the widget tree — the accept-invite lane
+  /// (`accept_pending_group_invite_use_case.dart`) is the caller this exists
+  /// for. Without it that lane drops such reactions permanently, because the
+  /// drain consumes the relay entry and the cursor commits regardless.
+  GroupPendingReactionRepository? get pendingReactionRepository =>
+      _pendingReactionRepo;
+
   /// Replays one already-decoded group envelope through the live listener path.
   ///
   /// Offline inbox recovery uses this so replayed system payloads can trigger

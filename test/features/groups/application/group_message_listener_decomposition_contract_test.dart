@@ -309,6 +309,11 @@ const _expectedPublicMembers = <String>{
   'getter|groupRemovedStream|Stream<String>|',
   'getter|groupReactionChangeStream|Stream<ReactionChange>|',
   'getter|appendGroupEventLogEntry|AppendGroupEventLogEntry?|',
+  // Plan 325: the accept-invite drain lane already receives this listener,
+  // so it forwards the SAME pending-reaction repository instance rather than
+  // threading it separately through four widget public APIs. Exposing it is a
+  // deliberate, second exception to DTR-16's no-collaborator rule.
+  'getter|pendingReactionRepository|GroupPendingReactionRepository?|',
   'method|handleReplayEnvelope|Future<void>|'
       '(Map<String, dynamic> data, {GroupMessageRepository? msgRepoOverride, '
       'bool rethrowOnError = false, bool allowMembershipBuffer = false, '
@@ -473,7 +478,7 @@ void _expectPublicFacadeContract(
     publicMembers,
     _expectedPublicMembers,
     reason:
-        'the four overridable getters and replay/start/flush/retry/reserve/'
+        'the five overridable getters and replay/start/flush/retry/reserve/'
         'stop/dispose public methods are the complete stable facade API',
   );
 

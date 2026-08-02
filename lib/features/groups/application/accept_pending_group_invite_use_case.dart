@@ -1234,6 +1234,12 @@ Future<bool> _drainAcceptedGroupInboxBestEffort({
       groupId: groupId,
       mediaAttachmentRepo: mediaAttachmentRepo,
       reactionRepo: reactionRepo,
+      // Plan 325: without this a drained reaction whose target message has not
+      // landed is dropped permanently — this drain consumes the relay entry and
+      // the cursor commits regardless, so nothing ever re-serves it. The
+      // listener already carries the exact repository instance, so it is
+      // forwarded here rather than threaded separately through the widget tree.
+      pendingReactionRepo: groupMessageListener?.pendingReactionRepository,
       groupMessageListener: groupMessageListener,
       selfPeerId: selfPeerId,
       drainAllPages: drainAllPages,
