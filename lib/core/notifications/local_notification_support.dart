@@ -71,6 +71,7 @@ const mknoonMessagesSilentNotificationDetails = NotificationDetails(
 NotificationDetails mknoonConversationNotificationDetails({
   required String conversationKey,
   bool silent = false,
+  bool autoCancel = true,
 }) {
   return NotificationDetails(
     android: AndroidNotificationDetails(
@@ -85,6 +86,7 @@ NotificationDetails mknoonConversationNotificationDetails({
       enableVibration: !silent,
       onlyAlertOnce: silent,
       category: AndroidNotificationCategory.message,
+      autoCancel: autoCancel,
     ),
     iOS: DarwinNotificationDetails(
       presentSound: !silent,

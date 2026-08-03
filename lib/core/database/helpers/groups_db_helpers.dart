@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'group_notification_display_outbox_db_helpers.dart';
 
 /// Inserts a group into the database.
 Future<void> dbInsertGroup(Database db, Map<String, Object?> row) async {
@@ -134,25 +135,7 @@ Future<void> dbUpdateGroup(Database db, Map<String, Object?> row) async {
 
   try {
     await dbWriteTransaction(db, (txn) async {
-      final existing = await txn.query(
-        'groups',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (existing.isEmpty) return;
-      final committedRow = Map<String, Object?>.from(row);
-      if (await _hasSelfRemovedAtColumn(txn)) {
-        _preserveGroupAuthority(committedRow, existing.single);
-      } else {
-        committedRow.remove('self_removed_at');
-      }
-      await txn.update(
-        'groups',
-        committedRow,
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await _updateGroupRowPreservingAuthority(txn, row);
     });
 
     emitFlowEvent(
@@ -165,6 +148,58 @@ Future<void> dbUpdateGroup(Database db, Map<String, Object?> row) async {
       layer: 'DB',
       event: 'GROUPS_DB_UPDATE_ERROR',
       details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Atomically commits a terminal dissolved-group row and retires every
+/// notification-display marker owned by that exact group.
+///
+/// The group row is updated first inside the transaction. A missing group or
+/// any cleanup failure aborts the transaction, so callers never observe a
+/// dissolved row whose pre-existing display custody survived this commit.
+Future<void> dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(
+  Database db,
+  Map<String, Object?> row,
+) async {
+  final id = row['id'] as String? ?? '';
+  if (id.trim().isEmpty) {
+    throw ArgumentError.value(id, 'row[id]', 'must be a non-empty String');
+  }
+  if (row['is_dissolved'] != 1) {
+    throw ArgumentError.value(
+      row['is_dissolved'],
+      'row[is_dissolved]',
+      'must be 1 for a terminal dissolve commit',
+    );
+  }
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUPS_DB_DISSOLVE_COMMIT_START',
+    details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+  );
+
+  try {
+    await dbWriteTransaction(db, (txn) async {
+      final updated = await _updateGroupRowPreservingAuthority(txn, row);
+      if (!updated) {
+        throw StateError('cannot dissolve a missing group');
+      }
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, id);
+    });
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUPS_DB_DISSOLVE_COMMIT_SUCCESS',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUPS_DB_DISSOLVE_COMMIT_ERROR',
+      details: {'id': id, 'error': e.toString()},
     );
     rethrow;
   }
@@ -271,6 +306,33 @@ void _preserveGroupAuthority(
   target['last_membership_event_id'] = stored['last_membership_event_id'];
 }
 
+Future<bool> _updateGroupRowPreservingAuthority(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
+) async {
+  final id = row['id'] as String? ?? '';
+  final existing = await db.query(
+    'groups',
+    where: 'id = ?',
+    whereArgs: [id],
+    limit: 1,
+  );
+  if (existing.isEmpty) return false;
+  final committedRow = Map<String, Object?>.from(row);
+  if (await _hasSelfRemovedAtColumn(db)) {
+    _preserveGroupAuthority(committedRow, existing.single);
+  } else {
+    committedRow.remove('self_removed_at');
+  }
+  return await db.update(
+        'groups',
+        committedRow,
+        where: 'id = ?',
+        whereArgs: [id],
+      ) ==
+      1;
+}
+
 Future<bool> _hasSelfRemovedAtColumn(DatabaseExecutor db) async {
   final columns = await db.rawQuery('PRAGMA table_info(groups)');
   return columns.any((row) => row['name'] == 'self_removed_at');
@@ -304,7 +366,10 @@ Future<void> dbDeleteGroup(Database db, String id) async {
   );
 
   try {
-    await db.delete('groups', where: 'id = ?', whereArgs: [id]);
+    await dbWriteTransaction(db, (txn) async {
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, id);
+      await txn.delete('groups', where: 'id = ?', whereArgs: [id]);
+    });
 
     emitFlowEvent(
       layer: 'DB',

@@ -128,7 +128,9 @@ class MigrationDatabaseImportStaging {
     );
   }
 
-  static Future<String> computeDatabaseChecksumForTesting(Database db) async {
+  static Future<String> computeDatabaseChecksumForTesting(
+    DatabaseExecutor db,
+  ) async {
     final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(db);
     final payload = <String, Object?>{};
     for (final tableName in inventory.tableNames) {

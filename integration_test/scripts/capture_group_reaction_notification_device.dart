@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import '_android_app_package.dart';
+import 'group_notification_projection_android_criteria.dart';
 import 'group_reaction_notification_device_criteria.dart';
 import 'reaction_notification_proof_support.dart';
 
@@ -23,6 +24,11 @@ const _runtimeRequestSchema = 'mknoon.plan257.runtime-probe-request.v1';
 const _runtimeResultSchema = 'mknoon.plan257.runtime-probe-result.v1';
 const _runtimeObserveAction = 'group_reaction_sqlcipher_observe';
 const _runtimeExactAddRedriveAction = 'group_reaction_exact_add_redrive';
+const _plan330EndpointAction = 'group_notification_projection_android';
+const _plan330EndpointCommandSchema =
+    'mknoon.plan330.android-endpoint-command.v1';
+const _plan330EndpointResultSchema =
+    'mknoon.plan330.android-endpoint-result.v1';
 const _iosTapTest = 'ios/RunnerUITests/NotificationTapUITests.swift';
 const _iosTapSelector = 'testAnnouncementReactionNotificationTap';
 const _iosFixtureCreateSelector = 'testCreateAnnouncementReactionFixture';
@@ -86,6 +92,50 @@ Future<(int, int)?> findOrbitCreateGroupFabWithRecovery({
   if (initial != null) return initial;
   await reestablishOrbit();
   return probe(probesAfterRecovery);
+}
+
+/// Finds one of Plan 330's exact group nodes on a canonical Inner Circle.
+///
+/// Accepting a group invite opens Orbit's all-chats `Intros` filter. The
+/// create-group FAB remains mounted there, but active group nodes are excluded
+/// from that filter. Plan 330 owns only one contact and two groups, so all
+/// three active nodes fit inside Inner Circle's thirteen seats. Canonicalizing
+/// to Inner Circle is therefore deterministic and avoids mistaking a mounted
+/// FAB for an active-group projection.
+Future<(int, int)?> findPlan330OrbitGroupWithInnerCircleRecovery({
+  required String groupName,
+  required Future<String> Function() readUiDump,
+  required Future<void> Function((int, int) center) tapSemanticNode,
+  int maximumPolls = 30,
+  int maximumToggleAttempts = 2,
+  Duration retryDelay = const Duration(milliseconds: 700),
+}) async {
+  if (maximumPolls <= 0) {
+    throw ArgumentError.value(maximumPolls, 'maximumPolls');
+  }
+  if (maximumToggleAttempts <= 0) {
+    throw ArgumentError.value(maximumToggleAttempts, 'maximumToggleAttempts');
+  }
+
+  var toggleAttempts = 0;
+  for (var poll = 0; poll < maximumPolls; poll += 1) {
+    final dump = await readUiDump();
+    final showInnerCircle = findSemanticNodeCenter(dump, 'Show inner circle');
+    if (showInnerCircle != null && toggleAttempts < maximumToggleAttempts) {
+      toggleAttempts += 1;
+      await tapSemanticNode(showInnerCircle);
+    } else if (findSemanticNodeCenter(dump, 'Show all chats') != null) {
+      final group = findSemanticNodeCenter(dump, 'Open group $groupName');
+      if (group != null) return group;
+    } else if (toggleAttempts == 0) {
+      return null;
+    }
+
+    if (poll + 1 < maximumPolls && retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return null;
 }
 
 /// Waits for the readiness event emitted by one already-pinned app process.
@@ -483,6 +533,27 @@ class _Plan257Capture {
   _AndroidBuilds? _androidBuilds;
   DateTime? _captureWindowStart;
   String _groupName = '';
+  String _plan330GroupAName = '';
+  String _plan330GroupBName = '';
+  String _plan330GroupAIdSha256 = '';
+  String _plan330GroupBIdSha256 = '';
+  String _plan330Locale = '';
+  int? _plan330GroupANotificationId;
+  int? _plan330GroupBNotificationId;
+  File? _plan330BeforeNotificationDump;
+  File? _plan330AfterNotificationDump;
+  File? _plan330BeforeUiDump;
+  File? _plan330AfterUiDump;
+  File? _plan330ReadFlowLog;
+  final List<Map<String, Object?>> _plan330ReactionObservations =
+      <Map<String, Object?>>[];
+  final List<Map<String, Object?>> _plan330Commands = <Map<String, Object?>>[];
+  late final Map<String, String> _plan330MessageIds = <String, String>{
+    for (final kind in const <String>['jpeg', 'mp4', 'voice']) kind: _uuidV4(),
+  };
+  late final Map<String, String> _plan330AttachmentIds = <String, String>{
+    for (final kind in const <String>['jpeg', 'mp4', 'voice']) kind: _uuidV4(),
+  };
   String _firstMarker = '';
   String _secondMarker = '';
   String _targetMarker = '';
@@ -525,6 +596,8 @@ class _Plan257Capture {
     'automation_command_journal.json',
   );
 
+  bool get _isPlan330 => scenario.id == groupNotificationProjectionScenarioId;
+
   Future<void> cleanupTransientState() => _transientCleanup.run();
 
   Future<void> run() async {
@@ -552,6 +625,13 @@ class _Plan257Capture {
           'central_prebuilt_android_apk_required',
         );
       }
+    }
+    if (_isPlan330 && (!noChildBuilds || prebuiltAndroidApk == null)) {
+      throw _CaptureFailure.configuration(
+        'prepared_artifact',
+        'Plan 330 requires one centrally prepared production-FCM APK and '
+            'forbids child builds',
+      );
     }
 
     stage = 'device_inventory';
@@ -591,7 +671,16 @@ class _Plan257Capture {
     await _prepopulateAndroidContacts();
 
     stage = 'group_fixture_setup';
-    await _createAndAcceptGroup();
+    if (_isPlan330) {
+      final suffix = _runtimeToken('fixture').replaceAll('-', '');
+      _plan330GroupAName = 'Plan330A-${suffix.substring(0, 16)}';
+      _plan330GroupBName = 'Plan330B-${suffix.substring(16, 32)}';
+      await _createAndAcceptGroup(name: _plan330GroupAName);
+      await _createAndAcceptGroup(name: _plan330GroupBName);
+      _groupName = _plan330GroupAName;
+    } else {
+      await _createAndAcceptGroup();
+    }
 
     stage = 'provider_registration';
     if (!statePreparedByParent ||
@@ -607,7 +696,10 @@ class _Plan257Capture {
     _captureWindowStart = DateTime.now().toUtc();
     await _adb(senderId, const <String>['logcat', '-c']);
     await _adb(recipientId, const <String>['logcat', '-c']);
-    if (scenario.id.endsWith('_message_unread_lifecycle')) {
+    if (_isPlan330) {
+      stage = 'android_group_notification_projection';
+      await _runAndroidGroupNotificationProjectionLifecycle();
+    } else if (scenario.id.endsWith('_message_unread_lifecycle')) {
       stage = 'android_unread_lifecycle';
       await _runAndroidUnreadLifecycle();
     } else {
@@ -615,26 +707,50 @@ class _Plan257Capture {
       await _runAndroidReactionLifecycle();
     }
 
-    stage = 'sqlcipher_observation';
-    final sqlCipherEvidence = await _captureSqlCipherObservation();
+    String? sqlCipherEvidence;
+    if (!_isPlan330) {
+      stage = 'sqlcipher_observation';
+      sqlCipherEvidence = await _captureSqlCipherObservation();
+    }
 
     stage = 'artifact_capture';
-    await _writeAndroidArtifact(sqlCipherEvidence);
+    if (_isPlan330) {
+      await _writePlan330AndroidArtifact();
+    } else {
+      await _writeAndroidArtifact(sqlCipherEvidence!);
+    }
 
     stage = 'artifact_self_validation';
     final artifact = File(
       '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
     );
-    final result = await validateGroupReactionNotificationArtifact(
-      scenario: scenario.id,
-      artifactFile: artifact,
-      expectedSenderDeviceId: senderId,
-      expectedRecipientDeviceId: recipientId,
-    );
-    if (!result.ok) {
+    late final bool artifactAccepted;
+    late final String artifactValidationDetail;
+    if (_isPlan330) {
+      final result = await validateGroupNotificationProjectionAndroidArtifact(
+        artifactFile: artifact,
+        expectedPhysicalDeviceId: recipientId,
+        expectedEmulatorDeviceId: senderId,
+        expectedApkSha256: _androidBuilds!.e2eSha256,
+        expectedPackageName: appPackage,
+      );
+      artifactAccepted = result.ok;
+      artifactValidationDetail = result.detail;
+    } else {
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario.id,
+        artifactFile: artifact,
+        expectedSenderDeviceId: senderId,
+        expectedRecipientDeviceId: recipientId,
+      );
+      artifactAccepted = result.ok;
+      artifactValidationDetail = result.detail;
+    }
+    if (!artifactAccepted) {
       throw _CaptureFailure.capture(
         stage,
-        'captured_authoritative_evidence_rejected: ${result.detail}',
+        'captured_authoritative_evidence_rejected: '
+        '$artifactValidationDetail',
       );
     }
 
@@ -1881,11 +1997,13 @@ class _Plan257Capture {
     await _launchAndroid(owner.deviceId);
   }
 
-  Future<void> _createAndAcceptGroup() async {
+  Future<void> _createAndAcceptGroup({String? name}) async {
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
-    _groupName = scenario.groupType == 'announcement'
-        ? 'TC257Ann$now'
-        : 'TC257Group$now';
+    _groupName =
+        name ??
+        (scenario.groupType == 'announcement'
+            ? 'TC257Ann$now'
+            : 'TC257Group$now');
     final creator = scenario.id.endsWith('_message_unread_lifecycle')
         ? sender
         : recipient;
@@ -2072,6 +2190,285 @@ class _Plan257Capture {
     await _collectBoundedLogs();
   }
 
+  Future<void> _runAndroidGroupNotificationProjectionLifecycle() async {
+    final suffix = _runtimeToken('message').replaceAll('-', '');
+    final groupAMarker = 'Plan330TextA${suffix.substring(0, 12)}';
+    final groupBMarker = 'Plan330TextB${suffix.substring(12, 24)}';
+
+    await _plan330InnerCircleGroupCenter(recipientId, _plan330GroupAName);
+    await _openPlan330Group(senderId, _plan330GroupAName);
+    await _sendGroupText(senderId, groupAMarker);
+    await _openPlan330Group(senderId, _plan330GroupBName);
+    await _sendGroupText(senderId, groupBMarker);
+
+    await _plan330InnerCircleGroupCenter(recipientId, _plan330GroupAName);
+    final beforeUi = await _waitForValue<String>(
+      'both Plan 330 unread-one Orbit projections',
+      const Duration(minutes: 3),
+      () async {
+        final xml = await _uiDump(recipientId);
+        return xml.contains(
+                  'Open group $_plan330GroupAName, 1 unread message',
+                ) &&
+                xml.contains('Open group $_plan330GroupBName, 1 unread message')
+            ? xml
+            : null;
+      },
+    );
+    _plan330BeforeUiDump = await _writePlan330RawFile(
+      'plan330_read_before_ui.xml',
+      beforeUi,
+    );
+
+    final beforeCards = await _waitForPlan330TwoCards();
+    _plan330BeforeNotificationDump = await _writePlan330RawFile(
+      'plan330_read_before_notifications.log',
+      '${_appNotificationRecords(beforeCards.$1)}\n',
+    );
+    _plan330GroupANotificationId = beforeCards.$2
+        .singleWhere((record) => record.$2.title == _plan330GroupAName)
+        .$1;
+    _plan330GroupBNotificationId = beforeCards.$2
+        .singleWhere((record) => record.$2.title == _plan330GroupBName)
+        .$1;
+
+    final groupABefore = await _runPlan330Endpoint(
+      deviceId: recipientId,
+      phase: 'observe_group',
+      role: 'physical_author',
+      groupName: _plan330GroupAName,
+      kind: 'group',
+    );
+    final groupBBefore = await _runPlan330Endpoint(
+      deviceId: recipientId,
+      phase: 'observe_group',
+      role: 'physical_author',
+      groupName: _plan330GroupBName,
+      kind: 'group',
+    );
+    if (groupABefore['unreadCount'] != 1 || groupBBefore['unreadCount'] != 1) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 SQLCipher unread baseline is not A=1/B=1',
+      );
+    }
+    _plan330GroupAIdSha256 = '${groupABefore['groupIdSha256'] ?? ''}';
+    _plan330GroupBIdSha256 = '${groupBBefore['groupIdSha256'] ?? ''}';
+
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    final readCenter = findSemanticNodeCenter(
+      await _uiDump(recipientId),
+      'Open group $_plan330GroupAName, 1 unread message',
+    );
+    if (readCenter == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 in-app group-A Orbit node is unavailable',
+      );
+    }
+    _recordPlan330Command(
+      commandStage: 'read_projection',
+      target: recipientId,
+      action: 'tap',
+      semanticTarget: 'Open group $_plan330GroupAName',
+    );
+    await _adbShell(recipientId, <String>[
+      'input',
+      'tap',
+      '${readCenter.$1}',
+      '${readCenter.$2}',
+    ], environmentFailure: true);
+    await _waitFor(
+      'Plan 330 group-A conversation',
+      const Duration(seconds: 45),
+      () async => isGroupConversationSurface(
+        await _uiDump(recipientId),
+        _plan330GroupAName,
+      ),
+    );
+    final groupAAfterRead = await _waitForValue<Map<String, dynamic>>(
+      'Plan 330 committed group-A unread zero',
+      const Duration(seconds: 60),
+      () async {
+        final observed = await _runPlan330Endpoint(
+          deviceId: recipientId,
+          phase: 'observe_group',
+          role: 'physical_author',
+          groupName: _plan330GroupAName,
+          kind: 'group',
+        );
+        return observed['unreadCount'] == 0 ? observed : null;
+      },
+    );
+    if (groupAAfterRead['groupIdSha256'] != _plan330GroupAIdSha256) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 group-A identity changed across the read commit',
+      );
+    }
+    _recordPlan330Command(
+      commandStage: 'read_projection',
+      target: recipientId,
+      action: 'wait_unread_zero',
+      semanticTarget: 'Open group $_plan330GroupAName',
+    );
+
+    await _adbShell(recipientId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_BACK',
+    ], environmentFailure: true);
+    final afterUi = await _waitForValue<String>(
+      'Plan 330 Orbit A=0/B=1 projection',
+      const Duration(seconds: 60),
+      () async {
+        final xml = await _uiDump(recipientId);
+        final aUnread = RegExp(
+          'Open group ${RegExp.escape(_plan330GroupAName)}, '
+          r'[1-9][0-9]* unread messages?',
+        ).hasMatch(xml);
+        return xml.contains('Open group $_plan330GroupAName') &&
+                !aUnread &&
+                xml.contains('Open group $_plan330GroupBName, 1 unread message')
+            ? xml
+            : null;
+      },
+    );
+    _plan330AfterUiDump = await _writePlan330RawFile(
+      'plan330_read_after_ui.xml',
+      afterUi,
+    );
+    final afterReadCards =
+        await _waitForValue<(String, List<(int, ActiveNotificationCard)>)>(
+          'Plan 330 exact group-A notification cancellation',
+          const Duration(seconds: 60),
+          () async {
+            final dump = await _notificationDump(recipientId);
+            final cards = _activeContentNotificationRecords(dump);
+            return cards.length == 1 &&
+                    cards.single.$1 == _plan330GroupBNotificationId &&
+                    cards.single.$2.title == _plan330GroupBName
+                ? (dump, cards)
+                : null;
+          },
+        );
+    _plan330AfterNotificationDump = await _writePlan330RawFile(
+      'plan330_read_after_notifications.log',
+      '${_appNotificationRecords(afterReadCards.$1)}\n',
+    );
+    _recordPlan330Command(
+      commandStage: 'read_projection',
+      target: recipientId,
+      action: 'dumpsys_notification',
+      semanticTarget: 'after_read_zero',
+    );
+    final readLog = _flowLines((await _readAndroidLogcat(recipientId)).stdout);
+    _plan330ReadFlowLog = await _writePlan330RawFile(
+      'plan330_read_flow.log',
+      '$readLog\n',
+    );
+
+    await _grantRecordAudioPermission(recipientId);
+    final mediaSend = await _runPlan330Endpoint(
+      deviceId: recipientId,
+      phase: 'send_media',
+      role: 'physical_author',
+      groupName: _plan330GroupAName,
+      kind: 'group',
+      timeout: const Duration(minutes: 6),
+    );
+    if (mediaSend['groupIdSha256'] != _plan330GroupAIdSha256 ||
+        mediaSend['media'] is! List ||
+        (mediaSend['media'] as List).length != 3) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 production media fixture receipt is incomplete',
+      );
+    }
+
+    const fixtureKinds = <String>['jpeg', 'mp4', 'voice'];
+    const externalKinds = <String>['photo', 'video', 'voiceMessage'];
+    const mediaTypes = <String>['image', 'video', 'audio'];
+    for (var index = 0; index < fixtureKinds.length; index += 1) {
+      await _terminateAndroidRecipient();
+      final fixtureKind = fixtureKinds[index];
+      final externalKind = externalKinds[index];
+      final receipt = await _runPlan330Endpoint(
+        deviceId: senderId,
+        phase: 'react_media',
+        role: 'emulator_reactor',
+        groupName: _plan330GroupAName,
+        kind: fixtureKind,
+        timeout: const Duration(minutes: 4),
+      );
+      if (receipt['schema'] != groupNotificationProjectionTargetReceiptSchema ||
+          receipt['kind'] != externalKind ||
+          receipt['mediaType'] != mediaTypes[index] ||
+          receipt['ownerLane'] != 'group' ||
+          receipt['attachmentCount'] != 1 ||
+          receipt['reactionCommitted'] != true) {
+        throw _CaptureFailure.capture(
+          stage,
+          'Plan 330 $externalKind reaction target receipt is invalid',
+        );
+      }
+      _recordPlan330Command(
+        commandStage: 'reaction_projection',
+        target: senderId,
+        action: 'react_to_group_media',
+        semanticTarget: externalKind,
+      );
+      final bodies = _plan330LocalizedBodies(externalKind);
+      final cards = await _waitForPlan330TwoCards(
+        acceptedGroupABodies: bodies.values.toSet(),
+      );
+      final groupACard = cards.$2.singleWhere(
+        (record) => record.$2.title == _plan330GroupAName,
+      );
+      final groupBCard = cards.$2.singleWhere(
+        (record) => record.$2.title == _plan330GroupBName,
+      );
+      if (groupACard.$1 != _plan330GroupANotificationId ||
+          groupBCard.$1 != _plan330GroupBNotificationId) {
+        throw _CaptureFailure.capture(
+          stage,
+          'Plan 330 stable group notification identity changed for '
+          '$externalKind',
+        );
+      }
+      final matchedLocales = bodies.entries
+          .where((entry) => entry.value == groupACard.$2.body)
+          .map((entry) => entry.key)
+          .toList(growable: false);
+      if (matchedLocales.length != 1 ||
+          (_plan330Locale.isNotEmpty &&
+              _plan330Locale != matchedLocales.single)) {
+        throw _CaptureFailure.capture(
+          stage,
+          'Plan 330 $externalKind localized notification copy is ambiguous',
+        );
+      }
+      _plan330Locale = matchedLocales.single;
+      final notificationFile = await _writePlan330RawFile(
+        'plan330_reaction_${externalKind}_notifications.log',
+        '${_appNotificationRecords(cards.$1)}\n',
+      );
+      final receiptFile = await _writePlan330RawFile(
+        'plan330_reaction_${externalKind}_target.json',
+        '${const JsonEncoder.withIndent(' ').convert(receipt)}\n',
+      );
+      _plan330ReactionObservations.add(<String, Object?>{
+        'kind': externalKind,
+        'mediaType': mediaTypes[index],
+        'ownerLane': 'group',
+        'attachmentCount': 1,
+        'targetMessageIdSha256': receipt['targetMessageIdSha256'],
+        'notificationDump': await _plan330EvidenceReference(notificationFile),
+        'targetReceipt': await _plan330EvidenceReference(receiptFile),
+      });
+    }
+  }
+
   Future<void> _runAndroidReactionLifecycle() async {
     final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
     _targetMarker = 'TC257Target$stamp';
@@ -2141,7 +2538,9 @@ class _Plan257Capture {
         'replacement=${replacementCard.$1}',
       );
     }
-    final expectedBody = 'Alice reacted $_reactionEmoji to your message';
+    final expectedBody = groupReactionNotificationExpectedAndroidReactionBody(
+      'Alice',
+    );
     if (replacementCard.$2.title != _groupName ||
         replacementCard.$2.body != expectedBody ||
         replacementCard.$2.body.contains('New Message')) {
@@ -2395,6 +2794,79 @@ class _Plan257Capture {
     );
   }
 
+  /// Reaches Orbit without assuming which of the two Plan-330 groups is
+  /// already projected. The legacy helper is intentionally group-specific;
+  /// using it immediately after accepting group B made a perfectly valid
+  /// group-B conversation stack look like a missing group-A Orbit surface.
+  Future<void> _ensurePlan330Orbit(String deviceId) async {
+    await _startAndroid(deviceId);
+    for (var attempt = 0; attempt < 12; attempt += 1) {
+      final dump = await _uiDump(deviceId);
+      if (findOrbitCreateGroupFabCenter(dump) != null) return;
+      await _adbShell(deviceId, const <String>[
+        'input',
+        'keyevent',
+        'KEYCODE_BACK',
+      ], allowFail: true);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+    }
+    throw _CaptureFailure.capture(
+      stage,
+      'Plan 330 Orbit FAB not reached on $deviceId',
+    );
+  }
+
+  Future<void> _openPlan330Group(String deviceId, String groupName) async {
+    _groupName = groupName;
+    final initial = await _uiDump(deviceId);
+    if (isGroupConversationSurface(initial, groupName)) return;
+    final center = await _plan330InnerCircleGroupCenter(deviceId, groupName);
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${center.$1}',
+      '${center.$2}',
+    ], environmentFailure: true);
+    await _waitFor(
+      'Plan 330 $groupName conversation on $deviceId',
+      const Duration(seconds: 45),
+      () async =>
+          isGroupConversationSurface(await _uiDump(deviceId), groupName),
+    );
+  }
+
+  Future<(int, int)> _plan330InnerCircleGroupCenter(
+    String deviceId,
+    String groupName,
+  ) async {
+    await _ensurePlan330Orbit(deviceId);
+    final center = await findPlan330OrbitGroupWithInnerCircleRecovery(
+      groupName: groupName,
+      readUiDump: () => _uiDump(deviceId),
+      tapSemanticNode: (toggleCenter) async {
+        _recordPlan330Command(
+          commandStage: 'orbit_recovery',
+          target: deviceId,
+          action: 'tap',
+          semanticTarget: 'Show inner circle',
+        );
+        await _adbShell(deviceId, <String>[
+          'input',
+          'tap',
+          '${toggleCenter.$1}',
+          '${toggleCenter.$2}',
+        ], environmentFailure: true);
+      },
+    );
+    if (center == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 Inner Circle node for $groupName unavailable on $deviceId',
+      );
+    }
+    return center;
+  }
+
   Future<void> _openGroup(String deviceId) async {
     var dump = await _uiDump(deviceId);
     if (isGroupConversationSurface(dump, _groupName)) {
@@ -2424,25 +2896,29 @@ class _Plan257Capture {
   }
 
   Future<void> _sendGroupText(String deviceId, String marker) async {
-    final dump = await _uiDump(deviceId);
-    final editor = findNodeBoundsByClass(dump, 'android.widget.EditText');
-    if (editor == null) {
+    final markerEntry = await enterGroupComposeMarkerOnce(
+      marker: marker,
+      readUiDump: () => _uiDump(deviceId),
+      tapEditor: (center) => _adbShell(deviceId, <String>[
+        'input',
+        'tap',
+        '${center.$1}',
+        '${center.$2}',
+      ], environmentFailure: true),
+      injectMarker: (value) => _adbShell(deviceId, <String>[
+        'input',
+        'text',
+        value,
+      ], environmentFailure: true),
+      maximumFocusPolls: 80,
+      maximumAcceptancePolls: 80,
+    );
+    if (markerEntry != GroupComposeMarkerEntryOutcome.accepted) {
       throw _CaptureFailure.capture(
         stage,
-        'group_compose_editor_missing_on_$deviceId',
+        'group_compose_marker_${markerEntry.name}_on_$deviceId',
       );
     }
-    await _adbShell(deviceId, <String>[
-      'input',
-      'tap',
-      '${(editor.$1 + editor.$3) ~/ 2}',
-      '${(editor.$2 + editor.$4) ~/ 2}',
-    ], environmentFailure: true);
-    await _adbShell(deviceId, <String>[
-      'input',
-      'text',
-      marker,
-    ], environmentFailure: true);
 
     // Announcement sends are intentionally rejected while the production
     // group-recovery gate is active. That result restores this exact draft,
@@ -2453,12 +2929,12 @@ class _Plan257Capture {
     var recoveryPendingOutcomes = 0;
     while (true) {
       final typedEditor = await _waitForValue<(int, int, int, int)>(
-        'group compose draft restored on $deviceId',
+        'group compose marker accepted on $deviceId',
         const Duration(seconds: 20),
-        () async => findNodeBoundsByClassContainingText(
+        () async => findEnabledFocusableGroupComposeEditorBounds(
           await _uiDump(deviceId),
-          'android.widget.EditText',
-          marker,
+          requireFocused: true,
+          exactText: marker,
         ),
       );
       final baselineOutcomeCount = (await _groupSendTimingObservations(
@@ -2918,6 +3394,214 @@ class _Plan257Capture {
         r'\b',
   ).allMatches(journal).length;
 
+  Future<Map<String, dynamic>> _runPlan330Endpoint({
+    required String deviceId,
+    required String phase,
+    required String role,
+    required String groupName,
+    required String kind,
+    Duration timeout = const Duration(seconds: 90),
+  }) async {
+    final stepId = 'plan330-$phase-$kind-$_runtimeRunId';
+    final request = <String, Object?>{
+      'schema': _plan330EndpointCommandSchema,
+      'transport_action': _plan330EndpointAction,
+      'scenario': scenario.id,
+      'stepId': stepId,
+      'phase': phase,
+      'role': role,
+      'runId': _runtimeRunId,
+      'nonce': _runtimeNonce,
+      'groupName': groupName,
+      'kind': kind,
+      'messageIds': _plan330MessageIds,
+      'attachmentIds': _plan330AttachmentIds,
+    };
+    await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+    await _writeAppFile(deviceId, 'intro_e2e_config.json', jsonEncode(request));
+    await _startAndroid(deviceId);
+    try {
+      return await _waitForValue<Map<String, dynamic>>(
+        'Plan 330 $phase/$kind installed endpoint result',
+        timeout,
+        () async {
+          final raw = await _readAppFile(deviceId, 'intro_e2e_result.json');
+          if (raw == null) return null;
+          late final Map<String, dynamic> result;
+          try {
+            result = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          } on Object {
+            throw _CaptureFailure.capture(
+              stage,
+              'Plan 330 endpoint result is invalid JSON',
+            );
+          }
+          if (result['stepId'] != stepId) return null;
+          if (result['schema'] != _plan330EndpointResultSchema ||
+              result['transport_action'] != _plan330EndpointAction ||
+              result['scenario'] != scenario.id ||
+              result['phase'] != phase ||
+              result['role'] != role ||
+              result['runId'] != _runtimeRunId ||
+              result['nonce'] != _runtimeNonce) {
+            throw _CaptureFailure.capture(
+              stage,
+              'Plan 330 endpoint result contract mismatch',
+            );
+          }
+          if (result['status'] != 'complete' ||
+              result['success'] != true ||
+              result['observation'] is! Map) {
+            throw _CaptureFailure.capture(
+              stage,
+              'Plan 330 endpoint failed with '
+              '${result['errorType'] ?? 'unknown error'}',
+            );
+          }
+          return Map<String, dynamic>.from(result['observation'] as Map);
+        },
+      );
+    } finally {
+      await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+      await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    }
+  }
+
+  Future<(String, List<(int, ActiveNotificationCard)>)>
+  _waitForPlan330TwoCards({Set<String>? acceptedGroupABodies}) async {
+    var lastDump = '';
+    var lastCards = <(int, ActiveNotificationCard)>[];
+    for (var attempt = 0; attempt < 180; attempt += 1) {
+      lastDump = await _notificationDump(recipientId);
+      lastCards = _activeContentNotificationRecords(lastDump);
+      final groupA = lastCards
+          .where((record) => record.$2.title == _plan330GroupAName)
+          .toList(growable: false);
+      final groupB = lastCards
+          .where((record) => record.$2.title == _plan330GroupBName)
+          .toList(growable: false);
+      if (lastCards.length == 2 &&
+          groupA.length == 1 &&
+          groupB.length == 1 &&
+          (acceptedGroupABodies == null ||
+              acceptedGroupABodies.contains(groupA.single.$2.body))) {
+        return (lastDump, lastCards);
+      }
+      if (attempt < 179) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+    }
+
+    final appRecords = _appNotificationRecords(lastDump).trim();
+    await _writePlan330RawFile(
+      'plan330_two_cards_timeout_notifications.log',
+      'parsed_card_count=${lastCards.length}\n'
+          'parsed_cards=${lastCards.map((record) => <String, Object?>{'id': record.$1, 'title': record.$2.title, 'body': record.$2.body}).toList(growable: false)}\n'
+          'app_notification_records=${appRecords.isEmpty ? '[none]' : appRecords}\n',
+    );
+    final recipientLog = await _readAndroidLogcat(recipientId);
+    final flowLog = _flowLines(recipientLog.stdout).trim();
+    await _writePlan330RawFile(
+      'plan330_two_cards_timeout_flow.log',
+      '${flowLog.isEmpty ? '[no FLOW records]' : flowLog}\n',
+    );
+    throw _CaptureFailure.capture(
+      stage,
+      'exact Plan 330 group-A/group-B notification cards unavailable; '
+      'observed ${lastCards.length} parsed app cards',
+    );
+  }
+
+  Map<String, String> _plan330LocalizedBodies(String externalKind) {
+    final targetKey = switch (externalKind) {
+      'photo' => 'notification_group_reaction_target_photo',
+      'video' => 'notification_group_reaction_target_video',
+      'voiceMessage' => 'notification_group_reaction_target_voice_message',
+      _ => throw _CaptureFailure.capture(
+        stage,
+        'unsupported Plan 330 reaction target kind $externalKind',
+      ),
+    };
+    final result = <String, String>{};
+    for (final locale in const <String>['ar', 'de', 'en']) {
+      final arb = Map<String, dynamic>.from(
+        jsonDecode(File('lib/l10n/app_$locale.arb').readAsStringSync()) as Map,
+      );
+      final template = arb['notification_group_reaction_actor'] as String?;
+      final target = arb[targetKey] as String?;
+      if (template == null ||
+          target == null ||
+          !template.contains('{actorName}') ||
+          !template.contains('{targetKind}')) {
+        throw _CaptureFailure.capture(
+          stage,
+          'Plan 330 localized copy source is malformed for $locale',
+        );
+      }
+      result[locale] = template
+          .replaceAll('{actorName}', sender.username)
+          .replaceAll('{targetKind}', target);
+    }
+    return result;
+  }
+
+  Future<File> _writePlan330RawFile(String name, String text) async {
+    if (text.trim().isEmpty || utf8.encode(text).length > 4 * 1024 * 1024) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 evidence $name is empty or exceeds 4 MiB',
+      );
+    }
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}$name',
+    );
+    await file.writeAsString(text, flush: true);
+    return file;
+  }
+
+  Future<Map<String, Object?>> _plan330EvidenceReference(File file) async =>
+      <String, Object?>{
+        'path': file.uri.pathSegments.last,
+        'sha256': await _sha256(file),
+      };
+
+  void _recordPlan330Command({
+    required String commandStage,
+    required String target,
+    required String action,
+    required String semanticTarget,
+  }) {
+    _plan330Commands.add(<String, Object?>{
+      'stage': commandStage,
+      'target': target,
+      'action': action,
+      'semanticTarget': semanticTarget,
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  Future<void> _grantRecordAudioPermission(String deviceId) async {
+    await _adbShell(deviceId, <String>[
+      'pm',
+      'grant',
+      appPackage,
+      'android.permission.RECORD_AUDIO',
+    ], environmentFailure: true);
+  }
+
+  String _uuidV4() {
+    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
+  }
+
   Future<Map<String, dynamic>> _runInstalledGroupReactionProbe({
     required String deviceId,
     required String action,
@@ -3086,6 +3770,109 @@ class _Plan257Capture {
         );
       }
     }
+  }
+
+  Future<void> _writePlan330AndroidArtifact() async {
+    final beforeNotifications = _plan330BeforeNotificationDump;
+    final afterNotifications = _plan330AfterNotificationDump;
+    final beforeUi = _plan330BeforeUiDump;
+    final afterUi = _plan330AfterUiDump;
+    final readFlow = _plan330ReadFlowLog;
+    final groupANotificationId = _plan330GroupANotificationId;
+    final groupBNotificationId = _plan330GroupBNotificationId;
+    if (beforeNotifications == null ||
+        afterNotifications == null ||
+        beforeUi == null ||
+        afterUi == null ||
+        readFlow == null ||
+        groupANotificationId == null ||
+        groupBNotificationId == null ||
+        _plan330GroupAIdSha256.isEmpty ||
+        _plan330GroupBIdSha256.isEmpty ||
+        _plan330Locale.isEmpty ||
+        _plan330ReactionObservations.length != 3) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 330 authoritative evidence inventory is incomplete',
+      );
+    }
+    final journal = await _writePlan330RawFile(
+      'plan330_command_journal.json',
+      '${const JsonEncoder.withIndent(' ').convert(<String, Object?>{'schema': groupNotificationProjectionCommandJournalSchema, 'commands': _plan330Commands})}\n',
+    );
+    final build = _androidBuilds!;
+    final artifact = <String, Object?>{
+      'schema': groupNotificationProjectionArtifactSchema,
+      'version': 1,
+      'capabilityId': groupNotificationProjectionCapabilityId,
+      'scenario': groupNotificationProjectionScenarioId,
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+      'build': <String, Object?>{
+        'profile': 'android.production_fcm',
+        'provenance': 'central_prebuilt',
+        'apkSha256': build.e2eSha256,
+        'childBuildCount': 0,
+        'packageName': appPackage,
+      },
+      'topology': <String, Object?>{
+        'physical': <String, Object?>{
+          'deviceId': recipientId,
+          'platform': 'android',
+          'kind': 'physical',
+        },
+        'emulator': <String, Object?>{
+          'deviceId': senderId,
+          'platform': 'android',
+          'kind': 'emulator',
+        },
+      },
+      'fixture': <String, Object?>{
+        'groupAName': _plan330GroupAName,
+        'groupBName': _plan330GroupBName,
+        'groupAIdSha256': _plan330GroupAIdSha256,
+        'groupBIdSha256': _plan330GroupBIdSha256,
+        'actorName': sender.username,
+        'locale': _plan330Locale,
+      },
+      'readProjection': <String, Object?>{
+        'navigation': 'in_app_group_list',
+        'unreadBefore': 1,
+        'unreadAfter': 0,
+        'commitObserved': true,
+        'notificationTapCount': 0,
+        'groupANotificationId': groupANotificationId,
+        'groupBNotificationId': groupBNotificationId,
+        'beforeNotificationDump': await _plan330EvidenceReference(
+          beforeNotifications,
+        ),
+        'afterNotificationDump': await _plan330EvidenceReference(
+          afterNotifications,
+        ),
+        'beforeUiDump': await _plan330EvidenceReference(beforeUi),
+        'afterUiDump': await _plan330EvidenceReference(afterUi),
+        'readFlowLog': await _plan330EvidenceReference(readFlow),
+      },
+      'reactionProjection': <String, Object?>{
+        'stableGroupANotificationId': groupANotificationId,
+        'duplicateCount': 0,
+        'observations': _plan330ReactionObservations,
+      },
+      'automation': <String, Object?>{
+        'manualTaps': 0,
+        'notificationCardTaps': 0,
+        'commandJournal': await _plan330EvidenceReference(journal),
+      },
+    };
+    final output = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final pending = File('${output.path}.pending');
+    await pending.writeAsString(
+      const JsonEncoder.withIndent(' ').convert(artifact),
+      flush: true,
+    );
+    await pending.rename(output.path);
+    await _flushCommandJournal();
   }
 
   Future<void> _writeAndroidArtifact(String sqlCipherObservation) async {
@@ -3782,46 +4569,29 @@ class _Plan257Capture {
   }
 
   List<(int, ActiveNotificationCard)> _activeNotificationRecords(String dump) {
-    final activeSection = dump.split(RegExp(r'\nRanking Config:')).first;
-    final records = RegExp(
-      r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
-    ).allMatches(activeSection);
-    final packagePattern = RegExp(
-      r'\bpkg=' + RegExp.escape(appPackage) + r'\b',
-    );
     final result = <(int, ActiveNotificationCard)>[];
-    for (final match in records) {
-      final record = match.group(0)!;
-      if (!packagePattern.hasMatch(record)) continue;
-      final idMatch = RegExp(r'\bid=(\d+)\b').firstMatch(record);
-      if (idMatch == null) {
+    for (final card in extractActiveNotificationCards(
+      dump,
+      packageName: appPackage,
+    )) {
+      final id = card.id;
+      if (id == null || id < 0) {
         throw _CaptureFailure.capture(
           stage,
           'android_notification_record_has_no_numeric_id',
         );
       }
-      result.add((
-        int.parse(idMatch.group(1)!),
-        ActiveNotificationCard(
-          title: _notificationValue(record, 'android.title'),
-          body: _notificationValue(record, 'android.text'),
-        ),
-      ));
+      result.add((id, card));
     }
     return result;
   }
 
-  String _notificationValue(String record, String key) {
-    final match = RegExp(
-      '^\\s*${RegExp.escape(key)}=(.+)\$',
-      multiLine: true,
-    ).firstMatch(record);
-    if (match == null) return '';
-    var value = match.group(1)!.trim();
-    if (value.startsWith('String (') && value.endsWith(')')) {
-      value = value.substring('String ('.length, value.length - 1);
-    }
-    return value == 'null' ? '' : value;
+  List<(int, ActiveNotificationCard)> _activeContentNotificationRecords(
+    String dump,
+  ) {
+    return _activeNotificationRecords(
+      dump,
+    ).where((record) => !record.$2.isGroupSummary).toList(growable: false);
   }
 
   String _appNotificationRecords(String dump) {

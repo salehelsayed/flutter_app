@@ -104,15 +104,13 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
   required MediaAttachmentRepository mediaAttachmentRepository,
   required MediaFileManager mediaFileManager,
   required AudioRecorderService audioRecorderService,
+  GroupMediaReliabilityAuthorityMode authorityMode =
+      GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
 }) async {
   final identity = await identityRepository.loadIdentity();
   final senderTransport = p2pService.currentState.peerId?.trim();
-  if (identity == null ||
-      senderTransport == null ||
-      senderTransport.isEmpty ||
-      identity.peerId == senderTransport ||
-      receiverAccountPeerId == receiverTransportPeerId) {
+  if (identity == null || senderTransport == null || senderTransport.isEmpty) {
     throw StateError('group-media send identity discriminator failed');
   }
 
@@ -124,15 +122,15 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
     receiverTransportPeerId: receiverTransportPeerId,
   );
   final allowedPeers = groupMediaAllowedPeersForMembers(members);
-  if (allowedPeers.length != 2 ||
-      allowedPeers.toSet().length != 2 ||
-      !allowedPeers.toSet().containsAll(<String>{
-        senderTransport,
-        receiverTransportPeerId,
-      }) ||
-      allowedPeers.contains(identity.peerId) ||
-      allowedPeers.contains(receiverAccountPeerId)) {
-    throw StateError('group-media ACL did not select receiver transport');
+  if (!groupMediaReliabilityAuthorityMatches(
+    mode: authorityMode,
+    localAccountPeerId: identity.peerId,
+    localTransportPeerId: senderTransport,
+    remoteAccountPeerId: receiverAccountPeerId,
+    remoteTransportPeerId: receiverTransportPeerId,
+    allowedPeers: allowedPeers,
+  )) {
+    throw StateError('group-media authority policy rejected');
   }
 
   await fixtureDirectory.create(recursive: true);
@@ -283,17 +281,15 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
         senderPeerId: identity.peerId,
         inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
         upload: (currentAllowedPeers) {
-          if (currentAllowedPeers.length != 2 ||
-              currentAllowedPeers.toSet().length != 2 ||
-              !currentAllowedPeers.toSet().containsAll(<String>{
-                senderTransport,
-                receiverTransportPeerId,
-              }) ||
-              currentAllowedPeers.contains(identity.peerId) ||
-              currentAllowedPeers.contains(receiverAccountPeerId)) {
-            throw StateError(
-              'group-media foreground leaf ACL lost transport authority',
-            );
+          if (!groupMediaReliabilityAuthorityMatches(
+            mode: authorityMode,
+            localAccountPeerId: identity.peerId,
+            localTransportPeerId: senderTransport,
+            remoteAccountPeerId: receiverAccountPeerId,
+            remoteTransportPeerId: receiverTransportPeerId,
+            allowedPeers: currentAllowedPeers,
+          )) {
+            throw StateError('group-media authority policy rejected');
           }
           return uploadMedia(
             bridge: bridge,

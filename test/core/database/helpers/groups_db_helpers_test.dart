@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/migrations/106_group_notification_display_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 
 void main() {
   late Database db;
@@ -106,6 +109,92 @@ void main() {
 
       final result = await dbLoadGroup(db, 'group-1');
       expect(result!['name'], 'Updated Name');
+    });
+  });
+
+  group('dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox', () {
+    Future<void> stageMarker(String eventId, String groupId) async {
+      const timestamp = '2026-08-03T08:00:00.000Z';
+      await dbStageGroupNotificationDisplayOutboxEntry(
+        db,
+        GroupNotificationDisplayOutboxEntry.message(
+          eventId: eventId,
+          groupId: groupId,
+          messageId: 'message-$eventId',
+          actorPeerId: 'peer-sender',
+          eventTimestamp: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ).toMap(),
+      );
+    }
+
+    setUp(() async {
+      await runGroupNotificationDisplayOutboxMigration(db);
+      await dbInsertGroup(db, makeGroupRow());
+      await dbInsertGroup(
+        db,
+        makeGroupRow(
+          id: 'group-sibling',
+          topicName: '/mknoon/groups/group-sibling',
+        ),
+      );
+      await stageMarker('target-a', 'group-1');
+      await stageMarker('target-b', 'group-1');
+      await stageMarker('sibling', 'group-sibling');
+    });
+
+    test(
+      'commits terminal state and deletes only exact-group custody',
+      () async {
+        await dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(db, {
+          ...makeGroupRow(),
+          'is_dissolved': 1,
+          'dissolved_at': '2026-08-03T08:01:00.000Z',
+          'dissolved_by': 'peer-admin',
+        });
+
+        final group = await dbLoadGroup(db, 'group-1');
+        expect(group, containsPair('is_dissolved', 1));
+        expect(group, containsPair('dissolved_by', 'peer-admin'));
+        expect(
+          (await db.query(
+            'group_notification_display_outbox',
+          )).map((row) => row['event_id']).toList(),
+          <String>['sibling'],
+        );
+      },
+    );
+
+    test('cleanup failure rolls the dissolved row update back', () async {
+      await db.execute('''
+        CREATE TRIGGER fail_group_display_cleanup
+        BEFORE DELETE ON group_notification_display_outbox
+        WHEN OLD.group_id = 'group-1'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced display cleanup failure');
+        END
+      ''');
+
+      await expectLater(
+        dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(db, {
+          ...makeGroupRow(),
+          'is_dissolved': 1,
+          'dissolved_at': '2026-08-03T08:01:00.000Z',
+          'dissolved_by': 'peer-admin',
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      final group = await dbLoadGroup(db, 'group-1');
+      expect(group, containsPair('is_dissolved', 0));
+      expect(
+        (await db.query(
+          'group_notification_display_outbox',
+          orderBy: 'event_id',
+        )).map((row) => row['event_id']),
+        <String>['sibling', 'target-a', 'target-b'],
+      );
     });
   });
 

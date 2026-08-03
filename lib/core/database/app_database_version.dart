@@ -20,4 +20,7 @@
 // state machine. Its legacy backfill is deliberately empty.
 // 266: DB v104 adds the bounded, opaque `group_exit_diagnostics` history.
 // Its legacy backfill is deliberately empty.
-const int currentIdentityDatabaseVersion = 105;
+// 330: DB v106 adds identifier-only durable group-notification display
+// custody. It intentionally has no foreign keys because the marker precedes
+// canonical message/reaction persistence.
+const int currentIdentityDatabaseVersion = 106;

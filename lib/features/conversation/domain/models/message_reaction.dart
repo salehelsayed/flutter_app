@@ -28,6 +28,10 @@ class MessageReaction {
   /// an older (stale) re-add can be recognised and dropped (INV-T1/INV-T2).
   final String? removedAt;
 
+  /// Local-only conversation-read boundary for notification projection.
+  /// Never serialized onto the wire or written by ordinary reaction payloads.
+  final String? notificationAcknowledgedAt;
+
   const MessageReaction({
     required this.id,
     required this.messageId,
@@ -36,6 +40,7 @@ class MessageReaction {
     required this.timestamp,
     required this.createdAt,
     this.removedAt,
+    this.notificationAcknowledgedAt,
   });
 
   /// Whether this reaction has been tombstoned by a remove.
@@ -51,6 +56,8 @@ class MessageReaction {
       timestamp: map['timestamp'] as String,
       createdAt: map['created_at'] as String,
       removedAt: map['removed_at'] as String?,
+      notificationAcknowledgedAt:
+          map['notification_acknowledged_at'] as String?,
     );
   }
 
@@ -105,6 +112,8 @@ class MessageReaction {
     String? createdAt,
     String? removedAt,
     bool clearRemovedAt = false,
+    String? notificationAcknowledgedAt,
+    bool clearNotificationAcknowledgedAt = false,
   }) {
     return MessageReaction(
       id: id ?? this.id,
@@ -114,6 +123,9 @@ class MessageReaction {
       timestamp: timestamp ?? this.timestamp,
       createdAt: createdAt ?? this.createdAt,
       removedAt: clearRemovedAt ? null : (removedAt ?? this.removedAt),
+      notificationAcknowledgedAt: clearNotificationAcknowledgedAt
+          ? null
+          : (notificationAcknowledgedAt ?? this.notificationAcknowledgedAt),
     );
   }
 

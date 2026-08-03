@@ -17,6 +17,8 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -59,6 +61,30 @@ import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+class _CancellableGroupNotificationService extends FakeNotificationService
+    implements ConversationNotificationCancellation {
+  final cancelledConversationKeys = <String>[];
+  ConversationNotificationContentMetadata? currentMetadata;
+
+  @override
+  Future<void> cancelConversationNotification(
+    String conversationKey, {
+    ConversationNotificationContentKind? onlyIfContentKind,
+    ConversationNotificationContentCancellationPredicate? shouldCancelContent,
+  }) async {
+    final metadata = currentMetadata;
+    if (metadata == null ||
+        (onlyIfContentKind != null && metadata.kind != onlyIfContentKind)) {
+      return;
+    }
+    if (shouldCancelContent != null && !await shouldCancelContent(metadata)) {
+      return;
+    }
+    cancelledConversationKeys.add(conversationKey);
+    currentMetadata = null;
+  }
+}
 
 List<Map<String, dynamic>> _gird003ListenerMedia({
   required String id,
@@ -177,6 +203,19 @@ class _FaultingSelfRemovalRepository extends InMemoryGroupRepository {
       throw StateError('terminal cleanup failed');
     }
     return super.terminalizeSelfRemovedShell(expected: expected);
+  }
+}
+
+class _RemoteDissolveCleanupRepository extends InMemoryGroupRepository
+    implements AtomicGroupDissolveRepository {
+  final displayRowsByGroup = <String, Set<String>>{};
+  int terminalCommitCalls = 0;
+
+  @override
+  Future<void> commitDissolvedGroup(GroupModel group) async {
+    terminalCommitCalls++;
+    await updateGroup(group);
+    displayRowsByGroup.remove(group.id);
   }
 }
 
@@ -814,10 +853,8 @@ void main() {
   }
 
   Future<void> expectCommittedNotificationClaim(File claim) async {
-    // Reaction notifications are intentionally launched without awaiting the
-    // OS-notification path. Keep this poll bounded, but allow a busy batched
-    // groups gate to finish the durable claim before teardown removes its
-    // directory.
+    // Keep this poll bounded, but allow a busy batched groups gate to finish
+    // the durable claim before teardown removes its directory.
     final deadline = DateTime.now().add(const Duration(seconds: 10));
     while (DateTime.now().isBefore(deadline)) {
       if (await claim.exists() &&
@@ -13326,6 +13363,83 @@ void main() {
   // Group notifications
   // ---------------------------------------------------------------------------
   group('group notifications', () {
+    test(
+      'TC-330-08 read commit wiring cancels the exact group conversation card',
+      () async {
+        final notificationService = _CancellableGroupNotificationService();
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-330-startup-read',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'already read before restart',
+            timestamp: DateTime.utc(2026, 8, 2, 19),
+            isIncoming: true,
+            readAt: DateTime.utc(2026, 8, 2, 19, 1),
+            createdAt: DateTime.utc(2026, 8, 2, 19),
+          ),
+        );
+        notificationService.currentMetadata =
+            const ConversationNotificationContentMetadata(
+              kind: ConversationNotificationContentKind.message,
+              eventIdentity: 'msg-330-startup-read',
+              generation: 'generation-startup-read',
+            );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          notificationService: notificationService,
+          notificationPresentationCoordinator:
+              GroupNotificationPresentationCoordinator(),
+        );
+        listener.start(sourceController.stream);
+        // Startup reconciliation intentionally retires any stale zero-unread
+        // card. Isolate that recovery projection from the read-commit event
+        // this wiring test owns.
+        final startupDeadline = DateTime.now().add(const Duration(seconds: 1));
+        while (notificationService.cancelledConversationKeys.isEmpty &&
+            DateTime.now().isBefore(startupDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(notificationService.cancelledConversationKeys, [
+          'group:group-1',
+        ]);
+        notificationService.cancelledConversationKeys.clear();
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-330-read',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'unread',
+            timestamp: DateTime.utc(2026, 8, 2, 20),
+            isIncoming: true,
+            readAt: null,
+            createdAt: DateTime.utc(2026, 8, 2, 20),
+          ),
+        );
+        notificationService.currentMetadata =
+            const ConversationNotificationContentMetadata(
+              kind: ConversationNotificationContentKind.message,
+              eventIdentity: 'msg-330-read',
+              generation: 'generation-live-read',
+            );
+
+        await msgRepo.markAsRead('group-1');
+        final deadline = DateTime.now().add(const Duration(seconds: 1));
+        while (notificationService.cancelledConversationKeys.isEmpty &&
+            DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(notificationService.cancelledConversationKeys, [
+          'group:group-1',
+        ]);
+        listener.dispose();
+      },
+    );
+
     test('shows notification for incoming group message', () async {
       await saveSelfMember();
       final notifService = FakeNotificationService();
@@ -14896,8 +15010,9 @@ void main() {
     );
 
     test(
-      '127-Bug-D: incoming ADD group reaction notifies (route + emoji)',
+      'TC-330-11 incoming ADD reaction uses semantic target kind without emoji',
       () async {
+        await saveSelfMember();
         await saveGroupReactionTargetMessage('msg-1');
         final notifService = FakeNotificationService();
         final rxnListener = GroupMessageListener(
@@ -14933,7 +15048,14 @@ void main() {
 
         expect(notifService.shown, hasLength(1));
         expect(notifService.shown.single.contactPeerId, 'group:group-1');
-        expect(notifService.shown.single.messageText, contains('\u{1F44D}'));
+        expect(
+          notifService.shown.single.messageText,
+          'Sender reacted to your message',
+        );
+        expect(
+          notifService.shown.single.messageText,
+          isNot(contains('\u{1F44D}')),
+        );
 
         rxnListener.dispose();
       },
@@ -15264,7 +15386,7 @@ void main() {
         expect(author.notifications.shown, hasLength(1));
         expect(
           author.notifications.shown.single.messageText,
-          'Sender reacted \u{1F44D} to your message',
+          'Sender reacted to your message',
         );
         expect(reactor.notifications.shown, isEmpty);
         expect(bystander.notifications.shown, isEmpty);
@@ -15316,6 +15438,7 @@ void main() {
     test(
       'announcement reaction notifies only announcement author with group context',
       () async {
+        await saveSelfMember();
         await groupRepo.updateGroup(
           testGroup.copyWith(
             name: 'Team Announcements',
@@ -15399,7 +15522,7 @@ void main() {
         expect(notifications.shown.single.senderUsername, 'Team Announcements');
         expect(
           notifications.shown.single.messageText,
-          'Sender reacted \u{1F389} to your message',
+          'Sender reacted to your message',
         );
         expect(readerNotifications.shown, isEmpty);
         expect(reactionRepo.saveReactionCallCount, 1);
@@ -16111,6 +16234,52 @@ void main() {
         expect(saved!.id.startsWith('sys-group_dissolved:group-1:'), isTrue);
         expect(saved.text, 'Admin dissolved the group');
         expect(bridge.commandLog, contains('group:leave'));
+      },
+    );
+
+    test(
+      'remote dissolve terminally clears only exact-group display custody',
+      () async {
+        listener.dispose();
+        final cleanupRepo = _RemoteDissolveCleanupRepository();
+        await cleanupRepo.saveGroup(testGroup);
+        await cleanupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        cleanupRepo.displayRowsByGroup['group-1'] = {'message-a', 'reaction-a'};
+        cleanupRepo.displayRowsByGroup['group-sibling'] = {'message-b'};
+        listener = GroupMessageListener(
+          groupRepo: cleanupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+
+        await listener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': '2026-04-05T12:00:00.000Z',
+            'dissolvedBy': 'peer-admin',
+          }),
+          'timestamp': '2026-04-05T12:00:00.000Z',
+          'messageId': 'remote-dissolve-cleanup',
+        });
+
+        expect(cleanupRepo.terminalCommitCalls, 1);
+        expect(cleanupRepo.displayRowsByGroup, isNot(contains('group-1')));
+        expect(cleanupRepo.displayRowsByGroup['group-sibling'], <String>{
+          'message-b',
+        });
+        expect((await cleanupRepo.getGroup('group-1'))?.isDissolved, isTrue);
       },
     );
 

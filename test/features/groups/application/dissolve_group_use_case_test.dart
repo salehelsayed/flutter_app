@@ -10,15 +10,29 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
+class _DissolveCleanupTrackingGroupRepository extends InMemoryGroupRepository
+    implements AtomicGroupDissolveRepository {
+  final displayRowsByGroup = <String, Set<String>>{};
+  int terminalCommitCalls = 0;
+
+  @override
+  Future<void> commitDissolvedGroup(GroupModel group) async {
+    terminalCommitCalls++;
+    await updateGroup(group);
+    displayRowsByGroup.remove(group.id);
+  }
+}
+
 void main() {
   late FakeBridge bridge;
-  late InMemoryGroupRepository groupRepo;
+  late _DissolveCleanupTrackingGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
 
   final now = DateTime.utc(2026, 4, 5, 12, 0, 0);
@@ -34,7 +48,7 @@ void main() {
 
   setUp(() async {
     bridge = FakeBridge();
-    groupRepo = InMemoryGroupRepository();
+    groupRepo = _DissolveCleanupTrackingGroupRepository();
     msgRepo = InMemoryGroupMessageRepository();
 
     await groupRepo.saveGroup(baseGroup);
@@ -125,6 +139,35 @@ void main() {
           jsonDecode(replayEnvelope['ciphertext'] as String)
               as Map<String, dynamic>;
       expect(replayEnvelope['messageId'], replayPlaintext['messageId']);
+    },
+  );
+
+  test(
+    'local dissolve terminally clears only exact-group display custody',
+    () async {
+      groupRepo.displayRowsByGroup['group-1'] = {'message-a', 'reaction-a'};
+      groupRepo.displayRowsByGroup['group-sibling'] = {'message-b'};
+
+      final (result, group) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: now.add(const Duration(minutes: 5)),
+      );
+
+      expect(result, DissolveGroupResult.success);
+      expect(group?.isDissolved, isTrue);
+      expect(groupRepo.terminalCommitCalls, 1);
+      expect(groupRepo.displayRowsByGroup, isNot(contains('group-1')));
+      expect(groupRepo.displayRowsByGroup['group-sibling'], <String>{
+        'message-b',
+      });
     },
   );
 
@@ -415,6 +458,11 @@ void main() {
           .where((message) => message.id.startsWith('sys-group_dissolved:'))
           .toList();
       expect(dissolvedMessages, hasLength(1));
+      expect(
+        groupRepo.terminalCommitCalls,
+        2,
+        reason: 'an already-dissolved replay must retry terminal cleanup',
+      );
     },
   );
 

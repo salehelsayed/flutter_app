@@ -6,6 +6,94 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('group-media fixture authority policy', () {
+    test('Plan 330 account-bound mode accepts only exact legacy authority', () {
+      expect(
+        groupMediaReliabilityAuthorityMatches(
+          mode: GroupMediaReliabilityAuthorityMode.accountBoundLegacy,
+          localAccountPeerId: 'account-author',
+          localTransportPeerId: 'account-author',
+          remoteAccountPeerId: 'account-reactor',
+          remoteTransportPeerId: 'account-reactor',
+          allowedPeers: const <String>['account-author', 'account-reactor'],
+        ),
+        isTrue,
+      );
+    });
+
+    test(
+      'Plan 330 account-bound mode rejects mixed and distinct authority',
+      () {
+        for (final authority
+            in const <
+              ({
+                String localTransport,
+                String remoteTransport,
+                List<String> allowedPeers,
+              })
+            >[
+              (
+                localTransport: 'transport-author',
+                remoteTransport: 'account-reactor',
+                allowedPeers: <String>['transport-author', 'account-reactor'],
+              ),
+              (
+                localTransport: 'account-author',
+                remoteTransport: 'transport-reactor',
+                allowedPeers: <String>['account-author', 'transport-reactor'],
+              ),
+              (
+                localTransport: 'transport-author',
+                remoteTransport: 'transport-reactor',
+                allowedPeers: <String>['transport-author', 'transport-reactor'],
+              ),
+              (
+                localTransport: '',
+                remoteTransport: 'account-reactor',
+                allowedPeers: <String>['account-reactor'],
+              ),
+            ]) {
+          expect(
+            groupMediaReliabilityAuthorityMatches(
+              mode: GroupMediaReliabilityAuthorityMode.accountBoundLegacy,
+              localAccountPeerId: 'account-author',
+              localTransportPeerId: authority.localTransport,
+              remoteAccountPeerId: 'account-reactor',
+              remoteTransportPeerId: authority.remoteTransport,
+              allowedPeers: authority.allowedPeers,
+            ),
+            isFalse,
+          );
+        }
+      },
+    );
+
+    test('P269 distinct mode remains strict and rejects legacy equality', () {
+      expect(
+        groupMediaReliabilityAuthorityMatches(
+          mode: GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
+          localAccountPeerId: 'account-author',
+          localTransportPeerId: 'transport-author',
+          remoteAccountPeerId: 'account-reactor',
+          remoteTransportPeerId: 'transport-reactor',
+          allowedPeers: const <String>['transport-author', 'transport-reactor'],
+        ),
+        isTrue,
+      );
+      expect(
+        groupMediaReliabilityAuthorityMatches(
+          mode: GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
+          localAccountPeerId: 'account-author',
+          localTransportPeerId: 'account-author',
+          remoteAccountPeerId: 'account-reactor',
+          remoteTransportPeerId: 'account-reactor',
+          allowedPeers: const <String>['account-author', 'account-reactor'],
+        ),
+        isFalse,
+      );
+    });
+  });
+
   test('P269 database fingerprint distinguishes same-path Android roles', () {
     const runId = 'p269-db-fingerprint-run';
     const sharedAndroidPath = '/data/user/0/com.mknoon.app/databases/app.db';

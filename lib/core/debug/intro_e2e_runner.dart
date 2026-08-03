@@ -11,6 +11,7 @@ import 'package:flutter_app/core/debug/android_voice_message_e2e.dart';
 import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/debug/group_reaction_e2e_probe.dart';
+import 'package:flutter_app/core/debug/group_notification_projection_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
@@ -269,6 +270,8 @@ Future<Map<String, Object?>> evaluateDirectTextRelayTokenProof({
 typedef OpenConversationForIntroE2EFn = Future<bool> Function(String peerId);
 typedef ResolveWakeTokenForIntroE2EFn = Future<String?> Function(String peerId);
 typedef RunGroupMediaReliabilityE2EFn =
+    Future<Map<String, Object?>> Function(Map<String, dynamic> config);
+typedef RunGroupNotificationProjectionE2EFn =
     Future<Map<String, Object?>> Function(Map<String, dynamic> config);
 typedef RunGroupMediaIosBackgroundE2EFn =
     Future<Map<String, Object?>> Function(
@@ -803,6 +806,7 @@ void startIntroE2EPoller({
   required WakeTokenAcceptedAttachmentObserver wakeTokenAttachmentObserver,
   PrivateMediaOutboxE2EController? privateMediaOutboxE2EController,
   RunGroupMediaReliabilityE2EFn? runGroupMediaReliabilityE2E,
+  RunGroupNotificationProjectionE2EFn? runGroupNotificationProjectionE2E,
   RunGroupMediaIosBackgroundE2EFn? runGroupMediaIosBackgroundE2E,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
@@ -875,6 +879,31 @@ void startIntroE2EPoller({
       // the release file channel.
       if (!kDebugMode) {
         await _deleteConfigIfPresent();
+        return;
+      }
+
+      if (config['transport_action'] == groupNotificationProjectionE2EAction) {
+        await _deleteConfigIfPresent();
+        try {
+          final run = runGroupNotificationProjectionE2E;
+          if (run == null) {
+            throw StateError(
+              'group notification projection endpoint is not wired',
+            );
+          }
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(await run(config)),
+          );
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              groupNotificationProjectionE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
+            ),
+          );
+        }
         return;
       }
 

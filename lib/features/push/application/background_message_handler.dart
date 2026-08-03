@@ -15,16 +15,21 @@ import 'package:flutter_app/core/notifications/remote_notification_identity.dart
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_read_acknowledgement_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -33,10 +38,13 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
+import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
-import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 final FlutterLocalNotificationsPlugin _backgroundNotificationsPlugin =
@@ -75,6 +83,10 @@ typedef BackgroundReactionNotificationCoordinatorResolver =
     Future<DurableNotificationToneLease> Function();
 typedef BackgroundGroupReactionLocalStateResolver =
     Future<BackgroundGroupReactionLocalState?> Function(RemoteMessage message);
+typedef BackgroundGroupNotificationPostShowValidator =
+    Future<BackgroundGroupNotificationPostShowDecision> Function(
+      BackgroundManagedGroupNotificationComparand comparand,
+    );
 
 class BackgroundDirectReactionLocalState {
   const BackgroundDirectReactionLocalState({
@@ -172,6 +184,9 @@ _backgroundReactionNotificationCoordinatorResolver =
 BackgroundGroupReactionLocalStateResolver
 _backgroundGroupReactionLocalStateResolver =
     _resolveGroupReactionLocalStateFromEncryptedDb;
+BackgroundGroupNotificationPostShowValidator
+_backgroundGroupNotificationPostShowValidator =
+    _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
 
 @visibleForTesting
 void debugSetBackgroundPushNotificationResolver(
@@ -292,6 +307,19 @@ void debugSetBackgroundGroupReactionLocalStateResolver(
 void debugResetBackgroundGroupReactionLocalStateResolver() {
   _backgroundGroupReactionLocalStateResolver =
       _resolveGroupReactionLocalStateFromEncryptedDb;
+}
+
+@visibleForTesting
+void debugSetBackgroundGroupNotificationPostShowValidator(
+  BackgroundGroupNotificationPostShowValidator validator,
+) {
+  _backgroundGroupNotificationPostShowValidator = validator;
+}
+
+@visibleForTesting
+void debugResetBackgroundGroupNotificationPostShowValidator() {
+  _backgroundGroupNotificationPostShowValidator =
+      _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
 }
 
 @visibleForTesting
@@ -440,10 +468,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       return;
     }
     final pushType = _trimToNull(message.data['type']);
+    final groupContentKind =
+        routeTarget?.kind == NotificationRouteTargetKind.group
+        ? groupNotificationContentKindFromRemoteData(message.data)
+        : null;
     final isOrdinaryMessage =
-        pushType == 'new_message' || pushType == 'group_message';
+        pushType == 'new_message' ||
+        groupContentKind == ConversationNotificationContentKind.message;
     final isReaction =
-        pushType == 'message_reaction' || pushType == 'group_reaction';
+        pushType == 'message_reaction' ||
+        groupContentKind == ConversationNotificationContentKind.reaction;
     final reactionEventId = isReaction
         ? _trimToNull(message.data['event_id']) ??
               _trimToNull(message.data['reaction_id'])
@@ -456,7 +490,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         : boundedReactionEventIdentity(reactionEventId);
     // Swift's NSE deliberately uses `message_reaction` for direct, group, and
     // announcement reactions. Keep the exact filename contract cross-platform.
-    final notificationClaimType = isReaction ? 'message_reaction' : pushType;
+    final notificationClaimType = isReaction
+        ? 'message_reaction'
+        : groupContentKind == ConversationNotificationContentKind.message
+        ? 'group_message'
+        : pushType;
     // The OS card/thread is conversation-scoped, while the tap payload remains
     // message-anchored. In particular, `group:<id>|message:<id>` must update the
     // existing group card rather than minting one card per message.
@@ -522,7 +560,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (notificationCoordinator != null) {
       try {
         final toneKey = isReaction
-            ? pushType == 'group_reaction'
+            ? groupContentKind == ConversationNotificationContentKind.reaction
                   ? _groupReactionConversationKey(message.data) ??
                         notificationEventIdentity!
                   : fallback.payload ?? notificationEventIdentity!
@@ -542,9 +580,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         );
       }
     }
+    late final DurableConversationNotificationIdRegistry notificationIdRegistry;
     late final int notificationId;
     try {
-      final notificationIdRegistry =
+      notificationIdRegistry =
           await _backgroundConversationNotificationIdRegistryResolver();
       notificationId = await notificationIdRegistry.resolve(
         conversationKey,
@@ -571,17 +610,54 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       throw allocationError;
     }
 
-    await _backgroundNotificationsPlugin.show(
+    final contentKind = groupContentKind;
+    final contentMetadata = contentKind == null
+        ? null
+        : ConversationNotificationContentMetadata(
+            kind: contentKind,
+            eventIdentity: notificationEventIdentity,
+            generation: createConversationNotificationGeneration(),
+          );
+    final nativePayload = contentMetadata == null
+        ? fallback.payload
+        : encodeConversationNotificationPayload(
+            routePayload: fallback.payload ?? conversationKey,
+            conversationKey: conversationKey,
+            metadata: contentMetadata,
+          );
+    Future<void> show() => _backgroundNotificationsPlugin.show(
       notificationId,
       fallback.title,
       fallback.body,
       mknoonConversationNotificationDetails(
         conversationKey: conversationKey,
         silent: silent,
+        autoCancel: contentMetadata == null,
       ),
-      payload: fallback.payload,
+      payload: nativePayload,
     );
+    if (contentMetadata == null) {
+      await show();
+    } else {
+      await notificationIdRegistry.replaceContent(
+        conversationKey: conversationKey,
+        notificationId: notificationId,
+        metadata: contentMetadata,
+        retireCurrent: () =>
+            _backgroundNotificationsPlugin.cancel(notificationId),
+        replace: show,
+      );
+    }
+    // Native display has succeeded. Detach both owners before any subsequent
+    // validation/bookkeeping so no post-show failure can reach the outer catch
+    // and release them for a duplicate audible retry.
     final shownToneReservation = notificationToneReservation;
+    notificationToneReservation = null;
+    final shownMessageClaim = notificationEventClaim;
+    notificationEventClaim = null;
+    // Commit durable ownership immediately after native publication. The
+    // canonical fence may need to open SQLCipher or call back into the plugin;
+    // neither operation may enlarge the show-to-commit crash window.
     if (shownToneReservation != null) {
       var toneCommitted = false;
       try {
@@ -591,7 +667,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
       // The OS show succeeded, so a later bookkeeping failure must never
       // release the audible right and permit a second immediate tone.
-      notificationToneReservation = null;
       if (!toneCommitted) {
         emitFlowEvent(
           layer: 'FL',
@@ -600,7 +675,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         );
       }
     }
-    final shownMessageClaim = notificationEventClaim;
     if (shownMessageClaim != null) {
       try {
         notificationClaimCommitted = await shownMessageClaim.commit();
@@ -609,12 +683,72 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
       // The OS show succeeded, so this producer must never release its claim,
       // even if a later compatibility-gate write fails.
-      notificationEventClaim = null;
       if (!notificationClaimCommitted) {
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_BACKGROUND_MESSAGE_CLAIM_COMMIT_FAILED',
           details: {'type': pushType},
+        );
+      }
+    }
+    final groupComparand = fallback.groupComparand;
+    if (contentMetadata != null && groupComparand != null) {
+      try {
+        final metadataMatches = switch (groupComparand) {
+          BackgroundGroupMessageNotificationComparand messageComparand =>
+            contentMetadata.kind ==
+                    ConversationNotificationContentKind.message &&
+                contentMetadata.eventIdentity == messageComparand.messageId,
+          BackgroundGroupReactionNotificationComparand reactionComparand =>
+            contentMetadata.kind ==
+                    ConversationNotificationContentKind.reaction &&
+                contentMetadata.eventIdentity ==
+                    reactionComparand.notificationEventIdentity,
+          BackgroundProvisionalGroupReactionNotificationComparand
+          reactionComparand =>
+            contentMetadata.kind ==
+                    ConversationNotificationContentKind.reaction &&
+                contentMetadata.eventIdentity ==
+                    reactionComparand.notificationEventIdentity,
+        };
+        final decision = metadataMatches
+            ? await _backgroundGroupNotificationPostShowValidator(
+                groupComparand,
+              )
+            : BackgroundGroupNotificationPostShowDecision.retire;
+        if (decision == BackgroundGroupNotificationPostShowDecision.retire) {
+          final retired = await notificationIdRegistry
+              .cancelContentIfGeneration(
+                conversationKey: conversationKey,
+                notificationId: notificationId,
+                generation: contentMetadata.generation!,
+                cancel: () =>
+                    _backgroundNotificationsPlugin.cancel(notificationId),
+              );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_BACKGROUND_GROUP_POST_SHOW_RETIRED',
+            details: {
+              'type': pushType,
+              'result': retired
+                  ? 'retired_exact_generation'
+                  : 'newer_generation_survived',
+            },
+          );
+        }
+      } catch (error) {
+        // The native show already succeeded. A read or cancellation failure is
+        // unknown, not a display failure: keep the card. Its tone and event
+        // owners were already committed immediately after native publication,
+        // so the same push cannot re-alert. Durable reconciliation retries the
+        // canonical projection from the foreground runtime.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_GROUP_POST_SHOW_UNKNOWN',
+          details: {
+            'type': pushType,
+            'errorType': error.runtimeType.toString(),
+          },
         );
       }
     }
@@ -771,6 +905,16 @@ String? _trimToNull(Object? value) {
   }
   return trimmed;
 }
+
+bool _isExactGroupNotificationReadAcknowledgement(
+  Map<String, Object?>? row, {
+  required String groupId,
+  required String contentKind,
+  required String eventIdentity,
+}) =>
+    _trimToNull(row?['group_id']) == groupId &&
+    _trimToNull(row?['content_kind']) == contentKind &&
+    _trimToNull(row?['event_identity']) == eventIdentity;
 
 String? _groupReactionConversationKey(Map<String, dynamic> data) {
   final groupId = _trimToNull(data['groupId']) ?? _trimToNull(data['group_id']);
@@ -991,6 +1135,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
     return resolveBackgroundPushNotification(
       message,
       groupReactionContext: localState.previewContext,
+      locale: _backgroundNotificationLocaleResolver(),
       decryptGroup:
           ({
             required groupId,
@@ -1264,6 +1409,8 @@ BackgroundGroupMessageLocalState? groupMessageLocalStateFromRows({
   required Map<String, Object?>? localMemberRow,
   required List<Map<String, Object?>> memberRows,
   required Map<String, Object?>? groupKeyRow,
+  Map<String, Object?>? readAcknowledgementRow,
+  Map<String, Object?>? canonicalMessageRow,
 }) {
   if (_trimToNull(data['type']) != 'group_message') return null;
   final groupId = _trimToNull(data['groupId']) ?? _trimToNull(data['group_id']);
@@ -1280,25 +1427,27 @@ BackgroundGroupMessageLocalState? groupMessageLocalStateFromRows({
   final storedGroupId = _trimToNull(groupRow?['id']);
   final groupName = _trimToNull(groupRow?['name']);
   final groupType = _trimToNull(groupRow?['type']);
-  final groupMuted = (groupRow?['is_muted'] as num?)?.toInt() == 1;
-  final groupArchived = (groupRow?['is_archived'] as num?)?.toInt() == 1;
-  final groupDissolved =
-      (groupRow?['is_dissolved'] as num?)?.toInt() == 1 ||
-      groupRow?['dissolved_at'] != null;
-  final localMemberGroupId = _trimToNull(localMemberRow?['group_id']);
-  final storedLocalMember = _trimToNull(localMemberRow?['peer_id']);
+  final messageId = remoteNotificationMessageIdFromData(data);
+  final groupDisplayEligibility = groupNotificationDisplayEligibilityFromRows(
+    expectedGroupId: groupId,
+    localPeerId: localPeerId,
+    groupRow: groupRow,
+    localMemberRow: localMemberRow,
+  );
   if (groupId == null ||
       localPeerId == null ||
       senderTransportPeerId == null ||
       storedGroupId != groupId ||
-      (groupType != 'chat' &&
-          groupType != 'announcement' &&
-          groupType != 'qa') ||
-      groupMuted ||
-      groupArchived ||
-      groupDissolved ||
-      localMemberGroupId != groupId ||
-      storedLocalMember != localPeerId) {
+      !groupDisplayEligibility.shouldDisplay) {
+    return null;
+  }
+  if (messageId != null &&
+      _isExactGroupNotificationReadAcknowledgement(
+        readAcknowledgementRow,
+        groupId: groupId,
+        contentKind: 'message',
+        eventIdentity: messageId,
+      )) {
     return null;
   }
 
@@ -1318,6 +1467,17 @@ BackgroundGroupMessageLocalState? groupMessageLocalStateFromRows({
       (outerSenderAccount != null &&
           outerSenderAccount != resolvedSender.peerId) ||
       !authorizedSenderRole) {
+    return null;
+  }
+  final canonicalIncoming = canonicalMessageRow?['is_incoming'];
+  if (messageId != null &&
+      _trimToNull(canonicalMessageRow?['id']) == messageId &&
+      _trimToNull(canonicalMessageRow?['group_id']) == groupId &&
+      _trimToNull(canonicalMessageRow?['sender_peer_id']) ==
+          resolvedSender.peerId &&
+      canonicalIncoming is num &&
+      canonicalIncoming.toInt() == 1 &&
+      canonicalMessageRow?['read_at'] != null) {
     return null;
   }
 
@@ -1383,10 +1543,24 @@ _resolveGroupMessageLocalStateFromEncryptedDb(RemoteMessage message) async {
     final groupKeyRowFuture = requestedEpoch == null || requestedEpoch < 0
         ? Future<Map<String, Object?>?>.value(null)
         : dbLoadGroupKeyByGeneration(db, groupId, requestedEpoch);
+    final messageId = remoteNotificationMessageIdFromData(data);
+    final readAcknowledgementRowFuture = messageId == null
+        ? Future<Map<String, Object?>?>.value(null)
+        : dbLoadExactGroupNotificationReadAcknowledgement(
+            db,
+            groupId: groupId,
+            contentKind: 'message',
+            eventIdentity: messageId,
+          );
+    final canonicalMessageRowFuture = messageId == null
+        ? Future<Map<String, Object?>?>.value(null)
+        : dbLoadGroupMessage(db, messageId);
     final groupRow = await groupRowFuture;
     final localMemberRow = await localMemberRowFuture;
     final memberRows = await memberRowsFuture;
     final groupKeyRow = await groupKeyRowFuture;
+    final readAcknowledgementRow = await readAcknowledgementRowFuture;
+    final canonicalMessageRow = await canonicalMessageRowFuture;
     Map<String, Object?>? hydratedGroupKeyRow;
     try {
       hydratedGroupKeyRow = await hydrateBackgroundGroupKeyRow(
@@ -1407,6 +1581,8 @@ _resolveGroupMessageLocalStateFromEncryptedDb(RemoteMessage message) async {
       localMemberRow: localMemberRow,
       memberRows: memberRows,
       groupKeyRow: hydratedGroupKeyRow,
+      readAcknowledgementRow: readAcknowledgementRow,
+      canonicalMessageRow: canonicalMessageRow,
     );
   } catch (e) {
     emitFlowEvent(
@@ -1552,8 +1728,11 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   required Map<String, Object?>? groupKeyRow,
   required Map<String, Object?>? latestGroupKeyRow,
   required Map<String, Object?>? currentReactionRow,
+  Map<String, Object?>? readAcknowledgementRow,
   required String? localInstallationTransportPeerId,
   required VerifiedGroupReactionNotificationNomination? verifiedNomination,
+  Iterable<Map<String, Object?>> targetAttachmentRows =
+      const <Map<String, Object?>>[],
 }) {
   final action = _trimToNull(data['action']);
   final eventId =
@@ -1570,12 +1749,12 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   final localPeerId = _trimToNull(identityRow?['peer_id']);
   final storedGroupId = _trimToNull(groupRow?['id']);
   final groupName = _trimToNull(groupRow?['name']);
-  final groupMuted = (groupRow?['is_muted'] as num?)?.toInt() == 1;
-  final groupArchived = (groupRow?['is_archived'] as num?)?.toInt() == 1;
-  final groupDissolved =
-      (groupRow?['is_dissolved'] as num?)?.toInt() == 1 ||
-      groupRow?['dissolved_at'] != null;
-  final storedLocalMember = _trimToNull(localMemberRow?['peer_id']);
+  final groupPolicyInput = _groupNotificationDisplayPolicyInputFromRows(
+    expectedGroupId: groupId,
+    localPeerId: localPeerId,
+    groupRow: groupRow,
+    localMemberRow: localMemberRow,
+  );
   final storedActor = _trimToNull(actorMemberRow?['peer_id']);
   final actorUsername = _trimToNull(actorMemberRow?['username']);
   final targetId = _trimToNull(targetMessageRow?['id']);
@@ -1583,6 +1762,32 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   final targetSenderPeerId = _trimToNull(targetMessageRow?['sender_peer_id']);
   final targetIncoming =
       (targetMessageRow?['is_incoming'] as num?)?.toInt() != 0;
+  final targetPolicy = GroupPrivateMediaPolicy.fromDatabase(
+    version: targetMessageRow?['media_policy_version'],
+    lifecycle: targetMessageRow?['media_lifecycle'],
+    durationSeconds: targetMessageRow?['media_duration_seconds'],
+    protected: targetMessageRow?['media_protected'],
+  );
+  final reactionDisplayEligibility =
+      evaluateGroupReactionNotificationDisplayPolicy(
+        GroupReactionNotificationDisplayPolicyInput(
+          group: groupPolicyInput,
+          hasCurrentLocalAuthoredTarget:
+              targetId == targetMessageId &&
+              targetGroupId == groupId &&
+              targetSenderPeerId == localPeerId &&
+              !targetIncoming,
+          targetRequiresRedaction: targetPolicy.requiresRedaction,
+        ),
+      );
+  final targetKind = groupReactionTargetKindForGroupOwnedMediaTypes(
+    targetAttachmentRows
+        .where(
+          (row) =>
+              _trimToNull(row['owner_lane']) == MediaOwnerLane.group.dbValue,
+        )
+        .map((row) => _trimToNull(row['media_type']) ?? 'unknown'),
+  );
   final keyGroupId = _trimToNull(groupKeyRow?['group_id']);
   final storedKeyEpoch = (groupKeyRow?['key_generation'] as num?)?.toInt();
   final groupKey = _trimToNull(groupKeyRow?['encrypted_key']);
@@ -1610,6 +1815,24 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   final currentReactionRemovedAt = _trimToNull(
     currentReactionRow?['removed_at'],
   );
+  final currentReactionAcknowledged =
+      currentReactionRow?['notification_acknowledged_at'] != null;
+  final currentReactionTerminalEventIdentity = _trimToNull(
+    currentReactionRow?['notification_display_terminal_event_id'],
+  );
+  final exactCanonicalReactionAcknowledged =
+      eventId != null &&
+      currentReactionAcknowledged &&
+      currentReactionTerminalEventIdentity ==
+          boundedReactionEventIdentity(eventId);
+  final exactReadAcknowledgement = eventId == null || groupId == null
+      ? false
+      : _isExactGroupNotificationReadAcknowledgement(
+          readAcknowledgementRow,
+          groupId: groupId,
+          contentKind: 'reaction',
+          eventIdentity: boundedReactionEventIdentity(eventId),
+        );
 
   if (action != 'add' ||
       eventId == null ||
@@ -1621,10 +1844,7 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
       actorPeerId == localPeerId ||
       storedGroupId != groupId ||
       groupName == null ||
-      groupMuted ||
-      groupArchived ||
-      groupDissolved ||
-      storedLocalMember != localPeerId ||
+      !reactionDisplayEligibility.shouldDisplay ||
       localTransportPeerId == null ||
       localDevice == null ||
       storedActor != actorPeerId ||
@@ -1633,10 +1853,6 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
       actorDevice == null ||
       actorDevice.deviceSigningPublicKey !=
           verifiedNomination.senderPublicKey ||
-      targetId != targetMessageId ||
-      targetGroupId != groupId ||
-      targetSenderPeerId != localPeerId ||
-      targetIncoming ||
       keyGroupId != groupId ||
       latestKeyGroupId != groupId ||
       !isCurrentGroupReactionKeyEpoch(
@@ -1645,7 +1861,9 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
         latestEpoch: latestKeyEpoch,
       ) ||
       groupKey == null ||
-      isSecureStoreReference(groupKey)) {
+      isSecureStoreReference(groupKey) ||
+      exactCanonicalReactionAcknowledged ||
+      exactReadAcknowledgement) {
     return null;
   }
   if (currentReactionRow != null &&
@@ -1662,8 +1880,11 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
       actorPeerId: actorPeerId,
       actorUsername: actorUsername,
       targetMessageId: targetMessageId,
+      targetKind: targetKind,
+      currentReactionId: _trimToNull(currentReactionRow?['id']),
       currentReactionTimestamp: currentReactionTimestamp,
       currentReactionRemovedAt: currentReactionRemovedAt,
+      currentReactionAcknowledged: currentReactionAcknowledged,
     ),
     groupKey: groupKey,
     keyEpoch: keyEpoch,
@@ -1710,10 +1931,13 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
   final targetMessageId =
       _trimToNull(data['target_message_id']) ??
       _trimToNull(data['targetMessageId']);
+  final eventId =
+      _trimToNull(data['event_id']) ?? _trimToNull(data['reaction_id']);
   final keyEpoch = int.tryParse(data['keyEpoch']?.toString() ?? '');
   if (groupId == null ||
       actorPeerId == null ||
       targetMessageId == null ||
+      eventId == null ||
       keyEpoch == null) {
     return null;
   }
@@ -1764,7 +1988,18 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
         targetMessageId,
         actorPeerId,
       ),
+      dbLoadExactGroupNotificationReadAcknowledgement(
+        db,
+        groupId: groupId,
+        contentKind: 'reaction',
+        eventIdentity: boundedReactionEventIdentity(eventId),
+      ),
     ]);
+    final targetAttachmentRows = await dbLoadMediaForMessage(
+      db,
+      targetMessageId,
+      ownerLane: MediaOwnerLane.group.dbValue,
+    );
     final hydratedGroupKeyRow = await hydrateBackgroundGroupKeyRow(
       groupKeyRow: rows[4],
       secureStore: secureStore,
@@ -1779,8 +2014,10 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
       groupKeyRow: hydratedGroupKeyRow,
       latestGroupKeyRow: rows[5],
       currentReactionRow: rows[6],
+      readAcknowledgementRow: rows[7],
       localInstallationTransportPeerId: localTransportPeerId,
       verifiedNomination: verifiedNomination,
+      targetAttachmentRows: targetAttachmentRows,
     );
   } catch (e) {
     emitFlowEvent(
@@ -1789,6 +2026,116 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
       details: {'error': e.toString()},
     );
     return null;
+  } finally {
+    await db?.close();
+  }
+}
+
+Future<BackgroundGroupNotificationPostShowDecision>
+_validateBackgroundGroupNotificationAfterShowFromEncryptedDb(
+  BackgroundManagedGroupNotificationComparand comparand,
+) async {
+  Database? db;
+  try {
+    final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
+    if (_trimToNull(key) == null) {
+      return BackgroundGroupNotificationPostShowDecision.unknown;
+    }
+    final dbPath = await getDatabasesPath();
+    db = await openBackgroundIdentityDbReadTolerant(
+      path: '$dbPath/identity.db',
+      key: key!,
+    );
+    final identityRow = await dbLoadIdentityRow(db);
+    final localPeerId = _trimToNull(identityRow?['peer_id']);
+    final commonRows = await Future.wait<Map<String, Object?>?>([
+      dbLoadGroup(db, comparand.groupId),
+      localPeerId == null
+          ? Future<Map<String, Object?>?>.value(null)
+          : dbLoadGroupMember(db, comparand.groupId, localPeerId),
+    ]);
+
+    switch (comparand) {
+      case BackgroundGroupMessageNotificationComparand message:
+        final rows = await Future.wait<Map<String, Object?>?>([
+          dbLoadGroupMessage(db, message.messageId),
+          dbLoadGroupMessageLocalDeletion(db, message.messageId),
+          dbLoadExactGroupNotificationReadAcknowledgement(
+            db,
+            groupId: message.groupId,
+            contentKind: 'message',
+            eventIdentity: message.messageId,
+          ),
+        ]);
+        return evaluateBackgroundGroupNotificationPostShowState(
+          comparand: message,
+          localPeerId: localPeerId,
+          groupRow: commonRows[0],
+          localMemberRow: commonRows[1],
+          messageRow: rows[0],
+          messageDeletionRow: rows[1],
+          readAcknowledgementRow: rows[2],
+        );
+      case BackgroundGroupReactionNotificationComparand reaction:
+        final rows = await Future.wait<Map<String, Object?>?>([
+          dbLoadActiveOrTombstonedReactionForSender(
+            db,
+            reaction.messageId,
+            reaction.senderPeerId,
+          ),
+          dbLoadGroupMessage(db, reaction.messageId),
+          dbLoadGroupMessageLocalDeletion(db, reaction.messageId),
+          dbLoadExactGroupNotificationReadAcknowledgement(
+            db,
+            groupId: reaction.groupId,
+            contentKind: 'reaction',
+            eventIdentity: reaction.notificationEventIdentity,
+          ),
+        ]);
+        return evaluateBackgroundGroupNotificationPostShowState(
+          comparand: reaction,
+          localPeerId: localPeerId,
+          groupRow: commonRows[0],
+          localMemberRow: commonRows[1],
+          reactionRow: rows[0],
+          targetMessageRow: rows[1],
+          targetDeletionRow: rows[2],
+          readAcknowledgementRow: rows[3],
+        );
+      case BackgroundProvisionalGroupReactionNotificationComparand reaction:
+        final rows = await Future.wait<Map<String, Object?>?>([
+          dbLoadActiveOrTombstonedReactionForSender(
+            db,
+            reaction.messageId,
+            reaction.senderPeerId,
+          ),
+          dbLoadGroupMessage(db, reaction.messageId),
+          dbLoadGroupMessageLocalDeletion(db, reaction.messageId),
+          dbLoadExactGroupNotificationReadAcknowledgement(
+            db,
+            groupId: reaction.groupId,
+            contentKind: 'reaction',
+            eventIdentity: reaction.notificationEventIdentity,
+          ),
+        ]);
+        return evaluateBackgroundGroupNotificationPostShowState(
+          comparand: reaction,
+          localPeerId: localPeerId,
+          groupRow: commonRows[0],
+          localMemberRow: commonRows[1],
+          reactionRow: rows[0],
+          targetMessageRow: rows[1],
+          targetDeletionRow: rows[2],
+          readAcknowledgementRow: rows[3],
+        );
+    }
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_GROUP_POST_SHOW_READ_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return BackgroundGroupNotificationPostShowDecision.unknown;
   } finally {
     await db?.close();
   }
@@ -1839,17 +2186,75 @@ Future<bool> _defaultBackgroundAccountMigrationNetworkGate({
   );
 }
 
-/// 04-P0 / SI-1: a confirmed group member's background-FCM display eligibility,
-/// honoring mute. Pure decision over the loaded `groups` row so the is_muted
-/// read is unit-testable without standing up a SQLCipher identity.db fixture.
-/// Fails open (notifies) when the column is absent/null, matching the live path.
+/// Maps encrypted-DB rows into the same fail-closed policy used by live and
+/// foreground group notification producers.
+@visibleForTesting
+GroupMessageNotificationDisplayEligibility
+groupNotificationDisplayEligibilityFromRows({
+  required String? expectedGroupId,
+  required String? localPeerId,
+  required Map<String, Object?>? groupRow,
+  required Map<String, Object?>? localMemberRow,
+}) {
+  return evaluateGroupNotificationDisplayPolicy(
+    _groupNotificationDisplayPolicyInputFromRows(
+      expectedGroupId: expectedGroupId,
+      localPeerId: localPeerId,
+      groupRow: groupRow,
+      localMemberRow: localMemberRow,
+    ),
+  );
+}
+
+GroupNotificationDisplayPolicyInput
+_groupNotificationDisplayPolicyInputFromRows({
+  required String? expectedGroupId,
+  required String? localPeerId,
+  required Map<String, Object?>? groupRow,
+  required Map<String, Object?>? localMemberRow,
+}) {
+  final normalizedGroupId = _trimToNull(expectedGroupId);
+  final normalizedLocalPeerId = _trimToNull(localPeerId);
+  final storedGroupId = _trimToNull(groupRow?['id']);
+  final storedMemberGroupId = _trimToNull(localMemberRow?['group_id']);
+  final storedMemberPeerId = _trimToNull(localMemberRow?['peer_id']);
+  final groupExists =
+      normalizedGroupId != null && storedGroupId == normalizedGroupId;
+  final hasCurrentMembership =
+      groupExists &&
+      normalizedLocalPeerId != null &&
+      storedMemberGroupId == normalizedGroupId &&
+      storedMemberPeerId == normalizedLocalPeerId;
+
+  return GroupNotificationDisplayPolicyInput(
+    groupExists: groupExists,
+    hasCurrentLocalMembership: hasCurrentMembership,
+    groupType: _trimToNull(groupRow?['type']),
+    isMuted: (groupRow?['is_muted'] as num?)?.toInt() == 1,
+    isArchived: (groupRow?['is_archived'] as num?)?.toInt() == 1,
+    isDissolved: (groupRow?['is_dissolved'] as num?)?.toInt() == 1,
+    hasDissolvedAt: groupRow?['dissolved_at'] != null,
+    hasSelfRemovedAt: groupRow?['self_removed_at'] != null,
+  );
+}
+
+/// Compatibility seam for callers that have already proved current local
+/// membership. Missing/unknown group fields still fail closed.
 GroupMessageNotificationDisplayEligibility groupMemberMessageDisplayEligibility(
   Map<String, Object?> groupRow,
 ) {
-  if ((groupRow['is_muted'] as int? ?? 0) == 1) {
-    return const GroupMessageNotificationDisplayEligibility.suppressed('muted');
-  }
-  return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+  return evaluateGroupNotificationDisplayPolicy(
+    GroupNotificationDisplayPolicyInput(
+      groupExists: true,
+      hasCurrentLocalMembership: true,
+      groupType: _trimToNull(groupRow['type']),
+      isMuted: (groupRow['is_muted'] as num?)?.toInt() == 1,
+      isArchived: (groupRow['is_archived'] as num?)?.toInt() == 1,
+      isDissolved: (groupRow['is_dissolved'] as num?)?.toInt() == 1,
+      hasDissolvedAt: groupRow['dissolved_at'] != null,
+      hasSelfRemovedAt: groupRow['self_removed_at'] != null,
+    ),
+  );
 }
 
 /// 218 Phase A — read-tolerant identity.db open for the background isolate's

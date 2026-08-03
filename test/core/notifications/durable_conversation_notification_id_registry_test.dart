@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -126,6 +128,47 @@ void main() {
       );
 
       expect(reopenedId, id);
+    },
+  );
+
+  test(
+    'lookup finds an existing owner without allocating and missing or corrupt owners stay null',
+    () async {
+      const key = 'group:lookup-existing';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      final before = directory
+          .listSync(followLinks: false)
+          .map((entity) => entity.path)
+          .toSet();
+
+      expect(await registry.lookup(key), id);
+      expect(await registry.lookup('group:lookup-missing'), isNull);
+      expect(
+        directory
+            .listSync(followLinks: false)
+            .map((entity) => entity.path)
+            .toSet(),
+        before,
+        reason: 'lookup must never publish an owner or coordination file',
+      );
+
+      File('${directory.path}/$id.owner').writeAsStringSync('{corrupt-owner');
+      expect(await registry.lookup(key), isNull);
+
+      final absent = Directory('${directory.path}/never-created');
+      expect(
+        await DurableConversationNotificationIdRegistry(
+          directory: absent,
+        ).lookup('group:absent-directory'),
+        isNull,
+      );
+      expect(absent.existsSync(), isFalse);
     },
   );
 
@@ -388,6 +431,598 @@ void main() {
     expect(ownerFile.path, isNot(contains(key)));
     expect(storedOwner, isNot(contains(key)));
   });
+
+  test(
+    'content kind is owner-bound durable and clears without releasing the id',
+    () async {
+      const key = 'group:content-kind-owner';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+
+      await registry.recordContentKind(
+        conversationKey: key,
+        notificationId: id,
+        kind: ConversationNotificationContentKind.reaction,
+      );
+
+      expect(
+        await registry.lookupContentKind(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        ConversationNotificationContentKind.reaction,
+      );
+      expect(
+        await registry.lookupContentKind(
+          conversationKey: 'group:different-owner',
+          notificationId: id,
+        ),
+        isNull,
+      );
+
+      await registry.clearContentKind(conversationKey: key, notificationId: id);
+
+      expect(
+        await registry.lookupContentKind(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        isNull,
+      );
+      expect(await registry.lookup(key), id);
+    },
+  );
+
+  test('malformed content kind fails closed as unknown', () async {
+    const key = 'group:malformed-content-kind';
+    final registry = DurableConversationNotificationIdRegistry(
+      directory: directory,
+    );
+    final id = await registry.resolve(
+      key,
+      activeNotificationIds: () async => const <Object?>[],
+    );
+    File(
+      '${directory.path}/$id'
+      '${DurableConversationNotificationIdRegistry.contentKindFileSuffix}',
+    ).writeAsStringSync('message\nreaction');
+
+    expect(
+      await registry.lookupContentKind(
+        conversationKey: key,
+        notificationId: id,
+      ),
+      isNull,
+    );
+  });
+
+  test('content metadata survives a fresh registry reopen', () async {
+    const key = 'group:content-metadata-reopen';
+    final first = DurableConversationNotificationIdRegistry(
+      directory: directory,
+    );
+    final id = await first.resolve(
+      key,
+      activeNotificationIds: () async => const <Object?>[],
+    );
+    const expected = ConversationNotificationContentMetadata(
+      kind: ConversationNotificationContentKind.message,
+      eventIdentity: 'message-reopen',
+      generation: 'generation-reopen',
+    );
+
+    await first.recordContentMetadata(
+      conversationKey: key,
+      notificationId: id,
+      metadata: expected,
+    );
+
+    final reopened = DurableConversationNotificationIdRegistry(
+      directory: directory,
+    );
+    expect(
+      await reopened.lookupContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+      ),
+      expected,
+    );
+    expect(
+      await reopened.lookupContentKind(
+        conversationKey: key,
+        notificationId: id,
+      ),
+      ConversationNotificationContentKind.message,
+    );
+  });
+
+  test(
+    'replacement proves metadata storage before retiring or showing a card',
+    () async {
+      const key = 'group:metadata-preflight';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      Directory(
+        '${directory.path}/$id'
+        '${DurableConversationNotificationIdRegistry.contentKindFileSuffix}',
+      ).createSync();
+      var retireCalls = 0;
+      var showCalls = 0;
+
+      await expectLater(
+        registry.replaceContent(
+          conversationKey: key,
+          notificationId: id,
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'message-preflight',
+            generation: 'generation-preflight',
+          ),
+          retireCurrent: () async => retireCalls += 1,
+          replace: () async => showCalls += 1,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+
+      expect(retireCalls, 0);
+      expect(showCalls, 0);
+    },
+  );
+
+  test('uncertain native replacement retains the exact new metadata', () async {
+    const key = 'group:failed-native-replacement';
+    final registry = DurableConversationNotificationIdRegistry(
+      directory: directory,
+    );
+    final id = await registry.resolve(
+      key,
+      activeNotificationIds: () async => const <Object?>[],
+    );
+    await registry.recordContentMetadata(
+      conversationKey: key,
+      notificationId: id,
+      metadata: const ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.reaction,
+        eventIdentity: 'reaction-before',
+        generation: 'generation-before',
+      ),
+    );
+    var retired = false;
+
+    await expectLater(
+      registry.replaceContent(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-after',
+          generation: 'generation-after',
+        ),
+        retireCurrent: () async => retired = true,
+        replace: () async => throw StateError('native show failed'),
+      ),
+      throwsStateError,
+    );
+
+    expect(retired, isTrue);
+    expect(
+      await registry.lookupContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+      ),
+      const ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: 'message-after',
+        generation: 'generation-after',
+      ),
+    );
+  });
+
+  test(
+    'generation replacement is atomic and a stale generation cannot overwrite it',
+    () async {
+      const key = 'group:canonical-rebuild';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.reaction,
+          eventIdentity: 'removed-reaction',
+          generation: 'generation-before',
+        ),
+      );
+      final operations = <String>[];
+
+      expect(
+        await registry.replaceContentIfGeneration(
+          conversationKey: key,
+          notificationId: id,
+          expectedGeneration: 'generation-before',
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'older-unread-message',
+            generation: 'generation-after',
+          ),
+          retireCurrent: () async => operations.add('retire'),
+          replace: () async => operations.add('replace'),
+        ),
+        isTrue,
+      );
+      expect(operations, <String>['retire', 'replace']);
+      expect(
+        await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'older-unread-message',
+          generation: 'generation-after',
+        ),
+      );
+
+      expect(
+        await registry.replaceContentIfGeneration(
+          conversationKey: key,
+          notificationId: id,
+          expectedGeneration: 'generation-before',
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'stale-message',
+            generation: 'stale-generation',
+          ),
+          retireCurrent: () async => operations.add('stale-retire'),
+          replace: () async => operations.add('stale-replace'),
+        ),
+        isFalse,
+      );
+      expect(operations, <String>['retire', 'replace']);
+    },
+  );
+
+  test(
+    'same-kind conditional cancellation validates the current event under lock',
+    () async {
+      const key = 'group:same-kind-event-race';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      const current = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: 'new-unread-message',
+        generation: 'new-generation',
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: current,
+      );
+      var cancelCalls = 0;
+
+      final staleReadCancelled = await registry.cancelContentIfKind(
+        conversationKey: key,
+        notificationId: id,
+        kind: ConversationNotificationContentKind.message,
+        shouldCancel: (metadata) async =>
+            metadata.eventIdentity == 'old-read-message',
+        cancel: () async => cancelCalls += 1,
+      );
+
+      expect(staleReadCancelled, isFalse);
+      expect(cancelCalls, 0);
+      expect(
+        await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        current,
+      );
+
+      final exactReadCancelled = await registry.cancelContentIfKind(
+        conversationKey: key,
+        notificationId: id,
+        kind: ConversationNotificationContentKind.message,
+        shouldCancel: (metadata) async =>
+            metadata.eventIdentity == 'new-unread-message',
+        cancel: () async => cancelCalls += 1,
+      );
+
+      expect(exactReadCancelled, isTrue);
+      expect(cancelCalls, 1);
+      expect(
+        await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        isNull,
+      );
+      expect(await registry.lookup(key), id);
+    },
+  );
+
+  test(
+    'tap cancellation matches an exact generation and no older one',
+    () async {
+      const key = 'group:tap-generation';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.reaction,
+          eventIdentity: 'reaction-current',
+          generation: 'generation-current',
+        ),
+      );
+      var cancelCalls = 0;
+
+      expect(
+        await registry.cancelContentIfGeneration(
+          conversationKey: key,
+          notificationId: id,
+          generation: 'generation-old',
+          cancel: () async => cancelCalls += 1,
+        ),
+        isFalse,
+      );
+      expect(cancelCalls, 0);
+      expect(
+        await registry.cancelContentIfGeneration(
+          conversationKey: key,
+          notificationId: id,
+          generation: 'generation-current',
+          cancel: () async => cancelCalls += 1,
+        ),
+        isTrue,
+      );
+      expect(cancelCalls, 1);
+    },
+  );
+
+  test(
+    'eligibility snapshot loses CAS when a newer same-kind generation arrives',
+    () async {
+      const key = 'group:same-kind-cas';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-g1',
+          generation: 'generation-g1',
+        ),
+      );
+      final eligibilityEntered = Completer<void>();
+      final releaseEligibility = Completer<void>();
+      var nativeCancelCalls = 0;
+      final cancellation = registry.cancelContentIfKind(
+        conversationKey: key,
+        notificationId: id,
+        kind: ConversationNotificationContentKind.message,
+        shouldCancel: (_) async {
+          eligibilityEntered.complete();
+          await releaseEligibility.future;
+          return true;
+        },
+        cancel: () async => nativeCancelCalls += 1,
+      );
+      await eligibilityEntered.future;
+
+      await registry.replaceContent(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-g2',
+          generation: 'generation-g2',
+        ),
+        retireCurrent: () async {},
+        replace: () async {},
+      );
+      releaseEligibility.complete();
+
+      expect(await cancellation, isFalse);
+      expect(nativeCancelCalls, 0);
+      expect(
+        await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-g2',
+          generation: 'generation-g2',
+        ),
+      );
+    },
+  );
+
+  test(
+    'fresh isolates serialize native cancel before reaction replacement',
+    () async {
+      const key = 'group:isolate-cancel-first';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-isolate',
+          generation: 'generation-message-isolate',
+        ),
+      );
+      final rootPath = directory.path;
+      final cancelEnteredPath = '$rootPath/cancel-entered';
+      final releaseCancelPath = '$rootPath/release-cancel';
+      final replacementRetiredPath = '$rootPath/replacement-retired';
+      final cancelEntered = File(cancelEnteredPath);
+      final releaseCancel = File(releaseCancelPath);
+      final replacementRetired = File(replacementRetiredPath);
+
+      final cancel = Isolate.run(() async {
+        final isolated = DurableConversationNotificationIdRegistry(
+          directory: Directory(rootPath),
+        );
+        return isolated.cancelContentIfKind(
+          conversationKey: key,
+          notificationId: id,
+          kind: ConversationNotificationContentKind.message,
+          shouldCancel: (_) async => true,
+          cancel: () async {
+            await File(cancelEnteredPath).create();
+            await _waitForFile(File(releaseCancelPath));
+          },
+        );
+      });
+      await _waitForFile(cancelEntered);
+
+      final replacement = Isolate.run(() async {
+        final isolated = DurableConversationNotificationIdRegistry(
+          directory: Directory(rootPath),
+        );
+        return isolated.replaceContent(
+          conversationKey: key,
+          notificationId: id,
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.reaction,
+            eventIdentity: 'reaction-isolate',
+            generation: 'generation-reaction-isolate',
+          ),
+          retireCurrent: () async => File(replacementRetiredPath).create(),
+          replace: () async {},
+        );
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 75));
+      expect(replacementRetired.existsSync(), isFalse);
+
+      await releaseCancel.create();
+      expect(await cancel, isTrue);
+      await replacement;
+      expect(replacementRetired.existsSync(), isTrue);
+      expect(
+        await registry.lookupContentKind(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        ConversationNotificationContentKind.reaction,
+      );
+    },
+  );
+
+  test(
+    'fresh isolate message cancellation preserves in-flight reaction replacement',
+    () async {
+      const key = 'group:isolate-replace-first';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
+        conversationKey: key,
+        notificationId: id,
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'message-before-reaction',
+          generation: 'generation-before-reaction',
+        ),
+      );
+      final rootPath = directory.path;
+      final showEnteredPath = '$rootPath/show-entered';
+      final releaseShowPath = '$rootPath/release-show';
+      final nativeCancelPath = '$rootPath/unexpected-native-cancel';
+      final showEntered = File(showEnteredPath);
+      final releaseShow = File(releaseShowPath);
+      final nativeCancel = File(nativeCancelPath);
+
+      final replacement = Isolate.run(() async {
+        final isolated = DurableConversationNotificationIdRegistry(
+          directory: Directory(rootPath),
+        );
+        return isolated.replaceContent(
+          conversationKey: key,
+          notificationId: id,
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.reaction,
+            eventIdentity: 'reaction-current',
+            generation: 'generation-reaction-current',
+          ),
+          retireCurrent: () async {},
+          replace: () async {
+            await File(showEnteredPath).create();
+            await _waitForFile(File(releaseShowPath));
+          },
+        );
+      });
+      await _waitForFile(showEntered);
+
+      final cancellation = Isolate.run(() async {
+        final isolated = DurableConversationNotificationIdRegistry(
+          directory: Directory(rootPath),
+        );
+        return isolated.cancelContentIfKind(
+          conversationKey: key,
+          notificationId: id,
+          kind: ConversationNotificationContentKind.message,
+          cancel: () async => File(nativeCancelPath).create(),
+        );
+      });
+
+      expect(await cancellation, isFalse);
+      expect(nativeCancel.existsSync(), isFalse);
+      await releaseShow.create();
+      await replacement;
+      expect(
+        await registry.lookupContentKind(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        ConversationNotificationContentKind.reaction,
+      );
+    },
+  );
 }
 
 Future<int> _resolveRegistryInFreshIsolate(

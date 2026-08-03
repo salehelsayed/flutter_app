@@ -2,11 +2,13 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -31,16 +33,31 @@ typedef GroupMessageNotificationDisplayEligibilityResolver =
     Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
 typedef ForegroundGroupReactionNotificationResolver =
     Future<BackgroundPushNotificationFallback?> Function(RemoteMessage message);
+typedef ForegroundGroupNotificationReadAcknowledgementResolver =
+    Future<bool> Function({
+      required String groupId,
+      required ConversationNotificationContentKind contentKind,
+      required String eventIdentity,
+      required BackgroundManagedGroupNotificationComparand? comparand,
+    });
+typedef ForegroundGroupNotificationPendingReadAcknowledgementResolver =
+    Future<bool> Function({
+      required String groupId,
+      required ConversationNotificationContentKind contentKind,
+      required String eventIdentity,
+    });
 
 class BackgroundPushNotificationFallback {
   final String title;
   final String body;
   final String? payload;
+  final BackgroundManagedGroupNotificationComparand? groupComparand;
 
   const BackgroundPushNotificationFallback({
     required this.title,
     required this.body,
     this.payload,
+    this.groupComparand,
   });
 }
 
@@ -58,6 +75,73 @@ class PushFallbackNotificationDisplayEligibility {
 
   const PushFallbackNotificationDisplayEligibility.suppressed(String reason)
     : this._(shouldDisplay: false, reason: reason);
+}
+
+/// Returns true only when the canonical row proves this exact incoming group
+/// message crossed a durable read boundary. A missing or different row is not
+/// acknowledgement of the foreground FCM event.
+bool isExactForegroundGroupMessageReadAcknowledgement({
+  required String groupId,
+  required String eventIdentity,
+  required String? canonicalGroupId,
+  required String? canonicalMessageId,
+  required bool canonicalIsIncoming,
+  required DateTime? canonicalReadAt,
+}) =>
+    groupId.trim().isNotEmpty &&
+    eventIdentity.trim().isNotEmpty &&
+    canonicalGroupId == groupId &&
+    canonicalMessageId == eventIdentity &&
+    canonicalIsIncoming &&
+    canonicalReadAt != null;
+
+/// Binds an acknowledgement to the exact decrypted reaction-state comparand.
+/// A provisional comparand, malformed time, or distinct/newer ADD remains
+/// eligible; an old conversation read must never suppress the next transition.
+bool isExactForegroundGroupReactionReadAcknowledgement({
+  required BackgroundManagedGroupNotificationComparand? comparand,
+  required String? canonicalReactionId,
+  required String? canonicalMessageId,
+  required String? canonicalSenderPeerId,
+  required String? canonicalTimestamp,
+  required String? canonicalNotificationAcknowledgedAt,
+}) {
+  if (comparand is! BackgroundGroupReactionNotificationComparand ||
+      canonicalNotificationAcknowledgedAt == null) {
+    return false;
+  }
+  final expectedAt = DateTime.tryParse(comparand.timestamp)?.toUtc();
+  final canonicalAt = DateTime.tryParse(canonicalTimestamp ?? '')?.toUtc();
+  return canonicalReactionId == comparand.reactionId &&
+      canonicalMessageId == comparand.messageId &&
+      canonicalSenderPeerId == comparand.senderPeerId &&
+      expectedAt != null &&
+      canonicalAt != null &&
+      expectedAt.isAtSameMomentAs(canonicalAt);
+}
+
+/// Resolves the exact durable read boundary before any foreground claim, tone,
+/// or native show. Pending custody is authoritative for push-before-inbox
+/// events; canonical state is consulted only when no exact pending tuple owns
+/// this event.
+Future<bool> resolveForegroundGroupNotificationReadAcknowledgement({
+  required String groupId,
+  required ConversationNotificationContentKind contentKind,
+  required String eventIdentity,
+  ForegroundGroupNotificationPendingReadAcknowledgementResolver?
+  pendingReadAcknowledgementResolver,
+  required Future<bool> Function() canonicalReadAcknowledgementResolver,
+}) async {
+  final pendingResolver = pendingReadAcknowledgementResolver;
+  if (pendingResolver != null &&
+      await pendingResolver(
+        groupId: groupId,
+        contentKind: contentKind,
+        eventIdentity: eventIdentity,
+      )) {
+    return true;
+  }
+  return canonicalReadAcknowledgementResolver();
 }
 
 bool shouldShowBackgroundPushFallbackNotification(RemoteMessage message) {
@@ -178,6 +262,10 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   AppLifecycleState Function()? getAppLifecycleState,
   ResolveDurableNotificationCoordinator?
   durableGroupMessageNotificationCoordinatorResolver,
+  GroupNotificationPresentationCoordinator?
+  groupNotificationPresentationCoordinator,
+  ForegroundGroupNotificationReadAcknowledgementResolver?
+  groupNotificationReadAcknowledgementResolver,
 }) async {
   if (result != ForegroundRemoteMessageResult.notificationNeeded) {
     return false;
@@ -194,10 +282,6 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
     if (resolver == null || groupId == null || eventId == null) {
       return false;
     }
-    final resolved = await resolver(message);
-    if (resolved == null || resolved.payload == null) {
-      return false;
-    }
     final conversationKey = 'group:$groupId';
     final tracker = groupConversationTracker;
     final lifecycle = getAppLifecycleState;
@@ -207,40 +291,50 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         'group reaction foreground presentation authority unavailable',
       );
     }
-    await maybeShowNotification(
-      notificationService: notificationService,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
-      contactPeerId: conversationKey,
-      routePayload: resolved.payload,
-      senderUsername: resolved.title,
-      messageText: resolved.body,
-      messageId: eventId,
-      notificationEventIdentity: boundedReactionEventIdentity(eventId),
-      notificationEventType: 'message_reaction',
-      durableNotificationCoordinatorResolver: coordinatorResolver,
-      backgroundDuplicateGuardDelay: Duration.zero,
-    );
-    return true;
-  }
-
-  final displayEligibility =
-      await resolveForegroundPushFallbackDisplayEligibility(
-        message,
-        groupMessageDisplayEligibilityResolver:
-            groupMessageDisplayEligibilityResolver,
+    final eventIdentity = boundedReactionEventIdentity(eventId);
+    Future<bool> present() async {
+      final resolved = await resolver(message);
+      if (resolved == null || resolved.payload == null) {
+        return false;
+      }
+      final readAcknowledgementResolver =
+          groupNotificationReadAcknowledgementResolver;
+      if (readAcknowledgementResolver != null &&
+          await readAcknowledgementResolver(
+            groupId: groupId,
+            contentKind: ConversationNotificationContentKind.reaction,
+            eventIdentity: eventIdentity,
+            comparand: resolved.groupComparand,
+          )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+          details: const {'reason': 'canonical_read_acknowledged'},
+        );
+        return false;
+      }
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: lifecycle,
+        contactPeerId: conversationKey,
+        routePayload: resolved.payload,
+        senderUsername: resolved.title,
+        messageText: resolved.body,
+        messageId: eventId,
+        notificationEventIdentity: eventIdentity,
+        notificationEventType: 'message_reaction',
+        durableNotificationCoordinatorResolver: coordinatorResolver,
+        backgroundDuplicateGuardDelay: Duration.zero,
       );
-  if (!displayEligibility.shouldDisplay) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
-      details: {
-        'messageId': message.messageId,
-        'reason': displayEligibility.reason,
-        'payload': _payloadFromMessage(message) ?? '',
-      },
-    );
-    return false;
+      return true;
+    }
+
+    final presentationCoordinator = groupNotificationPresentationCoordinator;
+    if (presentationCoordinator == null) {
+      return present();
+    }
+    return presentationCoordinator.runForGroup(groupId, present);
   }
 
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
@@ -264,54 +358,118 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         remoteNotificationMessageIdFromData(message.data) ??
         _trimToNull(routeTarget?.messageId);
     final genericBody = localizedNotificationMessage();
-    if (canonicalMessageId == null) {
-      final barePayload = NotificationRouteTarget.group(groupId).toPayload();
-      final isViewing =
-          tracker.isViewing(conversationKey) || tracker.isViewing(barePayload);
-      if (lifecycle() == AppLifecycleState.resumed && isViewing) {
+    Future<bool> present() async {
+      final displayEligibility =
+          await resolveForegroundPushFallbackDisplayEligibility(
+            message,
+            groupMessageDisplayEligibilityResolver:
+                groupMessageDisplayEligibilityResolver,
+          );
+      if (!displayEligibility.shouldDisplay) {
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
           details: {
-            'reason': 'viewing_conversation_without_canonical_message_id',
-            'payload': barePayload,
+            'messageId': message.messageId,
+            'reason': displayEligibility.reason,
+            'payload': _payloadFromMessage(message) ?? '',
           },
         );
         return false;
       }
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PUSH_FOREGROUND_GROUP_FALLBACK_UNANCHORED',
-        details: {'reason': 'missing_canonical_message_id'},
-      );
-      await notificationService.showMessageNotification(
+
+      if (canonicalMessageId == null) {
+        final barePayload = NotificationRouteTarget.group(groupId).toPayload();
+        final isViewing =
+            tracker.isViewing(conversationKey) ||
+            tracker.isViewing(barePayload);
+        if (lifecycle() == AppLifecycleState.resumed && isViewing) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+            details: {
+              'reason': 'viewing_conversation_without_canonical_message_id',
+              'payload': barePayload,
+            },
+          );
+          return false;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_GROUP_FALLBACK_UNANCHORED',
+          details: {'reason': 'missing_canonical_message_id'},
+        );
+        await notificationService.showMessageNotification(
+          contactPeerId: conversationKey,
+          senderUsername: 'Mknoon',
+          messageText: genericBody,
+          payload: barePayload,
+          silent: true,
+          contentKind: ConversationNotificationContentKind.message,
+        );
+        return true;
+      }
+
+      final canonicalPayload = NotificationRouteTarget.group(
+        groupId,
+        messageId: canonicalMessageId,
+      ).toPayload();
+      final readAcknowledgementResolver =
+          groupNotificationReadAcknowledgementResolver;
+      if (readAcknowledgementResolver != null &&
+          await readAcknowledgementResolver(
+            groupId: groupId,
+            contentKind: ConversationNotificationContentKind.message,
+            eventIdentity: canonicalMessageId,
+            comparand: null,
+          )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+          details: const {'reason': 'canonical_read_acknowledged'},
+        );
+        return false;
+      }
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: lifecycle,
         contactPeerId: conversationKey,
+        routePayload: canonicalPayload,
         senderUsername: 'Mknoon',
         messageText: genericBody,
-        payload: barePayload,
-        silent: true,
+        messageId: canonicalMessageId,
+        durableNotificationCoordinatorResolver: coordinatorResolver,
+        notificationEventType: 'group_message',
+        backgroundDuplicateGuardDelay: Duration.zero,
       );
       return true;
     }
 
-    final canonicalPayload = NotificationRouteTarget.group(
-      groupId,
-      messageId: canonicalMessageId,
-    ).toPayload();
-    await maybeShowNotification(
-      notificationService: notificationService,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
-      contactPeerId: conversationKey,
-      routePayload: canonicalPayload,
-      senderUsername: 'Mknoon',
-      messageText: genericBody,
-      messageId: canonicalMessageId,
-      durableNotificationCoordinatorResolver: coordinatorResolver,
-      notificationEventType: 'group_message',
-      backgroundDuplicateGuardDelay: Duration.zero,
+    final presentationCoordinator = groupNotificationPresentationCoordinator;
+    if (presentationCoordinator == null) {
+      return present();
+    }
+    return presentationCoordinator.runForGroup(groupId, present);
+  }
+
+  final displayEligibility =
+      await resolveForegroundPushFallbackDisplayEligibility(
+        message,
+        groupMessageDisplayEligibilityResolver:
+            groupMessageDisplayEligibilityResolver,
+      );
+  if (!displayEligibility.shouldDisplay) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+      details: {
+        'messageId': message.messageId,
+        'reason': displayEligibility.reason,
+        'payload': _payloadFromMessage(message) ?? '',
+      },
     );
-    return true;
+    return false;
   }
 
   final fallback = buildBackgroundPushFallbackNotification(message);
@@ -435,7 +593,12 @@ bool _routesToDirectReaction(RemoteMessage message) {
 }
 
 bool _routesToGroupReaction(RemoteMessage message) {
-  return _trimToNull(message.data['type']?.toString()) == 'group_reaction';
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  return routeTarget?.kind == NotificationRouteTargetKind.group &&
+      groupNotificationContentKindFromRemoteData(message.data) ==
+          ConversationNotificationContentKind.reaction;
 }
 
 bool _usesProtectedMessagePreview(RemoteMessage message) {

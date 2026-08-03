@@ -47,7 +47,9 @@ abstract class ReactionRepository {
     if (_incomingReactionIsOlder(reaction, current)) {
       return ReactionAddApplyResult.stale;
     }
-    if (current?.id == reaction.id) {
+    if (current?.id == reaction.id &&
+        current?.isRemoved == false &&
+        current?.timestamp == reaction.timestamp) {
       return ReactionAddApplyResult.exactReplay;
     }
     await saveReaction(reaction);
@@ -95,6 +97,32 @@ abstract interface class AtomicIncomingReactionMutationRepository {
   Future<ReactionRemoveApplyResult> applyIncomingRemove(
     MessageReaction reaction,
   );
+}
+
+/// Optional group-owned ADD capability. The explicit [groupId] and
+/// [notificationEventId] bind a staged display marker to the exact incoming
+/// transition while the canonical reaction comparand is decided atomically.
+/// A stale decision must retire only that exact staged marker.
+abstract interface class AtomicGroupReactionAdditionRepository {
+  Future<ReactionAddApplyResult> applyGroupAdd({
+    required String groupId,
+    required String notificationEventId,
+    required MessageReaction reaction,
+  });
+}
+
+/// Optional group-owned REMOVE capability. Implementations use the explicit
+/// [groupId] to tombstone the canonical reaction and retire any notification
+/// display custody for the same actor in one database transaction.
+///
+/// The explicit lane discriminator is required because direct and group
+/// message ids may collide, while a REMOVE payload has a different identity
+/// from the ADD transition whose display marker must be retired.
+abstract interface class AtomicGroupReactionRemovalRepository {
+  Future<ReactionRemoveApplyResult> applyGroupRemove({
+    required String groupId,
+    required MessageReaction reaction,
+  });
 }
 
 bool _incomingReactionIsOlder(

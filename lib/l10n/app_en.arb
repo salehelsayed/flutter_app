@@ -374,6 +374,25 @@
   "comment_hint": "Write a comment...",
   "group_name_optional": "Group name (optional)",
   "group_message_hint": "Message",
+  "notification_group_reaction_target_message": "message",
+  "notification_group_reaction_target_photo": "photo",
+  "notification_group_reaction_target_video": "video",
+  "notification_group_reaction_target_voice_message": "voice message",
+  "notification_group_reaction_target_file": "file",
+  "notification_group_reaction_target_media": "media",
+  "notification_group_reaction_actor": "{actorName} reacted to your {targetKind}",
+  "@notification_group_reaction_actor": {
+    "placeholders": {
+      "actorName": {"type": "String"},
+      "targetKind": {"type": "String"}
+    }
+  },
+  "notification_group_reaction_someone": "Someone reacted to your {targetKind}",
+  "@notification_group_reaction_someone": {
+    "placeholders": {
+      "targetKind": {"type": "String"}
+    }
+  },
   "group_create_failed": "Failed to create group",
   "group_invite_failed": "Failed to invite members",
   "group_create_member_limit_reached": "Groups can have up to {maxMembers} members including you. Reduce your selection by {overflowCount} and try again.",

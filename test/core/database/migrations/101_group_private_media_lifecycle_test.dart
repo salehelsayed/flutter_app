@@ -135,7 +135,7 @@ void main() {
       await runProductionOnUpgrade(db, 100, 101);
       await runGroupPrivateMediaLifecycleMigration(db);
 
-      expect(currentIdentityDatabaseVersion, 105);
+      expect(currentIdentityDatabaseVersion, 106);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -150,13 +150,17 @@ void main() {
         expect(registry.where((entry) => entry.version == 102), hasLength(1));
         expect(registry.where((entry) => entry.version == 103), hasLength(1));
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
+        expect(registry.where((entry) => entry.version == 105), hasLength(1));
+        expect(registry.where((entry) => entry.version == 106), hasLength(1));
         expect(index101, index100 + 1);
         expect(index102, index101 + 1);
         expect(index103, index102 + 1);
         expect(index104, index103 + 1);
         final index105 = registry.indexWhere((entry) => entry.version == 105);
+        final index106 = registry.indexWhere((entry) => entry.version == 106);
         expect(index105, index104 + 1);
-        expect(index105, registry.length - 1);
+        expect(index106, index105 + 1);
+        expect(index106, registry.length - 1);
         expect(
           registry[index100].run,
           same(runDirectPrivateMediaLifecycleMigration),
@@ -172,6 +176,11 @@ void main() {
         expect(registry[index103].run, same(runGroupExitIntentsMigration));
         expect(registry[index104].name, '104_group_exit_diagnostics');
         expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
+        expect(registry[index105].name, '105_reaction_outbox_needs_build');
+        expect(
+          registry[index106].name,
+          '106_group_notification_display_outbox',
+        );
       }
 
       final columns = await _columns(db, 'group_messages');

@@ -45,3 +45,48 @@ String localizedNotificationVoiceMessage({Locale? locale}) =>
 
 String localizedNotificationFile(int count, {Locale? locale}) =>
     notificationPreviewLocalizations(locale: locale).orbit_preview_file(count);
+
+String localizedNotificationGroupReactionTargetMessage({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_message;
+
+String localizedNotificationGroupReactionTargetPhoto({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_photo;
+
+String localizedNotificationGroupReactionTargetVideo({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_video;
+
+String localizedNotificationGroupReactionTargetVoiceMessage({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_voice_message;
+
+String localizedNotificationGroupReactionTargetFile({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_file;
+
+String localizedNotificationGroupReactionTargetMedia({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).notification_group_reaction_target_media;
+
+String localizedNotificationGroupReactionActor(
+  String actorName,
+  String targetKind, {
+  Locale? locale,
+}) => notificationPreviewLocalizations(
+  locale: locale,
+).notification_group_reaction_actor(actorName, targetKind);
+
+String localizedNotificationGroupReactionSomeone(
+  String targetKind, {
+  Locale? locale,
+}) => notificationPreviewLocalizations(
+  locale: locale,
+).notification_group_reaction_someone(targetKind);

@@ -2,6 +2,10 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
+import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
+
+export 'package:flutter_app/features/push/application/group_notification_display_policy.dart'
+    show GroupMessageNotificationDisplayEligibility;
 
 class GroupNotificationRouteResolution {
   final GroupModel? group;
@@ -20,22 +24,6 @@ class GroupNotificationRouteResolution {
 
   bool get hasGroup => group != null;
   bool get hasPendingInvite => pendingInvite != null;
-}
-
-class GroupMessageNotificationDisplayEligibility {
-  final bool shouldDisplay;
-  final String reason;
-
-  const GroupMessageNotificationDisplayEligibility._({
-    required this.shouldDisplay,
-    required this.reason,
-  });
-
-  const GroupMessageNotificationDisplayEligibility.allowCurrentMember()
-    : this._(shouldDisplay: true, reason: 'current_member');
-
-  const GroupMessageNotificationDisplayEligibility.suppressed(String reason)
-    : this._(shouldDisplay: false, reason: reason);
 }
 
 Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
@@ -115,19 +103,18 @@ resolveGroupMessageNotificationDisplayEligibility({
       groupId,
       normalizedLocalPeerId,
     );
-    if (localMember != null) {
-      // 04-P0 / SI-1: a current member of a muted group must be suppressed on
-      // the FCM/foreground-drain fallback path, exactly as the live listener
-      // path honors mute (group_message_listener.dart's isMuted gate). DB is
-      // the source of truth and is read live, so there is no projection to
-      // drift.
-      if (existingGroup.isMuted) {
-        return const GroupMessageNotificationDisplayEligibility.suppressed(
-          'muted',
-        );
-      }
-      return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
-    }
+    return evaluateGroupNotificationDisplayPolicy(
+      GroupNotificationDisplayPolicyInput(
+        groupExists: true,
+        hasCurrentLocalMembership: localMember != null,
+        groupType: existingGroup.type.toValue(),
+        isMuted: existingGroup.isMuted,
+        isArchived: existingGroup.isArchived,
+        isDissolved: existingGroup.isDissolved,
+        hasDissolvedAt: existingGroup.dissolvedAt != null,
+        hasSelfRemovedAt: existingGroup.selfRemovedAt != null,
+      ),
+    );
   }
 
   final existingPendingInvite = await pendingInviteRepo?.getPendingInvite(

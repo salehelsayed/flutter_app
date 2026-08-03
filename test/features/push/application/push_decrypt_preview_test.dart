@@ -5,9 +5,12 @@ import 'dart:ui';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -53,7 +56,7 @@ void main() {
     });
 
     test(
-      'group reaction preview uses local group actor and decrypted emoji',
+      'group reaction preview uses local actor and kind without emoji or target text',
       () async {
         const message = RemoteMessage(
           data: {
@@ -77,6 +80,7 @@ void main() {
             actorPeerId: 'peer-alice',
             actorUsername: 'Alice',
             targetMessageId: 'message-owned-by-bob',
+            targetKind: GroupReactionTargetKind.voiceMessage,
           ),
           decryptGroup:
               ({
@@ -100,16 +104,28 @@ void main() {
         );
 
         expect(resolved.title, 'Team Chat');
-        expect(resolved.body, 'Alice reacted 👍 to your message');
+        expect(resolved.body, 'Alice reacted to your voice message');
+        expect(resolved.body, isNot(contains('👍')));
         expect(
           resolved.payload,
           'group:group-team|message:message-owned-by-bob',
+        );
+        final comparand =
+            resolved.groupComparand
+                as BackgroundGroupReactionNotificationComparand;
+        expect(comparand.reactionId, 'deterministic-reaction-state');
+        expect(comparand.messageId, 'message-owned-by-bob');
+        expect(comparand.senderPeerId, 'peer-alice');
+        expect(comparand.timestamp, '2026-07-12T09:00:00.000Z');
+        expect(
+          comparand.notificationEventIdentity,
+          boundedReactionEventIdentity('transition-1'),
         );
       },
     );
 
     test(
-      'group reaction decrypt failure never falls back to New Message',
+      'group reaction decrypt or input failure keeps a provisional fence scope',
       () async {
         const message = RemoteMessage(
           data: {
@@ -124,16 +140,18 @@ void main() {
             'nonce': 'nonce',
           },
         );
+        const context = GroupReactionNotificationContext(
+          groupId: 'group-team',
+          groupName: 'Team Chat',
+          actorPeerId: 'peer-alice',
+          actorUsername: 'Alice',
+          targetMessageId: 'message-owned-by-bob',
+          targetKind: GroupReactionTargetKind.photo,
+        );
 
         final resolved = await resolveBackgroundPushNotification(
           message,
-          groupReactionContext: const GroupReactionNotificationContext(
-            groupId: 'group-team',
-            groupName: 'Team Chat',
-            actorPeerId: 'peer-alice',
-            actorUsername: 'Alice',
-            targetMessageId: 'message-owned-by-bob',
-          ),
+          groupReactionContext: context,
           decryptGroup:
               ({
                 required groupId,
@@ -144,9 +162,118 @@ void main() {
         );
 
         expect(resolved.title, 'Team Chat');
-        expect(resolved.body, 'Alice reacted to your message');
+        expect(resolved.body, 'Alice reacted to your photo');
         expect(resolved.title, isNot(backgroundPushDefaultTitle));
         expect(resolved.body, isNot(backgroundPushDefaultBody));
+        final comparand =
+            resolved.groupComparand
+                as BackgroundProvisionalGroupReactionNotificationComparand;
+        expect(comparand.groupId, 'group-team');
+        expect(comparand.messageId, 'message-owned-by-bob');
+        expect(comparand.senderPeerId, 'peer-alice');
+        expect(
+          comparand.notificationEventIdentity,
+          boundedReactionEventIdentity('transition-1'),
+        );
+
+        final inputUnavailable = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-team',
+              'reactor_peer_id': 'peer-alice',
+              'event_id': 'transition-1',
+              'target_message_id': 'message-owned-by-bob',
+              'action': 'add',
+            },
+          ),
+          groupReactionContext: context,
+        );
+        expect(
+          inputUnavailable.groupComparand,
+          isA<BackgroundProvisionalGroupReactionNotificationComparand>(),
+        );
+      },
+    );
+
+    test(
+      'group reaction invalid scope and unorderable outage fail closed',
+      () async {
+        const validData = <String, dynamic>{
+          'type': 'group_reaction',
+          'groupId': 'group-team',
+          'reactor_peer_id': 'peer-alice',
+          'event_id': 'transition-1',
+          'target_message_id': 'message-owned-by-bob',
+          'action': 'add',
+          'keyEpoch': '7',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        };
+        const context = GroupReactionNotificationContext(
+          groupId: 'group-team',
+          groupName: 'Team Chat',
+          actorPeerId: 'peer-alice',
+          actorUsername: 'Alice',
+          targetMessageId: 'message-owned-by-bob',
+        );
+
+        Future<void> expectIntegrityFailure(
+          Map<String, dynamic> data,
+          GroupReactionNotificationContext? localContext,
+        ) async {
+          await expectLater(
+            resolveBackgroundPushNotification(
+              RemoteMessage(data: data),
+              groupReactionContext: localContext,
+              decryptGroup:
+                  ({
+                    required groupId,
+                    required keyEpoch,
+                    required ciphertext,
+                    required nonce,
+                  }) async => throw StateError('must not decrypt'),
+            ),
+            throwsA(isA<GroupReactionNotificationIntegrityException>()),
+          );
+        }
+
+        await expectIntegrityFailure(validData, null);
+        await expectIntegrityFailure(<String, dynamic>{
+          ...validData,
+          'reactor_peer_id': 'peer-mismatch',
+        }, context);
+        await expectIntegrityFailure(<String, dynamic>{
+          ...validData,
+          'action': 'remove',
+        }, context);
+        final missingEvent = <String, dynamic>{...validData}
+          ..remove('event_id');
+        await expectIntegrityFailure(missingEvent, context);
+
+        await expectLater(
+          resolveBackgroundPushNotification(
+            const RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'group_reaction',
+                'groupId': 'group-team',
+                'reactor_peer_id': 'peer-alice',
+                'event_id': 'transition-1',
+                'target_message_id': 'message-owned-by-bob',
+                'action': 'add',
+              },
+            ),
+            groupReactionContext: const GroupReactionNotificationContext(
+              groupId: 'group-team',
+              groupName: 'Team Chat',
+              actorPeerId: 'peer-alice',
+              actorUsername: 'Alice',
+              targetMessageId: 'message-owned-by-bob',
+              currentReactionTimestamp: '2026-08-03T00:00:00.000Z',
+            ),
+          ),
+          throwsA(isA<GroupReactionNotificationIntegrityException>()),
+        );
       },
     );
 
@@ -256,6 +383,83 @@ void main() {
         ),
       );
     });
+
+    test(
+      'acknowledged exact ADD replay is suppressed before show but a later ADD survives',
+      () async {
+        const context = GroupReactionNotificationContext(
+          groupId: 'group-team',
+          groupName: 'Team Chat',
+          actorPeerId: 'peer-alice',
+          actorUsername: 'Alice',
+          targetMessageId: 'message-owned-by-bob',
+          currentReactionId: 'reaction-a',
+          currentReactionTimestamp: '2026-07-12T09:00:00.000Z',
+          currentReactionAcknowledged: true,
+        );
+
+        Future<BackgroundPushNotificationFallback> resolve({
+          required String eventId,
+          required String reactionId,
+          required String timestamp,
+        }) => resolveBackgroundPushNotification(
+          RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-team',
+              'reactor_peer_id': 'peer-alice',
+              'event_id': eventId,
+              'target_message_id': 'message-owned-by-bob',
+              'action': 'add',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'nonce',
+            },
+          ),
+          groupReactionContext: context,
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => jsonEncode(<String, Object?>{
+                'id': reactionId,
+                'messageId': 'message-owned-by-bob',
+                'emoji': '👍',
+                'action': 'add',
+                'senderPeerId': 'peer-alice',
+                'timestamp': timestamp,
+                'eventId': eventId,
+              }),
+        );
+
+        await expectLater(
+          resolve(
+            eventId: 'transition-a-replay',
+            reactionId: 'reaction-a',
+            timestamp: '2026-07-12T09:00:00.000Z',
+          ),
+          throwsA(
+            isA<GroupReactionNotificationIntegrityException>().having(
+              (error) => error.reason,
+              'reason',
+              'group_reaction_stale_local_state',
+            ),
+          ),
+        );
+
+        final later = await resolve(
+          eventId: 'transition-b',
+          reactionId: 'reaction-b',
+          timestamp: '2026-07-12T09:00:02.000Z',
+        );
+        expect(
+          later.groupComparand,
+          isA<BackgroundGroupReactionNotificationComparand>(),
+        );
+      },
+    );
 
     test(
       'signed group reaction nomination binds this exact transport installation',
@@ -833,6 +1037,13 @@ void main() {
         );
         expect(resolved.title, 'Team from groups DB');
         expect(resolved.body, 'Admin from members DB: Hello trusted group');
+        final comparand =
+            resolved.groupComparand
+                as BackgroundGroupMessageNotificationComparand;
+        expect(comparand.groupId, 'group-team');
+        expect(comparand.messageId, 'msg-trusted-group');
+        expect(comparand.senderPeerId, 'peer-admin');
+        expect(comparand.senderTransportPeerId, 'transport-admin-phone');
 
         await expectLater(
           resolveBackgroundPushNotification(

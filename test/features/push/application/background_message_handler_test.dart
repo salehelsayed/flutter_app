@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
@@ -15,8 +16,10 @@ import 'package:flutter_app/core/notifications/recent_background_notification_ga
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -120,6 +123,9 @@ void main() {
     }) async {
       return true;
     });
+    debugSetBackgroundGroupNotificationPostShowValidator(
+      (_) async => BackgroundGroupNotificationPostShowDecision.keep,
+    );
   });
 
   tearDown(() {
@@ -138,6 +144,7 @@ void main() {
     debugResetBackgroundNotificationLocaleResolver();
     debugResetBackgroundDirectReactionLocalStateResolver();
     debugResetBackgroundGroupReactionLocalStateResolver();
+    debugResetBackgroundGroupNotificationPostShowValidator();
     debugResetBackgroundMessageNotificationCoordinatorResolver();
     debugResetBackgroundConversationNotificationIdRegistryResolver();
     debugResetBackgroundReactionNotificationCoordinatorResolver();
@@ -149,6 +156,514 @@ void main() {
   });
 
   group('firebaseMessagingBackgroundHandler', () {
+    test(
+      'post-show policy flip retires only the generation just shown',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        var nativeShowCompleted = false;
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Team',
+            body: 'Alice: hello',
+            payload: 'group:group-fence|message:message-fence',
+            groupComparand: BackgroundGroupMessageNotificationComparand(
+              groupId: 'group-fence',
+              messageId: 'message-fence',
+              senderPeerId: 'peer-alice',
+            ),
+          ),
+        );
+        debugSetBackgroundGroupNotificationPostShowValidator((_) async {
+          expect(nativeShowCompleted, isTrue);
+          return BackgroundGroupNotificationPostShowDecision.retire;
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              if (call.method == 'show') nativeShowCompleted = true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fence',
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-fence',
+              'message_id': 'message-fence',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        expect(
+          log
+              .where((call) => call.method == 'show' || call.method == 'cancel')
+              .map((call) => call.method),
+          <String>['cancel', 'show', 'cancel'],
+        );
+      },
+    );
+
+    test(
+      'newer generation published during the fence survives stale retirement',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Team',
+            body: 'Alice: hello',
+            payload: 'group:group-fence-race|message:message-fence-race',
+            groupComparand: BackgroundGroupMessageNotificationComparand(
+              groupId: 'group-fence-race',
+              messageId: 'message-fence-race',
+              senderPeerId: 'peer-alice',
+            ),
+          ),
+        );
+        final directory = Directory.systemTemp.createTempSync(
+          'background-post-show-race-',
+        );
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: directory,
+        );
+        final concurrentPublisherRegistry =
+            DurableConversationNotificationIdRegistry(directory: directory);
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+        addTearDown(() {
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        debugSetBackgroundGroupNotificationPostShowValidator((_) async {
+          final notificationId = await registry.lookup(
+            'group:group-fence-race',
+          );
+          await concurrentPublisherRegistry.replaceContent(
+            conversationKey: 'group:group-fence-race',
+            notificationId: notificationId!,
+            metadata: const ConversationNotificationContentMetadata(
+              kind: ConversationNotificationContentKind.message,
+              eventIdentity: 'newer-message',
+              generation: 'newer-generation',
+            ),
+            retireCurrent: () async {},
+            replace: () async {},
+          );
+          return BackgroundGroupNotificationPostShowDecision.retire;
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fence-race',
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-fence-race',
+              'message_id': 'message-fence-race',
+            },
+          ),
+        );
+
+        final notificationId = await registry.lookup('group:group-fence-race');
+        expect(
+          await registry.lookupContentMetadata(
+            conversationKey: 'group:group-fence-race',
+            notificationId: notificationId!,
+          ),
+          const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'newer-message',
+            generation: 'newer-generation',
+          ),
+        );
+        expect(
+          log
+              .where((call) => call.method == 'show' || call.method == 'cancel')
+              .map((call) => call.method),
+          <String>['cancel', 'show'],
+        );
+        expect(
+          events.singleWhere(
+            (event) =>
+                event['event'] == 'PUSH_BACKGROUND_GROUP_POST_SHOW_RETIRED',
+          )['details'],
+          containsPair('result', 'newer_generation_survived'),
+        );
+      },
+    );
+
+    test(
+      'post-show read error keeps the card and commits the exact claim',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Team',
+            body: 'Alice: hello',
+            payload: 'group:group-fence-error|message:message-fence-error',
+            groupComparand: BackgroundGroupMessageNotificationComparand(
+              groupId: 'group-fence-error',
+              messageId: 'message-fence-error',
+              senderPeerId: 'peer-alice',
+            ),
+          ),
+        );
+        debugSetBackgroundGroupNotificationPostShowValidator(
+          (_) => throw StateError('post-show database unavailable'),
+        );
+        final gate = RecentBackgroundNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/post-show-claim-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentBackgroundNotificationGate(gate);
+        addTearDown(gate.clear);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+        const first = RemoteMessage(
+          messageId: 'provider-fence-error-a',
+          data: <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-fence-error',
+            'message_id': 'message-fence-error',
+          },
+        );
+        const duplicateTransport = RemoteMessage(
+          messageId: 'provider-fence-error-b',
+          data: <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-fence-error',
+            'message_id': 'message-fence-error',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(first);
+        await gate.clear();
+        await firebaseMessagingBackgroundHandler(duplicateTransport);
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        expect(
+          log
+              .where((call) => call.method == 'show' || call.method == 'cancel')
+              .map((call) => call.method),
+          <String>['cancel', 'show'],
+        );
+      },
+    );
+
+    test(
+      'post-show cancellation error keeps metadata and commits exact owners',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Team',
+            body: 'Alice: hello',
+            payload: 'group:group-fence-cancel|message:message-fence-cancel',
+            groupComparand: BackgroundGroupMessageNotificationComparand(
+              groupId: 'group-fence-cancel',
+              messageId: 'message-fence-cancel',
+              senderPeerId: 'peer-alice',
+            ),
+          ),
+        );
+        final registryDirectory = Directory.systemTemp.createTempSync(
+          'background-post-show-cancel-registry-',
+        );
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: registryDirectory,
+        );
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+        final ownerDirectory = Directory.systemTemp.createTempSync(
+          'background-post-show-cancel-owners-',
+        );
+        final coordinator = DurableNotificationToneLease(
+          directory: ownerDirectory,
+          pendingClaimWait: Duration.zero,
+          pendingToneReservationWait: Duration.zero,
+        );
+        debugSetBackgroundMessageNotificationCoordinatorResolver(
+          () async => coordinator,
+        );
+        final claimFile = File(
+          '${ownerDirectory.path}/'
+          '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'group_message', eventIdentity: 'message-fence-cancel')}',
+        );
+        var fenceObservedCommittedOwners = false;
+        debugSetBackgroundGroupNotificationPostShowValidator((_) async {
+          expect(
+            jsonDecode(claimFile.readAsStringSync()),
+            containsPair('state', 'committed'),
+          );
+          expect(
+            await coordinator.reserveTone('group:group-fence-cancel'),
+            isNull,
+          );
+          fenceObservedCommittedOwners = true;
+          return BackgroundGroupNotificationPostShowDecision.retire;
+        });
+        addTearDown(() {
+          if (registryDirectory.existsSync()) {
+            registryDirectory.deleteSync(recursive: true);
+          }
+          if (ownerDirectory.existsSync()) {
+            ownerDirectory.deleteSync(recursive: true);
+          }
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        var cancelAttempts = 0;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              if (call.method == 'cancel' && ++cancelAttempts == 2) {
+                throw PlatformException(code: 'synthetic_cancel_failure');
+              }
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fence-cancel',
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-fence-cancel',
+              'message_id': 'message-fence-cancel',
+            },
+          ),
+        );
+
+        final notificationId = await registry.lookup(
+          'group:group-fence-cancel',
+        );
+        expect(notificationId, isNotNull);
+        expect(
+          await registry.lookupContentMetadata(
+            conversationKey: 'group:group-fence-cancel',
+            notificationId: notificationId!,
+          ),
+          isNotNull,
+        );
+        expect(fenceObservedCommittedOwners, isTrue);
+        expect(
+          jsonDecode(claimFile.readAsStringSync()),
+          containsPair('state', 'committed'),
+        );
+        expect(
+          await coordinator.reserveTone('group:group-fence-cancel'),
+          isNull,
+          reason: 'the successful show must retain its committed tone window',
+        );
+        expect(
+          log
+              .where((call) => call.method == 'show' || call.method == 'cancel')
+              .map((call) => call.method),
+          <String>['cancel', 'show', 'cancel'],
+        );
+        final eventNames = events.map((event) => event['event']);
+        expect(eventNames, contains('PUSH_BACKGROUND_GROUP_POST_SHOW_UNKNOWN'));
+        expect(
+          eventNames,
+          isNot(contains('PUSH_BACKGROUND_NOTIFICATION_ERROR')),
+        );
+        expect(
+          eventNames,
+          isNot(contains('PUSH_BACKGROUND_MESSAGE_TONE_RELEASE_FAILED')),
+        );
+        expect(
+          eventNames,
+          isNot(contains('PUSH_BACKGROUND_MESSAGE_CLAIM_RELEASE_FAILED')),
+        );
+      },
+    );
+
+    test(
+      'headless group message and reaction record durable shared-card ownership',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushNotificationResolver((message) async {
+          final isReaction = message.data['type'] == 'group_reaction';
+          return BackgroundPushNotificationFallback(
+            title: 'Team Chat',
+            body: isReaction ? 'Alice reacted to your message' : 'Alice: hello',
+            payload: isReaction
+                ? 'group:group-content-kind|message:target-message'
+                : 'group:group-content-kind|message:group-message-kind',
+          );
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        final directory = Directory.systemTemp.createTempSync(
+          'background-content-kind-',
+        );
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: directory,
+        );
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async =>
+              DurableConversationNotificationIdRegistry(directory: directory),
+        );
+        addTearDown(() {
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-content-kind',
+              'message_id': 'group-message-kind',
+              'preview_unavailable': '1',
+            },
+          ),
+        );
+
+        final id = await registry.lookup('group:group-content-kind');
+        expect(id, isNotNull);
+        expect(
+          await registry.lookupContentKind(
+            conversationKey: 'group:group-content-kind',
+            notificationId: id!,
+          ),
+          ConversationNotificationContentKind.message,
+        );
+        final firstMetadata = await registry.lookupContentMetadata(
+          conversationKey: 'group:group-content-kind',
+          notificationId: id,
+        );
+        expect(firstMetadata?.eventIdentity, 'group-message-kind');
+        expect(firstMetadata?.generation, isNotEmpty);
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-content-kind',
+              'event_id': 'group-reaction-kind',
+              'reaction_id': 'group-reaction-kind',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'target-message',
+              'action': 'add',
+            },
+          ),
+        );
+
+        expect(
+          await registry.lookupContentKind(
+            conversationKey: 'group:group-content-kind',
+            notificationId: id,
+          ),
+          ConversationNotificationContentKind.reaction,
+        );
+        final reactionMetadata = await registry.lookupContentMetadata(
+          conversationKey: 'group:group-content-kind',
+          notificationId: id,
+        );
+        expect(
+          reactionMetadata?.eventIdentity,
+          boundedReactionEventIdentity('group-reaction-kind'),
+        );
+        expect(reactionMetadata?.generation, isNot(firstMetadata?.generation));
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-content-kind',
+              'message_id': 'group-message-before-legacy-reaction',
+              'preview_unavailable': '1',
+            },
+          ),
+        );
+        expect(
+          await registry.lookupContentKind(
+            conversationKey: 'group:group-content-kind',
+            notificationId: id,
+          ),
+          ConversationNotificationContentKind.message,
+        );
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'payloadType': 'group_reaction',
+              'groupId': 'group-content-kind',
+              'event_id': 'legacy-group-reaction-kind',
+              'reaction_id': 'legacy-group-reaction-kind',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'legacy-target-message',
+              'action': 'add',
+            },
+          ),
+        );
+        expect(
+          await registry.lookupContentKind(
+            conversationKey: 'group:group-content-kind',
+            notificationId: id,
+          ),
+          ConversationNotificationContentKind.reaction,
+          reason: 'legacy group reaction routing must remain reaction-owned',
+        );
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'payload': 'group:group-content-kind|message:legacy-message',
+            },
+          ),
+        );
+        expect(
+          await registry.lookupContentKind(
+            conversationKey: 'group:group-content-kind',
+            notificationId: id,
+          ),
+          ConversationNotificationContentKind.message,
+          reason: 'payload-only legacy group routes must replace stale markers',
+        );
+      },
+    );
+
     test(
       'group reaction background handler uses headless group crypto and stable group card',
       () async {
@@ -205,8 +720,94 @@ void main() {
           deterministicConversationNotificationId('group:group-team'),
         );
         expect(showArgs['title'], 'Team Chat');
-        expect(showArgs['body'], 'Alice reacted 👍 to your message');
-        expect(showArgs['payload'], 'group:group-team|message:message-1');
+        expect(showArgs['body'], 'Alice reacted to your message');
+        final payload = decodeConversationNotificationPayload(
+          showArgs['payload'] as String?,
+        );
+        expect(payload?.routePayload, 'group:group-team|message:message-1');
+        expect(
+          payload?.metadata.kind,
+          ConversationNotificationContentKind.reaction,
+        );
+        expect((showArgs['platformSpecifics'] as Map)['autoCancel'], isFalse);
+      },
+    );
+
+    test(
+      'group reaction decrypt failure is shown generically then fenced by authenticated outer scope',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        var nativeShowCompleted = false;
+        final fencedComparands =
+            <BackgroundManagedGroupNotificationComparand>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              if (call.method == 'show') nativeShowCompleted = true;
+              return null;
+            });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+              expect(call.method, 'decryptGroup');
+              return <String, Object?>{
+                'ok': false,
+                'errorCode': 'decrypt_failed',
+              };
+            });
+        debugSetBackgroundGroupReactionLocalStateResolver((_) async {
+          return const BackgroundGroupReactionLocalState(
+            previewContext: GroupReactionNotificationContext(
+              groupId: 'group-team-fallback',
+              groupName: 'Team Chat',
+              actorPeerId: 'peer-alice',
+              actorUsername: 'Alice',
+              targetMessageId: 'message-fallback',
+            ),
+            groupKey: 'group-key',
+            keyEpoch: 7,
+            nominationVerified: true,
+          );
+        });
+        debugSetBackgroundGroupNotificationPostShowValidator((comparand) async {
+          expect(nativeShowCompleted, isTrue);
+          fencedComparands.add(comparand);
+          return BackgroundGroupNotificationPostShowDecision.retire;
+        });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-group-reaction-fallback',
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-team-fallback',
+              'reactor_peer_id': 'peer-alice',
+              'event_id': 'transition-fallback',
+              'target_message_id': 'message-fallback',
+              'action': 'add',
+              'keyEpoch': '7',
+              'ciphertext': 'transiently-unavailable',
+              'nonce': 'nonce',
+            },
+          ),
+        );
+
+        final showCall = log.singleWhere((call) => call.method == 'show');
+        final showArgs = showCall.arguments as Map;
+        expect(showArgs['title'], 'Team Chat');
+        expect(showArgs['body'], 'Alice reacted to your message');
+        final comparand =
+            fencedComparands.single
+                as BackgroundProvisionalGroupReactionNotificationComparand;
+        expect(comparand.groupId, 'group-team-fallback');
+        expect(comparand.messageId, 'message-fallback');
+        expect(comparand.senderPeerId, 'peer-alice');
+        expect(
+          comparand.notificationEventIdentity,
+          boundedReactionEventIdentity('transition-fallback'),
+        );
+        expect(log.where((call) => call.method == 'cancel'), hasLength(2));
       },
     );
 
@@ -247,6 +848,12 @@ void main() {
         debugSetBackgroundReactionNotificationCoordinatorResolver(
           () async => coordinator,
         );
+        final fencedComparands =
+            <BackgroundManagedGroupNotificationComparand>[];
+        debugSetBackgroundGroupNotificationPostShowValidator((comparand) async {
+          fencedComparands.add(comparand);
+          return BackgroundGroupNotificationPostShowDecision.keep;
+        });
         addTearDown(() {
           if (directory.existsSync()) directory.deleteSync(recursive: true);
         });
@@ -268,6 +875,7 @@ void main() {
         );
 
         expect(log.where((call) => call.method == 'show'), isEmpty);
+        expect(fencedComparands, isEmpty);
         expect(
           await coordinator.claimEvent(
             boundedReactionEventIdentity('transition-parity'),
@@ -1803,6 +2411,8 @@ void main() {
         Map<String, Object?>? localRow = localMember,
         Map<String, Object?>? actorRow = actorMember,
         List<Map<String, Object?>>? members,
+        Map<String, Object?>? readAcknowledgementRow,
+        Map<String, Object?>? canonicalMessageRow,
       }) => groupMessageLocalStateFromRows(
         data: data,
         identityRow: identity,
@@ -1810,6 +2420,8 @@ void main() {
         localMemberRow: localRow,
         memberRows: members ?? <Map<String, Object?>>[?localRow, ?actorRow],
         groupKeyRow: groupKey,
+        readAcknowledgementRow: readAcknowledgementRow,
+        canonicalMessageRow: canonicalMessageRow,
       );
 
       expect(resolveGroup()?.previewContext.senderUsername, 'Trusted Admin');
@@ -1822,7 +2434,64 @@ void main() {
       expect(resolveGroup(groupRow: {...group, 'is_muted': 1}), isNull);
       expect(resolveGroup(groupRow: {...group, 'is_archived': 1}), isNull);
       expect(resolveGroup(groupRow: {...group, 'is_dissolved': 1}), isNull);
+      expect(
+        resolveGroup(
+          groupRow: {...group, 'self_removed_at': '2026-08-02T00:00:00Z'},
+        ),
+        isNull,
+      );
       expect(resolveGroup(localRow: null), isNull);
+      expect(
+        resolveGroup(
+          readAcknowledgementRow: const <String, Object?>{
+            'group_id': 'group-team',
+            'content_kind': 'message',
+            'event_identity': 'group-policy',
+            'generation': 'read-generation',
+            'acknowledged_at': '2026-08-03T01:00:01.000Z',
+          },
+        ),
+        isNull,
+        reason: 'an exact push-before-inbox message read suppresses pre-show',
+      );
+      expect(
+        resolveGroup(
+          readAcknowledgementRow: const <String, Object?>{
+            'group_id': 'group-team',
+            'content_kind': 'message',
+            'event_identity': 'different-message',
+          },
+        ),
+        isNotNull,
+        reason: 'a distinct message remains eligible after the read',
+      );
+      expect(
+        resolveGroup(
+          canonicalMessageRow: const <String, Object?>{
+            'id': 'group-policy',
+            'group_id': 'group-team',
+            'sender_peer_id': 'peer-admin',
+            'is_incoming': 1,
+            'read_at': '2026-08-03T01:00:01.000Z',
+          },
+        ),
+        isNull,
+        reason:
+            'a read canonical message cannot alert after a crash before its first display',
+      );
+      expect(
+        resolveGroup(
+          canonicalMessageRow: const <String, Object?>{
+            'id': 'different-message',
+            'group_id': 'group-team',
+            'sender_peer_id': 'peer-admin',
+            'is_incoming': 1,
+            'read_at': '2026-08-03T01:00:01.000Z',
+          },
+        ),
+        isNotNull,
+        reason: 'a distinct read message cannot suppress this push',
+      );
       expect(
         resolveGroup(
           data: <String, dynamic>{
@@ -1842,13 +2511,7 @@ void main() {
         resolveGroup(actorRow: {...actorMember, 'role': 'unknown'}),
         isNull,
       );
-      expect(
-        resolveGroup(
-          groupRow: {...group, 'type': 'qa'},
-          actorRow: {...actorMember, 'role': 'reader'},
-        ),
-        isNull,
-      );
+      expect(resolveGroup(groupRow: {...group, 'type': 'qa'}), isNull);
       expect(
         resolveGroup(groupRow: {...group, 'type': 'announcement'}),
         isNotNull,
@@ -1972,11 +2635,13 @@ void main() {
         const group = <String, Object?>{
           'id': 'group-team',
           'name': 'Team Chat',
+          'type': 'chat',
           'is_muted': 0,
           'is_dissolved': 0,
           'dissolved_at': null,
         };
         final localMember = <String, Object?>{
+          'group_id': 'group-team',
           'peer_id': 'peer-bob',
           'devices_json': jsonEncode(<Map<String, Object?>>[
             <String, Object?>{
@@ -2183,11 +2848,13 @@ void main() {
       const group = <String, Object?>{
         'id': 'group-team',
         'name': 'Team Chat',
+        'type': 'chat',
         'is_muted': 0,
         'is_dissolved': 0,
         'dissolved_at': null,
       };
       final localMember = <String, Object?>{
+        'group_id': 'group-team',
         'peer_id': 'peer-bob',
         'devices_json': jsonEncode(<Map<String, Object?>>[
           <String, Object?>{
@@ -2238,9 +2905,172 @@ void main() {
         currentReactionRow: null,
         localInstallationTransportPeerId: 'transport-bob-phone',
         verifiedNomination: nomination,
+        targetAttachmentRows: const <Map<String, Object?>>[
+          <String, Object?>{'owner_lane': 'direct', 'media_type': 'image'},
+          <String, Object?>{'owner_lane': 'unresolved', 'media_type': 'audio'},
+          <String, Object?>{'owner_lane': 'group', 'media_type': 'video'},
+        ],
       );
       expect(eligible?.previewContext.groupName, 'Team Chat');
       expect(eligible?.previewContext.actorUsername, 'Alice');
+      expect(
+        eligible?.previewContext.targetKind,
+        GroupReactionTargetKind.video,
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: <String, Object?>{
+            'id': 'reaction-existing',
+            'message_id': 'message-1',
+            'sender_peer_id': 'peer-alice',
+            'timestamp': '2026-08-03T01:00:00.000Z',
+            'removed_at': null,
+            'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
+            'notification_display_terminal_event_id':
+                boundedReactionEventIdentity('transition-1'),
+          },
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+        reason: 'an acknowledged canonical reaction cannot alert again',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: <String, dynamic>{...data, 'event_id': 'transition-2'},
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: const <String, Object?>{
+            'id': 'reaction-existing',
+            'message_id': 'message-1',
+            'sender_peer_id': 'peer-alice',
+            'timestamp': '2026-08-03T01:00:00.000Z',
+            'removed_at': null,
+            'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
+            'notification_display_terminal_event_id':
+                'group-reaction-kind-transition-1',
+          },
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNotNull,
+        reason:
+            'reading transition 1 cannot suppress distinct transition 2 before inbox mutation',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: const <String, Object?>{
+            'id': 'reaction-existing',
+            'message_id': 'message-1',
+            'sender_peer_id': 'peer-alice',
+            'timestamp': '2026-08-03T01:00:00.000Z',
+            'removed_at': null,
+            'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
+            'notification_display_terminal_event_id': null,
+          },
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNotNull,
+        reason:
+            'an unbound acknowledgement must reach decrypted exact-state comparison',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          readAcknowledgementRow: <String, Object?>{
+            'group_id': 'group-team',
+            'content_kind': 'reaction',
+            'event_identity': boundedReactionEventIdentity('transition-1'),
+            'generation': 'read-generation',
+            'acknowledged_at': '2026-08-03T01:00:01.000Z',
+          },
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+        reason: 'the exact durable read boundary wins the push/read race',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          readAcknowledgementRow: const <String, Object?>{
+            'group_id': 'group-team',
+            'content_kind': 'reaction',
+            'event_identity': 'different-bounded-event',
+          },
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNotNull,
+        reason: 'a different event acknowledgement cannot suppress this push',
+      );
+
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: group,
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: const <String, Object?>{
+            ...outgoingTarget,
+            'media_policy_version': 1,
+            'media_lifecycle': 'view_once',
+            'media_duration_seconds': null,
+            'media_protected': 1,
+          },
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+        reason: 'private target media never becomes notification copy',
+      );
 
       expect(
         groupReactionLocalStateFromRows(
@@ -2257,6 +3087,40 @@ void main() {
           verifiedNomination: nomination,
         ),
         isNull,
+      );
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: {...group, 'type': 'qa'},
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+        reason: 'QA storage does not widen the notification projection',
+      );
+      expect(
+        groupReactionLocalStateFromRows(
+          data: data,
+          identityRow: identity,
+          groupRow: {...group, 'self_removed_at': '2026-08-02T00:00:00.000Z'},
+          localMemberRow: localMember,
+          actorMemberRow: actorMember,
+          targetMessageRow: outgoingTarget,
+          groupKeyRow: groupKey,
+          latestGroupKeyRow: groupKey,
+          currentReactionRow: null,
+          localInstallationTransportPeerId: 'transport-bob-phone',
+          verifiedNomination: nomination,
+        ),
+        isNull,
+        reason: 'a durable self-removal marker suppresses the notification',
       );
       expect(
         groupReactionLocalStateFromRows(
@@ -2744,7 +3608,10 @@ void main() {
         (message) => resolveBackgroundPushFallbackDisplayEligibility(
           message,
           groupMessageDisplayEligibilityResolver: (_) async =>
-              groupMemberMessageDisplayEligibility({'is_muted': 1}),
+              groupMemberMessageDisplayEligibility({
+                'type': 'chat',
+                'is_muted': 1,
+              }),
         ),
       );
       final events = <Map<String, dynamic>>[];
@@ -3036,13 +3903,17 @@ void main() {
           deterministicConversationNotificationId('group:group-burst'),
         );
         expect(id1, id0);
-        expect(
-          (shows[0].arguments as Map)['payload'],
-          'group:group-burst|message:gmsg-a',
+        final firstPayload = decodeConversationNotificationPayload(
+          (shows[0].arguments as Map)['payload'] as String?,
         );
+        final secondPayload = decodeConversationNotificationPayload(
+          (shows[1].arguments as Map)['payload'] as String?,
+        );
+        expect(firstPayload?.routePayload, 'group:group-burst|message:gmsg-a');
+        expect(secondPayload?.routePayload, 'group:group-burst|message:gmsg-b');
         expect(
-          (shows[1].arguments as Map)['payload'],
-          'group:group-burst|message:gmsg-b',
+          secondPayload?.metadata.generation,
+          isNot(firstPayload?.metadata.generation),
         );
         final secondPlatformSpecifics =
             (shows[1].arguments as Map)['platformSpecifics'] as Map;
@@ -3050,6 +3921,8 @@ void main() {
             (shows[0].arguments as Map)['platformSpecifics'] as Map;
         expect(firstPlatformSpecifics['playSound'], isTrue);
         expect(secondPlatformSpecifics['playSound'], isFalse);
+        expect(firstPlatformSpecifics['autoCancel'], isFalse);
+        expect(secondPlatformSpecifics['autoCancel'], isFalse);
         expect(
           secondPlatformSpecifics['channelId'],
           mknoonMessagesSilentChannelId,
@@ -3113,30 +3986,118 @@ void main() {
     );
   });
 
-  // 04-P0 / SI-1 — the background (Android encrypted-DB) producer must honor
-  // mute. The is_muted read is unit-tested via the pure `groups`-row helper so
-  // it does not require a SQLCipher identity.db fixture.
-  group('groupMemberMessageDisplayEligibility (background mute, 04-P0)', () {
+  group('canonical background group display policy row mapping', () {
+    const groupId = 'group-policy';
+    const localPeerId = 'peer-local';
+    const group = <String, Object?>{
+      'id': groupId,
+      'type': 'chat',
+      'is_muted': 0,
+      'is_archived': 0,
+      'is_dissolved': 0,
+      'dissolved_at': null,
+      'self_removed_at': null,
+    };
+    const member = <String, Object?>{
+      'group_id': groupId,
+      'peer_id': localPeerId,
+    };
+
+    test('maps the exact group and current member to allow', () {
+      final eligibility = groupNotificationDisplayEligibilityFromRows(
+        expectedGroupId: groupId,
+        localPeerId: localPeerId,
+        groupRow: group,
+        localMemberRow: member,
+      );
+      expect(eligibility.shouldDisplay, isTrue);
+      expect(eligibility.reason, 'current_member');
+    });
+
+    for (final scenario
+        in <
+          ({
+            Map<String, Object?>? groupRow,
+            Map<String, Object?>? memberRow,
+            String reason,
+          })
+        >[
+          (groupRow: null, memberRow: member, reason: 'group_missing'),
+          (groupRow: group, memberRow: null, reason: 'local_member_missing'),
+          (
+            groupRow: group,
+            memberRow: {...member, 'group_id': 'other-group'},
+            reason: 'local_member_missing',
+          ),
+          (
+            groupRow: {...group, 'type': 'qa'},
+            memberRow: member,
+            reason: 'unsupported_group_type',
+          ),
+          (
+            groupRow: {...group, 'is_muted': 1},
+            memberRow: member,
+            reason: 'muted',
+          ),
+          (
+            groupRow: {...group, 'is_archived': 1},
+            memberRow: member,
+            reason: 'archived',
+          ),
+          (
+            groupRow: {...group, 'is_dissolved': 1},
+            memberRow: member,
+            reason: 'dissolved',
+          ),
+          (
+            groupRow: {...group, 'dissolved_at': '2026-08-02T00:00:00Z'},
+            memberRow: member,
+            reason: 'dissolved',
+          ),
+          (
+            groupRow: {...group, 'self_removed_at': '2026-08-02T00:00:00Z'},
+            memberRow: member,
+            reason: 'self_removed',
+          ),
+        ]) {
+      test('suppresses row state with reason ${scenario.reason}', () {
+        final eligibility = groupNotificationDisplayEligibilityFromRows(
+          expectedGroupId: groupId,
+          localPeerId: localPeerId,
+          groupRow: scenario.groupRow,
+          localMemberRow: scenario.memberRow,
+        );
+        expect(eligibility.shouldDisplay, isFalse);
+        expect(eligibility.reason, scenario.reason);
+      });
+    }
+
     test('suppresses a muted group member with reason "muted"', () {
-      final eligibility = groupMemberMessageDisplayEligibility({'is_muted': 1});
+      final eligibility = groupMemberMessageDisplayEligibility({
+        'type': 'chat',
+        'is_muted': 1,
+      });
       expect(eligibility.shouldDisplay, isFalse);
       expect(eligibility.reason, 'muted');
     });
 
     test('allows an un-muted group member', () {
-      final eligibility = groupMemberMessageDisplayEligibility({'is_muted': 0});
+      final eligibility = groupMemberMessageDisplayEligibility({
+        'type': 'chat',
+        'is_muted': 0,
+      });
       expect(eligibility.shouldDisplay, isTrue);
       expect(eligibility.reason, 'current_member');
     });
 
-    test('fails open (notifies) when the is_muted column is absent/null', () {
+    test('fails closed when the group type is absent', () {
       expect(
         groupMemberMessageDisplayEligibility(<String, Object?>{}).shouldDisplay,
-        isTrue,
+        isFalse,
       );
       expect(
         groupMemberMessageDisplayEligibility({'is_muted': null}).shouldDisplay,
-        isTrue,
+        isFalse,
       );
     });
   });

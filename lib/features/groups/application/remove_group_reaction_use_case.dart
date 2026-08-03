@@ -171,11 +171,18 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
   // 5. Delete locally (optimistic) regardless of the publish outcome. Tombstone
   //    with the remove's authored timestamp so a stale incoming add can't
   //    resurrect it (INV-T1/INV-T2).
-  await reactionRepo.removeReaction(
-    messageId,
-    senderPeerId,
-    removedAtTimestamp: timestamp,
-  );
+  if (reactionRepo case AtomicGroupReactionRemovalRepository atomicGroup) {
+    await atomicGroup.applyGroupRemove(
+      groupId: groupId,
+      reaction: payload.toMessageReaction(),
+    );
+  } else {
+    await reactionRepo.removeReaction(
+      messageId,
+      senderPeerId,
+      removedAtTimestamp: timestamp,
+    );
+  }
 
   // 6. Attempt live publish. A failure downgrades the result to queuedForRetry
   //    but never discards the custody/optimistic delete staged above.

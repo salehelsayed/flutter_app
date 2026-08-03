@@ -783,6 +783,38 @@ class AppLocalizationsEn extends AppLocalizations {
   String get group_message_hint => 'Message';
 
   @override
+  String get notification_group_reaction_target_message => 'message';
+
+  @override
+  String get notification_group_reaction_target_photo => 'photo';
+
+  @override
+  String get notification_group_reaction_target_video => 'video';
+
+  @override
+  String get notification_group_reaction_target_voice_message =>
+      'voice message';
+
+  @override
+  String get notification_group_reaction_target_file => 'file';
+
+  @override
+  String get notification_group_reaction_target_media => 'media';
+
+  @override
+  String notification_group_reaction_actor(
+    String actorName,
+    String targetKind,
+  ) {
+    return '$actorName reacted to your $targetKind';
+  }
+
+  @override
+  String notification_group_reaction_someone(String targetKind) {
+    return 'Someone reacted to your $targetKind';
+  }
+
+  @override
   String get group_create_failed => 'Failed to create group';
 
   @override

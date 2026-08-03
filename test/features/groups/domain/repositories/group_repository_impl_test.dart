@@ -160,12 +160,18 @@ void main() {
     void Function()? beforeSelfRemovedReferenceFinalize,
     Future<List<Map<String, Object?>>> Function()? loadAllGroupsOverride,
     Future<bool> Function(String groupId)? hasExitCleanupPending,
+    Future<void> Function(Map<String, Object?> row)?
+    commitDissolvedGroupOverride,
   }) {
     return GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
       dbLoadAllGroups: loadAllGroupsOverride ?? () => dbLoadAllGroups(db),
       dbLoadGroup: (id) => dbLoadGroup(db, id),
       dbUpdateGroup: (row) => dbUpdateGroup(db, row),
+      dbCommitDissolvedGroup:
+          commitDissolvedGroupOverride ??
+          (row) =>
+              dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(db, row),
       dbDeleteGroup: (id) => dbDeleteGroup(db, id),
       dbLoadActiveGroups: () => dbLoadActiveGroups(db),
       dbArchiveGroup: (id) => dbArchiveGroup(db, id),
@@ -539,6 +545,26 @@ void main() {
       final result = await repo.getGroup('group-1');
       expect(result!.name, 'Updated');
     });
+
+    test(
+      'commitDissolvedGroup routes through the terminal DB capability',
+      () async {
+        await repo.saveGroup(makeGroup());
+
+        await repo.commitDissolvedGroup(
+          makeGroup().copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 8, 3, 8),
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+
+        final result = await repo.getGroup('group-1');
+        expect(result, isNotNull);
+        expect(result!.isDissolved, isTrue);
+        expect(result.dissolvedBy, 'peer-admin');
+      },
+    );
 
     test('saveGroup and getGroup round-trip membership watermark', () async {
       await repo.saveGroup(

@@ -5,46 +5,72 @@ final class _GroupReactionIngressProcessor {
     required GroupRepository groupRepo,
     required GroupMessageRepository msgRepo,
     required ReactionRepository? reactionRepo,
+    required MediaAttachmentRepository? mediaAttachmentRepo,
     required GroupPendingReactionRepository? pendingReactionRepo,
     required NotificationService? notificationService,
     required ActiveConversationTracker? groupConversationTracker,
     required AppLifecycleState Function()? getAppLifecycleState,
     required NotificationToneTracker? notificationToneTracker,
+    required GroupNotificationPresentationCoordinator?
+    notificationPresentationCoordinator,
     required RecentRemoteNotificationGate remoteNotificationGate,
     required bool Function() isStoppingOrDisposed,
     required Future<String?> Function() resolveSelfPeerId,
     required Future<DurableNotificationToneLease?> Function()
     resolveDurableNotificationCoordinator,
     required void Function(ReactionChange) emitReactionChange,
+    required Future<void> Function(
+      GroupReactionPayload payload,
+      String groupId,
+    )?
+    stageNotificationDisplayCustody,
+    required Future<void> Function(String eventId)?
+    reconcileNotificationDisplayCustody,
+    required Future<void> Function()? retryNotificationDisplays,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _reactionRepo = reactionRepo,
+       _mediaAttachmentRepo = mediaAttachmentRepo,
        _pendingReactionRepo = pendingReactionRepo,
        _notificationService = notificationService,
        _groupConversationTracker = groupConversationTracker,
        _getAppLifecycleState = getAppLifecycleState,
        _notificationToneTracker = notificationToneTracker,
+       _notificationPresentationCoordinator =
+           notificationPresentationCoordinator,
        _remoteNotificationGate = remoteNotificationGate,
        _isStoppingOrDisposed = isStoppingOrDisposed,
        _resolveSelfPeerId = resolveSelfPeerId,
        _resolveDurableNotificationCoordinator =
            resolveDurableNotificationCoordinator,
-       _emitReactionChange = emitReactionChange;
+       _emitReactionChange = emitReactionChange,
+       _stageNotificationDisplayCustody = stageNotificationDisplayCustody,
+       _reconcileNotificationDisplayCustody =
+           reconcileNotificationDisplayCustody,
+       _retryNotificationDisplays = retryNotificationDisplays;
 
   final GroupRepository _groupRepo;
   final GroupMessageRepository _msgRepo;
   final ReactionRepository? _reactionRepo;
+  final MediaAttachmentRepository? _mediaAttachmentRepo;
   final GroupPendingReactionRepository? _pendingReactionRepo;
   final NotificationService? _notificationService;
   final ActiveConversationTracker? _groupConversationTracker;
   final AppLifecycleState Function()? _getAppLifecycleState;
   final NotificationToneTracker? _notificationToneTracker;
+  final GroupNotificationPresentationCoordinator?
+  _notificationPresentationCoordinator;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final bool Function() _isStoppingOrDisposed;
   final Future<String?> Function() _resolveSelfPeerId;
   final Future<DurableNotificationToneLease?> Function()
   _resolveDurableNotificationCoordinator;
   final void Function(ReactionChange) _emitReactionChange;
+  final Future<void> Function(GroupReactionPayload payload, String groupId)?
+  _stageNotificationDisplayCustody;
+  final Future<void> Function(String eventId)?
+  _reconcileNotificationDisplayCustody;
+  final Future<void> Function()? _retryNotificationDisplays;
   final Set<String> _pendingReactionClaims = <String>{};
 
   bool _samePendingReaction(
@@ -141,6 +167,10 @@ final class _GroupReactionIngressProcessor {
 
     if (!_pendingReactionClaims.add(pending.id)) return;
     try {
+      final pendingGroupId = pending.groupId;
+      final wireReaction = GroupReactionPayload.fromDecryptedJson(
+        pending.reactionJson,
+      );
       final (result, change) = await handleIncomingGroupReaction(
         groupRepo: _groupRepo,
         reactionRepo: reactionRepo,
@@ -151,7 +181,29 @@ final class _GroupReactionIngressProcessor {
         transportPeerId: pending.transportPeerId,
         senderPublicKey: pending.senderPublicKey,
         reactionJson: pending.reactionJson,
+        stageNotificationDisplayCustody:
+            _stageNotificationDisplayCustody == null
+            ? null
+            : (payload) =>
+                  _stageNotificationDisplayCustody(payload, pendingGroupId),
+        markNotificationDisplayCustodyReady:
+            _reconcileNotificationDisplayCustody == null
+            ? null
+            : (payload) => _reconcileNotificationDisplayCustody(
+                _notificationEventId(payload),
+              ),
       );
+      if (result == HandleGroupReactionResult.success &&
+          wireReaction != null &&
+          wireReaction.action == GroupReactionPayload.actionAdd &&
+          _reconcileNotificationDisplayCustody != null) {
+        // Reconcile an exact/stale replay whose canonical mutation may have
+        // committed before an earlier process died while the marker was
+        // still `not_ready`.
+        await _reconcileNotificationDisplayCustody(
+          _notificationEventId(wireReaction),
+        );
+      }
       if (result == HandleGroupReactionResult.success && change != null) {
         final targetMessage = await _loadReactionDerivativeTarget(
           groupId: pending.groupId,
@@ -159,17 +211,21 @@ final class _GroupReactionIngressProcessor {
         );
         if (targetMessage != null) {
           _emitReactionChange(change);
-          final wireReaction = GroupReactionPayload.fromDecryptedJson(
-            pending.reactionJson,
-          );
-          await _maybeNotifyGroupReaction(
-            groupId: pending.groupId,
-            reactorPeerId: pending.senderPeerId,
-            change: change,
-            targetMessage: targetMessage,
-            eventId: wireReaction?.eventId,
-          );
+          if (_stageNotificationDisplayCustody == null) {
+            await _maybeNotifyGroupReaction(
+              groupId: pending.groupId,
+              reactorPeerId: pending.senderPeerId,
+              change: change,
+              targetMessage: targetMessage,
+              eventId: wireReaction == null
+                  ? null
+                  : _notificationEventId(wireReaction),
+            );
+          }
         }
+      }
+      if (result == HandleGroupReactionResult.success) {
+        await _retryNotificationDisplays?.call();
       }
       await repo.deletePendingReaction(pending.id);
       emitFlowEvent(
@@ -262,7 +318,26 @@ final class _GroupReactionIngressProcessor {
         transportPeerId: transportPeerId,
         senderPublicKey: senderPublicKey,
         reactionJson: reactionJson,
+        stageNotificationDisplayCustody:
+            _stageNotificationDisplayCustody == null
+            ? null
+            : (payload) => _stageNotificationDisplayCustody(payload, groupId),
+        markNotificationDisplayCustodyReady:
+            _reconcileNotificationDisplayCustody == null
+            ? null
+            : (payload) => _reconcileNotificationDisplayCustody(
+                _notificationEventId(payload),
+              ),
       );
+
+      if (result == HandleGroupReactionResult.success &&
+          wireReaction != null &&
+          wireReaction.action == GroupReactionPayload.actionAdd &&
+          _reconcileNotificationDisplayCustody != null) {
+        await _reconcileNotificationDisplayCustody(
+          _notificationEventId(wireReaction),
+        );
+      }
 
       if (result == HandleGroupReactionResult.success && change != null) {
         final targetMessage = await _loadReactionDerivativeTarget(
@@ -274,14 +349,21 @@ final class _GroupReactionIngressProcessor {
           // Notify on a fresh group-reaction ADD. A reaction buffered before
           // its target joins this same validated/claimed path when the target
           // later materializes; ordinary replay duplicates remain silent.
-          await _maybeNotifyGroupReaction(
-            groupId: groupId,
-            reactorPeerId: senderId,
-            change: change,
-            targetMessage: targetMessage,
-            eventId: wireReaction?.eventId,
-          );
+          if (_stageNotificationDisplayCustody == null) {
+            await _maybeNotifyGroupReaction(
+              groupId: groupId,
+              reactorPeerId: senderId,
+              change: change,
+              targetMessage: targetMessage,
+              eventId: wireReaction == null
+                  ? null
+                  : _notificationEventId(wireReaction),
+            );
+          }
         }
+      }
+      if (result == HandleGroupReactionResult.success) {
+        await _retryNotificationDisplays?.call();
       }
     } catch (e) {
       emitFlowEvent(
@@ -320,8 +402,7 @@ final class _GroupReactionIngressProcessor {
   /// reaction, group mute, viewing-suppression + tone debounce (via
   /// [maybeShowNotification]) — and fires ONLY on a fresh ADD upsert (the
   /// remove and stale-ignored branches return a non-upserted/empty change and
-  /// stay silent). The OS call is fire-and-forget so reaction throughput is
-  /// never blocked.
+  /// stay silent).
   Future<void> _maybeNotifyGroupReaction({
     required String groupId,
     required String reactorPeerId,
@@ -359,9 +440,22 @@ final class _GroupReactionIngressProcessor {
     }
 
     final group = await _groupRepo.getGroup(groupId);
-    // Device-local mute and archive suppress local notifications (mirrors the
-    // message path); a missing group means we can't route, so skip.
-    if (group == null || group.isMuted || group.isArchived) return;
+    final selfMember = group == null
+        ? null
+        : await _groupRepo.getMember(groupId, selfPeerId);
+    final displayEligibility = evaluateGroupNotificationDisplayPolicy(
+      GroupNotificationDisplayPolicyInput(
+        groupExists: group != null,
+        hasCurrentLocalMembership: selfMember != null,
+        groupType: group?.type.name,
+        isMuted: group?.isMuted ?? false,
+        isArchived: group?.isArchived ?? false,
+        isDissolved: group?.isDissolved ?? false,
+        hasDissolvedAt: group?.dissolvedAt != null,
+        hasSelfRemovedAt: group?.selfRemovedAt != null,
+      ),
+    );
+    if (!displayEligibility.shouldDisplay || group == null) return;
 
     // Best-effort reactor display name from the group roster.
     var reactorName = '';
@@ -375,40 +469,55 @@ final class _GroupReactionIngressProcessor {
       }
     } catch (_) {}
 
-    final body = reactorName.isNotEmpty
-        ? '$reactorName reacted ${reaction.emoji} to your message'
-        : 'Someone reacted ${reaction.emoji} to your message';
+    final targetAttachments = _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            targetMessage.id,
+            owner: MediaOwnerLane.group,
+          );
+    final body = localizedGroupReactionNotificationBody(
+      actorName: reactorName,
+      targetAttachments: targetAttachments,
+    );
     final notificationEventId = eventId?.trim().isNotEmpty == true
         ? eventId!.trim()
         : reaction.id;
 
-    unawaited(
-      maybeShowNotification(
-        notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: lifecycle,
-        contactPeerId: 'group:$groupId',
-        routePayload: NotificationRouteTarget.group(
-          groupId,
-          messageId: reaction.messageId,
-        ).toPayload(),
-        senderUsername: group.name,
-        messageText: body,
-        messageId: notificationEventId,
-        notificationEventIdentity: boundedReactionEventIdentity(
-          notificationEventId,
-        ),
-        notificationEventType: 'message_reaction',
-        toneTracker: _notificationToneTracker,
-        durableNotificationCoordinatorResolver:
-            _resolveDurableNotificationCoordinator,
-        consumeRecentRemoteNotificationAnnouncement:
-            ({required payload, String? messageId}) =>
-                _remoteNotificationGate.consumeIfRecentAnnouncement(
-                  payload: payload,
-                  messageId: messageId,
-                ),
+    Future<NotificationPresentationResult> present() => maybeShowNotification(
+      notificationService: notificationService,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: 'group:$groupId',
+      routePayload: NotificationRouteTarget.group(
+        groupId,
+        messageId: reaction.messageId,
+      ).toPayload(),
+      senderUsername: group.name,
+      messageText: body,
+      messageId: notificationEventId,
+      notificationEventIdentity: boundedReactionEventIdentity(
+        notificationEventId,
       ),
+      notificationEventType: 'message_reaction',
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
     );
+    final presentationCoordinator = _notificationPresentationCoordinator;
+    if (presentationCoordinator == null) {
+      await present();
+    } else {
+      await presentationCoordinator.runForGroup(groupId, present);
+    }
+  }
+
+  String _notificationEventId(GroupReactionPayload payload) {
+    return payload.notificationTransitionId;
   }
 }

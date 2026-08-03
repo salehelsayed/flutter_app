@@ -108,6 +108,15 @@ void main() {
   });
 
   group('Plan 257 device scenario catalog', () {
+    test('Android reaction copy is privacy bounded and omits the emoji', () {
+      final body = groupReactionNotificationExpectedAndroidReactionBody(
+        'Alice',
+      );
+
+      expect(body, 'Alice reacted to your message');
+      expect(body, isNot(contains('👍')));
+    });
+
     test('lists the six availability-bounded scenarios in stable order', () {
       expect(
         groupReactionNotificationScenarios.map((scenario) => scenario.id),
@@ -1576,8 +1585,8 @@ String _notificationRecords({
   final bodies = messageScenario
       ? <String>[firstMarker, secondMarker]
       : <String>[
-          '$actorName reacted 👍 to your message',
-          '$actorName reacted 👍 to your message',
+          groupReactionNotificationExpectedAndroidReactionBody(actorName),
+          groupReactionNotificationExpectedAndroidReactionBody(actorName),
         ];
   final buffer = StringBuffer();
   for (var index = 0; index < sourceNames.length; index++) {

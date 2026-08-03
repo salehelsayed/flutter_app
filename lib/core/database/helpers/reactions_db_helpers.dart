@@ -1,7 +1,11 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../notifications/deterministic_notification_id.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'group_notification_display_outbox_db_helpers.dart';
+import 'group_notification_read_acknowledgement_db_helpers.dart';
+import 'group_notification_reconciliation_outbox_db_helpers.dart';
 
 /// Mutation kind accepted by [dbApplyIncomingReactionMutation].
 enum DbIncomingReactionMutation { add, remove }
@@ -27,11 +31,38 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
   Database db,
   Map<String, Object?> row, {
   required DbIncomingReactionMutation mutation,
+  String? groupIdForNotificationCleanup,
+  String? notificationEventIdForStaleAddCleanup,
 }) async {
   final id = _requiredReactionString(row, 'id');
   final messageId = _requiredReactionString(row, 'message_id');
   final senderPeerId = _requiredReactionString(row, 'sender_peer_id');
   final timestamp = _requiredReactionString(row, 'timestamp');
+  final normalizedGroupId = groupIdForNotificationCleanup?.trim();
+  final normalizedNotificationEventId = notificationEventIdForStaleAddCleanup
+      ?.trim();
+  final hasGroupCustody =
+      normalizedGroupId != null && normalizedGroupId.isNotEmpty;
+  final hasAddEventCustody =
+      normalizedNotificationEventId != null &&
+      normalizedNotificationEventId.isNotEmpty;
+  if (hasAddEventCustody &&
+      (!hasGroupCustody || mutation != DbIncomingReactionMutation.add)) {
+    throw ArgumentError.value(
+      notificationEventIdForStaleAddCleanup,
+      'notificationEventIdForStaleAddCleanup',
+      'requires an explicit group ADD mutation',
+    );
+  }
+  if (hasGroupCustody &&
+      mutation == DbIncomingReactionMutation.add &&
+      !hasAddEventCustody) {
+    throw ArgumentError.value(
+      notificationEventIdForStaleAddCleanup,
+      'notificationEventIdForStaleAddCleanup',
+      'is required for exact stale ADD custody cleanup',
+    );
+  }
 
   emitFlowEvent(
     layer: 'DB',
@@ -44,6 +75,20 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
 
   try {
     final result = await dbWriteTransaction(db, (txn) async {
+      if (hasGroupCustody) {
+        final target = await txn.query(
+          'group_messages',
+          columns: const <String>['id'],
+          where: 'id = ? AND group_id = ?',
+          whereArgs: <Object?>[messageId, normalizedGroupId],
+          limit: 1,
+        );
+        if (target.isEmpty) {
+          throw StateError(
+            'group reaction REMOVE target does not belong to explicit group',
+          );
+        }
+      }
       final rows = await txn.query(
         'message_reactions',
         where: 'message_id = ? AND sender_peer_id = ?',
@@ -51,6 +96,19 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
         limit: 1,
       );
       final current = rows.isEmpty ? null : rows.single;
+      final boundedAddEventIdentity =
+          mutation == DbIncomingReactionMutation.add && hasAddEventCustody
+          ? boundedReactionEventIdentity(normalizedNotificationEventId)
+          : null;
+      final pendingReadAcknowledgement =
+          boundedAddEventIdentity == null || !hasGroupCustody
+          ? null
+          : await dbLoadExactGroupNotificationReadAcknowledgement(
+              txn,
+              groupId: normalizedGroupId,
+              contentKind: 'reaction',
+              eventIdentity: boundedAddEventIdentity,
+            );
       final incomingAt = DateTime.tryParse(timestamp);
       final currentTimestamp = current == null
           ? null
@@ -62,27 +120,195 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
       if (incomingAt != null &&
           currentAt != null &&
           incomingAt.isBefore(currentAt)) {
+        if (mutation == DbIncomingReactionMutation.add &&
+            hasGroupCustody &&
+            hasAddEventCustody) {
+          await _deleteExactStaleAddNotificationCustody(
+            txn,
+            eventId: normalizedNotificationEventId,
+            groupId: normalizedGroupId,
+            messageId: messageId,
+            actorPeerId: senderPeerId,
+            eventTimestamp: timestamp,
+            reactionId: id,
+          );
+          if (pendingReadAcknowledgement != null) {
+            await dbConsumeExactGroupNotificationReadAcknowledgement(
+              txn,
+              groupId: normalizedGroupId,
+              contentKind: 'reaction',
+              eventIdentity: boundedAddEventIdentity!,
+            );
+            await dbEnqueueGroupNotificationReconciliationOutbox(
+              txn,
+              groupId: normalizedGroupId,
+            );
+          }
+        }
         return DbIncomingReactionApplyResult.stale;
       }
 
       final currentId = current?['id'] as String?;
+      final currentRemovedAt = current?['removed_at'] as String?;
+      final currentAddTimestamp = current?['timestamp'] as String?;
       final isExactReplay = mutation == DbIncomingReactionMutation.add
-          ? currentId == id
-          : currentId == id && current?['removed_at'] != null;
+          ? currentId == id &&
+                currentRemovedAt == null &&
+                currentAddTimestamp == timestamp
+          : currentId == id && currentRemovedAt == timestamp;
       if (isExactReplay) {
+        if (mutation == DbIncomingReactionMutation.add &&
+            hasGroupCustody &&
+            pendingReadAcknowledgement != null) {
+          await txn.rawUpdate(
+            'UPDATE message_reactions '
+            'SET notification_acknowledged_at = ?, '
+            'notification_display_terminal_event_id = ? '
+            'WHERE message_id = ? AND sender_peer_id = ?',
+            <Object?>[
+              pendingReadAcknowledgement['acknowledged_at'],
+              boundedAddEventIdentity,
+              messageId,
+              senderPeerId,
+            ],
+          );
+          await dbConsumeExactGroupNotificationReadAcknowledgement(
+            txn,
+            groupId: normalizedGroupId,
+            contentKind: 'reaction',
+            eventIdentity: boundedAddEventIdentity!,
+          );
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: normalizedGroupId,
+          );
+        }
+        if (mutation == DbIncomingReactionMutation.add &&
+            hasGroupCustody &&
+            hasAddEventCustody &&
+            (current?['notification_display_terminal_event_id'] as String?)
+                    ?.trim()
+                    .isNotEmpty ==
+                true) {
+          // This exact canonical ADD generation was already presented (or
+          // terminally suppressed). The bounded filesystem claim may have
+          // expired, but the canonical row remains authoritative. Retire only
+          // the just-staged exact transition; a crash-before-display row has
+          // no terminal marker and deliberately remains retryable.
+          await _deleteExactStaleAddNotificationCustody(
+            txn,
+            eventId: normalizedNotificationEventId,
+            groupId: normalizedGroupId,
+            messageId: messageId,
+            actorPeerId: senderPeerId,
+            eventTimestamp: timestamp,
+            reactionId: id,
+          );
+        }
+        if (mutation == DbIncomingReactionMutation.remove && hasGroupCustody) {
+          await dbDeleteGroupNotificationDisplayOutboxForReactionActor(
+            txn,
+            groupId: normalizedGroupId,
+            messageId: messageId,
+            actorPeerId: senderPeerId,
+          );
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: normalizedGroupId,
+          );
+        }
         return DbIncomingReactionApplyResult.exactReplay;
       }
 
       final normalizedRow = Map<String, Object?>.from(row);
       normalizedRow['removed_at'] =
           mutation == DbIncomingReactionMutation.remove ? timestamp : null;
+      final currentTerminalIdentity =
+          (current?['notification_display_terminal_event_id'] as String?)
+              ?.trim();
+      final custodyTerminalIdentity =
+          mutation == DbIncomingReactionMutation.remove &&
+              hasGroupCustody &&
+              current != null &&
+              currentRemovedAt == null &&
+              (currentTerminalIdentity == null ||
+                  currentTerminalIdentity.isEmpty)
+          ? await _loadExactCurrentAddCustodyTerminalIdentity(
+              txn,
+              groupId: normalizedGroupId,
+              messageId: messageId,
+              actorPeerId: senderPeerId,
+              eventTimestamp: currentAddTimestamp!,
+              reactionId: currentId!,
+            )
+          : null;
+      // A REMOVE is a terminal transition for the currently displayed ADD.
+      // Preserve its recorded terminal identity, or transfer the identifier
+      // from its exact still-live ADD custody before that custody is retired.
+      // The latter closes the background-show -> markerless foreground ADD ->
+      // REMOVE race without copying notification text, emoji, or payload.
+      // A later ADD deliberately starts without this marker until its own
+      // display custody reaches a terminal decision.
+      normalizedRow['notification_display_terminal_event_id'] =
+          mutation == DbIncomingReactionMutation.remove
+          ? currentTerminalIdentity?.isNotEmpty == true
+                ? currentTerminalIdentity
+                : custodyTerminalIdentity
+          : pendingReadAcknowledgement == null
+          ? null
+          : boundedAddEventIdentity;
+      if (mutation == DbIncomingReactionMutation.add &&
+          pendingReadAcknowledgement != null) {
+        normalizedRow['notification_acknowledged_at'] =
+            pendingReadAcknowledgement['acknowledged_at'];
+      } else if (current != null &&
+          mutation == DbIncomingReactionMutation.remove &&
+          current.containsKey('notification_acknowledged_at')) {
+        normalizedRow['notification_acknowledged_at'] =
+            current['notification_acknowledged_at'];
+      }
       await txn.insert(
         'message_reactions',
         normalizedRow,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
+      if (mutation == DbIncomingReactionMutation.add &&
+          hasGroupCustody &&
+          pendingReadAcknowledgement != null) {
+        await dbConsumeExactGroupNotificationReadAcknowledgement(
+          txn,
+          groupId: normalizedGroupId,
+          contentKind: 'reaction',
+          eventIdentity: boundedAddEventIdentity!,
+        );
+        await dbEnqueueGroupNotificationReconciliationOutbox(
+          txn,
+          groupId: normalizedGroupId,
+        );
+      }
+
       if (mutation == DbIncomingReactionMutation.remove) {
+        if (hasGroupCustody) {
+          await dbDeleteGroupNotificationDisplayOutboxForReactionActor(
+            txn,
+            groupId: normalizedGroupId,
+            messageId: messageId,
+            actorPeerId: senderPeerId,
+          );
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: normalizedGroupId,
+          );
+          if (currentTerminalIdentity?.isNotEmpty == true) {
+            await dbConsumeExactGroupNotificationReadAcknowledgement(
+              txn,
+              groupId: normalizedGroupId,
+              contentKind: 'reaction',
+              eventIdentity: currentTerminalIdentity!,
+            );
+          }
+        }
         return DbIncomingReactionApplyResult.removed;
       }
       return current == null
@@ -104,6 +330,107 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
     );
     rethrow;
   }
+}
+
+Future<int> _deleteExactStaleAddNotificationCustody(
+  DatabaseExecutor db, {
+  required String eventId,
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String reactionId,
+}) async {
+  final table = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'group_notification_display_outbox' LIMIT 1",
+  );
+  if (table.isEmpty) return 0;
+  final where =
+      'event_id = ? AND event_kind = ? AND group_id = ? '
+      'AND message_id = ? AND actor_peer_id = ? AND event_timestamp = ? '
+      'AND reaction_id = ? AND reaction_action = ? '
+      'AND reaction_tombstone = ?';
+  final whereArgs = <Object?>[
+    eventId,
+    'reaction',
+    groupId,
+    messageId,
+    actorPeerId,
+    eventTimestamp,
+    reactionId,
+    'add',
+    0,
+  ];
+  final exactCustody = await db.query(
+    'group_notification_display_outbox',
+    columns: const <String>['event_id'],
+    where: where,
+    whereArgs: whereArgs,
+    limit: 1,
+  );
+  if (exactCustody.isEmpty) return 0;
+
+  // A REMOVE-before-ADD tombstone has no marker to carry forward. When the
+  // delayed ADD is proven stale, consuming its exact identifier-only custody
+  // is itself the terminal decision for that ADD generation. Bind the event
+  // to the tombstone before deleting custody so canonical reconciliation can
+  // retire a card that the background isolate may already have published.
+  await db.rawUpdate(
+    'UPDATE message_reactions '
+    'SET notification_display_terminal_event_id = ? '
+    'WHERE message_id = ? AND sender_peer_id = ? AND removed_at IS NOT NULL '
+    'AND (notification_display_terminal_event_id IS NULL '
+    "OR TRIM(notification_display_terminal_event_id) = '')",
+    <Object?>[boundedReactionEventIdentity(eventId), messageId, actorPeerId],
+  );
+  return db.delete(
+    'group_notification_display_outbox',
+    where: where,
+    whereArgs: whereArgs,
+  );
+}
+
+Future<String?> _loadExactCurrentAddCustodyTerminalIdentity(
+  DatabaseExecutor db, {
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String reactionId,
+}) async {
+  final table = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'group_notification_display_outbox' LIMIT 1",
+  );
+  if (table.isEmpty) return null;
+  final rows = await db.query(
+    'group_notification_display_outbox',
+    columns: const <String>['event_id'],
+    where:
+        'event_kind = ? AND group_id = ? AND message_id = ? '
+        'AND actor_peer_id = ? AND event_timestamp = ? AND reaction_id = ? '
+        'AND reaction_action = ? AND reaction_tombstone = ?',
+    whereArgs: <Object?>[
+      'reaction',
+      groupId,
+      messageId,
+      actorPeerId,
+      eventTimestamp,
+      reactionId,
+      'add',
+      0,
+    ],
+    orderBy: 'event_id ASC',
+    limit: 2,
+  );
+  // Multiple different transition identities for one canonical ADD are an
+  // authority conflict. Fail unknown instead of binding the card arbitrarily.
+  if (rows.length != 1) return null;
+  final eventId = (rows.single['event_id'] as String?)?.trim();
+  return eventId == null || eventId.isEmpty
+      ? null
+      : boundedReactionEventIdentity(eventId);
 }
 
 String _requiredReactionString(Map<String, Object?> row, String key) {

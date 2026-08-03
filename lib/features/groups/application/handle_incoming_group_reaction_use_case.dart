@@ -14,6 +14,12 @@ const kMaxBufferedGroupReactionsPerGroup = 50;
 /// How long a buffered reaction is retained before TTL eviction.
 const kBufferedGroupReactionTtl = Duration(days: 7);
 
+/// Durable notification custody seam for a validated incoming ADD transition.
+/// Stage runs immediately before the canonical reaction mutation; ready runs
+/// only after that mutation commits. REMOVE transitions do not create alerts.
+typedef IncomingGroupReactionDisplayCustodyCallback =
+    Future<void> Function(GroupReactionPayload payload);
+
 /// Result of handling an incoming group reaction.
 enum HandleGroupReactionResult {
   success,
@@ -56,6 +62,9 @@ handleIncomingGroupReaction({
   String? transportPeerId,
   String? senderDeviceId,
   String? senderPublicKey,
+  IncomingGroupReactionDisplayCustodyCallback? stageNotificationDisplayCustody,
+  IncomingGroupReactionDisplayCustodyCallback?
+  markNotificationDisplayCustodyReady,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -237,41 +246,70 @@ handleIncomingGroupReaction({
   //     commit out of order (INV-R7). Compares parsed DateTimes, not the raw
   //     ISO-8601 strings. Gated BEFORE the add/remove branch so the remove
   //     direction is covered while the add row still carries a comparand.
-  final currentReaction =
-      await reactionRepo.getReactionForSenderIncludingRemoved(
-    messageId: payload.messageId,
-    senderPeerId: payload.senderPeerId,
-  );
-  if (_isStaleComparedToCurrent(
-    incomingTimestamp: payload.timestamp,
-    // Comparand is the latest event's timestamp: a tombstone's removed_at when
-    // present, else the add timestamp (INV-T2). This is what lets a remove be
-    // defended from a later stale add.
-    currentTimestamp: currentReaction == null
-        ? null
-        : (currentReaction.removedAt ?? currentReaction.timestamp),
-  )) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_REACTION_RECEIVE_STALE_IGNORED',
-      details: {
-        'messageId': payload.messageId.length > 8
-            ? payload.messageId.substring(0, 8)
-            : payload.messageId,
-        'incomingAction': payload.action,
-        'incomingEmoji': payload.emoji,
-      },
-    );
-    return (HandleGroupReactionResult.success, null);
+  final hasAtomicGroupDecision =
+      (payload.action == GroupReactionPayload.actionAdd &&
+          reactionRepo is AtomicGroupReactionAdditionRepository) ||
+      (payload.action == GroupReactionPayload.actionRemove &&
+          reactionRepo is AtomicGroupReactionRemovalRepository);
+  if (!hasAtomicGroupDecision) {
+    final currentReaction = await reactionRepo
+        .getReactionForSenderIncludingRemoved(
+          messageId: payload.messageId,
+          senderPeerId: payload.senderPeerId,
+        );
+    if (_isStaleComparedToCurrent(
+      incomingTimestamp: payload.timestamp,
+      // Comparand is the latest event's timestamp: a tombstone's removed_at
+      // when present, else the add timestamp (INV-T2).
+      currentTimestamp: currentReaction == null
+          ? null
+          : (currentReaction.removedAt ?? currentReaction.timestamp),
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_RECEIVE_STALE_IGNORED',
+        details: {
+          'messageId': payload.messageId.length > 8
+              ? payload.messageId.substring(0, 8)
+              : payload.messageId,
+          'incomingAction': payload.action,
+          'incomingEmoji': payload.emoji,
+          'decisionPoint': 'non_atomic_precheck',
+        },
+      );
+      return (HandleGroupReactionResult.success, null);
+    }
   }
 
   // 6. Process action
   if (payload.action == GroupReactionPayload.actionRemove) {
-    await reactionRepo.removeReaction(
-      payload.messageId,
-      payload.senderPeerId,
-      removedAtTimestamp: payload.timestamp,
-    );
+    if (reactionRepo case AtomicGroupReactionRemovalRepository atomicGroup) {
+      final result = await atomicGroup.applyGroupRemove(
+        groupId: groupId,
+        reaction: payload.toMessageReaction(),
+      );
+      if (result == ReactionRemoveApplyResult.stale) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REACTION_RECEIVE_STALE_IGNORED',
+          details: {
+            'messageId': payload.messageId.length > 8
+                ? payload.messageId.substring(0, 8)
+                : payload.messageId,
+            'incomingAction': payload.action,
+            'incomingEmoji': payload.emoji,
+            'decisionPoint': 'atomic_group_remove',
+          },
+        );
+        return (HandleGroupReactionResult.success, null);
+      }
+    } else {
+      await reactionRepo.removeReaction(
+        payload.messageId,
+        payload.senderPeerId,
+        removedAtTimestamp: payload.timestamp,
+      );
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_RECEIVE_REMOVED',
@@ -296,7 +334,33 @@ handleIncomingGroupReaction({
   }
 
   final reaction = payload.toMessageReaction();
-  await reactionRepo.saveReaction(reaction);
+  await stageNotificationDisplayCustody?.call(payload);
+  late final ReactionAddApplyResult applyResult;
+  if (reactionRepo case AtomicGroupReactionAdditionRepository atomicGroup) {
+    applyResult = await atomicGroup.applyGroupAdd(
+      groupId: groupId,
+      notificationEventId: payload.notificationTransitionId,
+      reaction: reaction,
+    );
+  } else {
+    applyResult = await reactionRepo.applyIncomingAdd(reaction);
+  }
+  if (applyResult == ReactionAddApplyResult.stale) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_RECEIVE_STALE_IGNORED',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+        'incomingAction': payload.action,
+        'incomingEmoji': payload.emoji,
+        'decisionPoint': 'atomic_group_add',
+      },
+    );
+    return (HandleGroupReactionResult.success, null);
+  }
+  await markNotificationDisplayCustodyReady?.call(payload);
 
   emitFlowEvent(
     layer: 'FL',

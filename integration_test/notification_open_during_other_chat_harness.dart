@@ -145,6 +145,8 @@ class _RecordingNotificationService implements NotificationService {
     required String messageText,
     String? payload,
     bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
   }) async {
     shown.add(
       _RecordedShow(

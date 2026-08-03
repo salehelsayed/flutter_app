@@ -22,6 +22,13 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 const _maxIncomingMessageFutureClockSkew = Duration(minutes: 5);
 const _incomingMediaRetrySearchLimit = 200;
 
+/// Durable notification custody seam for one fully authorized incoming group
+/// message. The stage callback runs immediately before canonical persistence;
+/// the ready callback runs only after the parent and admitted media metadata
+/// have committed. Callers that do not project notifications omit both.
+typedef IncomingGroupMessageDisplayCustodyCallback =
+    Future<void> Function(GroupMessage message);
+
 sealed class IncomingGroupMessageDetailedOutcome {
   const IncomingGroupMessageDetailedOutcome();
 
@@ -34,8 +41,13 @@ sealed class IncomingGroupMessageDetailedOutcome {
     Set<String> persistedAttachmentIds,
   ) = IncomingGroupMessageDuplicateEnriched;
 
-  const factory IncomingGroupMessageDetailedOutcome.ignored() =
-      IncomingGroupMessageIgnored;
+  factory IncomingGroupMessageDetailedOutcome.duplicate(
+    GroupMessage canonicalMessage,
+  ) = IncomingGroupMessageDuplicate;
+
+  const factory IncomingGroupMessageDetailedOutcome.ignored({
+    GroupMessage? canonicalMessage,
+  }) = IncomingGroupMessageIgnored;
 }
 
 final class IncomingGroupMessageDelivered
@@ -45,15 +57,26 @@ final class IncomingGroupMessageDelivered
   final GroupMessage message;
 }
 
-final class IncomingGroupMessageDuplicateEnriched
+base class IncomingGroupMessageDuplicate
     extends IncomingGroupMessageDetailedOutcome {
+  IncomingGroupMessageDuplicate(
+    this.canonicalMessage, [
+    Set<String> persistedAttachmentIds = const <String>{},
+  ]) : persistedAttachmentIds = Set<String>.unmodifiable(
+         persistedAttachmentIds,
+       );
+
+  final GroupMessage canonicalMessage;
+  final Set<String> persistedAttachmentIds;
+}
+
+final class IncomingGroupMessageDuplicateEnriched
+    extends IncomingGroupMessageDuplicate {
   IncomingGroupMessageDuplicateEnriched(
-    this.canonicalMessage,
+    GroupMessage canonicalMessage,
     Set<String> persistedAttachmentIds,
-  ) : persistedAttachmentIds = Set<String>.unmodifiable(
-        persistedAttachmentIds,
-      ) {
-    if (this.persistedAttachmentIds.isEmpty) {
+  ) : super(canonicalMessage, persistedAttachmentIds) {
+    if (persistedAttachmentIds.isEmpty) {
       throw ArgumentError.value(
         persistedAttachmentIds,
         'persistedAttachmentIds',
@@ -61,14 +84,15 @@ final class IncomingGroupMessageDuplicateEnriched
       );
     }
   }
-
-  final GroupMessage canonicalMessage;
-  final Set<String> persistedAttachmentIds;
 }
 
 final class IncomingGroupMessageIgnored
     extends IncomingGroupMessageDetailedOutcome {
-  const IncomingGroupMessageIgnored();
+  const IncomingGroupMessageIgnored({this.canonicalMessage});
+
+  /// Present only when the event was an authority-exact stable-ID replay.
+  /// Rejected/conflicting events deliberately carry no canonical authority.
+  final GroupMessage? canonicalMessage;
 }
 
 /// Handles an incoming group message.
@@ -101,6 +125,9 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   bool enforceSelfJoinedAtLowerBound = false,
   String deliverySource = 'direct',
   DateTime Function()? nowUtc,
+  IncomingGroupMessageDisplayCustodyCallback? stageNotificationDisplayCustody,
+  IncomingGroupMessageDisplayCustodyCallback?
+  markNotificationDisplayCustodyReady,
 }) async {
   final outcome = await handleIncomingGroupMessageDetailed(
     groupRepo: groupRepo,
@@ -125,6 +152,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     enforceSelfJoinedAtLowerBound: enforceSelfJoinedAtLowerBound,
     deliverySource: deliverySource,
     nowUtc: nowUtc,
+    stageNotificationDisplayCustody: stageNotificationDisplayCustody,
+    markNotificationDisplayCustodyReady: markNotificationDisplayCustodyReady,
   );
   return outcome is IncomingGroupMessageDelivered ? outcome.message : null;
 }
@@ -154,6 +183,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
   bool enforceSelfJoinedAtLowerBound = false,
   String deliverySource = 'direct',
   DateTime Function()? nowUtc,
+  IncomingGroupMessageDisplayCustodyCallback? stageNotificationDisplayCustody,
+  IncomingGroupMessageDisplayCustodyCallback?
+  markNotificationDisplayCustodyReady,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -165,8 +197,10 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
   );
 
   final sanitizedText = sanitizeMessageText(text);
-  final stableMessageId = messageId != null && messageId.isNotEmpty
-      ? messageId
+  final normalizedMessageId = messageId?.trim();
+  final stableMessageId =
+      normalizedMessageId != null && normalizedMessageId.isNotEmpty
+      ? normalizedMessageId
       : null;
   final stableLogicalDeliveryId =
       logicalDeliveryId != null && logicalDeliveryId.trim().isNotEmpty
@@ -294,7 +328,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
         ),
       );
       return persistedAttachmentIds.isEmpty
-          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          ? IncomingGroupMessageDetailedOutcome.ignored(
+              canonicalMessage: canonicalMessage,
+            )
           : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
               canonicalMessage,
               persistedAttachmentIds,
@@ -711,7 +747,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
         ),
       );
       return persistedAttachmentIds.isEmpty
-          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          ? IncomingGroupMessageDetailedOutcome.ignored(
+              canonicalMessage: canonicalMessage,
+            )
           : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
               canonicalMessage,
               persistedAttachmentIds,
@@ -729,6 +767,12 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
     if (existingByLogicalDelivery != null &&
         existingByLogicalDelivery.id != stableMessageId &&
         !_isRepairPlaceholder(existingByLogicalDelivery)) {
+      // A reminted wire ID acquires its own alias custody before duplicate
+      // enrichment mutates canonical media. The listener atomically moves
+      // that custody back to the original canonical message afterward.
+      await stageNotificationDisplayCustody?.call(
+        existingByLogicalDelivery.copyWith(id: stableMessageId),
+      );
       final persistedAttachmentIds = await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         groupId: groupId,
@@ -757,7 +801,7 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
         ),
       );
       return persistedAttachmentIds.isEmpty
-          ? const IncomingGroupMessageDetailedOutcome.ignored()
+          ? IncomingGroupMessageDetailedOutcome.duplicate(canonicalMessage)
           : IncomingGroupMessageDetailedOutcome.duplicateEnriched(
               canonicalMessage,
               persistedAttachmentIds,
@@ -902,6 +946,12 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
     mediaCleanupPending: privateMediaPolicy.isUnsupported,
   );
 
+  // Plan 330: acquire durable, identifier-only display custody before the
+  // canonical mutation. If staging fails, propagate the error so the existing
+  // live/relay/pending owner can retry and no eligible canonical event can be
+  // committed markerless.
+  await stageNotificationDisplayCustody?.call(message);
+
   // 6. Save to repo
   await msgRepo.saveMessage(message);
   if (message.mediaExpiresAt != null) {
@@ -918,6 +968,11 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
     media: admittedMedia,
     mediaAttachmentRepo: mediaAttachmentRepo,
   );
+
+  // A not-ready marker must never race projection before all canonical media
+  // descriptors have landed. Failure leaves the durable marker not-ready and
+  // deliberately propagates so replay can reconcile it.
+  await markNotificationDisplayCustodyReady?.call(message);
 
   emitFlowEvent(
     layer: 'FL',

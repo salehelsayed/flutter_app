@@ -317,7 +317,20 @@ void main() {
       expect(mp4, greaterThanOrEqualTo(0));
       expect(voice, greaterThan(mp4));
       expect(jpeg, greaterThan(voice));
-      expect(fixtureSource, contains('allowedPeers.length != 2'));
+      expect(
+        fixtureSource,
+        contains(
+          'GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport',
+        ),
+      );
+      expect(
+        RegExp(
+          r'groupMediaReliabilityAuthorityMatches\(',
+        ).allMatches(fixtureSource),
+        hasLength(2),
+        reason:
+            'P269 must validate authority before and inside the upload leaf',
+      );
       final lease = fixtureSource.indexOf(
         'mediaUploadInFlightTracker.tryClaimAll(',
       );
@@ -455,6 +468,32 @@ void main() {
       expect(recoveryStart, greaterThan(sendStart));
       expect(senderSettled, greaterThanOrEqualTo(0));
       expect(barrierObserved, greaterThan(senderSettled));
+    },
+  );
+
+  test(
+    'P330 notification projection media fixture uses account-bound legacy authority',
+    () {
+      final source = File(
+        'lib/debug/group_notification_projection_e2e_action.dart',
+      ).readAsStringSync();
+      final fixtureCall = source.indexOf(
+        'await sendGroupMediaReliabilityFixtures(',
+      );
+      final fixtureCallEnd = source.indexOf('final media =', fixtureCall);
+
+      expect(fixtureCall, greaterThanOrEqualTo(0));
+      expect(fixtureCallEnd, greaterThan(fixtureCall));
+      expect(
+        source.substring(fixtureCall, fixtureCallEnd),
+        contains(
+          'authorityMode: '
+          'GroupMediaReliabilityAuthorityMode.accountBoundLegacy,',
+        ),
+        reason:
+            'Plan 330 reuses account IDs as transport authority for its '
+            'legacy-compatible fixture topology',
+      );
     },
   );
 

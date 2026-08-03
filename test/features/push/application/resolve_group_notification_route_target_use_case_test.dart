@@ -359,34 +359,60 @@ void main() {
       expect(result.reason, 'current_member');
     });
 
-    // RED BY DESIGN — documents the muted-group FCM-leak (K01 / GS-K01).
-    // A current member of a MUTED group must NOT have an FCM group-message
-    // notification displayed: mute should be honored on the FCM/background
-    // fallback path exactly as it is on the live listener path
-    // (group_message_listener.dart's isMuted gate). Today
-    // resolveGroupMessageNotificationDisplayEligibility never reads
-    // GroupModel.isMuted, so it returns allowCurrentMember() (shouldDisplay=true)
-    // and this assertion FAILS, locking the open bug. Do NOT weaken it; it should
-    // turn green only once the resolver suppresses muted groups (e.g. a
-    // 'muted' suppression reason). See Test-Flight-Improv/Group-Chat-Feature.
-    test('RED: suppresses FCM display for a current member of a MUTED group', () async {
-      final groupRepo = InMemoryGroupRepository();
-      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+    test(
+      'suppresses FCM display for a current member of a muted group',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
 
-      await groupRepo.saveGroup(_makeGroup().copyWith(isMuted: true));
-      await groupRepo.saveMember(_makeMember(peerId: 'peer-user-a'));
+        await groupRepo.saveGroup(_makeGroup().copyWith(isMuted: true));
+        await groupRepo.saveMember(_makeMember(peerId: 'peer-user-a'));
 
-      final result = await resolveGroupMessageNotificationDisplayEligibility(
-        groupId: _groupId,
-        groupRepo: groupRepo,
-        pendingInviteRepo: pendingInviteRepo,
-        localPeerId: 'peer-user-a',
-      );
+        final result = await resolveGroupMessageNotificationDisplayEligibility(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+        );
 
-      // Correct behavior: a muted group is suppressed on the FCM path.
-      expect(result.shouldDisplay, isFalse);
-      expect(result.reason, 'muted');
-    });
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, 'muted');
+      },
+    );
+
+    for (final scenario in <({GroupModel group, String reason})>[
+      (group: _makeGroup().copyWith(isArchived: true), reason: 'archived'),
+      (group: _makeGroup().copyWith(isDissolved: true), reason: 'dissolved'),
+      (
+        group: _makeGroup().copyWith(dissolvedAt: DateTime.utc(2026, 8, 2)),
+        reason: 'dissolved',
+      ),
+      (
+        group: _makeGroup().copyWith(selfRemovedAt: DateTime.utc(2026, 8, 2)),
+        reason: 'self_removed',
+      ),
+      (
+        group: _makeGroup().copyWith(type: GroupType.qa),
+        reason: 'unsupported_group_type',
+      ),
+    ]) {
+      test('uses canonical policy suppression: ${scenario.reason}', () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        await groupRepo.saveGroup(scenario.group);
+        await groupRepo.saveMember(_makeMember(peerId: 'peer-user-a'));
+
+        final result = await resolveGroupMessageNotificationDisplayEligibility(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+        );
+
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, scenario.reason);
+      });
+    }
 
     test('suppresses display when local identity is unavailable', () async {
       final groupRepo = InMemoryGroupRepository();

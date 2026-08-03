@@ -16,7 +16,7 @@ class MigrationDatabaseSchemaInventory {
   }
 
   static Future<MigrationDatabaseSchemaInventory> fromDatabase(
-    Database db,
+    DatabaseExecutor db,
   ) async {
     final tableRows = await db.rawQuery(
       "SELECT name FROM sqlite_master "

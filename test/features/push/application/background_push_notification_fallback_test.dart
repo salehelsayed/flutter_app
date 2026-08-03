@@ -1,13 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 
@@ -330,6 +334,10 @@ void main() {
           'group:group-abc-123|message:target-message-1',
         );
         expect(notificationService.shown.single.silent, isTrue);
+        expect(
+          notificationService.shown.single.contentKind,
+          ConversationNotificationContentKind.reaction,
+        );
         expect(notificationService.shownGeneric, isEmpty);
         final eventClaim = File(
           '${groupMessageCoordinatorDirectory.path}/'
@@ -340,6 +348,279 @@ void main() {
         expect(eventClaim.readAsStringSync(), contains('"state":"committed"'));
       },
     );
+
+    test(
+      'canonical message read after drain suppresses before maybeShow',
+      () async {
+        final notificationService = FakeNotificationService();
+        var readCheckCount = 0;
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-read-replay',
+              'message_id': 'message-read-replay',
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupNotificationPresentationCoordinator:
+              GroupNotificationPresentationCoordinator(),
+          groupNotificationReadAcknowledgementResolver:
+              ({
+                required groupId,
+                required contentKind,
+                required eventIdentity,
+                required comparand,
+              }) async {
+                readCheckCount += 1;
+                expect(groupId, 'group-read-replay');
+                expect(
+                  contentKind,
+                  ConversationNotificationContentKind.message,
+                );
+                expect(eventIdentity, 'message-read-replay');
+                expect(comparand, isNull);
+                return true;
+              },
+        );
+
+        expect(shown, isFalse);
+        expect(readCheckCount, 1);
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
+      'canonical reaction acknowledgement after drain suppresses before maybeShow',
+      () async {
+        final notificationService = FakeNotificationService();
+        const reactionComparand = BackgroundGroupReactionNotificationComparand(
+          groupId: 'group-reaction-read-replay',
+          reactionId: 'reaction-state-read-replay',
+          messageId: 'target-read-replay',
+          senderPeerId: 'peer-reactor',
+          timestamp: '2026-08-03T10:00:00.000Z',
+          notificationEventIdentity: 'bounded-read-replay',
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'action': 'add',
+              'group_id': 'group-reaction-read-replay',
+              'event_id': 'reaction-event-read-replay',
+              'target_message_id': 'target-read-replay',
+              'reactor_peer_id': 'peer-reactor',
+            },
+          ),
+          groupReactionNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Project group',
+                body: 'Alice reacted to your message',
+                payload:
+                    'group:group-reaction-read-replay|message:target-read-replay',
+                groupComparand: reactionComparand,
+              ),
+          durableReactionNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          groupNotificationPresentationCoordinator:
+              GroupNotificationPresentationCoordinator(),
+          groupNotificationReadAcknowledgementResolver:
+              ({
+                required groupId,
+                required contentKind,
+                required eventIdentity,
+                required comparand,
+              }) async {
+                expect(groupId, 'group-reaction-read-replay');
+                expect(
+                  contentKind,
+                  ConversationNotificationContentKind.reaction,
+                );
+                expect(
+                  eventIdentity,
+                  boundedReactionEventIdentity('reaction-event-read-replay'),
+                );
+                expect(comparand, same(reactionComparand));
+                return true;
+              },
+        );
+
+        expect(shown, isFalse);
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test('exact canonical read comparands preserve distinct newer content', () {
+      expect(
+        isExactForegroundGroupMessageReadAcknowledgement(
+          groupId: 'group-a',
+          eventIdentity: 'message-a',
+          canonicalGroupId: 'group-a',
+          canonicalMessageId: 'message-a',
+          canonicalIsIncoming: true,
+          canonicalReadAt: DateTime.utc(2026, 8, 3, 10),
+        ),
+        isTrue,
+      );
+      expect(
+        isExactForegroundGroupMessageReadAcknowledgement(
+          groupId: 'group-a',
+          eventIdentity: 'message-new',
+          canonicalGroupId: 'group-a',
+          canonicalMessageId: 'message-a',
+          canonicalIsIncoming: true,
+          canonicalReadAt: DateTime.utc(2026, 8, 3, 10),
+        ),
+        isFalse,
+      );
+
+      const acknowledged = BackgroundGroupReactionNotificationComparand(
+        groupId: 'group-a',
+        reactionId: 'reaction-old',
+        messageId: 'target-a',
+        senderPeerId: 'peer-alice',
+        timestamp: '2026-08-03T10:00:00.000Z',
+        notificationEventIdentity: 'bounded-old',
+      );
+      expect(
+        isExactForegroundGroupReactionReadAcknowledgement(
+          comparand: acknowledged,
+          canonicalReactionId: 'reaction-old',
+          canonicalMessageId: 'target-a',
+          canonicalSenderPeerId: 'peer-alice',
+          canonicalTimestamp: '2026-08-03T10:00:00Z',
+          canonicalNotificationAcknowledgedAt: '2026-08-03T10:00:01.000Z',
+        ),
+        isTrue,
+      );
+      const newer = BackgroundGroupReactionNotificationComparand(
+        groupId: 'group-a',
+        reactionId: 'reaction-new',
+        messageId: 'target-a',
+        senderPeerId: 'peer-alice',
+        timestamp: '2026-08-03T10:00:02.000Z',
+        notificationEventIdentity: 'bounded-new',
+      );
+      expect(
+        isExactForegroundGroupReactionReadAcknowledgement(
+          comparand: newer,
+          canonicalReactionId: 'reaction-old',
+          canonicalMessageId: 'target-a',
+          canonicalSenderPeerId: 'peer-alice',
+          canonicalTimestamp: '2026-08-03T10:00:00.000Z',
+          canonicalNotificationAcknowledgedAt: '2026-08-03T10:00:01.000Z',
+        ),
+        isFalse,
+        reason: 'an acknowledged old transition cannot suppress the next ADD',
+      );
+    });
+
+    test(
+      'pending push-before-inbox acknowledgement wins before canonical lookup',
+      () async {
+        var canonicalChecks = 0;
+        final acknowledged =
+            await resolveForegroundGroupNotificationReadAcknowledgement(
+              groupId: 'group-pending-read',
+              contentKind: ConversationNotificationContentKind.message,
+              eventIdentity: 'message-before-inbox',
+              pendingReadAcknowledgementResolver:
+                  ({
+                    required groupId,
+                    required contentKind,
+                    required eventIdentity,
+                  }) async {
+                    expect(groupId, 'group-pending-read');
+                    expect(
+                      contentKind,
+                      ConversationNotificationContentKind.message,
+                    );
+                    expect(eventIdentity, 'message-before-inbox');
+                    return true;
+                  },
+              canonicalReadAcknowledgementResolver: () async {
+                canonicalChecks += 1;
+                return false;
+              },
+            );
+
+        expect(acknowledged, isTrue);
+        expect(canonicalChecks, 0);
+
+        expect(
+          await resolveForegroundGroupNotificationReadAcknowledgement(
+            groupId: 'group-pending-read',
+            contentKind: ConversationNotificationContentKind.reaction,
+            eventIdentity: 'different-reaction',
+            pendingReadAcknowledgementResolver:
+                ({
+                  required groupId,
+                  required contentKind,
+                  required eventIdentity,
+                }) async => false,
+            canonicalReadAcknowledgementResolver: () async {
+              canonicalChecks += 1;
+              return true;
+            },
+          ),
+          isTrue,
+          reason: 'a distinct pending tuple cannot suppress canonical lookup',
+        );
+        expect(canonicalChecks, 1);
+      },
+    );
+
+    test('legacy payloadType group reaction remains reaction-owned', () async {
+      final notificationService = FakeNotificationService();
+      const message = RemoteMessage(
+        data: <String, dynamic>{
+          'payloadType': 'group_reaction',
+          'action': 'add',
+          'group_id': 'group-legacy-reaction',
+          'event_id': 'legacy-reaction-event',
+          'target_message_id': 'legacy-target-message',
+          'reactor_peer_id': 'peer-reactor',
+        },
+      );
+
+      final shown = await showForegroundPushFallbackNotificationIfNeeded(
+        result: ForegroundRemoteMessageResult.notificationNeeded,
+        notificationService: notificationService,
+        message: message,
+        groupReactionNotificationResolver: (_) async =>
+            const BackgroundPushNotificationFallback(
+              title: 'Legacy group',
+              body: 'Alice reacted to your message',
+              payload:
+                  'group:group-legacy-reaction|message:legacy-target-message',
+            ),
+        durableReactionNotificationCoordinatorResolver: () async =>
+            groupMessageCoordinator,
+        groupConversationTracker: groupConversationTracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+
+      expect(shown, isTrue);
+      expect(notificationService.shown, hasLength(1));
+      expect(
+        notificationService.shown.single.contentKind,
+        ConversationNotificationContentKind.reaction,
+      );
+    });
 
     test(
       'canonical group drain fallback deduplicates exact ids and suppresses active conversations',
@@ -469,6 +750,298 @@ void main() {
       expect(await show(), isTrue);
       expect(notificationService.shown, hasLength(1));
     });
+
+    for (final anchored in <bool>[true, false]) {
+      final path = anchored ? 'anchored' : 'unanchored';
+
+      test(
+        'read cancellation first holds $path foreground group message presentation',
+        () async {
+          final groupId = 'group-race-message-$path-read-first';
+          final presentationCoordinator =
+              GroupNotificationPresentationCoordinator();
+          final notificationService = _BlockingNotificationService();
+          final readEntered = Completer<void>();
+          final releaseRead = Completer<void>();
+          final read = presentationCoordinator.runForGroup(groupId, () async {
+            readEntered.complete();
+            await releaseRead.future;
+          });
+          await readEntered.future;
+
+          final show = showForegroundPushFallbackNotificationIfNeeded(
+            result: ForegroundRemoteMessageResult.notificationNeeded,
+            notificationService: notificationService,
+            message: RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'group_message',
+                'groupId': groupId,
+                if (anchored) 'message_id': 'message-after-read',
+              },
+            ),
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+            groupConversationTracker: groupConversationTracker,
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+            durableGroupMessageNotificationCoordinatorResolver: () async =>
+                groupMessageCoordinator,
+            groupNotificationPresentationCoordinator: presentationCoordinator,
+          );
+          final showOvertookRead = await Future.any<bool>(<Future<bool>>[
+            notificationService.showEntered.future.then((_) => true),
+            Future<void>.delayed(
+              const Duration(milliseconds: 50),
+            ).then((_) => false),
+          ]);
+
+          try {
+            expect(
+              showOvertookRead,
+              isFalse,
+              reason: '$path presentation must wait for read cancellation',
+            );
+          } finally {
+            releaseRead.complete();
+            await notificationService.showEntered.future;
+            notificationService.releaseShow.complete();
+            await Future.wait<void>(<Future<void>>[read, show.then((_) {})]);
+          }
+
+          expect(notificationService.shown, hasLength(1));
+          expect(presentationCoordinator.debugActiveKeyCount, 0);
+        },
+      );
+
+      test(
+        '$path foreground group message presentation holds later read cancellation',
+        () async {
+          final groupId = 'group-race-message-$path-show-first';
+          final presentationCoordinator =
+              GroupNotificationPresentationCoordinator();
+          final notificationService = _BlockingNotificationService();
+          final show = showForegroundPushFallbackNotificationIfNeeded(
+            result: ForegroundRemoteMessageResult.notificationNeeded,
+            notificationService: notificationService,
+            message: RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'group_message',
+                'groupId': groupId,
+                if (anchored) 'message_id': 'message-before-read',
+              },
+            ),
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+            groupConversationTracker: groupConversationTracker,
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+            durableGroupMessageNotificationCoordinatorResolver: () async =>
+                groupMessageCoordinator,
+            groupNotificationPresentationCoordinator: presentationCoordinator,
+          );
+          await notificationService.showEntered.future;
+
+          final readEntered = Completer<void>();
+          final read = presentationCoordinator.runForGroup(groupId, () async {
+            readEntered.complete();
+          });
+          final readOvertookShow = await Future.any<bool>(<Future<bool>>[
+            readEntered.future.then((_) => true),
+            Future<void>.delayed(
+              const Duration(milliseconds: 50),
+            ).then((_) => false),
+          ]);
+
+          try {
+            expect(
+              readOvertookShow,
+              isFalse,
+              reason: 'read cancellation must wait for $path presentation',
+            );
+          } finally {
+            notificationService.releaseShow.complete();
+            await show;
+            await read;
+          }
+
+          expect(readEntered.isCompleted, isTrue);
+          expect(notificationService.shown, hasLength(1));
+          expect(presentationCoordinator.debugActiveKeyCount, 0);
+        },
+      );
+    }
+
+    test(
+      'group policy is resolved inside the keyed foreground presentation lane',
+      () async {
+        const groupId = 'group-policy-lane-final-check';
+        final presentationCoordinator =
+            GroupNotificationPresentationCoordinator();
+        final notificationService = FakeNotificationService();
+        final holdEntered = Completer<void>();
+        final releaseHold = Completer<void>();
+        final held = presentationCoordinator.runForGroup(groupId, () async {
+          holdEntered.complete();
+          await releaseHold.future;
+        });
+        await holdEntered.future;
+
+        var policyChecks = 0;
+        var stillEligible = true;
+        final show = showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': groupId,
+              'message_id': 'message-policy-lane',
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async {
+            policyChecks += 1;
+            return stillEligible
+                ? const GroupMessageNotificationDisplayEligibility.allowCurrentMember()
+                : const GroupMessageNotificationDisplayEligibility.suppressed(
+                    'group_muted',
+                  );
+          },
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupNotificationPresentationCoordinator: presentationCoordinator,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          policyChecks,
+          0,
+          reason: 'policy cannot be snapshotted before an earlier publisher',
+        );
+        stillEligible = false;
+        releaseHold.complete();
+        await held;
+
+        expect(await show, isFalse);
+        expect(policyChecks, 1);
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
+      'reaction canonical resolver runs inside the keyed presentation lane',
+      () async {
+        const groupId = 'group-reaction-lane-final-check';
+        final presentationCoordinator =
+            GroupNotificationPresentationCoordinator();
+        final notificationService = FakeNotificationService();
+        final holdEntered = Completer<void>();
+        final releaseHold = Completer<void>();
+        final held = presentationCoordinator.runForGroup(groupId, () async {
+          holdEntered.complete();
+          await releaseHold.future;
+        });
+        await holdEntered.future;
+
+        var resolverChecks = 0;
+        var exactEventStillEligible = true;
+        final show = showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'action': 'add',
+              'group_id': groupId,
+              'event_id': 'reaction-lane-event-a',
+              'target_message_id': 'reaction-lane-target',
+              'reactor_peer_id': 'peer-reactor',
+            },
+          ),
+          groupReactionNotificationResolver: (_) async {
+            resolverChecks += 1;
+            if (!exactEventStillEligible) return null;
+            return const BackgroundPushNotificationFallback(
+              title: 'Project group',
+              body: 'Alice reacted to your message',
+              payload:
+                  'group:group-reaction-lane-final-check|message:reaction-lane-target',
+            );
+          },
+          durableReactionNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          groupNotificationPresentationCoordinator: presentationCoordinator,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          resolverChecks,
+          0,
+          reason:
+              'a reaction comparand cannot be cached before an earlier publisher',
+        );
+        exactEventStillEligible = false;
+        releaseHold.complete();
+        await held;
+
+        expect(await show, isFalse);
+        expect(resolverChecks, 1);
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
+      'anchored foreground group reaction presentation holds later read cancellation',
+      () async {
+        final presentationCoordinator =
+            GroupNotificationPresentationCoordinator();
+        final notificationService = _BlockingNotificationService();
+
+        final show = showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'action': 'add',
+              'group_id': 'group-race-reaction',
+              'event_id': 'reaction-race-event',
+              'target_message_id': 'reaction-race-target',
+              'reactor_peer_id': 'peer-reactor',
+            },
+          ),
+          groupReactionNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Project group',
+                body: 'Alice reacted to your photo',
+                payload:
+                    'group:group-race-reaction|message:reaction-race-target',
+              ),
+          durableReactionNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          groupNotificationPresentationCoordinator: presentationCoordinator,
+        );
+        await notificationService.showEntered.future;
+
+        var readCancellationRan = false;
+        final read = presentationCoordinator.runForGroup(
+          'group-race-reaction',
+          () async => readCancellationRan = true,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(readCancellationRan, isFalse);
+
+        notificationService.releaseShow.complete();
+        await show;
+        await read;
+        expect(readCancellationRan, isTrue);
+        expect(notificationService.shown, hasLength(1));
+        expect(presentationCoordinator.debugActiveKeyCount, 0);
+      },
+    );
 
     test(
       'foreground fallback shows current-member group_message with visible FCM payload',
@@ -1002,6 +1575,8 @@ class _FailOnceNotificationService extends FakeNotificationService {
     required String messageText,
     String? payload,
     bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
   }) async {
     if (_shouldFail) {
       _shouldFail = false;
@@ -1013,6 +1588,36 @@ class _FailOnceNotificationService extends FakeNotificationService {
       messageText: messageText,
       payload: payload,
       silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
+    );
+  }
+}
+
+class _BlockingNotificationService extends FakeNotificationService {
+  final showEntered = Completer<void>();
+  final releaseShow = Completer<void>();
+
+  @override
+  Future<void> showMessageNotification({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+  }) async {
+    if (!showEntered.isCompleted) showEntered.complete();
+    await releaseShow.future;
+    await super.showMessageNotification(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
     );
   }
 }

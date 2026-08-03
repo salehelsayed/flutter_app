@@ -76,7 +76,7 @@ _AdapterResult _passed(SimsArtifactEvidence evidence) =>
       'printOnly': false,
       'exitCode': 0,
       'detail':
-          'All four Android group message/reaction notification scenarios '
+          'All five Android group message/reaction notification scenarios '
           'passed with one centrally prepared production-FCM APK.',
       'artifactEvidence': evidence.toJson(),
     }, 0);
@@ -158,7 +158,7 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
     return _blocked(
       'targetUnavailable',
       'One explicit physical Android ID and one distinct adb emulator ID are '
-          'required for all four scenarios.',
+          'required for all five scenarios.',
     );
   }
 

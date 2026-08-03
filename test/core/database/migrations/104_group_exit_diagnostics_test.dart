@@ -103,15 +103,16 @@ void main() {
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         104,
       );
-      expect(currentIdentityDatabaseVersion, 105);
+      expect(currentIdentityDatabaseVersion, 106);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
-        expect(registry.last.version, 105);
-        expect(registry.last.name, '105_reaction_outbox_needs_build');
-        expect(registry[registry.length - 2].version, 104);
+        expect(registry.last.version, 106);
+        expect(registry.last.name, '106_group_notification_display_outbox');
+        expect(registry[registry.length - 2].version, 105);
+        expect(registry[registry.length - 3].version, 104);
       }
 
       expect(await db.query('group_exit_diagnostics'), isEmpty);

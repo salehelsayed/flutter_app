@@ -221,6 +221,114 @@ void main() {
   });
 
   test(
+    'TC-330-02 display custody is staged before canonical save and ready after media',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      final order = <String>[];
+
+      final outcome = await handleIncomingGroupMessageDetailed(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'custody ordering',
+        timestamp: '2026-08-02T20:00:00.000Z',
+        messageId: 'msg-330-order',
+        media: _gird003Media(
+          id: 'att-330-order',
+          createdAt: '2026-08-02T20:00:00.000Z',
+        ),
+        stageNotificationDisplayCustody: (message) async {
+          expect(await msgRepo.getMessage(message.id), isNull);
+          expect(
+            await mediaRepo.getAttachmentsForMessage(
+              message.id,
+              owner: MediaOwnerLane.group,
+            ),
+            isEmpty,
+          );
+          order.add('stage');
+        },
+        markNotificationDisplayCustodyReady: (message) async {
+          expect(await msgRepo.getMessage(message.id), isNotNull);
+          expect(
+            await mediaRepo.getAttachmentsForMessage(
+              message.id,
+              owner: MediaOwnerLane.group,
+            ),
+            hasLength(1),
+          );
+          order.add('ready');
+        },
+      );
+
+      expect(outcome, isA<IncomingGroupMessageDelivered>());
+      expect(order, ['stage', 'ready']);
+    },
+  );
+
+  test(
+    'TC-330-02 failed display-custody stage aborts canonical mutation',
+    () async {
+      await expectLater(
+        handleIncomingGroupMessageDetailed(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'must not persist',
+          timestamp: '2026-08-02T20:01:00.000Z',
+          messageId: 'msg-330-stage-fails',
+          stageNotificationDisplayCustody: (_) async {
+            throw StateError('stage unavailable');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(await msgRepo.getMessage('msg-330-stage-fails'), isNull);
+    },
+  );
+
+  test(
+    'TC-330 exact message identity is normalized before custody and persistence',
+    () async {
+      final custodyIds = <String>[];
+      final outcome = await handleIncomingGroupMessageDetailed(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'normalized identity',
+        timestamp: '2026-08-03T04:05:00.000Z',
+        messageId: '  msg-normalized-before-ack  ',
+        stageNotificationDisplayCustody: (message) async {
+          custodyIds.add('stage:${message.id}');
+        },
+        markNotificationDisplayCustodyReady: (message) async {
+          custodyIds.add('ready:${message.id}');
+        },
+      );
+
+      expect(outcome, isA<IncomingGroupMessageDelivered>());
+      final delivered = (outcome as IncomingGroupMessageDelivered).message;
+      expect(delivered.id, 'msg-normalized-before-ack');
+      expect(custodyIds, const <String>[
+        'stage:msg-normalized-before-ack',
+        'ready:msg-normalized-before-ack',
+      ]);
+      expect(await msgRepo.getMessage('msg-normalized-before-ack'), isNotNull);
+      expect(await msgRepo.getMessage('  msg-normalized-before-ack  '), isNull);
+    },
+  );
+
+  test(
     'ML-016 incoming member message falls back to group member label when sender username is empty',
     () async {
       final sentAt = DateTime.now().toUtc();
@@ -1804,6 +1912,45 @@ void main() {
           )
           .toList();
       expect(successEvents, hasLength(1));
+    },
+  );
+
+  test(
+    'TC-330-P1 ordinary logical duplicate returns its canonical notification identity',
+    () async {
+      final timestamp = DateTime.utc(2026, 8, 3, 12, 10).toIso8601String();
+      final first = await handleIncomingGroupMessageDetailed(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Canonical custody',
+        timestamp: timestamp,
+        messageId: 'canonical-custody-id',
+        logicalDeliveryId: 'logical-custody-id',
+      );
+      expect(first, isA<IncomingGroupMessageDelivered>());
+
+      final duplicate = await handleIncomingGroupMessageDetailed(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Canonical custody',
+        timestamp: timestamp,
+        messageId: 'reminted-custody-alias',
+        logicalDeliveryId: 'logical-custody-id',
+      );
+
+      expect(duplicate, isA<IncomingGroupMessageDuplicate>());
+      final canonicalDuplicate = duplicate as IncomingGroupMessageDuplicate;
+      expect(canonicalDuplicate.canonicalMessage.id, 'canonical-custody-id');
+      expect(canonicalDuplicate.persistedAttachmentIds, isEmpty);
+      expect(await msgRepo.getMessage('reminted-custody-alias'), isNull);
     },
   );
 

@@ -32,6 +32,7 @@ import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/debug/group_notification_projection_e2e_action.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
@@ -680,6 +681,27 @@ final class DebugE2ECompositionRoot {
       detailedInboxStore: dependencies.p2pService,
       wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
       privateMediaOutboxE2EController: privateMediaOutboxE2EController,
+      runGroupNotificationProjectionE2E: (config) =>
+          runGroupNotificationProjectionE2EAction(
+            config: config,
+            fixtureDirectory: Directory(
+              '${dependencies.documentsDirectory.path}'
+              '/plan330-group-notification-fixtures',
+            ),
+            bridge: dependencies.bridge,
+            p2pService: dependencies.p2pService,
+            identityRepository: dependencies.identityRepository,
+            groupRepository: dependencies.groupRepository,
+            groupMessageRepository: dependencies.groupMessageRepository,
+            mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
+            audioRecorderService: dependencies.audioRecorderService,
+            mediaFileManager: dependencies.mediaFileManager,
+            reactionRepository: dependencies.reactionRepository,
+            groupReactionReplayOutboxRepository:
+                dependencies.groupReactionReplayOutboxRepository,
+            inviteDeliveryAttemptRepository:
+                dependencies.groupInviteDeliveryAttemptRepository,
+          ),
       runGroupMediaReliabilityE2E: (config) async {
         final request = GroupMediaReliabilityE2ERequest.fromConfig(config);
         await awaitGroupMediaProofEndpointReady(

@@ -25,6 +25,7 @@ const List<String> _membershipInstanceWorkTables = <String>[
   'group_history_gap_repairs',
   'group_pending_reactions',
   'pending_sibling_devices',
+  'group_notification_display_outbox',
 ];
 
 enum SelfRemovedGroupShellAuthorityShape {
@@ -752,7 +753,8 @@ dbTerminalizeSelfRemovedMembershipInstance(
   }
   pendingRowsDeleted += await txn.delete(
     'group_reaction_replay_outbox',
-    where: "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
+    where:
+        "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
     whereArgs: <Object?>[groupId],
   );
 
@@ -2990,7 +2992,8 @@ Future<int> _clearMembershipInstancePendingWork(
   }
   deleted += await txn.delete(
     'group_reaction_replay_outbox',
-    where: "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
+    where:
+        "group_id = ? AND delivery_status IN ('pending', 'failed', 'needs_build')",
     whereArgs: <Object?>[groupId],
   );
   return deleted;

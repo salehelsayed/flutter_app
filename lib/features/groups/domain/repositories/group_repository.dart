@@ -102,6 +102,34 @@ abstract class GroupRepository {
   Future<void> removeAllKeys(String groupId);
 }
 
+/// Optional persistence capability for committing terminal dissolve state and
+/// retiring every display-outbox row owned by that exact group atomically.
+abstract interface class AtomicGroupDissolveRepository {
+  Future<void> commitDissolvedGroup(GroupModel group);
+}
+
+/// Routes terminal dissolve writes through [AtomicGroupDissolveRepository]
+/// when available while preserving lightweight repository compatibility.
+extension GroupDissolveCommit on GroupRepository {
+  Future<void> commitDissolvedGroupTerminally(GroupModel group) async {
+    if (!group.isDissolved) {
+      throw ArgumentError.value(
+        group.isDissolved,
+        'group.isDissolved',
+        'must be true for a terminal dissolve commit',
+      );
+    }
+    final repository = this;
+    if (repository is AtomicGroupDissolveRepository) {
+      await (repository as AtomicGroupDissolveRepository).commitDissolvedGroup(
+        group,
+      );
+      return;
+    }
+    await updateGroup(group);
+  }
+}
+
 /// Strict external-state retirement for a confirmed voluntary group exit.
 ///
 /// The SQL exit intent and its exact membership/key rows are the durable retry

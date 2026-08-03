@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import 'reaction_notification_proof_support.dart';
+
 const String groupReactionNotificationArtifactSchema =
     'mknoon.plan257.device-proof.v1';
 const int groupReactionNotificationArtifactVersion = 1;
@@ -22,6 +24,14 @@ const Set<String> _processAliveReactionScenarioIds = <String>{
 
 bool groupReactionNotificationKeepsRecipientProcessAlive(String scenarioId) =>
     _processAliveReactionScenarioIds.contains(scenarioId);
+
+/// Canonical Android text-target reaction copy after Plan 330.
+///
+/// The emoji remains part of the authenticated reaction transition, but the
+/// notification preview deliberately exposes only the trusted actor and the
+/// locally derived semantic target kind.
+String groupReactionNotificationExpectedAndroidReactionBody(String actorName) =>
+    '$actorName reacted to your message';
 
 /// Builds a least-disclosure probe for the rollout flag inherited by the
 /// running relay process. `systemctl show --property=Environment` omits values
@@ -422,7 +432,7 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
         kind: 'android_notification_records',
         markers: <String>[
           'title_source=recipient_owned_group',
-          'body=Alice reacted 👍 to your message',
+          'body=Alice reacted to your message',
           'stable_group_card=true',
           'contains_new_message_copy=false',
         ],
@@ -501,7 +511,7 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
         kind: 'android_notification_records',
         markers: <String>[
           'title_source=recipient_owned_group',
-          'body=Alice reacted 👍 to your message',
+          'body=Alice reacted to your message',
           'stable_group_card=true',
           'contains_new_message_copy=false',
         ],
@@ -582,7 +592,7 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
         kind: 'android_notification_records',
         markers: <String>[
           'title_source=recipient_owned_group',
-          'body=Alice reacted 👍 to your message',
+          'body=Alice reacted to your message',
           'stable_group_card=true',
           'contains_new_message_copy=false',
         ],
@@ -671,9 +681,36 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
   ),
 ];
 
+/// Named source extension consumed only by the Plan-330 Android adapter.
+///
+/// It deliberately stays out of [groupReactionNotificationScenarios]: the
+/// Plan-257 rollout runner and validator own their stable legacy matrix, while
+/// Plan 330 has a stronger two-group/media evidence schema and its own Sims
+/// capability.
+const GroupReactionNotificationScenario
+groupNotificationProjectionAndroidSourceScenario =
+    GroupReactionNotificationScenario(
+      id: 'android_group_notification_projection_durability',
+      testCase: 'PLAN-330',
+      summary:
+          'two-group Android read-zero cancellation plus stable localized '
+          'photo, video, and voice-message reaction projection',
+      groupType: 'chat',
+      senderRole: 'member_reactor',
+      senderPlatform: 'android',
+      senderDeviceKind: 'emulator',
+      recipientRole: 'target_media_author',
+      recipientPlatform: 'android',
+      recipientDeviceKind: 'physical',
+      evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
+    );
+
 GroupReactionNotificationScenario? groupReactionNotificationScenario(
   String id,
 ) {
+  if (id == groupNotificationProjectionAndroidSourceScenario.id) {
+    return groupNotificationProjectionAndroidSourceScenario;
+  }
   for (final scenario in groupReactionNotificationScenarios) {
     if (scenario.id == id) return scenario;
   }
@@ -2486,18 +2523,25 @@ void _validateNotificationRaw(
       );
       continue;
     }
-    final id = int.tryParse(
-      RegExp(r'\bid=(\d+)\b').firstMatch(block)?.group(1) ?? '',
+    final contentCards = extractActiveContentNotificationCards(
+      block,
+      packageName: appPackage,
     );
-    final title = _notificationValue(block, 'android.title');
-    final body = _notificationValue(block, 'android.text');
-    if (id == null || title.isEmpty || body.isEmpty) {
+    if (contentCards.length != 1) {
       failures.add(
         r'$.evidence[android_notification_records] has malformed raw card',
       );
       continue;
     }
-    cards.add((id: id, title: title, body: body));
+    final card = contentCards.single;
+    final id = card.id;
+    if (id == null || id < 0 || card.title.isEmpty || card.body.isEmpty) {
+      failures.add(
+        r'$.evidence[android_notification_records] has malformed raw card',
+      );
+      continue;
+    }
+    cards.add((id: id, title: card.title, body: card.body));
   }
   if (cards.length == 2 && cards[0].id != cards[1].id) {
     failures.add(
@@ -2518,25 +2562,13 @@ void _validateNotificationRaw(
       cards.any(
         (card) =>
             card.title != groupName ||
-            card.body != '$actorName reacted 👍 to your message',
+            card.body !=
+                groupReactionNotificationExpectedAndroidReactionBody(actorName),
       )) {
     failures.add(
       r'$.evidence[android_notification_records] reaction title/body mismatch',
     );
   }
-}
-
-String _notificationValue(String record, String key) {
-  final match = RegExp(
-    '^\\s*${RegExp.escape(key)}=(.+)\$',
-    multiLine: true,
-  ).firstMatch(record);
-  if (match == null) return '';
-  var value = match.group(1)!.trim();
-  if (value.startsWith('String (') && value.endsWith(')')) {
-    value = value.substring('String ('.length, value.length - 1);
-  }
-  return value == 'null' ? '' : value;
 }
 
 void _validateUiRaw(

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -13,6 +15,54 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
+
+class _InterleavingAtomicGroupReactionRepository extends FakeReactionRepository
+    implements
+        AtomicGroupReactionAdditionRepository,
+        AtomicGroupReactionRemovalRepository {
+  final stagedNotificationEventIds = <String>{};
+  String? appliedAddGroupId;
+  String? appliedAddNotificationEventId;
+
+  @override
+  Future<ReactionAddApplyResult> applyGroupAdd({
+    required String groupId,
+    required String notificationEventId,
+    required MessageReaction reaction,
+  }) async {
+    appliedAddGroupId = groupId;
+    appliedAddNotificationEventId = notificationEventId;
+    final result = await super.applyIncomingAdd(reaction);
+    if (result == ReactionAddApplyResult.stale) {
+      stagedNotificationEventIds.remove(notificationEventId);
+    }
+    return result;
+  }
+
+  @override
+  Future<ReactionRemoveApplyResult> applyGroupRemove({
+    required String groupId,
+    required MessageReaction reaction,
+  }) async {
+    final current = await getReactionForSenderIncludingRemoved(
+      messageId: reaction.messageId,
+      senderPeerId: reaction.senderPeerId,
+    );
+    final incomingAt = DateTime.parse(reaction.timestamp);
+    final currentAt = current == null
+        ? null
+        : DateTime.parse(current.removedAt ?? current.timestamp);
+    if (currentAt != null && incomingAt.isBefore(currentAt)) {
+      return ReactionRemoveApplyResult.stale;
+    }
+    await removeReaction(
+      reaction.messageId,
+      reaction.senderPeerId,
+      removedAtTimestamp: reaction.timestamp,
+    );
+    return ReactionRemoveApplyResult.applied;
+  }
+}
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -53,6 +103,7 @@ void main() {
     String action = 'add',
     String senderPeerId = 'peer-sender',
     String timestamp = '2026-03-08T00:00:00.000Z',
+    String? eventId,
   }) {
     return jsonEncode({
       'id': id,
@@ -61,6 +112,7 @@ void main() {
       'action': action,
       'senderPeerId': senderPeerId,
       'timestamp': timestamp,
+      'eventId': ?eventId,
     });
   }
 
@@ -81,6 +133,186 @@ void main() {
     final stored = await reactionRepo.getReactionsForMessage('msg-1');
     expect(stored, hasLength(1));
   });
+
+  test(
+    'TC-330-03 display custody brackets the canonical reaction mutation',
+    () async {
+      final order = <String>[];
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'reaction-state-330',
+          eventId: 'reaction-event-330',
+        ),
+        stageNotificationDisplayCustody: (payload) async {
+          expect(payload.eventId, 'reaction-event-330');
+          expect(
+            await reactionRepo.getReactionsForMessage(payload.messageId),
+            isEmpty,
+          );
+          order.add('stage');
+        },
+        markNotificationDisplayCustodyReady: (payload) async {
+          expect(
+            await reactionRepo.getReactionsForMessage(payload.messageId),
+            hasLength(1),
+          );
+          order.add('ready');
+        },
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNotNull);
+      expect(order, ['stage', 'ready']);
+    },
+  );
+
+  test(
+    'TC-330-03 failed reaction custody stage aborts canonical mutation',
+    () async {
+      await expectLater(
+        handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            id: 'reaction-state-stage-fails',
+            eventId: 'reaction-event-stage-fails',
+          ),
+          stageNotificationDisplayCustody: (_) async {
+            throw StateError('stage unavailable');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    },
+  );
+
+  test(
+    'TC-330-03 stale ADD cannot resurrect after a newer REMOVE interleaves',
+    () async {
+      final atomicRepo = _InterleavingAtomicGroupReactionRepository();
+      await atomicRepo.saveReaction(
+        const MessageReaction(
+          id: 'initial-state',
+          messageId: 'msg-1',
+          emoji: '❤️',
+          senderPeerId: 'peer-sender',
+          timestamp: '2026-03-08T00:00:00.000Z',
+          createdAt: '2026-03-08T00:00:00.000Z',
+        ),
+      );
+      final stageEntered = Completer<void>();
+      final releaseStage = Completer<void>();
+      var readyCalls = 0;
+
+      final staleAdd = handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: atomicRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'stale-add-state',
+          emoji: '👍',
+          timestamp: '2026-03-08T00:00:01.000Z',
+          eventId: 'stale-add-event',
+        ),
+        stageNotificationDisplayCustody: (payload) async {
+          atomicRepo.stagedNotificationEventIds.add(payload.eventId!);
+          stageEntered.complete();
+          await releaseStage.future;
+        },
+        markNotificationDisplayCustodyReady: (_) async {
+          readyCalls++;
+        },
+      );
+
+      await stageEntered.future;
+      final (removeResult, removeChange) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: atomicRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'newer-remove-state',
+          action: 'remove',
+          timestamp: '2026-03-08T00:00:02.000Z',
+          eventId: 'newer-remove-event',
+        ),
+      );
+      expect(removeResult, HandleGroupReactionResult.success);
+      expect(removeChange?.type, ReactionChangeType.removed);
+      releaseStage.complete();
+
+      final (addResult, addChange) = await staleAdd;
+      expect(addResult, HandleGroupReactionResult.success);
+      expect(addChange, isNull);
+      expect(atomicRepo.appliedAddGroupId, 'group-1');
+      expect(atomicRepo.appliedAddNotificationEventId, 'stale-add-event');
+      expect(atomicRepo.stagedNotificationEventIds, isEmpty);
+      expect(readyCalls, 0);
+      expect(await atomicRepo.getReactionsForMessage('msg-1'), isEmpty);
+      final tombstone = await atomicRepo.getReactionForSenderIncludingRemoved(
+        messageId: 'msg-1',
+        senderPeerId: 'peer-sender',
+      );
+      expect(tombstone?.removedAt, '2026-03-08T00:00:02.000Z');
+    },
+  );
+
+  test(
+    'TC-330-P1 stale ADD replay delegates exact staged-custody cleanup to the atomic owner',
+    () async {
+      final atomicRepo = _InterleavingAtomicGroupReactionRepository();
+      await atomicRepo.saveReaction(
+        const MessageReaction(
+          id: 'newer-add-state',
+          messageId: 'msg-1',
+          emoji: '❤️',
+          senderPeerId: 'peer-sender',
+          timestamp: '2026-03-08T00:00:02.000Z',
+          createdAt: '2026-03-08T00:00:02.000Z',
+        ),
+      );
+      atomicRepo.stagedNotificationEventIds.add('stale-replay-event');
+      var stageCalls = 0;
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: atomicRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'stale-replay-state',
+          emoji: '👍',
+          timestamp: '2026-03-08T00:00:01.000Z',
+          eventId: 'stale-replay-event',
+        ),
+        stageNotificationDisplayCustody: (payload) async {
+          stageCalls += 1;
+          atomicRepo.stagedNotificationEventIds.add(payload.eventId!);
+        },
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNull);
+      expect(stageCalls, 1);
+      expect(atomicRepo.appliedAddNotificationEventId, 'stale-replay-event');
+      expect(atomicRepo.stagedNotificationEventIds, isEmpty);
+      expect(
+        (await atomicRepo.getReactionForSenderIncludingRemoved(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-sender',
+        ))?.id,
+        'newer-add-state',
+      );
+    },
+  );
 
   test(
     'PL-009 active sender reaction applies once to the correct message',
@@ -199,28 +431,30 @@ void main() {
       );
     }
 
-    test('stale add is dropped and does not overwrite the newer stored reaction',
-        () async {
-      await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:05.000Z');
+    test(
+      'stale add is dropped and does not overwrite the newer stored reaction',
+      () async {
+        await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:05.000Z');
 
-      final (result, change) = await handleIncomingGroupReaction(
-        groupRepo: groupRepo,
-        reactionRepo: reactionRepo,
-        groupId: 'group-1',
-        senderId: 'peer-sender',
-        reactionJson: makeReactionJson(
-          emoji: '👍',
-          timestamp: '2026-03-08T00:00:00.000Z',
-        ),
-      );
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            emoji: '👍',
+            timestamp: '2026-03-08T00:00:00.000Z',
+          ),
+        );
 
-      // Stale ⇒ success with no change emitted, stored reaction untouched.
-      expect(result, HandleGroupReactionResult.success);
-      expect(change, isNull);
-      final stored = await reactionRepo.getReactionsForMessage('msg-1');
-      expect(stored, hasLength(1));
-      expect(stored.single.emoji, '❤️');
-    });
+        // Stale ⇒ success with no change emitted, stored reaction untouched.
+        expect(result, HandleGroupReactionResult.success);
+        expect(change, isNull);
+        final stored = await reactionRepo.getReactionsForMessage('msg-1');
+        expect(stored, hasLength(1));
+        expect(stored.single.emoji, '❤️');
+      },
+    );
 
     test('newer add overwrites the older stored reaction', () async {
       await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:00.000Z');
@@ -276,7 +510,10 @@ void main() {
             timestamp: '2026-03-08T00:00:00.000Z',
           ),
         );
-        expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+        expect(
+          await reactionRepo.getReactionsForMessage('msg-1'),
+          hasLength(1),
+        );
 
         // 2. Apply a remove at T2 > T1 → tombstone (row retained, hidden).
         await handleIncomingGroupReaction(
@@ -309,49 +546,46 @@ void main() {
       },
     );
 
-    test(
-      'INV-T3 a newer add after a remove resurrects the reaction',
-      () async {
-        await handleIncomingGroupReaction(
-          groupRepo: groupRepo,
-          reactionRepo: reactionRepo,
-          groupId: 'group-1',
-          senderId: 'peer-sender',
-          reactionJson: makeReactionJson(
-            emoji: '👍',
-            timestamp: '2026-03-08T00:00:00.000Z',
-          ),
-        );
-        await handleIncomingGroupReaction(
-          groupRepo: groupRepo,
-          reactionRepo: reactionRepo,
-          groupId: 'group-1',
-          senderId: 'peer-sender',
-          reactionJson: makeReactionJson(
-            action: 'remove',
-            timestamp: '2026-03-08T00:00:05.000Z',
-          ),
-        );
-        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    test('INV-T3 a newer add after a remove resurrects the reaction', () async {
+      await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          emoji: '👍',
+          timestamp: '2026-03-08T00:00:00.000Z',
+        ),
+      );
+      await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          action: 'remove',
+          timestamp: '2026-03-08T00:00:05.000Z',
+        ),
+      );
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
 
-        // A NEWER add (T3 > remove's T2) clears the tombstone.
-        final (result, change) = await handleIncomingGroupReaction(
-          groupRepo: groupRepo,
-          reactionRepo: reactionRepo,
-          groupId: 'group-1',
-          senderId: 'peer-sender',
-          reactionJson: makeReactionJson(
-            emoji: '🔥',
-            timestamp: '2026-03-08T00:00:09.000Z',
-          ),
-        );
-        expect(result, HandleGroupReactionResult.success);
-        expect(change!.type, ReactionChangeType.upserted);
-        final stored = await reactionRepo.getReactionsForMessage('msg-1');
-        expect(stored, hasLength(1));
-        expect(stored.single.emoji, '🔥');
-      },
-    );
+      // A NEWER add (T3 > remove's T2) clears the tombstone.
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          emoji: '🔥',
+          timestamp: '2026-03-08T00:00:09.000Z',
+        ),
+      );
+      expect(result, HandleGroupReactionResult.success);
+      expect(change!.type, ReactionChangeType.upserted);
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.emoji, '🔥');
+    });
 
     test('newer remove deletes the older stored add', () async {
       await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:00.000Z');
@@ -482,7 +716,11 @@ void main() {
       expect(targetReactions.single.id, 'pl011-r-1');
       expect(targetReactions.single.senderPeerId, 'peer-sender');
       expect(targetReactions.single.emoji, '✅');
-      expect(reactionRepo.saveReactionCallCount, 2);
+      expect(
+        reactionRepo.saveReactionCallCount,
+        1,
+        reason: 'an exact replay must not rewrite canonical reaction state',
+      );
     },
   );
 
@@ -913,10 +1151,7 @@ void main() {
         senderId: 'peer-sender',
         reactionJson: makeReactionJson(messageId: 'msg-deleted'),
       );
-      expect(
-        deletedResult,
-        HandleGroupReactionResult.discardedLocallyDeleted,
-      );
+      expect(deletedResult, HandleGroupReactionResult.discardedLocallyDeleted);
       expect(deletedChange, isNull);
       expect(
         await pendingRepo.getPendingReactionsForMessage(
@@ -926,10 +1161,7 @@ void main() {
         isEmpty,
         reason: 'a discarded reaction must never enter the pending buffer',
       );
-      expect(
-        await reactionRepo.getReactionsForMessage('msg-deleted'),
-        isEmpty,
-      );
+      expect(await reactionRepo.getReactionsForMessage('msg-deleted'), isEmpty);
 
       // A tombstone belonging to ANOTHER group does not discard this group's
       // late reaction — it buffers exactly as before (INV-R4).

@@ -801,6 +801,37 @@ class AppLocalizationsAr extends AppLocalizations {
   String get group_message_hint => 'رسالة';
 
   @override
+  String get notification_group_reaction_target_message => 'رسالة';
+
+  @override
+  String get notification_group_reaction_target_photo => 'صورة';
+
+  @override
+  String get notification_group_reaction_target_video => 'فيديو';
+
+  @override
+  String get notification_group_reaction_target_voice_message => 'رسالة صوتية';
+
+  @override
+  String get notification_group_reaction_target_file => 'ملف';
+
+  @override
+  String get notification_group_reaction_target_media => 'وسائط';
+
+  @override
+  String notification_group_reaction_actor(
+    String actorName,
+    String targetKind,
+  ) {
+    return 'تفاعل $actorName مع هذا المحتوى: $targetKind';
+  }
+
+  @override
+  String notification_group_reaction_someone(String targetKind) {
+    return 'تفاعل شخص ما مع هذا المحتوى: $targetKind';
+  }
+
+  @override
   String get group_create_failed => 'فشل إنشاء المجموعة';
 
   @override

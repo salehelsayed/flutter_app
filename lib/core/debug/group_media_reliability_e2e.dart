@@ -33,6 +33,50 @@ const Map<String, String> groupMediaReliabilityRenderLabelsByKind =
       'voice': 'P269 receiver voice player ready',
     };
 
+enum GroupMediaReliabilityAuthorityMode {
+  distinctAccountAndTransport,
+  accountBoundLegacy,
+}
+
+bool groupMediaReliabilityAuthorityMatches({
+  required GroupMediaReliabilityAuthorityMode mode,
+  required String localAccountPeerId,
+  required String localTransportPeerId,
+  required String remoteAccountPeerId,
+  required String remoteTransportPeerId,
+  required Iterable<String> allowedPeers,
+}) {
+  final localAccount = localAccountPeerId.trim();
+  final localTransport = localTransportPeerId.trim();
+  final remoteAccount = remoteAccountPeerId.trim();
+  final remoteTransport = remoteTransportPeerId.trim();
+  final peers = allowedPeers.map((peer) => peer.trim()).toList(growable: false);
+  if (localAccount.isEmpty ||
+      localTransport.isEmpty ||
+      remoteAccount.isEmpty ||
+      remoteTransport.isEmpty ||
+      localAccount != localAccountPeerId ||
+      localTransport != localTransportPeerId ||
+      remoteAccount != remoteAccountPeerId ||
+      remoteTransport != remoteTransportPeerId ||
+      localAccount == remoteAccount ||
+      peers.length != 2 ||
+      peers.any((peer) => peer.isEmpty) ||
+      peers.toSet().length != 2 ||
+      !peers.toSet().containsAll(<String>{localTransport, remoteTransport})) {
+    return false;
+  }
+  return switch (mode) {
+    GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport =>
+      localTransport != localAccount &&
+          remoteTransport != remoteAccount &&
+          !peers.toSet().contains(localAccount) &&
+          !peers.toSet().contains(remoteAccount),
+    GroupMediaReliabilityAuthorityMode.accountBoundLegacy =>
+      localTransport == localAccount && remoteTransport == remoteAccount,
+  };
+}
+
 String groupMediaReliabilityDatabasePathFingerprint({
   required String runId,
   required String transportPeerId,
@@ -405,6 +449,7 @@ String _groupMediaReliabilityE2EFailureCode(Object error) {
       'send_identity_discriminator',
     'group-media ACL did not select receiver transport' =>
       'receiver_transport_acl',
+    'group-media authority policy rejected' => 'authority_policy',
     'group-media fixture IDs are incomplete or reused' => 'fixture_id_contract',
     'group-media fixture attachment lease was denied' => 'fixture_lease_denied',
     'group-media voice fixture lacks RECORD_AUDIO' => 'voice_permission',

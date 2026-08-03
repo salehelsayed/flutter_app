@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
@@ -47,7 +48,8 @@ final class NotificationIdAllocationException implements Exception {
 ///
 /// Allocation is serialized in-isolate and with BSD `flock`, covering the main
 /// Flutter isolate, Firebase headless isolates, and separate app processes.
-final class DurableConversationNotificationIdRegistry {
+final class DurableConversationNotificationIdRegistry
+    implements ConversationNotificationContentRegistry {
   DurableConversationNotificationIdRegistry({
     required this.directory,
     this.maxProbeAttempts = 128,
@@ -62,6 +64,7 @@ final class DurableConversationNotificationIdRegistry {
   static const directoryName = 'NotificationConversationIds';
   static const coordinationLockFileName = '.coordination.lock';
   static const ownerFileSuffix = '.owner';
+  static const contentKindFileSuffix = '.content-kind';
   static const _opaqueActiveOwner = 'opaque-active';
   static const _maxNotificationId = 0x7fffffff;
   static final RegExp _ownerFilePattern = RegExp(r'^(\d+)\.owner$');
@@ -199,6 +202,276 @@ final class DurableConversationNotificationIdRegistry {
     }
   }
 
+  /// Returns an existing numeric id without creating storage or allocating a
+  /// new owner.
+  ///
+  /// Cancellation uses this path so a read event can never occupy an id for a
+  /// conversation that has no delivered card. Owner publication is atomic and
+  /// immutable, so readers do not need to create/acquire the allocation lock.
+  Future<int?> lookup(String conversationKey) async {
+    final normalized = conversationKey.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(
+        conversationKey,
+        'conversationKey',
+        'must not be empty',
+      );
+    }
+    if (!await directory.exists()) return null;
+
+    try {
+      final owner = sha256.convert(utf8.encode(normalized)).toString();
+      final snapshot = await _readSnapshot(owner);
+      if (snapshot.ownerIds.isEmpty) return null;
+      return _preferredExistingId(normalized, snapshot.ownerIds);
+    } on FileSystemException catch (error) {
+      // A concurrent support-directory teardown is equivalent to no mapping.
+      if (!await directory.exists()) return null;
+      throw NotificationIdAllocationException(
+        operation: 'registry_lookup',
+        errorType: error.runtimeType.toString(),
+      );
+    } on NotificationIdAllocationException {
+      rethrow;
+    } catch (error) {
+      throw NotificationIdAllocationException(
+        operation: 'registry_lookup',
+        errorType: error.runtimeType.toString(),
+      );
+    }
+  }
+
+  @override
+  Future<ConversationNotificationContentReplacementResult> replaceContent({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() replace,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    await directory.create(recursive: true);
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        await _requireExactOwner(id, normalized);
+        final prepared = await _prepareContentMetadataFile(id, metadata);
+        try {
+          // Retire the old stable-id card before the new marker becomes
+          // active. A kill after this point can leave no card, but can never
+          // leave an old reaction card mislabeled as a new message (or vice
+          // versa). Outbox/headless retry can safely repeat the sequence.
+          await retireCurrent();
+          await _activatePreparedContentMetadataFile(id, prepared);
+          // Keep the new marker even if the plugin call throws: a platform
+          // error is not proof the native side effect did not occur. With the
+          // prior card already retired, the marker describes either the exact
+          // new card or a harmless generation with no card; a retry is safe.
+          await replace();
+          return ConversationNotificationContentReplacementResult
+              .shownAndRecorded;
+        } finally {
+          try {
+            if (await prepared.exists()) await prepared.delete();
+          } on FileSystemException {
+            // Hidden prepared files are ignored and can be retried.
+          }
+        }
+      });
+    });
+  }
+
+  @override
+  Future<bool> replaceContentIfGeneration({
+    required String conversationKey,
+    required int notificationId,
+    required String expectedGeneration,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() replace,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final generation = expectedGeneration.trim();
+    if (generation.isEmpty) {
+      throw ArgumentError.value(
+        expectedGeneration,
+        'expectedGeneration',
+        'must not be empty',
+      );
+    }
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return false;
+    if (!await _hasExactOwner(id, normalized)) return false;
+    final snapshot = await _readContentMetadataFile(id);
+    if (snapshot?.generation != generation) return false;
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        if (!await _hasExactOwner(id, normalized)) return false;
+        if (await _readContentMetadataFile(id) != snapshot) return false;
+        final prepared = await _prepareContentMetadataFile(id, metadata);
+        try {
+          await retireCurrent();
+          await _activatePreparedContentMetadataFile(id, prepared);
+          // As with ordinary replacement, retain the new generation if the
+          // plugin throws because the native side effect is ambiguous. The
+          // durable reconciliation job remains available for a later refresh.
+          await replace();
+          return true;
+        } finally {
+          try {
+            if (await prepared.exists()) await prepared.delete();
+          } on FileSystemException {
+            // Hidden prepared files are ignored and can be retried.
+          }
+        }
+      });
+    });
+  }
+
+  @override
+  Future<bool> cancelContentIfKind({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentKind kind,
+    ConversationNotificationContentCancellationPredicate? shouldCancel,
+    required Future<void> Function() cancel,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return false;
+    if (!await _hasExactOwner(id, normalized)) return false;
+    final snapshot = await _readContentMetadataFile(id);
+    if (snapshot?.kind != kind) return false;
+    if (shouldCancel != null && !await shouldCancel(snapshot!)) {
+      return false;
+    }
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        if (!await _hasExactOwner(id, normalized)) return false;
+        // The database/read-eligibility query above deliberately runs outside
+        // flock. Compare the full generation-bearing snapshot here to close
+        // message-to-message ABA races without creating a cross-store lock
+        // ordering dependency.
+        if (await _readContentMetadataFile(id) != snapshot) return false;
+        await cancel();
+        await _deleteContentKindFile(id);
+        return true;
+      });
+    });
+  }
+
+  @override
+  Future<bool> cancelContentIfGeneration({
+    required String conversationKey,
+    required int notificationId,
+    required String generation,
+    required Future<void> Function() cancel,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final expectedGeneration = generation.trim();
+    if (expectedGeneration.isEmpty) {
+      throw ArgumentError.value(generation, 'generation', 'must not be empty');
+    }
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return false;
+    if (!await _hasExactOwner(id, normalized)) return false;
+    final snapshot = await _readContentMetadataFile(id);
+    if (snapshot?.generation != expectedGeneration) return false;
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        if (!await _hasExactOwner(id, normalized)) return false;
+        if (await _readContentMetadataFile(id) != snapshot) return false;
+        await cancel();
+        await _deleteContentKindFile(id);
+        return true;
+      });
+    });
+  }
+
+  @override
+  Future<void> recordContentMetadata({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    await directory.create(recursive: true);
+    final lock = _coordinationLockFile();
+    await _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        await _requireExactOwner(id, normalized);
+        await _publishContentMetadataFile(id, metadata);
+      });
+    });
+  }
+
+  @override
+  Future<void> recordContentKind({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentKind kind,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    await directory.create(recursive: true);
+    final lock = _coordinationLockFile();
+    await _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        await _requireExactOwner(id, normalized);
+        await _publishContentMetadataFile(
+          id,
+          ConversationNotificationContentMetadata(kind: kind),
+        );
+      });
+    });
+  }
+
+  @override
+  Future<ConversationNotificationContentMetadata?> lookupContentMetadata({
+    required String conversationKey,
+    required int notificationId,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return null;
+    if (!await _hasExactOwner(id, normalized)) return null;
+    return _readContentMetadataFile(id);
+  }
+
+  @override
+  Future<ConversationNotificationContentKind?> lookupContentKind({
+    required String conversationKey,
+    required int notificationId,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return null;
+    if (!await _hasExactOwner(id, normalized)) return null;
+    return (await _readContentMetadataFile(id))?.kind;
+  }
+
+  @override
+  Future<void> clearContentKind({
+    required String conversationKey,
+    required int notificationId,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    if (!await directory.exists()) return;
+    final lock = _coordinationLockFile();
+    await _serializeInIsolate(lock.path, () {
+      return _NotificationIdFlock.withExclusive(lock, () async {
+        if (!await _hasExactOwner(id, normalized)) return;
+        await _deleteContentKindFile(id);
+      });
+    });
+  }
+
   Future<_RegistrySnapshot> _readSnapshot(String requestedOwner) async {
     final occupiedIds = <int>{};
     final ownerIds = <int>[];
@@ -254,6 +527,157 @@ final class DurableConversationNotificationIdRegistry {
         // Hidden leftovers are ignored by snapshot parsing and can be retried.
       }
     }
+  }
+
+  String _normalizedConversationKey(String conversationKey) {
+    final normalized = conversationKey.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(
+        conversationKey,
+        'conversationKey',
+        'must not be empty',
+      );
+    }
+    return normalized;
+  }
+
+  int _requiredNotificationId(int notificationId) {
+    final valid = _validNotificationId(notificationId);
+    if (valid == null) {
+      throw ArgumentError.value(
+        notificationId,
+        'notificationId',
+        'must be a non-negative signed 32-bit integer',
+      );
+    }
+    return valid;
+  }
+
+  File _contentKindFile(int id) => File(
+    '${directory.path}${Platform.pathSeparator}$id$contentKindFileSuffix',
+  );
+
+  File _coordinationLockFile() => File(
+    '${directory.path}${Platform.pathSeparator}$coordinationLockFileName',
+  );
+
+  Future<ConversationNotificationContentMetadata?> _readContentMetadataFile(
+    int id,
+  ) async {
+    final file = _contentKindFile(id);
+    try {
+      if (!await file.exists()) return null;
+      final encoded = (await file.readAsString()).trim();
+      try {
+        final decoded = ConversationNotificationContentMetadata.fromJson(
+          jsonDecode(encoded),
+        );
+        if (decoded != null) return decoded;
+      } on FormatException {
+        // Fall through to the legacy single-enum parser below.
+      }
+      for (final kind in ConversationNotificationContentKind.values) {
+        if (kind.name == encoded) {
+          return ConversationNotificationContentMetadata(kind: kind);
+        }
+      }
+      return null;
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<void> _deleteContentKindFile(int id) async {
+    final file = _contentKindFile(id);
+    if (await file.exists()) await file.delete();
+  }
+
+  Future<bool> _hasExactOwner(int id, String normalizedConversationKey) async {
+    final ownerFile = File(
+      '${directory.path}${Platform.pathSeparator}$id$ownerFileSuffix',
+    );
+    try {
+      if (!await ownerFile.exists()) return false;
+      final expectedOwner = sha256
+          .convert(utf8.encode(normalizedConversationKey))
+          .toString();
+      return (await ownerFile.readAsString()).trim() == expectedOwner;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  Future<void> _requireExactOwner(
+    int id,
+    String normalizedConversationKey,
+  ) async {
+    if (await _hasExactOwner(id, normalizedConversationKey)) return;
+    throw const NotificationIdAllocationException(
+      operation: 'content_kind_owner',
+      errorType: 'StateError',
+    );
+  }
+
+  Future<void> _publishContentMetadataFile(
+    int id,
+    ConversationNotificationContentMetadata metadata,
+  ) async {
+    final prepared = await _prepareContentMetadataFile(id, metadata);
+    try {
+      await _activatePreparedContentMetadataFile(id, prepared);
+    } finally {
+      try {
+        if (await prepared.exists()) await prepared.delete();
+      } on FileSystemException {
+        // Hidden leftovers are ignored by content-metadata lookup.
+      }
+    }
+  }
+
+  Future<File> _prepareContentMetadataFile(
+    int id,
+    ConversationNotificationContentMetadata metadata,
+  ) async {
+    final target = _contentKindFile(id);
+    final targetType = await FileSystemEntity.type(
+      target.path,
+      followLinks: false,
+    );
+    if (targetType != FileSystemEntityType.notFound &&
+        targetType != FileSystemEntityType.file) {
+      throw FileSystemException(
+        'Notification content metadata target is not a file',
+        target.path,
+      );
+    }
+    final random = Random.secure();
+    final token = List<int>.generate(12, (_) => random.nextInt(256));
+    final suffix = base64UrlEncode(token).replaceAll('=', '');
+    final temporary = File(
+      '${directory.path}${Platform.pathSeparator}.$id-kind-$suffix.tmp',
+    );
+    try {
+      await temporary.writeAsString(jsonEncode(metadata.toJson()), flush: true);
+      return temporary;
+    } catch (_) {
+      try {
+        if (await temporary.exists()) await temporary.delete();
+      } on FileSystemException {
+        // Hidden leftovers are ignored by content-metadata lookup.
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _activatePreparedContentMetadataFile(
+    int id,
+    File prepared,
+  ) async {
+    final target = _contentKindFile(id);
+    // POSIX rename replaces the old regular file atomically. Android/iOS and
+    // this project's host test matrix are POSIX, so readers see old or new
+    // metadata and never an absent delete/rename gap.
+    await prepared.rename(target.path);
   }
 
   Future<T> _serializeInIsolate<T>(

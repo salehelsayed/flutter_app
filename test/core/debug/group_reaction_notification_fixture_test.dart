@@ -172,6 +172,96 @@ void main() {
   });
 
   test(
+    'Plan 330 group lookup leaves the Intros filter for Inner Circle',
+    () async {
+      var dump =
+          _node(contentDescription: 'Show inner circle') +
+          _node(text: 'Pending Group Invites');
+      final taps = <(int, int)>[];
+
+      final center = await fixture_driver
+          .findPlan330OrbitGroupWithInnerCircleRecovery(
+            groupName: 'Plan330A-fixture',
+            readUiDump: () async => dump,
+            tapSemanticNode: (value) async {
+              taps.add(value);
+              dump =
+                  _node(contentDescription: 'Show all chats') +
+                  _node(contentDescription: 'Open group Plan330A-fixture');
+            },
+            retryDelay: Duration.zero,
+          );
+
+      expect(center, (50, 50));
+      expect(taps, [(50, 50)]);
+    },
+  );
+
+  test(
+    'Plan 330 group lookup keeps an existing Inner Circle surface',
+    () async {
+      final dump =
+          _node(contentDescription: 'Show all chats') +
+          _node(contentDescription: 'Open group Plan330A-fixture');
+      var taps = 0;
+
+      final center = await fixture_driver
+          .findPlan330OrbitGroupWithInnerCircleRecovery(
+            groupName: 'Plan330A-fixture',
+            readUiDump: () async => dump,
+            tapSemanticNode: (_) async => taps += 1,
+            retryDelay: Duration.zero,
+          );
+
+      expect(center, (50, 50));
+      expect(taps, 0);
+    },
+  );
+
+  test(
+    'Plan 330 Inner Circle recovery retries one intercepted toggle',
+    () async {
+      var dump = _node(contentDescription: 'Show inner circle');
+      var taps = 0;
+
+      final center = await fixture_driver
+          .findPlan330OrbitGroupWithInnerCircleRecovery(
+            groupName: 'Plan330A-fixture',
+            readUiDump: () async => dump,
+            tapSemanticNode: (_) async {
+              taps += 1;
+              if (taps == 2) {
+                dump =
+                    _node(contentDescription: 'Show all chats') +
+                    _node(contentDescription: 'Open group Plan330A-fixture');
+              }
+            },
+            retryDelay: Duration.zero,
+          );
+
+      expect(center, (50, 50));
+      expect(taps, 2);
+    },
+  );
+
+  test('Plan 330 group lookup never taps unrelated Orbit semantics', () async {
+    var taps = 0;
+
+    final center = await fixture_driver
+        .findPlan330OrbitGroupWithInnerCircleRecovery(
+          groupName: 'Plan330A-fixture',
+          readUiDump: () async =>
+              _node(contentDescription: 'Open group unrelated'),
+          tapSemanticNode: (_) async => taps += 1,
+          maximumPolls: 2,
+          retryDelay: Duration.zero,
+        );
+
+    expect(center, isNull);
+    expect(taps, 0);
+  });
+
+  test(
     'transient fixture cleanup is idempotent and attempts every action',
     () async {
       final calls = <String>[];

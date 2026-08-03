@@ -13,6 +13,7 @@ import 'package:flutter_app/core/database/migrations/099_group_messages_is_forwa
 import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
@@ -1351,40 +1352,50 @@ CREATE TABLE groups (
   });
 
   group('markAsRead', () {
-    test('markAsRead emits group read event only when rows changed', () async {
-      await repo.saveMessage(
-        makeMessage(id: 'msg-unread-g1', isIncoming: true, readAt: null),
-      );
-      await repo.saveMessage(
-        makeMessage(
-          id: 'msg-unread-g2',
-          groupId: 'group-2',
-          isIncoming: true,
-          readAt: null,
-        ),
-      );
-      await repo.saveMessage(
-        makeMessage(id: 'msg-outgoing-g1', isIncoming: false, readAt: null),
-      );
+    test(
+      'markAsRead emits a conversation acknowledgement even when already read',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'msg-unread-g1', isIncoming: true, readAt: null),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-unread-g2',
+            groupId: 'group-2',
+            isIncoming: true,
+            readAt: null,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(id: 'msg-outgoing-g1', isIncoming: false, readAt: null),
+        );
 
-      final readEvents = <String>[];
-      final subscription = repo.groupConversationReadStream.listen(
-        readEvents.add,
-      );
-      addTearDown(subscription.cancel);
+        final readEvents = <String>[];
+        final reconciliationEvents = <String>[];
+        final subscription = repo.groupConversationReadStream.listen(
+          readEvents.add,
+        );
+        addTearDown(subscription.cancel);
+        final reconciliationSubscription =
+            groupNotificationReconciliationSignals.listen(
+              reconciliationEvents.add,
+            );
+        addTearDown(reconciliationSubscription.cancel);
 
-      await repo.markAsRead('group-1');
-      await pumpEventQueue();
-      expect(readEvents, ['group-1']);
+        await repo.markAsRead('group-1');
+        await pumpEventQueue();
+        expect(readEvents, ['group-1']);
 
-      await repo.markAsRead('group-1');
-      await pumpEventQueue();
-      expect(readEvents, ['group-1']);
+        await repo.markAsRead('group-1');
+        await pumpEventQueue();
+        expect(readEvents, ['group-1', 'group-1']);
 
-      await repo.markAsRead('group-2');
-      await pumpEventQueue();
-      expect(readEvents, ['group-1', 'group-2']);
-    });
+        await repo.markAsRead('group-2');
+        await pumpEventQueue();
+        expect(readEvents, ['group-1', 'group-1', 'group-2']);
+        expect(reconciliationEvents, ['group-1', 'group-1', 'group-2']);
+      },
+    );
 
     test('marks unread incoming messages as read', () async {
       await repo.saveMessage(

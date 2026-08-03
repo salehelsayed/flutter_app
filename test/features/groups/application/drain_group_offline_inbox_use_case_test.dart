@@ -11,6 +11,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart'
@@ -34,8 +35,10 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -212,6 +215,37 @@ class _CursorInboxBridge extends FakeBridge {
   }
 }
 
+final class _CanonicalRecoverySpyListener extends GroupMessageListener {
+  _CanonicalRecoverySpyListener({
+    required InMemoryGroupRepository groupRepo,
+    required InMemoryGroupMessageRepository msgRepo,
+  }) : super(groupRepo: groupRepo, msgRepo: msgRepo);
+
+  final List<String> recoveryEvents = <String>[];
+
+  @override
+  void beginCanonicalNotificationRecovery() {
+    recoveryEvents.add('begin');
+  }
+
+  @override
+  Future<void> endCanonicalNotificationRecovery({
+    required bool canonicalStateComplete,
+    bool releaseStartupHold = false,
+  }) async {
+    recoveryEvents.add(
+      'end:$canonicalStateComplete:releaseStartupHold=$releaseStartupHold',
+    );
+  }
+}
+
+final class _ThrowingGetAllGroupsRepository extends InMemoryGroupRepository {
+  @override
+  Future<List<GroupModel>> getAllGroups() async {
+    throw StateError('simulated startup group query failure');
+  }
+}
+
 class _MarkAfterDecryptInboxBridge extends _CursorInboxBridge {
   void Function()? afterDecrypt;
 
@@ -317,6 +351,257 @@ class _ThrowingGroupPendingReactionRepository
     savePendingReactionCallCount++;
     throw StateError('pending reaction buffer unavailable');
   }
+}
+
+final class _DrainNotificationDisplayOutbox
+    implements GroupNotificationDisplayOutboxRepository {
+  final Map<String, GroupNotificationDisplayOutboxEntry> entries = {};
+  bool failStage = false;
+  int stageAttempts = 0;
+  DateTime _now = DateTime.now().toUtc();
+
+  void makeRetriesDue() {
+    final deadlines = entries.values
+        .map((entry) => entry.nextAttemptAt)
+        .whereType<String>()
+        .map((value) => DateTime.parse(value).toUtc());
+    for (final deadline in deadlines) {
+      if (!deadline.isBefore(_now)) {
+        _now = deadline.add(const Duration(milliseconds: 1));
+      }
+    }
+  }
+
+  @override
+  Future<void> stage(GroupNotificationDisplayOutboxEntry entry) async {
+    stageAttempts++;
+    if (failStage) {
+      throw StateError('notification display staging unavailable');
+    }
+    final current = entries[entry.eventId];
+    if (current == null) {
+      entries[entry.eventId] = entry;
+      return;
+    }
+    if (!_sameAuthority(current, entry)) {
+      throw StateError('conflicting notification transition event id');
+    }
+  }
+
+  @override
+  Future<GroupNotificationDisplayOutboxEntry?> loadByEventId(
+    String eventId,
+  ) async => entries[eventId];
+
+  @override
+  Future<bool> promoteReadyIfExact({
+    required String eventId,
+    required int expectedRevision,
+  }) async {
+    final current = entries[eventId];
+    if (current == null || current.revision != expectedRevision) return false;
+    entries[eventId] = current.copyWith(
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      revision: current.revision + 1,
+      lastErrorCode: null,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      updatedAt: _now.toIso8601String(),
+    );
+    return true;
+  }
+
+  @override
+  Future<List<GroupNotificationDisplayOutboxEntry>> loadReady({
+    int limit = 20,
+  }) async {
+    return entries.values
+        .where(
+          (entry) =>
+              entry.isReady &&
+              (entry.nextAttemptAt == null ||
+                  !DateTime.parse(entry.nextAttemptAt!).toUtc().isAfter(_now)),
+        )
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<DateTime?> loadEarliestNextAttemptAt() async {
+    DateTime? earliest;
+    for (final entry in entries.values) {
+      final value = entry.nextAttemptAt;
+      if (!entry.isReady || value == null) continue;
+      final attempt = DateTime.parse(value).toUtc();
+      if (earliest == null || attempt.isBefore(earliest)) earliest = attempt;
+    }
+    return earliest;
+  }
+
+  @override
+  Future<bool> recordRetryIfExact({
+    required String eventId,
+    required int expectedRevision,
+    required String lastErrorCode,
+    required DateTime nextAttemptAt,
+  }) async {
+    final current = entries[eventId];
+    if (current == null || current.revision != expectedRevision) return false;
+    entries[eventId] = current.copyWith(
+      revision: current.revision + 1,
+      retryCount: current.retryCount + 1,
+      lastErrorCode: lastErrorCode,
+      lastAttemptAt: _now.toIso8601String(),
+      nextAttemptAt: nextAttemptAt.toUtc().toIso8601String(),
+      updatedAt: _now.toIso8601String(),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> completeIfExact(
+    GroupNotificationDisplayOutboxEntry expected,
+  ) async {
+    final current = entries[expected.eventId];
+    if (current == null ||
+        current.revision != expected.revision ||
+        !_sameAuthority(current, expected)) {
+      return false;
+    }
+    entries.remove(expected.eventId);
+    return true;
+  }
+
+  @override
+  Future<bool> reconcileMessageAliasReady({
+    required String aliasEventId,
+    required GroupMessage canonicalMessage,
+  }) async {
+    final canonical = entries[canonicalMessage.id];
+    final alias = entries[aliasEventId];
+    final selected = canonical ?? alias;
+    if (selected == null) return false;
+    entries.remove(aliasEventId);
+    entries[canonicalMessage.id] = selected.copyWith(
+      eventId: canonicalMessage.id,
+      messageId: canonicalMessage.id,
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      revision: selected.revision + 1,
+      lastErrorCode: null,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      updatedAt: _now.toIso8601String(),
+    );
+    return true;
+  }
+
+  @override
+  Future<int> deleteForGroup(String groupId) async =>
+      _deleteWhere((entry) => entry.groupId == groupId);
+
+  @override
+  Future<int> deleteForMessage({
+    required String groupId,
+    required String messageId,
+  }) async => _deleteWhere(
+    (entry) => entry.groupId == groupId && entry.messageId == messageId,
+  );
+
+  @override
+  Future<int> deleteForReaction({
+    required String groupId,
+    required String messageId,
+    required String reactionId,
+  }) async => _deleteWhere(
+    (entry) =>
+        entry.groupId == groupId &&
+        entry.messageId == messageId &&
+        entry.reactionId == reactionId,
+  );
+
+  @override
+  Future<int> deleteForReactionActor({
+    required String groupId,
+    required String messageId,
+    required String actorPeerId,
+  }) async => _deleteWhere(
+    (entry) =>
+        entry.eventKind == GroupNotificationDisplayOutboxKind.reaction &&
+        entry.groupId == groupId &&
+        entry.messageId == messageId &&
+        entry.actorPeerId == actorPeerId,
+  );
+
+  int _deleteWhere(
+    bool Function(GroupNotificationDisplayOutboxEntry entry) test,
+  ) {
+    final before = entries.length;
+    entries.removeWhere((_, entry) => test(entry));
+    return before - entries.length;
+  }
+
+  bool _sameAuthority(
+    GroupNotificationDisplayOutboxEntry left,
+    GroupNotificationDisplayOutboxEntry right,
+  ) {
+    return left.eventKind == right.eventKind &&
+        left.groupId == right.groupId &&
+        left.messageId == right.messageId &&
+        left.actorPeerId == right.actorPeerId &&
+        left.eventTimestamp == right.eventTimestamp &&
+        left.reactionId == right.reactionId &&
+        left.reactionAction == right.reactionAction &&
+        left.reactionTombstone == right.reactionTombstone;
+  }
+}
+
+final class _FailOnceDrainNotificationService extends FakeNotificationService {
+  int showAttempts = 0;
+  Future<void> Function()? beforeShowAttempt;
+
+  @override
+  Future<void> showMessageNotification({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+  }) async {
+    await beforeShowAttempt?.call();
+    showAttempts++;
+    if (showAttempts == 1) {
+      throw StateError('simulated notification display failure');
+    }
+    await super.showMessageNotification(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
+    );
+  }
+}
+
+final class _DrainNoopRemoteNotificationGate
+    extends RecentRemoteNotificationGate {
+  _DrainNoopRemoteNotificationGate()
+    : super(filePath: '${Directory.systemTemp.path}/unused-drain-gate');
+
+  @override
+  Future<bool> consumeIfRecentAnnouncement({
+    required String payload,
+    String? messageId,
+  }) async => false;
+
+  @override
+  Future<void> markAnnouncement({
+    required String payload,
+    String? messageId,
+  }) async {}
 }
 
 class _InboxPage {
@@ -10938,6 +11223,7 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         bridge: bridge,
+        getSelfPeerId: () async => 'peer-local',
         notificationService: notifService,
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
@@ -11104,6 +11390,7 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         bridge: bridge,
+        getSelfPeerId: () async => 'peer-local',
         notificationService: notifService,
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
@@ -13127,6 +13414,107 @@ void main() {
 
   group('drainGroupOfflineInbox use case', () {
     test(
+      'TC-330-13 successful startup drain releases the startup hold after canonical completion',
+      () async {
+        final listener = _CanonicalRecoverySpyListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+        );
+        addTearDown(listener.dispose);
+        bridge.addPage('group-1', '', const <Map<String, dynamic>>[], '');
+
+        final result = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+        );
+
+        expect(result.isSuccessful, isTrue);
+        expect(result.hasMorePages, isFalse);
+        expect(listener.recoveryEvents, <String>[
+          'begin',
+          'end:true:releaseStartupHold=true',
+        ]);
+      },
+    );
+
+    test(
+      'TC-330-13 failed startup group query releases the startup hold as incomplete',
+      () async {
+        final listener = _CanonicalRecoverySpyListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+        );
+        addTearDown(listener.dispose);
+
+        await expectLater(
+          drainGroupOfflineInbox(
+            bridge: bridge,
+            groupRepo: _ThrowingGetAllGroupsRepository(),
+            msgRepo: msgRepo,
+            groupMessageListener: listener,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'simulated startup group query failure',
+            ),
+          ),
+        );
+        expect(listener.recoveryEvents, <String>[
+          'begin',
+          'end:false:releaseStartupHold=true',
+        ]);
+      },
+    );
+
+    test(
+      'TC-330-13 first-page drain defers projection until continuation exhausts the cursor',
+      () async {
+        final listener = _CanonicalRecoverySpyListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+        );
+        addTearDown(listener.dispose);
+        bridge.addPage('group-1', '', const <Map<String, dynamic>>[], 'page2');
+        bridge.addPage('group-1', 'page2', const <Map<String, dynamic>>[], '');
+
+        final firstPage = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+          drainAllPages: false,
+        );
+        expect(firstPage.hasMorePages, isTrue);
+        expect(listener.recoveryEvents, <String>[
+          'begin',
+          'end:false:releaseStartupHold=true',
+        ]);
+
+        final continuation = await drain_use_case
+            .drainGroupOfflineInboxContinuation(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              groupMessageListener: listener,
+              retentionNowUtc: _fixedDateFixtureRetentionNow,
+            );
+
+        expect(continuation.isSuccessful, isTrue);
+        expect(continuation.hasMorePages, isFalse);
+        expect(listener.recoveryEvents, <String>[
+          'begin',
+          'end:false:releaseStartupHold=true',
+          'begin',
+          'end:true:releaseStartupHold=false',
+        ]);
+      },
+    );
+
+    test(
       'resume uses cursor continuation rather than timestamp guessing',
       () async {
         final ts = DateTime.now().toUtc().toIso8601String();
@@ -13370,6 +13758,297 @@ void main() {
   // ---------------------------------------------------------------------------
   // Reaction drain tests
   // ---------------------------------------------------------------------------
+  group('TC-330-17 durable display custody and inbox cursor boundary', () {
+    test(
+      'TC-330-17 message staging failure keeps the transport cursor retryable',
+      () async {
+        await saveDefaultReplayKey();
+        final outbox = _DrainNotificationDisplayOutbox()..failStage = true;
+        final notifications = _FailOnceDrainNotificationService();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-local',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
+          notificationDisplayOutbox: outbox,
+        );
+        addTearDown(listener.dispose);
+        bridge.addPage('group-1', '', [
+          await signedRelayMessage(
+            id: 'tc330-17-message-stage-failure',
+            text: 'Stage before advancing',
+            timestamp: DateTime.utc(2026, 5, 8, 11),
+          ),
+        ], '');
+
+        final result = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+          selfPeerId: 'peer-local',
+        );
+
+        expect(outbox.stageAttempts, 1);
+        expect(result.errorCount, 1);
+        expect(result.isSuccessful, isFalse);
+        expect(result.hasMorePages, isTrue);
+        expect(await msgRepo.getInboxCursor('group-1'), isNull);
+        expect(
+          await msgRepo.getMessage('tc330-17-message-stage-failure'),
+          isNull,
+        );
+        expect(outbox.entries, isEmpty);
+        expect(notifications.showAttempts, 0);
+      },
+    );
+
+    test(
+      'TC-330-17 durable message staging advances the cursor when display fails and later retry succeeds',
+      () async {
+        await saveDefaultReplayKey();
+        final outbox = _DrainNotificationDisplayOutbox();
+        final notifications = _FailOnceDrainNotificationService();
+        notifications.beforeShowAttempt = () async {
+          expect(
+            await msgRepo.getInboxCursor('group-1'),
+            startsWith(groupInboxSyntheticSinceCursorPrefix),
+          );
+        };
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-local',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
+          notificationDisplayOutbox: outbox,
+        );
+        addTearDown(listener.dispose);
+        bridge.addPage('group-1', '', [
+          await signedRelayMessage(
+            id: 'tc330-17-message-display-retry',
+            text: 'Cursor is independent of display',
+            timestamp: DateTime.utc(2026, 5, 8, 11, 1),
+          ),
+        ], '');
+
+        final result = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+          selfPeerId: 'peer-local',
+        );
+
+        expect(result.isSuccessful, isTrue);
+        expect(result.hasMorePages, isFalse);
+        expect(
+          await msgRepo.getInboxCursor('group-1'),
+          startsWith(groupInboxSyntheticSinceCursorPrefix),
+        );
+        expect(
+          await msgRepo.getMessage('tc330-17-message-display-retry'),
+          isNotNull,
+        );
+        expect(notifications.showAttempts, 1);
+        expect(notifications.shown, isEmpty);
+        final retained = outbox.entries['tc330-17-message-display-retry'];
+        expect(retained, isNotNull);
+        expect(retained!.isReady, isTrue);
+        expect(retained.retryCount, 1);
+        expect(
+          retained.lastErrorCode,
+          GroupNotificationDisplayOutboxErrorCode.displayFailed,
+        );
+
+        outbox.makeRetriesDue();
+        await listener.retryPendingNotificationDisplays();
+
+        expect(notifications.showAttempts, 2);
+        expect(notifications.shown, hasLength(1));
+        expect(outbox.entries, isEmpty);
+      },
+    );
+
+    test(
+      'TC-330-17 reaction staging failure keeps the transport cursor retryable',
+      () async {
+        await saveDefaultReplayKey();
+        const targetId = 'tc330-17-reaction-stage-target';
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: targetId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-local',
+            senderUsername: 'Local',
+            text: 'Self-authored target',
+            timestamp: DateTime.utc(2026, 5, 8, 11, 2),
+            createdAt: DateTime.utc(2026, 5, 8, 11, 2),
+            isIncoming: false,
+          ),
+        );
+        final reactionRepo = FakeReactionRepository();
+        final outbox = _DrainNotificationDisplayOutbox()..failStage = true;
+        final notifications = _FailOnceDrainNotificationService();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-local',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
+          notificationDisplayOutbox: outbox,
+        );
+        addTearDown(listener.dispose);
+        final reaction = jsonEncode({
+          'id': 'tc330-17-reaction-stage-state',
+          'eventId': 'tc330-17-reaction-stage-transition',
+          'messageId': targetId,
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': DateTime.utc(2026, 5, 8, 11, 3).toIso8601String(),
+        });
+        bridge.addPage('group-1', '', [
+          {
+            'from': 'peer-sender',
+            'message': await signedReplayEnvelope(
+              payloadType: groupOfflineReplayPayloadTypeReaction,
+              plaintext: reaction,
+              messageId: 'tc330-17-reaction-stage-state',
+            ),
+            'timestamp': DateTime.utc(2026, 5, 8, 11, 3).millisecondsSinceEpoch,
+          },
+        ], '');
+
+        final result = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          groupMessageListener: listener,
+          selfPeerId: 'peer-local',
+        );
+
+        expect(outbox.stageAttempts, 1);
+        expect(result.errorCount, 1);
+        expect(result.isSuccessful, isFalse);
+        expect(result.hasMorePages, isTrue);
+        expect(await msgRepo.getInboxCursor('group-1'), isNull);
+        expect(reactionRepo.saveReactionCallCount, 0);
+        expect(outbox.entries, isEmpty);
+        expect(notifications.showAttempts, 0);
+      },
+    );
+
+    test(
+      'TC-330-17 durable reaction staging advances the cursor when display fails and later retry succeeds',
+      () async {
+        await saveDefaultReplayKey();
+        const targetId = 'tc330-17-reaction-display-target';
+        const transitionId = 'tc330-17-reaction-display-transition';
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: targetId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-local',
+            senderUsername: 'Local',
+            text: 'Self-authored target',
+            timestamp: DateTime.utc(2026, 5, 8, 11, 4),
+            createdAt: DateTime.utc(2026, 5, 8, 11, 4),
+            isIncoming: false,
+          ),
+        );
+        final reactionRepo = FakeReactionRepository();
+        final outbox = _DrainNotificationDisplayOutbox();
+        final notifications = _FailOnceDrainNotificationService();
+        notifications.beforeShowAttempt = () async {
+          expect(
+            await msgRepo.getInboxCursor('group-1'),
+            startsWith(groupInboxSyntheticSinceCursorPrefix),
+          );
+        };
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-local',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
+          notificationDisplayOutbox: outbox,
+        );
+        addTearDown(listener.dispose);
+        final reaction = jsonEncode({
+          'id': 'tc330-17-reaction-display-state',
+          'eventId': transitionId,
+          'messageId': targetId,
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': DateTime.utc(2026, 5, 8, 11, 5).toIso8601String(),
+        });
+        bridge.addPage('group-1', '', [
+          {
+            'from': 'peer-sender',
+            'message': await signedReplayEnvelope(
+              payloadType: groupOfflineReplayPayloadTypeReaction,
+              plaintext: reaction,
+              messageId: 'tc330-17-reaction-display-state',
+            ),
+            'timestamp': DateTime.utc(2026, 5, 8, 11, 5).millisecondsSinceEpoch,
+          },
+        ], '');
+
+        final result = await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          groupMessageListener: listener,
+          selfPeerId: 'peer-local',
+        );
+
+        expect(result.isSuccessful, isTrue);
+        expect(result.hasMorePages, isFalse);
+        expect(
+          await msgRepo.getInboxCursor('group-1'),
+          startsWith(groupInboxSyntheticSinceCursorPrefix),
+        );
+        expect(reactionRepo.saveReactionCallCount, 1);
+        expect(notifications.showAttempts, 1);
+        expect(notifications.shown, isEmpty);
+        final retained = outbox.entries[transitionId];
+        expect(retained, isNotNull);
+        expect(retained!.isReady, isTrue);
+        expect(retained.retryCount, 1);
+        expect(
+          retained.lastErrorCode,
+          GroupNotificationDisplayOutboxErrorCode.displayFailed,
+        );
+
+        outbox.makeRetriesDue();
+        await listener.retryPendingNotificationDisplays();
+
+        expect(notifications.showAttempts, 2);
+        expect(notifications.shown, hasLength(1));
+        expect(outbox.entries, isEmpty);
+      },
+    );
+  });
+
   test('drains group_reaction items when reactionRepo is provided', () async {
     final reactionRepo = FakeReactionRepository();
     await msgRepo.saveMessage(
@@ -13493,7 +14172,7 @@ void main() {
       expect(notificationService.shown.single.contactPeerId, 'group:group-1');
       expect(
         notificationService.shown.single.messageText,
-        'Sender reacted \u{1F44D} to your message',
+        'Sender reacted to your message',
       );
     },
   );

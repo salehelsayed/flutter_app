@@ -4,12 +4,15 @@ import 'dart:ui' show Locale;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/push/application/private_media_notification_body.dart';
 
@@ -142,8 +145,11 @@ class GroupReactionNotificationContext {
     required this.actorPeerId,
     required this.actorUsername,
     required this.targetMessageId,
+    this.targetKind = GroupReactionTargetKind.message,
+    this.currentReactionId,
     this.currentReactionTimestamp,
     this.currentReactionRemovedAt,
+    this.currentReactionAcknowledged = false,
   });
 
   final String groupId;
@@ -151,11 +157,18 @@ class GroupReactionNotificationContext {
   final String actorPeerId;
   final String actorUsername;
   final String targetMessageId;
+  final GroupReactionTargetKind targetKind;
+
+  /// Recipient-owned state identifier for the current sender/target row.
+  /// Together with [currentReactionTimestamp], this lets decrypted replay
+  /// checks bind a read acknowledgement without trusting outer push fields.
+  final String? currentReactionId;
 
   /// Recipient-owned last-writer-wins comparand for this target/reactor pair.
   /// A tombstoned or newer row suppresses a delayed ADD before any event claim.
   final String? currentReactionTimestamp;
   final String? currentReactionRemovedAt;
+  final bool currentReactionAcknowledged;
 
   bool get hasCurrentReaction => currentReactionTimestamp != null;
 }
@@ -372,6 +385,7 @@ Future<BackgroundPushNotificationFallback> resolveBackgroundPushNotification(
       fallback,
       decryptGroup: decryptGroup,
       context: groupReactionContext,
+      locale: locale,
     );
   }
 
@@ -383,17 +397,9 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
   BackgroundPushNotificationFallback fallback, {
   required DecryptGroupPush? decryptGroup,
   required GroupReactionNotificationContext? context,
+  required Locale? locale,
 }) async {
   final actorName = _trimToNull(context?.actorUsername);
-  final trustedFallback = BackgroundPushNotificationFallback(
-    title:
-        _trimToNull(context?.groupName) ??
-        backgroundPushGroupReactionFallbackTitle,
-    body: actorName == null
-        ? backgroundPushGroupReactionFallbackBody
-        : '$actorName reacted to your message',
-    payload: fallback.payload,
-  );
   final outerGroupId =
       _trimToNull(data['groupId']?.toString()) ??
       _trimToNull(data['group_id']?.toString());
@@ -414,17 +420,34 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
   final keyEpoch = int.tryParse(data['keyEpoch']?.toString() ?? '');
   final ciphertext = _trimToNull(data['ciphertext']?.toString());
   final nonce = _trimToNull(data['nonce']?.toString());
+  final provisionalComparand =
+      context != null &&
+          outerGroupId == context.groupId &&
+          outerSender == context.actorPeerId &&
+          outerTargetId == context.targetMessageId &&
+          outerAction == GroupReactionPayload.actionAdd &&
+          outerEventId != null
+      ? BackgroundProvisionalGroupReactionNotificationComparand(
+          groupId: context.groupId,
+          messageId: context.targetMessageId,
+          senderPeerId: context.actorPeerId,
+          notificationEventIdentity: boundedReactionEventIdentity(outerEventId),
+        )
+      : null;
+  final trustedFallback = BackgroundPushNotificationFallback(
+    title:
+        _trimToNull(context?.groupName) ??
+        backgroundPushGroupReactionFallbackTitle,
+    body: localizedGroupReactionNotificationBodyForTargetKind(
+      actorName: actorName,
+      targetKind: context?.targetKind ?? GroupReactionTargetKind.message,
+      locale: locale,
+    ),
+    payload: fallback.payload,
+    groupComparand: provisionalComparand,
+  );
 
-  if (context == null ||
-      outerGroupId != context.groupId ||
-      outerSender != context.actorPeerId ||
-      outerTargetId != context.targetMessageId ||
-      outerAction != GroupReactionPayload.actionAdd ||
-      outerEventId == null ||
-      keyEpoch == null ||
-      decryptGroup == null ||
-      ciphertext == null ||
-      nonce == null) {
+  if (provisionalComparand == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
@@ -433,6 +456,28 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
         'reason': 'group_reaction_context_or_input',
       },
     );
+    throw const GroupReactionNotificationIntegrityException(
+      'group_reaction_context_or_input',
+    );
+  }
+  final authorizedContext = context!;
+  if (keyEpoch == null ||
+      decryptGroup == null ||
+      ciphertext == null ||
+      nonce == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {
+        'kind': 'group_reaction',
+        'reason': 'group_reaction_crypto_input_unavailable',
+      },
+    );
+    if (authorizedContext.hasCurrentReaction) {
+      throw const GroupReactionNotificationIntegrityException(
+        'group_reaction_state_unverifiable_without_plaintext',
+      );
+    }
     return trustedFallback;
   }
 
@@ -464,7 +509,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
         'group_reaction_parity_mismatch',
       );
     }
-    if (_groupReactionPayloadIsStale(payload, context)) {
+    if (_groupReactionPayloadIsStale(payload, authorizedContext)) {
       emitFlowEvent(
         layer: 'FL',
         event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
@@ -484,9 +529,23 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
       details: {'kind': 'group_reaction'},
     );
     return BackgroundPushNotificationFallback(
-      title: context.groupName,
-      body: '${context.actorUsername} reacted ${payload.emoji} to your message',
+      title: authorizedContext.groupName,
+      body: localizedGroupReactionNotificationBodyForTargetKind(
+        actorName: authorizedContext.actorUsername,
+        targetKind: authorizedContext.targetKind,
+        locale: locale,
+      ),
       payload: fallback.payload,
+      groupComparand: BackgroundGroupReactionNotificationComparand(
+        groupId: authorizedContext.groupId,
+        reactionId: payload.id,
+        messageId: payload.messageId,
+        senderPeerId: payload.senderPeerId,
+        timestamp: payload.timestamp,
+        notificationEventIdentity: boundedReactionEventIdentity(
+          payload.notificationTransitionId,
+        ),
+      ),
     );
   } on GroupReactionNotificationIntegrityException {
     rethrow;
@@ -499,7 +558,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
         'reason': 'group_reaction_decrypt_error',
       },
     );
-    if (context.hasCurrentReaction) {
+    if (authorizedContext.hasCurrentReaction) {
       throw const GroupReactionNotificationIntegrityException(
         'group_reaction_state_unverifiable_without_plaintext',
       );
@@ -519,6 +578,11 @@ bool _groupReactionPayloadIsStale(
   if (incomingAt == null) return true;
   if (currentAt == null) return context.hasCurrentReaction;
   if (incomingAt.isBefore(currentAt)) return true;
+  if (context.currentReactionAcknowledged &&
+      context.currentReactionId == payload.id &&
+      incomingAt == currentAt) {
+    return true;
+  }
   return context.currentReactionRemovedAt != null &&
       !incomingAt.isAfter(currentAt);
 }
@@ -736,10 +800,22 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
   required GroupMessageNotificationContext? context,
   required Locale? locale,
 }) async {
+  final trustedMessageId = _trimToNull(context?.expectedMessageId);
+  final trustedSenderPeerId = _trimToNull(context?.senderPeerId);
+  final groupComparand =
+      context != null && trustedMessageId != null && trustedSenderPeerId != null
+      ? BackgroundGroupMessageNotificationComparand(
+          groupId: context.groupId,
+          messageId: trustedMessageId,
+          senderPeerId: trustedSenderPeerId,
+          senderTransportPeerId: context.senderTransportPeerId,
+        )
+      : null;
   final trustedFallback = BackgroundPushNotificationFallback(
     title: _trimToNull(context?.groupName) ?? 'Mknoon',
     body: localizedNotificationMessage(locale: locale),
     payload: fallback.payload,
+    groupComparand: groupComparand,
   );
   final trustedPreviewUnavailableFallback = BackgroundPushNotificationFallback(
     title: _trimToNull(context?.groupName) ?? 'Mknoon',
@@ -750,6 +826,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       locale: locale,
     ),
     payload: fallback.payload,
+    groupComparand: groupComparand,
   );
   final groupId =
       _trimToNull(data['groupId']?.toString()) ??
@@ -902,6 +979,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       title: 'Mknoon',
       body: localizedGroupPrivateMediaNotificationBody(locale: locale),
       payload: fallback.payload,
+      groupComparand: groupComparand,
     );
   }
   final groupName =
@@ -948,6 +1026,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     title: groupName ?? fallback.title,
     body: body,
     payload: fallback.payload,
+    groupComparand: groupComparand,
   );
 }
 

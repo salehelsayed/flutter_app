@@ -1,8 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
-import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
-import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -165,6 +165,46 @@ void main() {
     });
 
     test(
+      'group ADD adapter threads exact group and notification transition identity',
+      () async {
+        String? capturedGroupId;
+        String? capturedNotificationEventId;
+        Map<String, Object?>? capturedRow;
+        repo = ReactionRepositoryImpl(
+          dbInsertReaction: (_) async {},
+          dbApplyGroupAdd:
+              ({
+                required groupId,
+                required notificationEventId,
+                required row,
+              }) async {
+                capturedGroupId = groupId;
+                capturedNotificationEventId = notificationEventId;
+                capturedRow = Map<String, Object?>.from(row);
+                return ReactionAddApplyResult.stale;
+              },
+          dbLoadReactionsForMessage: (_) async => const [],
+          dbLoadReactionsForMessages: (_) async => const [],
+          dbLoadActiveOrTombstonedReactionForSender: (_, _) async => null,
+          dbDeleteReaction: (_, _, {removedAtTimestamp}) async => 0,
+          dbDeleteReactionsForMessage: (_) async => 0,
+          dbDeleteReactionsForContact: (_) async => 0,
+        );
+
+        final result = await repo.applyGroupAdd(
+          groupId: 'group-1',
+          notificationEventId: 'reaction-event-1',
+          reaction: testReaction,
+        );
+
+        expect(result, ReactionAddApplyResult.stale);
+        expect(capturedGroupId, 'group-1');
+        expect(capturedNotificationEventId, 'reaction-event-1');
+        expect(capturedRow, containsPair('id', 'r1'));
+      },
+    );
+
+    test(
       'callback fallback distinguishes insert from exact replay for fakes',
       () async {
         repo = ReactionRepositoryImpl(
@@ -291,8 +331,7 @@ void main() {
 
     setUp(() async {
       db = await openDatabase(inMemoryDatabasePath);
-      await runMessageReactionsMigration(db);
-      await runMessageReactionTombstoneMigration(db);
+      await runProductionOnCreate(db, currentIdentityDatabaseVersion);
     });
 
     tearDown(() => db.close());

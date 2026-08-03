@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -65,6 +66,129 @@ void main() {
   });
 
   group('maybeShowNotification', () {
+    test('group message and reaction tag shared-card ownership', () async {
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'group:message-kind',
+        senderUsername: 'Team',
+        messageText: 'Alice: hello',
+        notificationEventType: 'group_message',
+      );
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'group:reaction-kind',
+        senderUsername: 'Team',
+        messageText: 'Alice reacted to your message',
+        notificationEventType: 'message_reaction',
+      );
+
+      expect(
+        notificationService.shown.map((entry) => entry.contentKind),
+        <ConversationNotificationContentKind>[
+          ConversationNotificationContentKind.message,
+          ConversationNotificationContentKind.reaction,
+        ],
+      );
+    });
+
+    test(
+      'direct reaction does not publish group shared-card metadata',
+      () async {
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-direct-reaction',
+          senderUsername: 'Alice',
+          messageText: 'Alice reacted to your message',
+          notificationEventType: 'message_reaction',
+        );
+
+        expect(notificationService.shown.single.contentKind, isNull);
+        expect(notificationService.shown.single.contentEventIdentity, isNull);
+      },
+    );
+
+    test(
+      'typed claim disposition distinguishes pending from committed',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'typed-notification-disposition-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final owner = DurableNotificationToneLease(
+          directory: directory,
+          pendingClaimWait: Duration.zero,
+        );
+        final claim = await owner.claimMessageEvent(
+          type: 'group_message',
+          eventIdentity: 'typed-group-event',
+        );
+        expect(claim, isNotNull);
+
+        Future<NotificationPresentationResult> attempt() {
+          return maybeShowNotification(
+            notificationService: notificationService,
+            conversationTracker: tracker,
+            getAppLifecycleState: () => AppLifecycleState.paused,
+            contactPeerId: 'group:typed-disposition',
+            senderUsername: 'Team',
+            messageText: 'Message',
+            messageId: 'typed-group-event',
+            notificationEventType: 'group_message',
+            durableNotificationCoordinatorResolver: () async =>
+                DurableNotificationToneLease(
+                  directory: directory,
+                  pendingClaimWait: Duration.zero,
+                ),
+          );
+        }
+
+        expect(
+          await attempt(),
+          NotificationPresentationResult.contendedRetryable,
+        );
+        expect(notificationService.shown, isEmpty);
+
+        expect(await claim!.commit(), isTrue);
+        expect(
+          await attempt(),
+          NotificationPresentationResult.terminalSuppressed,
+        );
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test('typed presentation reports shown and policy suppression', () async {
+      expect(
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:shown-result',
+          senderUsername: 'Team',
+          messageText: 'Shown',
+        ),
+        NotificationPresentationResult.shown,
+      );
+      expect(
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:suppressed-result',
+          senderUsername: 'Team',
+          messageText: 'Suppressed',
+          suppressNotification: true,
+        ),
+        NotificationPresentationResult.terminalSuppressed,
+      );
+    });
+
     test(
       'concurrent live producers claim one message and make one tone decision',
       () async {
@@ -1519,6 +1643,8 @@ class _HookedNotificationService extends FakeNotificationService {
     required String messageText,
     String? payload,
     bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
   }) async {
     attempts += 1;
     await _beforeShow(attempts);
@@ -1528,6 +1654,8 @@ class _HookedNotificationService extends FakeNotificationService {
       messageText: messageText,
       payload: payload,
       silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
     );
   }
 }

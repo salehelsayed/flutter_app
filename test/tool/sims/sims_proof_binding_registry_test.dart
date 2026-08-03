@@ -10,6 +10,7 @@ const _captureOwnedBindings = <String>{
   'integration_test/notif_push_payload_persist_harness.dart',
   'integration_test/notification_tap_message_visible_proof_test.dart',
   'integration_test/intro_accept_notification_android_proof_test.dart',
+  'integration_test/group_notification_projection_android_proof_test.dart',
   'integration_test/scripts/validate_group_reaction_notification_artifacts.dart',
 };
 
@@ -25,6 +26,13 @@ const _manualProofRegistry = 'Test-Flight-Improv/sims-manual-proof-registry.md';
 const _manifestOwnedSupportFacades = <String>{
   'integration_test/scripts/run_1to1_device_real.dart',
   'integration_test/scripts/run_notification_tap_device_real.dart',
+};
+
+const _groupNotificationProjectionSupport = <String, String>{
+  'integration_test/scripts/run_group_notification_projection_android.dart':
+      'typed Sims adapter for Android group notification projection durability; manifest owns execution',
+  'integration_test/scripts/group_notification_projection_android_criteria.dart':
+      '330 strict Android group notification projection raw-evidence criteria',
 };
 
 void main() {
@@ -278,6 +286,91 @@ void main() {
         ),
         hasLength(1),
       );
+
+      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+      expect(major.selectedIds, contains(capabilityId));
+      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+    },
+  );
+
+  test(
+    'group notification projection durability is manifest-owned and discoverable',
+    () {
+      const capabilityId = 'groups.notification_projection_durability';
+      const runner =
+          'integration_test/scripts/run_group_notification_projection_android.dart';
+      final capability = manifest.capabilityById(capabilityId);
+
+      expect(capability, isNotNull);
+      expect(capability!.toJson(), <String, Object?>{
+        'id': capabilityId,
+        'owner': 'groups',
+        'proofBoundary': 'android.group-notification-projection-durability',
+        'assertions': <String>[
+          'groups.two_group_read_zero_exact_cancel',
+          'groups.group_reaction_photo_semantic_kind',
+          'groups.group_reaction_video_semantic_kind',
+          'groups.group_reaction_voice_message_semantic_kind',
+          'groups.group_projection_stable_single_card',
+        ],
+        'lane': 'reliability',
+        'modes': <String>['full', 'major'],
+        'families': <String>['group', 'notifications'],
+        'required': true,
+        'command': <String>['dart', 'run', runner],
+        'buildProfile': 'android.production_fcm',
+        'dependencies': <String>['build.android.production_fcm'],
+        'resources': <Map<String, String>>[
+          <String, String>{
+            'name': 'build:android.production_fcm',
+            'access': 'read',
+          },
+          <String, String>{
+            'name': 'device:android-physical',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'device:android-emulator',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'relay-mutation:staging',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'artifact:group-notification-projection',
+            'access': 'write',
+          },
+        ],
+        'targetCapabilities': <String>[
+          'android.physical',
+          'android.emulator',
+          'credentials.fcm',
+          'relay.staging',
+        ],
+        'allowedNaReason': targetUnavailableNaReason,
+        'artifactRequired': true,
+        'artifactValidator':
+            'integration_test/group_notification_projection_android_proof_test.dart',
+        'active': true,
+        'declaredBuildException': false,
+        'automationReady': true,
+      });
+
+      for (final entry in _groupNotificationProjectionSupport.entries) {
+        expect(
+          discovery.where(
+            (record) =>
+                record.path == entry.key &&
+                record.category == 'support' &&
+                record.kind == 'support' &&
+                record.note == entry.value,
+          ),
+          hasLength(1),
+          reason: '${entry.key} must remain one exact support-only record',
+        );
+        expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+      }
 
       final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
       expect(major.selectedIds, contains(capabilityId));

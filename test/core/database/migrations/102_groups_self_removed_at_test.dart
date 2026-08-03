@@ -337,7 +337,7 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 105);
+      expect(currentIdentityDatabaseVersion, 106);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -350,12 +350,19 @@ void main() {
         expect(index103, index102 + 1);
         expect(index104, index103 + 1);
         final index105 = registry.indexWhere((entry) => entry.version == 105);
+        final index106 = registry.indexWhere((entry) => entry.version == 106);
         expect(index105, index104 + 1);
-        expect(index105, registry.length - 1);
+        expect(index106, index105 + 1);
+        expect(index106, registry.length - 1);
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
         expect(registry[index104].name, '104_group_exit_diagnostics');
         expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
+        expect(registry[index105].name, '105_reaction_outbox_needs_build');
+        expect(
+          registry[index106].name,
+          '106_group_notification_display_outbox',
+        );
       }
 
       final columns = await db.rawQuery('PRAGMA table_info(groups)');

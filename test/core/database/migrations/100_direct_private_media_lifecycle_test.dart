@@ -113,7 +113,7 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   test('v100 remains the sole successor to v99 and v101-v104 follow it', () {
-    expect(currentIdentityDatabaseVersion, 105);
+    expect(currentIdentityDatabaseVersion, 106);
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
@@ -123,7 +123,9 @@ void main() {
       expect(registry.where((entry) => entry.version == 102), hasLength(1));
       expect(registry.where((entry) => entry.version == 103), hasLength(1));
       expect(registry.where((entry) => entry.version == 104), hasLength(1));
-      expect(registry.where((entry) => entry.version > 105), isEmpty);
+      expect(registry.where((entry) => entry.version == 105), hasLength(1));
+      expect(registry.where((entry) => entry.version == 106), hasLength(1));
+      expect(registry.where((entry) => entry.version > 106), isEmpty);
       final index99 = registry.indexWhere((entry) => entry.version == 99);
       final index100 = registry.indexWhere((entry) => entry.version == 100);
       final index101 = registry.indexWhere((entry) => entry.version == 101);
@@ -137,8 +139,10 @@ void main() {
       expect(index103, index102 + 1);
       expect(index104, index103 + 1);
       final index105 = registry.indexWhere((entry) => entry.version == 105);
-        expect(index105, index104 + 1);
-        expect(index105, registry.length - 1);
+      final index106 = registry.indexWhere((entry) => entry.version == 106);
+      expect(index105, index104 + 1);
+      expect(index106, index105 + 1);
+      expect(index106, registry.length - 1);
       expect(registry[index100].name, '100_direct_private_media_lifecycle');
       expect(
         registry[index100].run,
@@ -155,6 +159,8 @@ void main() {
       expect(registry[index103].run, same(runGroupExitIntentsMigration));
       expect(registry[index104].name, '104_group_exit_diagnostics');
       expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
+      expect(registry[index105].name, '105_reaction_outbox_needs_build');
+      expect(registry[index106].name, '106_group_notification_display_outbox');
     }
   });
 

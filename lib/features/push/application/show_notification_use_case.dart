@@ -63,7 +63,7 @@ String notificationBodyForMessage(
 ///   - App resumed AND viewing sender's conversation -> suppress
 ///   - Same message was already announced by a recent remote push -> suppress
 ///   - Otherwise -> show notification
-Future<void> maybeShowNotification({
+Future<NotificationPresentationResult> maybeShowNotification({
   required NotificationService notificationService,
   required ActiveConversationTracker conversationTracker,
   required AppLifecycleState Function() getAppLifecycleState,
@@ -100,7 +100,7 @@ Future<void> maybeShowNotification({
             : contactPeerId,
       },
     );
-    return;
+    return NotificationPresentationResult.terminalSuppressed;
   }
 
   final lifecycleState = getAppLifecycleState();
@@ -119,7 +119,7 @@ Future<void> maybeShowNotification({
             : contactPeerId,
       },
     );
-    return;
+    return NotificationPresentationResult.terminalSuppressed;
   }
 
   if (consumeRecentRemoteNotificationAnnouncement != null) {
@@ -144,7 +144,7 @@ Future<void> maybeShowNotification({
               : contactPeerId,
         },
       );
-      return;
+      return NotificationPresentationResult.terminalSuppressed;
     }
   }
 
@@ -164,10 +164,39 @@ Future<void> maybeShowNotification({
   final eventIdentity = notificationEventIdentity ?? messageId;
   if (durableNotificationCoordinator != null && eventIdentity != null) {
     try {
-      messageClaim = await durableNotificationCoordinator.claimMessageEvent(
-        type: notificationEventType,
-        eventIdentity: eventIdentity,
-      );
+      final acquisition = await durableNotificationCoordinator
+          .acquireMessageEventClaim(
+            type: notificationEventType,
+            eventIdentity: eventIdentity,
+          );
+      messageClaim = acquisition.claim;
+      if (acquisition.disposition ==
+          DurableNotificationClaimDisposition.pending) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_DEFERRED',
+          details: {
+            'reason': 'message_event_claim_pending',
+            'type': notificationEventType,
+          },
+        );
+        return NotificationPresentationResult.contendedRetryable;
+      }
+      if (acquisition.disposition ==
+          DurableNotificationClaimDisposition.committedOrUnavailable) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_SUPPRESSED',
+          details: {
+            'reason': 'message_event_already_claimed',
+            'type': notificationEventType,
+            'contactPeerId': contactPeerId.length > 10
+                ? contactPeerId.substring(0, 10)
+                : contactPeerId,
+          },
+        );
+        return NotificationPresentationResult.terminalSuppressed;
+      }
     } catch (error) {
       // Storage/locking failure is the sole fail-open case. There is no durable
       // ownership result to honor, so retain the in-memory tone fallback.
@@ -179,20 +208,7 @@ Future<void> maybeShowNotification({
       durableNotificationCoordinator = null;
       claimStorageFailedOpen = true;
     }
-    if (messageClaim == null && !claimStorageFailedOpen) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'NOTIFICATION_SUPPRESSED',
-        details: {
-          'reason': 'message_event_already_claimed',
-          'type': notificationEventType,
-          'contactPeerId': contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
-        },
-      );
-      return;
-    }
+    assert(messageClaim != null || claimStorageFailedOpen);
   }
 
   DurableNotificationToneReservation? toneReservation;
@@ -275,6 +291,15 @@ Future<void> maybeShowNotification({
       messageText: messageText,
       payload: routePayload,
       silent: silent,
+      contentKind: !conversationKey.startsWith('group:')
+          ? null
+          : switch (notificationEventType) {
+              'group_message' => ConversationNotificationContentKind.message,
+              'message_reaction' =>
+                ConversationNotificationContentKind.reaction,
+              _ => null,
+            },
+      contentEventIdentity: eventIdentity,
     );
   } catch (error, stackTrace) {
     // No OS card was published. Release both provisional owners independently;
@@ -343,4 +368,5 @@ Future<void> maybeShowNotification({
       messageId: messageId,
     );
   }
+  return NotificationPresentationResult.shown;
 }

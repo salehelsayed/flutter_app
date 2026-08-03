@@ -22,10 +22,29 @@ class MigrationDatabaseActiveImportResult {
   });
 }
 
+typedef MigrationDatabaseActiveIntegrityCheck =
+    Future<String> Function(DatabaseExecutor db);
+typedef MigrationDatabaseActiveLogicalChecksum =
+    Future<String> Function(DatabaseExecutor db);
+
+final class _ActiveDatabaseTrigger {
+  final String name;
+  final String sql;
+
+  const _ActiveDatabaseTrigger({required this.name, required this.sql});
+}
+
 class MigrationDatabaseActiveImporter {
   final Database activeDatabase;
+  final MigrationDatabaseActiveIntegrityCheck? _activeIntegrityCheck;
+  final MigrationDatabaseActiveLogicalChecksum? _activeLogicalChecksum;
 
-  const MigrationDatabaseActiveImporter({required this.activeDatabase});
+  const MigrationDatabaseActiveImporter({
+    required this.activeDatabase,
+    MigrationDatabaseActiveIntegrityCheck? activeIntegrityCheck,
+    MigrationDatabaseActiveLogicalChecksum? activeLogicalChecksum,
+  }) : _activeIntegrityCheck = activeIntegrityCheck,
+       _activeLogicalChecksum = activeLogicalChecksum;
 
   Future<MigrationDatabaseActiveImportResult> importVerifiedStagedDatabase(
     MigrationDatabaseImportStagingResult staged,
@@ -68,6 +87,13 @@ class MigrationDatabaseActiveImporter {
     try {
       var importedRows = 0;
       await dbWriteTransaction(activeDatabase, (txn) async {
+        final activeTriggers = await _snapshotActiveTriggers(txn);
+        for (final trigger in activeTriggers) {
+          await txn.execute(
+            'DROP TRIGGER IF EXISTS ${_quoteIdentifier(trigger.name)}',
+          );
+        }
+
         for (final tableName in staged.manifest.schemaInventory.tableNames) {
           await txn.delete(tableName);
         }
@@ -81,23 +107,27 @@ class MigrationDatabaseActiveImporter {
             importedRows += 1;
           }
         }
-      });
 
-      final integrity = await _runQuickCheck(activeDatabase);
-      if (integrity.toLowerCase() != 'ok') {
-        throw MigrationDatabaseActiveImportException(
-          'Active database integrity check failed after import: $integrity',
-        );
-      }
-      final importedChecksum =
-          await MigrationDatabaseImportStaging.computeDatabaseChecksumForTesting(
-            activeDatabase,
+        for (final trigger in activeTriggers) {
+          await txn.execute(trigger.sql);
+        }
+
+        final integrity = await (_activeIntegrityCheck ?? _runQuickCheck)(txn);
+        if (integrity.toLowerCase() != 'ok') {
+          throw MigrationDatabaseActiveImportException(
+            'Active database integrity check failed after import: $integrity',
           );
-      if (importedChecksum != stagedLogicalChecksum) {
-        throw const MigrationDatabaseActiveImportException(
-          'Active database checksum does not match imported staged database',
-        );
-      }
+        }
+        final importedChecksum =
+            await (_activeLogicalChecksum ??
+                MigrationDatabaseImportStaging
+                    .computeDatabaseChecksumForTesting)(txn);
+        if (importedChecksum != stagedLogicalChecksum) {
+          throw const MigrationDatabaseActiveImportException(
+            'Active database checksum does not match imported staged database',
+          );
+        }
+      });
 
       return MigrationDatabaseActiveImportResult(
         importedTables: List.unmodifiable(
@@ -112,7 +142,32 @@ class MigrationDatabaseActiveImporter {
     }
   }
 
-  static Future<String> _runQuickCheck(Database db) async {
+  static Future<List<_ActiveDatabaseTrigger>> _snapshotActiveTriggers(
+    DatabaseExecutor db,
+  ) async {
+    final rows = await db.rawQuery(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+      'ORDER BY name',
+    );
+    final triggers = <_ActiveDatabaseTrigger>[];
+    for (final row in rows) {
+      final name = (row['name'] as String?)?.trim();
+      final sql = (row['sql'] as String?)?.trim();
+      if (name == null || name.isEmpty || sql == null || sql.isEmpty) {
+        throw const MigrationDatabaseActiveImportException(
+          'Active database contains a trigger that cannot be restored',
+        );
+      }
+      triggers.add(_ActiveDatabaseTrigger(name: name, sql: sql));
+    }
+    return triggers;
+  }
+
+  static String _quoteIdentifier(String value) {
+    return '"${value.replaceAll('"', '""')}"';
+  }
+
+  static Future<String> _runQuickCheck(DatabaseExecutor db) async {
     final rows = await db.rawQuery('PRAGMA quick_check');
     if (rows.isEmpty) {
       return 'missing quick_check result';

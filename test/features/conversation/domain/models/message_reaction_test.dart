@@ -35,6 +35,23 @@ void main() {
         expect(map['timestamp'], '2026-02-27T10:00:00.000Z');
         expect(map['created_at'], '2026-02-27T10:00:01.000Z');
       });
+
+      test('hydrates acknowledgement from DB without serializing it', () {
+        final hydrated = MessageReaction.fromMap(<String, dynamic>{
+          ...testReaction.toMap(),
+          'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
+        });
+
+        expect(hydrated.notificationAcknowledgedAt, '2026-08-03T01:00:01.000Z');
+        expect(
+          hydrated.toMap(),
+          isNot(contains('notification_acknowledged_at')),
+        );
+        expect(
+          hydrated.toJson(),
+          isNot(contains('notificationAcknowledgedAt')),
+        );
+      });
     });
 
     group('fromJson / toJson round-trip', () {

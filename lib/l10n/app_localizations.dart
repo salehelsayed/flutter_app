@@ -1384,6 +1384,54 @@ abstract class AppLocalizations {
   /// **'Message'**
   String get group_message_hint;
 
+  /// No description provided for @notification_group_reaction_target_message.
+  ///
+  /// In en, this message translates to:
+  /// **'message'**
+  String get notification_group_reaction_target_message;
+
+  /// No description provided for @notification_group_reaction_target_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'photo'**
+  String get notification_group_reaction_target_photo;
+
+  /// No description provided for @notification_group_reaction_target_video.
+  ///
+  /// In en, this message translates to:
+  /// **'video'**
+  String get notification_group_reaction_target_video;
+
+  /// No description provided for @notification_group_reaction_target_voice_message.
+  ///
+  /// In en, this message translates to:
+  /// **'voice message'**
+  String get notification_group_reaction_target_voice_message;
+
+  /// No description provided for @notification_group_reaction_target_file.
+  ///
+  /// In en, this message translates to:
+  /// **'file'**
+  String get notification_group_reaction_target_file;
+
+  /// No description provided for @notification_group_reaction_target_media.
+  ///
+  /// In en, this message translates to:
+  /// **'media'**
+  String get notification_group_reaction_target_media;
+
+  /// No description provided for @notification_group_reaction_actor.
+  ///
+  /// In en, this message translates to:
+  /// **'{actorName} reacted to your {targetKind}'**
+  String notification_group_reaction_actor(String actorName, String targetKind);
+
+  /// No description provided for @notification_group_reaction_someone.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone reacted to your {targetKind}'**
+  String notification_group_reaction_someone(String targetKind);
+
   /// No description provided for @group_create_failed.
   ///
   /// In en, this message translates to:

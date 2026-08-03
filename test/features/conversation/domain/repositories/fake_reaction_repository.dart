@@ -56,7 +56,9 @@ class FakeReactionRepository implements ReactionRepository {
           incomingAt.isBefore(currentAt)) {
         return ReactionAddApplyResult.stale;
       }
-      if (current?.id == reaction.id) {
+      if (current?.id == reaction.id &&
+          current?.isRemoved == false &&
+          current?.timestamp == reaction.timestamp) {
         return ReactionAddApplyResult.exactReplay;
       }
       await saveReaction(reaction);

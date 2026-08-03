@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 
 const String plan256ArtifactSchema = 'mknoon.plan256.device-proof.v1';
 const String backgroundCryptoPreflightBundleSchema =
@@ -5717,6 +5718,7 @@ class ActiveNotificationCard {
     this.id,
     this.category,
     this.routePayload,
+    this.isGroupSummary = false,
   });
 
   final String title;
@@ -5724,6 +5726,7 @@ class ActiveNotificationCard {
   final int? id;
   final String? category;
   final String? routePayload;
+  final bool isGroupSummary;
 }
 
 enum BackgroundCryptoFixtureNotificationOwnershipReason {
@@ -6075,11 +6078,8 @@ List<String> validateOrdinaryMessageNotificationCard(
 }
 
 bool isAcceptedGroupSurface(String xml, String groupName) {
-  final groupVisible =
-      findSemanticNodeCenter(xml, groupName) != null ||
-      findSemanticNodeCenter(xml, 'Open group $groupName') != null;
-  if (!groupVisible) return false;
-  return findSemanticNodeCenter(xml, 'Accept') == null;
+  return findSemanticNodeCenter(xml, 'Accept') == null &&
+      isGroupConversationSurface(xml, groupName);
 }
 
 bool isGroupConversationSurface(String xml, String groupName) {
@@ -6112,6 +6112,143 @@ bool isGroupConversationSurface(String xml, String groupName) {
     if (bounds != null) return bounds;
   }
   return null;
+}
+
+/// Terminal outcomes for one bounded, single-injection compose attempt.
+enum GroupComposeMarkerEntryOutcome {
+  accepted,
+  editorUnavailable,
+  focusNotAcquired,
+  composeNotEmpty,
+  markerMismatch,
+  markerNotObserved,
+}
+
+final class _GroupComposeEditorNode {
+  const _GroupComposeEditorNode({required this.bounds, required this.value});
+
+  final (int, int, int, int) bounds;
+  final String value;
+}
+
+/// Finds the exact enabled and focusable Android compose editor.
+///
+/// When [requireFocused] is true, an otherwise matching but unfocused
+/// `android.widget.EditText` is rejected. [exactText] is compared as a whole
+/// value, never as a substring, so partial input and a marker in a message
+/// bubble cannot satisfy the compose proof.
+(int, int, int, int)? findEnabledFocusableGroupComposeEditorBounds(
+  String xml, {
+  bool requireFocused = false,
+  String? exactText,
+}) {
+  return _findEnabledFocusableGroupComposeEditor(
+    xml,
+    requireFocused: requireFocused,
+    exactText: exactText,
+  )?.bounds;
+}
+
+_GroupComposeEditorNode? _findEnabledFocusableGroupComposeEditor(
+  String xml, {
+  required bool requireFocused,
+  String? exactText,
+}) {
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    if (_xmlAttribute(raw, 'class') != 'android.widget.EditText' ||
+        _xmlAttribute(raw, 'enabled') != 'true' ||
+        _xmlAttribute(raw, 'focusable') != 'true' ||
+        (requireFocused && _xmlAttribute(raw, 'focused') != 'true')) {
+      continue;
+    }
+    final bounds = _nodeBounds(raw);
+    if (bounds == null) continue;
+    final nodeText = _xmlAttribute(raw, 'text');
+    final description = _xmlAttribute(raw, 'content-desc');
+    final value = nodeText.isNotEmpty ? nodeText : description;
+    if (exactText != null && value != exactText) continue;
+    return _GroupComposeEditorNode(bounds: bounds, value: value);
+  }
+  return null;
+}
+
+/// Taps, focus-fences, and injects one group compose marker exactly once.
+///
+/// ADB text injection is permitted only after a bounded UIAutomator poll sees
+/// the exact enabled, focusable, focused `android.widget.EditText`. Once text
+/// has been injected, partial or different editor content fails immediately;
+/// the helper never retries injection. Empty content may be polled for the
+/// bounded acceptance window to allow the semantics tree to catch up.
+Future<GroupComposeMarkerEntryOutcome> enterGroupComposeMarkerOnce({
+  required String marker,
+  required Future<String> Function() readUiDump,
+  required Future<void> Function((int, int) center) tapEditor,
+  required Future<void> Function(String marker) injectMarker,
+  int maximumFocusPolls = 20,
+  int maximumAcceptancePolls = 20,
+  Duration pollInterval = const Duration(milliseconds: 250),
+}) async {
+  if (marker.isEmpty) {
+    throw ArgumentError.value(marker, 'marker', 'must not be empty');
+  }
+  if (maximumFocusPolls <= 0) {
+    throw ArgumentError.value(maximumFocusPolls, 'maximumFocusPolls');
+  }
+  if (maximumAcceptancePolls <= 0) {
+    throw ArgumentError.value(maximumAcceptancePolls, 'maximumAcceptancePolls');
+  }
+
+  final initial = _findEnabledFocusableGroupComposeEditor(
+    await readUiDump(),
+    requireFocused: false,
+  );
+  if (initial == null) {
+    return GroupComposeMarkerEntryOutcome.editorUnavailable;
+  }
+  await tapEditor((
+    (initial.bounds.$1 + initial.bounds.$3) ~/ 2,
+    (initial.bounds.$2 + initial.bounds.$4) ~/ 2,
+  ));
+
+  _GroupComposeEditorNode? focused;
+  for (var poll = 0; poll < maximumFocusPolls; poll += 1) {
+    focused = _findEnabledFocusableGroupComposeEditor(
+      await readUiDump(),
+      requireFocused: true,
+    );
+    if (focused != null) break;
+    if (poll + 1 < maximumFocusPolls && pollInterval > Duration.zero) {
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+  if (focused == null) {
+    return GroupComposeMarkerEntryOutcome.focusNotAcquired;
+  }
+  if (focused.value.isNotEmpty) {
+    return GroupComposeMarkerEntryOutcome.composeNotEmpty;
+  }
+
+  await injectMarker(marker);
+
+  for (var poll = 0; poll < maximumAcceptancePolls; poll += 1) {
+    final observed = _findEnabledFocusableGroupComposeEditor(
+      await readUiDump(),
+      requireFocused: true,
+    );
+    if (observed != null) {
+      if (observed.value == marker) {
+        return GroupComposeMarkerEntryOutcome.accepted;
+      }
+      if (observed.value.isNotEmpty) {
+        return GroupComposeMarkerEntryOutcome.markerMismatch;
+      }
+    }
+    if (poll + 1 < maximumAcceptancePolls && pollInterval > Duration.zero) {
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+  return GroupComposeMarkerEntryOutcome.markerNotObserved;
 }
 
 /// Finds a node only when both its Android class and semantic text match.
@@ -6219,11 +6356,60 @@ List<ActiveNotificationCard> extractActiveNotificationCards(
           RegExp(r'\bid=(-?\d+)\b').firstMatch(record)?.group(1) ?? '',
         ),
         category: RegExp(r'\bcategory=([^\s,)]+)').firstMatch(record)?.group(1),
-        routePayload: _notificationValue(record, 'payload'),
+        routePayload: _notificationRouteValue(record),
+        isGroupSummary: isAndroidGroupSummaryNotificationRecord(record),
       ),
     );
   }
   return cards;
+}
+
+/// Returns only content-bearing app notification records.
+///
+/// Android may synthesize an id=0 aggregate summary when multiple app
+/// notifications are active. That OS-owned record is useful diagnostic data,
+/// but it is not a conversation card and must not affect exact card counts.
+List<ActiveNotificationCard> extractActiveContentNotificationCards(
+  String dump, {
+  required String packageName,
+}) {
+  return extractActiveNotificationCards(
+    dump,
+    packageName: packageName,
+  ).where((card) => !card.isGroupSummary).toList(growable: false);
+}
+
+/// Distinguishes Android's synthetic notification-group summary from the
+/// content-bearing notification records posted by the app.
+bool isAndroidGroupSummaryNotificationRecord(String record) {
+  final flags = RegExp(
+    r'^\s*flags=([^\r\n]+)$',
+    multiLine: true,
+  ).firstMatch(record)?.group(1);
+  if (flags == null) return false;
+  final normalizedFlags = flags.trim();
+  final hasGroupSummary = RegExp(
+    r'(?:^|\|)GROUP_SUMMARY(?:\||$)',
+  ).hasMatch(normalizedFlags);
+  final hasAutoGroupSummary = RegExp(
+    r'(?:^|\|)AUTOGROUP_SUMMARY(?:\||$)',
+  ).hasMatch(normalizedFlags);
+  final id = int.tryParse(
+    RegExp(r'\bid=(-?\d+)\b').firstMatch(record)?.group(1) ?? '',
+  );
+  final packageName = RegExp(r'\bpkg=([^\s,)]+)').firstMatch(record)?.group(1);
+  final tag = RegExp(r'\btag=([^\s,)]+)').firstMatch(record)?.group(1);
+  final aggregateTag = packageName != null
+      ? RegExp(
+          '^0\\|${RegExp.escape(packageName)}\\|g:Aggregate_[A-Za-z0-9_]+\$',
+        ).hasMatch(tag ?? '')
+      : false;
+  return id == 0 &&
+      hasGroupSummary &&
+      hasAutoGroupSummary &&
+      aggregateTag &&
+      _notificationValue(record, 'android.title').isEmpty &&
+      _notificationValue(record, 'android.text').isEmpty;
 }
 
 String _relayPrefix(String value) {
@@ -6242,6 +6428,12 @@ String _notificationValue(String record, String key) {
     value = value.substring('String ('.length, value.length - 1);
   }
   return value == 'null' ? '' : value;
+}
+
+String _notificationRouteValue(String record) {
+  final payload = _notificationValue(record, 'payload');
+  return decodeConversationNotificationPayload(payload)?.routePayload ??
+      payload;
 }
 
 String _xmlAttribute(String node, String name) {

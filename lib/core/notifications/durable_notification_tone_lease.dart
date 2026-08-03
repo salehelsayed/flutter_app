@@ -40,6 +40,44 @@ class DurableNotificationEventClaim {
   Future<bool> release() => _owner._releaseMessageClaim(this);
 }
 
+/// Typed ownership outcome for an exact notification event.
+enum DurableNotificationClaimDisposition {
+  /// This caller owns a new provisional claim and may attempt OS publication.
+  acquired,
+
+  /// Another producer owns a fresh provisional claim. Retry after its bounded
+  /// claim window; this is not proof that the event was displayed.
+  pending,
+
+  /// A committed, legacy, NSE, or malformed fail-closed owner exists.
+  committedOrUnavailable,
+}
+
+final class DurableNotificationClaimAcquisition {
+  const DurableNotificationClaimAcquisition._({
+    required this.disposition,
+    this.claim,
+  });
+
+  const DurableNotificationClaimAcquisition.acquired(
+    DurableNotificationEventClaim claim,
+  ) : this._(
+        disposition: DurableNotificationClaimDisposition.acquired,
+        claim: claim,
+      );
+
+  const DurableNotificationClaimAcquisition.pending()
+    : this._(disposition: DurableNotificationClaimDisposition.pending);
+
+  const DurableNotificationClaimAcquisition.committedOrUnavailable()
+    : this._(
+        disposition: DurableNotificationClaimDisposition.committedOrUnavailable,
+      );
+
+  final DurableNotificationClaimDisposition disposition;
+  final DurableNotificationEventClaim? claim;
+}
+
 /// A token-owned reservation for the next audible notification in one
 /// conversation.
 ///
@@ -282,6 +320,18 @@ class DurableNotificationToneLease {
     required String type,
     required String eventIdentity,
   }) async {
+    return (await acquireMessageEventClaim(
+      type: type,
+      eventIdentity: eventIdentity,
+    )).claim;
+  }
+
+  /// Acquires an exact event claim without conflating a fresh contender with a
+  /// terminal committed/NSE owner.
+  Future<DurableNotificationClaimAcquisition> acquireMessageEventClaim({
+    required String type,
+    required String eventIdentity,
+  }) async {
     final normalizedType = _normalize(type, 'type');
     final normalizedIdentity = _normalize(eventIdentity, 'eventIdentity');
     final first = await _attemptMessageClaim(
@@ -289,10 +339,10 @@ class DurableNotificationToneLease {
       eventIdentity: normalizedIdentity,
     );
     if (first.state == _MessageClaimAttemptState.claimed) {
-      return first.claim;
+      return DurableNotificationClaimAcquisition.acquired(first.claim!);
     }
     if (first.state != _MessageClaimAttemptState.pending) {
-      return null;
+      return const DurableNotificationClaimAcquisition.committedOrUnavailable();
     }
 
     if (pendingClaimWait > Duration.zero) {
@@ -302,7 +352,14 @@ class DurableNotificationToneLease {
       type: normalizedType,
       eventIdentity: normalizedIdentity,
     );
-    return retry.claim;
+    return switch (retry.state) {
+      _MessageClaimAttemptState.claimed =>
+        DurableNotificationClaimAcquisition.acquired(retry.claim!),
+      _MessageClaimAttemptState.pending =>
+        const DurableNotificationClaimAcquisition.pending(),
+      _MessageClaimAttemptState.unavailable =>
+        const DurableNotificationClaimAcquisition.committedOrUnavailable(),
+    };
   }
 
   Future<_MessageClaimAttempt> _attemptMessageClaim({

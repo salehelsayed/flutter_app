@@ -38,7 +38,7 @@ const _relocations = <String, List<String>>{
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/reaction_repository_impl.dart',
-    '13b077a7e38eba342c0931b63b2787fd94cfb6710674198f8b83fd178a122c14',
+    '449747d0b7ecbb954a59f8f7f7d94844e31f85bd390e7d0571271ccabb1f3386',
   ],
   'lib/features/groups/domain/repositories/'
       'group_exit_diagnostic_repository_impl.dart': <String>[
@@ -67,7 +67,7 @@ const _relocations = <String, List<String>>{
   'lib/features/groups/domain/repositories/'
       'group_message_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/group_message_repository_impl.dart',
-    '414791b5c32e3a32000db687cf012cfc4a973821319c686896103d824ca0461c',
+    '370bc07e12068d0491f868b88e63493d8aa0eafe604a704b2c8e668b15de7ed0',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_broadcast_repository_impl.dart': <String>[
@@ -103,12 +103,12 @@ const _relocations = <String, List<String>>{
       'group_reaction_replay_outbox_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/'
         'group_reaction_replay_outbox_repository_impl.dart',
-    '29aadb44b199d5f01c2cf7879933fe746bf648b40280d3aeb0ea1774d65ead1d',
+    'c323a1410410d7e238ad8e4f451211910d8b745b54a4a81c0a13245050b0e2bc',
   ],
   'lib/features/groups/domain/repositories/'
       'group_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/group_repository_impl.dart',
-    'c32d07debab99919a94c9df5e098b7bd12e53190d42325defc1dbf70778bd877',
+    'd25715a537c6160530f32cf5549b8f89b0c171953cc5b129489e54ba0bed3704',
   ],
   'lib/features/groups/domain/repositories/'
       'pending_group_invite_repository_impl.dart': <String>[

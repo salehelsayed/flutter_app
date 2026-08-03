@@ -136,9 +136,9 @@ const _contactSha256 =
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
 const _applicationRootNormalizedSha256 =
-    '6a03bbb997b9962fd3140fc60b16822406c787179b7cfd43fa1ed217d85b5fe5';
+    '7a3c1d993bc8cb8062daaed0a4b035470afd0c3940768f06709f3e6776eb51db';
 const _productionBootstrapNormalizedSha256 =
-    '6d9904e680a158933daa02b0d37b6a9c4b19c3f199d7d504ed81555b93804afe';
+    '4502b225116ae648c8aff4529c4c312592a01d13217db7dcf12d8e73e1195e25';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -161,6 +161,8 @@ const _reviewedResumeExceptionTargets = <String>{
   'lib/features/groups/domain/repositories/group_message_repository.dart',
   'lib/features/groups/domain/repositories/'
       'group_pending_key_repair_repository.dart',
+  'lib/features/groups/domain/repositories/'
+      'group_pending_reaction_repository.dart',
   'lib/features/groups/domain/repositories/group_repository.dart',
   'lib/features/identity/domain/repositories/identity_repository.dart',
   'lib/features/posts/application/nearby_location_service.dart',
@@ -289,7 +291,7 @@ void main() {
     expect(
       _featureImportTargets(_source(root, _newResumePath)),
       _reviewedResumeExceptionTargets,
-      reason: 'the moved source must retain the 17 reviewed feature imports',
+      reason: 'the moved source must retain the 18 reviewed feature imports',
     );
 
     expect(_directiveFiles(root, _newResumeUri), _resumeDirectiveFiles);
@@ -380,7 +382,7 @@ void main() {
 
     expect(dependencies, hasLength(165));
     expect(placements, isEmpty);
-    expect(_reviewedResumeExceptionTargets, hasLength(17));
+    expect(_reviewedResumeExceptionTargets, hasLength(18));
     for (final target in _reviewedResumeExceptionTargets) {
       expect(
         dependencies.where(

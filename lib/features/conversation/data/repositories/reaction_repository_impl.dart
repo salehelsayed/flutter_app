@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../../domain/models/message_reaction.dart';
@@ -8,12 +9,27 @@ import '../../domain/repositories/reaction_repository.dart';
 
 /// Implementation of ReactionRepository using database helper functions.
 class ReactionRepositoryImpl
-    implements ReactionRepository, AtomicIncomingReactionMutationRepository {
+    implements
+        ReactionRepository,
+        AtomicIncomingReactionMutationRepository,
+        AtomicGroupReactionAdditionRepository,
+        AtomicGroupReactionRemovalRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertReaction;
   final Future<ReactionAddApplyResult> Function(Map<String, Object?> row)?
   dbApplyIncomingAdd;
+  final Future<ReactionAddApplyResult> Function({
+    required String groupId,
+    required String notificationEventId,
+    required Map<String, Object?> row,
+  })?
+  dbApplyGroupAdd;
   final Future<ReactionRemoveApplyResult> Function(Map<String, Object?> row)?
   dbApplyIncomingRemove;
+  final Future<ReactionRemoveApplyResult> Function({
+    required String groupId,
+    required Map<String, Object?> row,
+  })?
+  dbApplyGroupRemove;
   final Future<List<Map<String, Object?>>> Function(String messageId)
   dbLoadReactionsForMessage;
   final Future<List<Map<String, Object?>>> Function(List<String> messageIds)
@@ -42,7 +58,9 @@ class ReactionRepositoryImpl
   ReactionRepositoryImpl({
     required this.dbInsertReaction,
     this.dbApplyIncomingAdd,
+    this.dbApplyGroupAdd,
     this.dbApplyIncomingRemove,
+    this.dbApplyGroupRemove,
     required this.dbLoadReactionsForMessage,
     required this.dbLoadReactionsForMessages,
     required this.dbLoadActiveOrTombstonedReactionForSender,
@@ -89,6 +107,26 @@ class ReactionRepositoryImpl
   }
 
   @override
+  Future<ReactionAddApplyResult> applyGroupAdd({
+    required String groupId,
+    required String notificationEventId,
+    required MessageReaction reaction,
+  }) async {
+    final atomicApply = dbApplyGroupAdd;
+    final result = atomicApply == null
+        ? await applyIncomingAdd(reaction)
+        : await atomicApply(
+            groupId: groupId,
+            notificationEventId: notificationEventId,
+            row: reaction.toMap(),
+          );
+    if (atomicApply != null && result != ReactionAddApplyResult.stale) {
+      await groupReactionProjection?.upsertReactionComparand(reaction);
+    }
+    return result;
+  }
+
+  @override
   Future<ReactionAddApplyResult> applyIncomingAdd(MessageReaction reaction) {
     final atomicApply = dbApplyIncomingAdd;
     if (atomicApply != null) {
@@ -114,7 +152,9 @@ class ReactionRepositoryImpl
           incomingAt.isBefore(currentAt)) {
         return ReactionAddApplyResult.stale;
       }
-      if (current?.id == reaction.id) {
+      if (current?.id == reaction.id &&
+          current?.isRemoved == false &&
+          current?.timestamp == reaction.timestamp) {
         return ReactionAddApplyResult.exactReplay;
       }
 
@@ -155,7 +195,9 @@ class ReactionRepositoryImpl
           incomingAt.isBefore(currentAt)) {
         return ReactionRemoveApplyResult.stale;
       }
-      if (current?.isRemoved == true && current?.id == reaction.id) {
+      if (current?.isRemoved == true &&
+          current?.id == reaction.id &&
+          current?.removedAt == reaction.timestamp) {
         return ReactionRemoveApplyResult.exactReplay;
       }
 
@@ -166,6 +208,26 @@ class ReactionRepositoryImpl
       );
       return ReactionRemoveApplyResult.applied;
     });
+  }
+
+  @override
+  Future<ReactionRemoveApplyResult> applyGroupRemove({
+    required String groupId,
+    required MessageReaction reaction,
+  }) async {
+    final atomicApply = dbApplyGroupRemove;
+    final result = atomicApply == null
+        ? await applyIncomingRemove(reaction)
+        : await atomicApply(groupId: groupId, row: reaction.toMap());
+    if (atomicApply != null && result != ReactionRemoveApplyResult.stale) {
+      await groupReactionProjection?.upsertReactionComparand(
+        reaction.copyWith(removedAt: reaction.timestamp),
+      );
+    }
+    if (result != ReactionRemoveApplyResult.stale) {
+      emitGroupNotificationReconciliationSignal(groupId);
+    }
+    return result;
   }
 
   Future<T> _serializeIncomingMutation<T>(Future<T> Function() action) async {
@@ -251,7 +313,9 @@ class ReactionRepositoryImpl
   }
 
   /// Launch/migration self-heal for the bounded iOS reaction comparand mirror.
-  Future<void> mirrorAllGroupReactionNotificationComparands() async {
+  Future<void> mirrorAllGroupReactionNotificationComparands({
+    bool rethrowOnError = false,
+  }) async {
     final projection = groupReactionProjection;
     final loadRows = dbLoadGroupReactionComparandsForProjection;
     if (projection == null || loadRows == null) return;
@@ -271,6 +335,7 @@ class ReactionRepositoryImpl
         event: 'REACTION_REPO_GROUP_PUSH_PROJECTION_BACKFILL_ERROR',
         details: {'error': error.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
   }
 }

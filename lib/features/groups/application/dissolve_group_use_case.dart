@@ -98,6 +98,10 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   }
 
   if (group.isDissolved) {
+    // Replays are also cleanup retries. The database-backed repository keeps
+    // this exact-group outbox retirement in the same transaction as the
+    // authoritative terminal row update.
+    await groupRepo.commitDissolvedGroupTerminally(group);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_DISSOLVE_USE_CASE_ALREADY_DISSOLVED',
@@ -268,7 +272,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       } catch (error) {
         return _DissolvePublishAttempt.failed(error, freshGroup);
       }
-      await groupRepo.updateGroup(updatedGroup);
+      await groupRepo.commitDissolvedGroupTerminally(updatedGroup);
       return _DissolvePublishAttempt.published(
         published,
         updatedGroup,

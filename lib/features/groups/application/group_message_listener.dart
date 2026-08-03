@@ -11,6 +11,10 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
+import 'package:flutter_app/core/notifications/group_notification_canonical_reconciler.dart';
+import 'package:flutter_app/core/notifications/group_notification_read_projector.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -29,6 +33,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
+import 'package:flutter_app/features/groups/application/group_notification_display_retry_coordinator.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
@@ -44,6 +49,8 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_membersh
 import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_reconciliation_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository.dart';
@@ -51,6 +58,10 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_re
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_notification_reconciliation_outbox_repository.dart';
+import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/push/application/private_media_notification_body.dart';
 
@@ -86,6 +97,42 @@ typedef BeginGroupMediaReceiveCriticalTask = Future<String?> Function();
 /// Releases the exact critical-task lease granted to a background group-media
 /// receive batch.
 typedef EndGroupMediaReceiveCriticalTask = Future<void> Function(String taskId);
+
+typedef LoadLatestUnreadGroupNotificationMessage =
+    Future<GroupMessage?> Function(String groupId);
+typedef IsActiveGroupNotificationReaction =
+    Future<GroupNotificationCanonicalContentDecision> Function({
+      required String groupId,
+      required String selfPeerId,
+      required String eventIdentity,
+    });
+typedef LoadLatestActiveGroupNotificationReaction =
+    Future<GroupNotificationCanonicalReaction?> Function({
+      required String groupId,
+      required String selfPeerId,
+    });
+typedef GroupNotificationEventAcknowledgedResolver =
+    Future<bool> Function({
+      required String groupId,
+      required ConversationNotificationContentKind contentKind,
+      required String eventIdentity,
+    });
+
+/// Identifier-only canonical reaction attention used to rebuild the shared
+/// group card. Target text and raw emoji are intentionally not represented.
+final class GroupNotificationCanonicalReaction {
+  const GroupNotificationCanonicalReaction({
+    required this.messageId,
+    required this.actorPeerId,
+    required this.eventIdentity,
+    required this.timestamp,
+  });
+
+  final String messageId;
+  final String actorPeerId;
+  final String eventIdentity;
+  final DateTime timestamp;
+}
 
 /// Opaque ownership of one participant in the listener's shared group-media
 /// receive critical task.
@@ -135,6 +182,9 @@ class GroupMessageListener {
   // 118 Phase 4: shared per-conversation tone debounce (the same tracker the
   // direct listener uses; group + direct keys are disjoint).
   final NotificationToneTracker? _notificationToneTracker;
+  final GroupNotificationPresentationCoordinator?
+  _notificationPresentationCoordinator;
+  late final GroupNotificationReadProjector? _notificationReadProjector;
   final Future<DurableNotificationToneLease> Function()
   _durableNotificationCoordinatorResolver;
   final AppLifecycleState Function()? _getAppLifecycleState;
@@ -149,6 +199,32 @@ class GroupMessageListener {
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final GroupPrivateMediaAvailability _privateMediaAvailability;
+  final GroupNotificationDisplayOutboxRepository? _notificationDisplayOutbox;
+  final GroupNotificationReconciliationOutboxRepository?
+  _notificationReconciliationOutbox;
+  final LoadLatestUnreadGroupNotificationMessage?
+  _loadLatestUnreadNotificationMessage;
+  final IsActiveGroupNotificationReaction? _isActiveGroupNotificationReaction;
+  final LoadLatestActiveGroupNotificationReaction?
+  _loadLatestActiveNotificationReaction;
+  final GroupNotificationEventAcknowledgedResolver?
+  _isGroupNotificationEventAcknowledged;
+  late final GroupNotificationCanonicalReconciler?
+  _notificationCanonicalReconciler;
+  late final GroupNotificationDisplayRetryCoordinator<
+    GroupNotificationDisplayOutboxEntry
+  >?
+  _notificationDisplayRetryCoordinator;
+  late final GroupNotificationDisplayRetryCoordinator<
+    GroupNotificationReconciliationOutboxEntry
+  >?
+  _notificationReconciliationRetryCoordinator;
+  Timer? _notificationDisplayRetryTimer;
+  DateTime? _notificationDisplayRetryDueAt;
+  int _canonicalNotificationRecoveryDepth = 0;
+  bool _canonicalNotificationRecoveryFailed = false;
+  bool _canonicalNotificationStateIncomplete = false;
+  bool _startupCanonicalNotificationRecoveryPending = false;
 
   late final _GroupMessageSystemTransitionProcessor _systemTransitionProcessor;
   late final _GroupMembershipDependentMessageBuffer
@@ -159,6 +235,7 @@ class GroupMessageListener {
   StreamSubscription<void>? _subscription;
   StreamSubscription<void>? _reactionSubscription;
   StreamSubscription<Map<String, dynamic>>? _diagnosticSubscription;
+  StreamSubscription<String>? _notificationReconciliationSignalSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
   final _removedController = StreamController<String>.broadcast();
   final _reactionChangeController =
@@ -184,6 +261,8 @@ class GroupMessageListener {
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     NotificationToneTracker? notificationToneTracker,
+    GroupNotificationPresentationCoordinator?
+    notificationPresentationCoordinator,
     Future<DurableNotificationToneLease> Function()?
     durableNotificationCoordinatorResolver,
     AppLifecycleState Function()? getAppLifecycleState,
@@ -207,6 +286,16 @@ class GroupMessageListener {
     GroupPrivateMediaAvailability privateMediaAvailability =
         productionGroupPrivateMediaAvailability,
     GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
+    GroupNotificationDisplayOutboxRepository? notificationDisplayOutbox,
+    GroupNotificationReconciliationOutboxRepository?
+    notificationReconciliationOutbox,
+    LoadLatestUnreadGroupNotificationMessage?
+    loadLatestUnreadNotificationMessage,
+    IsActiveGroupNotificationReaction? isActiveGroupNotificationReaction,
+    LoadLatestActiveGroupNotificationReaction?
+    loadLatestActiveNotificationReaction,
+    GroupNotificationEventAcknowledgedResolver?
+    isGroupNotificationEventAcknowledged,
     BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
     EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
   }) : _groupRepo = groupRepo,
@@ -217,6 +306,11 @@ class GroupMessageListener {
        _notificationService = notificationService,
        _groupConversationTracker = groupConversationTracker,
        _notificationToneTracker = notificationToneTracker,
+       _notificationPresentationCoordinator =
+           notificationPresentationCoordinator ??
+           (notificationDisplayOutbox == null
+               ? null
+               : GroupNotificationPresentationCoordinator()),
        _durableNotificationCoordinatorResolver =
            durableNotificationCoordinatorResolver ??
            DurableNotificationToneLease.openMobileDefault,
@@ -233,7 +327,147 @@ class GroupMessageListener {
            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
-       _privateMediaAvailability = privateMediaAvailability {
+       _privateMediaAvailability = privateMediaAvailability,
+       _notificationDisplayOutbox = notificationDisplayOutbox,
+       _notificationReconciliationOutbox = notificationReconciliationOutbox,
+       _loadLatestUnreadNotificationMessage =
+           loadLatestUnreadNotificationMessage,
+       _isActiveGroupNotificationReaction = isActiveGroupNotificationReaction,
+       _loadLatestActiveNotificationReaction =
+           loadLatestActiveNotificationReaction,
+       _isGroupNotificationEventAcknowledged =
+           isGroupNotificationEventAcknowledged {
+    final readSource = msgRepo is GroupConversationReadEventSource
+        ? msgRepo as GroupConversationReadEventSource
+        : null;
+    final ConversationNotificationCancellation? cancellation =
+        notificationService is ConversationNotificationCancellation
+        ? notificationService as ConversationNotificationCancellation
+        : null;
+    _notificationReadProjector =
+        _notificationPresentationCoordinator != null && readSource != null
+        ? GroupNotificationReadProjector(
+            coordinator: _notificationPresentationCoordinator,
+            readEvents: readSource.groupConversationReadStream,
+            existingGroupIds: () async =>
+                (await groupRepo.getAllGroups()).map((group) => group.id),
+            unreadCountForGroup: msgRepo.getUnreadCount,
+            messageEventIsRead: (groupId, eventIdentity) async {
+              final message = await msgRepo.getMessage(eventIdentity);
+              return message != null &&
+                  message.groupId == groupId &&
+                  message.isIncoming &&
+                  message.readAt != null;
+            },
+            contentEventIsAcknowledged:
+                _isGroupNotificationEventAcknowledged == null
+                ? null
+                : (groupId, metadata) {
+                    final eventIdentity = metadata.eventIdentity?.trim();
+                    if (eventIdentity == null || eventIdentity.isEmpty) {
+                      return Future<bool>.value(false);
+                    }
+                    return _isGroupNotificationEventAcknowledged(
+                      groupId: groupId,
+                      contentKind: metadata.kind,
+                      eventIdentity: eventIdentity,
+                    );
+                  },
+            cancellation: cancellation,
+          )
+        : null;
+    final generationCancellation =
+        notificationService is ConversationNotificationGenerationCancellation
+        ? notificationService as ConversationNotificationGenerationCancellation
+        : null;
+    final generationReplacement =
+        notificationService is ConversationNotificationGenerationReplacement
+        ? notificationService as ConversationNotificationGenerationReplacement
+        : null;
+    _notificationCanonicalReconciler =
+        _notificationPresentationCoordinator != null &&
+            notificationReconciliationOutbox != null &&
+            generationCancellation != null &&
+            generationReplacement != null &&
+            loadLatestUnreadNotificationMessage != null &&
+            isActiveGroupNotificationReaction != null &&
+            loadLatestActiveNotificationReaction != null &&
+            groupConversationTracker != null &&
+            getAppLifecycleState != null
+        ? GroupNotificationCanonicalReconciler(
+            coordinator: _notificationPresentationCoordinator,
+            generationCancellation: generationCancellation,
+            generationReplacement: generationReplacement,
+            isCurrentContentCanonical: _isCurrentNotificationContentCanonical,
+            loadReplacement: _loadCanonicalNotificationReplacement,
+          )
+        : null;
+    final displayOutbox = notificationDisplayOutbox;
+    _notificationDisplayRetryCoordinator = displayOutbox == null
+        ? null
+        : GroupNotificationDisplayRetryCoordinator<
+            GroupNotificationDisplayOutboxEntry
+          >(
+            loadReady: ({required limit}) =>
+                displayOutbox.loadReady(limit: limit),
+            entryIdentity: (entry) => entry.eventId,
+            loadEarliestNextAttemptAt: displayOutbox.loadEarliestNextAttemptAt,
+            project: _projectNotificationDisplayEntry,
+            complete: (entry) async {
+              final completed = await displayOutbox.completeIfExact(entry);
+              if (!completed) {
+                throw const GroupNotificationDisplayRetryableException();
+              }
+            },
+            recordFailure: (entry, error) async {
+              await displayOutbox.recordRetryIfExact(
+                eventId: entry.eventId,
+                expectedRevision: entry.revision,
+                lastErrorCode:
+                    error is GroupNotificationDisplayStateUnavailableException
+                    ? GroupNotificationDisplayOutboxErrorCode.stateUnavailable
+                    : error is GroupNotificationDisplayRetryableException
+                    ? GroupNotificationDisplayOutboxErrorCode.claimPending
+                    : GroupNotificationDisplayOutboxErrorCode.displayFailed,
+                nextAttemptAt: DateTime.now().toUtc().add(
+                  const Duration(seconds: 65),
+                ),
+              );
+            },
+            scheduleRetry: _scheduleNotificationDisplayRetry,
+          );
+    final reconciliationOutbox = notificationReconciliationOutbox;
+    final canonicalReconciler = _notificationCanonicalReconciler;
+    _notificationReconciliationRetryCoordinator =
+        reconciliationOutbox == null || canonicalReconciler == null
+        ? null
+        : GroupNotificationDisplayRetryCoordinator<
+            GroupNotificationReconciliationOutboxEntry
+          >(
+            loadReady: ({required limit}) =>
+                reconciliationOutbox.loadEligible(limit: limit),
+            entryIdentity: (entry) => entry.groupId,
+            loadEarliestNextAttemptAt:
+                reconciliationOutbox.loadEarliestNextAttemptAt,
+            project: (entry) async {
+              await canonicalReconciler.reconcile(entry.groupId);
+              return GroupNotificationDisplayRetryDisposition.completed;
+            },
+            complete: (entry) async {
+              if (!await reconciliationOutbox.completeIfExact(entry)) {
+                throw const GroupNotificationDisplayRetryableException();
+              }
+            },
+            recordFailure: (entry, _) async {
+              await reconciliationOutbox.recordFailureIfExact(
+                expected: entry,
+                nextAttemptAt: DateTime.now().toUtc().add(
+                  const Duration(seconds: 65),
+                ),
+              );
+            },
+            scheduleRetry: _scheduleNotificationDisplayRetry,
+          );
     _membershipDependentMessageBuffer = _GroupMembershipDependentMessageBuffer(
       groupRepo: groupRepo,
       msgRepo: msgRepo,
@@ -255,11 +489,13 @@ class GroupMessageListener {
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       reactionRepo: reactionRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
       pendingReactionRepo: pendingReactionRepo,
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: getAppLifecycleState,
       notificationToneTracker: notificationToneTracker,
+      notificationPresentationCoordinator: _notificationPresentationCoordinator,
       remoteNotificationGate:
           remoteNotificationGate ?? recentRemoteNotificationGate,
       isStoppingOrDisposed: () => _isStopping || _isDisposed,
@@ -267,6 +503,15 @@ class GroupMessageListener {
       resolveDurableNotificationCoordinator:
           _resolveDurableNotificationCoordinator,
       emitReactionChange: _emitReactionChange,
+      stageNotificationDisplayCustody: _notificationDisplayOutbox == null
+          ? null
+          : _stageReactionNotificationDisplayCustody,
+      reconcileNotificationDisplayCustody: _notificationDisplayOutbox == null
+          ? null
+          : _markNotificationDisplayCustodyReady,
+      retryNotificationDisplays: _notificationDisplayOutbox == null
+          ? null
+          : retryPendingNotificationDisplays,
     );
     _mediaReceiveCoordinator = _GroupMediaReceiveCoordinator(
       bridge: bridge,
@@ -324,6 +569,805 @@ class GroupMessageListener {
       );
       return null;
     }
+  }
+
+  Future<GroupMessageNotificationDisplayEligibility>
+  _resolveGroupNotificationDisplayEligibility(
+    String groupId,
+    String? selfPeerId,
+  ) async {
+    final group = await _groupRepo.getGroup(groupId);
+    final normalizedSelf = selfPeerId?.trim();
+    final selfMember =
+        group == null || normalizedSelf == null || normalizedSelf.isEmpty
+        ? null
+        : await _groupRepo.getMember(groupId, normalizedSelf);
+    return evaluateGroupNotificationDisplayPolicy(
+      GroupNotificationDisplayPolicyInput(
+        groupExists: group != null,
+        hasCurrentLocalMembership: selfMember != null,
+        groupType: group?.type.name,
+        isMuted: group?.isMuted ?? false,
+        isArchived: group?.isArchived ?? false,
+        isDissolved: group?.isDissolved ?? false,
+        hasDissolvedAt: group?.dissolvedAt != null,
+        hasSelfRemovedAt: group?.selfRemovedAt != null,
+      ),
+    );
+  }
+
+  bool _isViewingGroupConversation(String groupId) {
+    final tracker = _groupConversationTracker;
+    final lifecycle = _getAppLifecycleState;
+    if (tracker == null || lifecycle == null) return false;
+    if (lifecycle() != AppLifecycleState.resumed) return false;
+    return tracker.isViewing('group:$groupId') ||
+        tracker.isViewing(NotificationRouteTarget.group(groupId).toPayload());
+  }
+
+  Future<GroupNotificationCanonicalContentDecision>
+  _isCurrentNotificationContentCanonical(
+    String groupId,
+    ConversationNotificationContentMetadata metadata,
+  ) async {
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay || _isViewingGroupConversation(groupId)) {
+      return GroupNotificationCanonicalContentDecision.retire;
+    }
+    final eventIdentity = metadata.eventIdentity?.trim();
+    if (eventIdentity == null || eventIdentity.isEmpty) {
+      return GroupNotificationCanonicalContentDecision.unknown;
+    }
+    if (await _isNotificationEventAcknowledged(
+      groupId: groupId,
+      contentKind: metadata.kind,
+      eventIdentity: eventIdentity,
+    )) {
+      return GroupNotificationCanonicalContentDecision.retire;
+    }
+    return switch (metadata.kind) {
+      ConversationNotificationContentKind.message => () async {
+        final message = await _msgRepo.getMessage(eventIdentity);
+        if (message == null) {
+          final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
+            eventIdentity,
+          );
+          return deletionGroup == groupId
+              ? GroupNotificationCanonicalContentDecision.retire
+              : GroupNotificationCanonicalContentDecision.unknown;
+        }
+        return message.groupId == groupId &&
+                message.isIncoming &&
+                message.readAt == null &&
+                _privateMediaAvailability.allowsMediaDerivatives(
+                  message.privateMediaPolicy,
+                )
+            ? GroupNotificationCanonicalContentDecision.keep
+            : GroupNotificationCanonicalContentDecision.retire;
+      }(),
+      ConversationNotificationContentKind.reaction =>
+        await _isActiveGroupNotificationReaction!(
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          eventIdentity: eventIdentity,
+        ),
+    };
+  }
+
+  Future<CanonicalConversationNotificationReplacement?>
+  _loadCanonicalNotificationReplacement(
+    String groupId,
+    ConversationNotificationContentMetadata currentMetadata,
+  ) async {
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay || _isViewingGroupConversation(groupId)) {
+      return null;
+    }
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null) return null;
+    final latestMessage = await _loadLatestUnreadNotificationMessage!(groupId);
+    final currentMessageEvent =
+        currentMetadata.kind == ConversationNotificationContentKind.message
+        ? currentMetadata.eventIdentity?.trim()
+        : null;
+    final currentMessage =
+        currentMessageEvent == null ||
+            currentMessageEvent.isEmpty ||
+            latestMessage?.id == currentMessageEvent
+        ? null
+        : await _msgRepo.getMessage(currentMessageEvent);
+    final reaction = await _loadLatestActiveNotificationReaction!(
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+    );
+
+    final latestMessageCandidate = await _canonicalMessageReplacementCandidate(
+      groupId: groupId,
+      groupName: group.name,
+      message: latestMessage,
+    );
+    final currentMessageCandidate = await _canonicalMessageReplacementCandidate(
+      groupId: groupId,
+      groupName: group.name,
+      message: currentMessage,
+    );
+    final messageCandidate = _newerCanonicalReplacementCandidate(
+      latestMessageCandidate,
+      currentMessageCandidate,
+    );
+    final reactionCandidate = await _canonicalReactionReplacementCandidate(
+      groupId: groupId,
+      groupName: group.name,
+      selfPeerId: selfPeerId,
+      reaction: reaction,
+    );
+    if (messageCandidate == null) return reactionCandidate?.replacement;
+    if (reactionCandidate == null) return messageCandidate.replacement;
+    final eventOrder = messageCandidate.timestamp.compareTo(
+      reactionCandidate.timestamp,
+    );
+    if (eventOrder != 0) {
+      return eventOrder > 0
+          ? messageCandidate.replacement
+          : reactionCandidate.replacement;
+    }
+    // Canonical timestamps are normally unique; identity ordering makes the
+    // rare tie deterministic across retries and process restarts.
+    return messageCandidate.replacement.eventIdentity.compareTo(
+              reactionCandidate.replacement.eventIdentity,
+            ) >=
+            0
+        ? messageCandidate.replacement
+        : reactionCandidate.replacement;
+  }
+
+  ({
+    DateTime timestamp,
+    CanonicalConversationNotificationReplacement replacement,
+  })?
+  _newerCanonicalReplacementCandidate(
+    ({
+      DateTime timestamp,
+      CanonicalConversationNotificationReplacement replacement,
+    })?
+    first,
+    ({
+      DateTime timestamp,
+      CanonicalConversationNotificationReplacement replacement,
+    })?
+    second,
+  ) {
+    if (first == null) return second;
+    if (second == null) return first;
+    final timeOrder = first.timestamp.compareTo(second.timestamp);
+    if (timeOrder != 0) return timeOrder > 0 ? first : second;
+    return first.replacement.eventIdentity.compareTo(
+              second.replacement.eventIdentity,
+            ) >=
+            0
+        ? first
+        : second;
+  }
+
+  Future<
+    ({
+      DateTime timestamp,
+      CanonicalConversationNotificationReplacement replacement,
+    })?
+  >
+  _canonicalMessageReplacementCandidate({
+    required String groupId,
+    required String groupName,
+    required GroupMessage? message,
+  }) async {
+    if (message == null ||
+        message.groupId != groupId ||
+        !message.isIncoming ||
+        message.readAt != null ||
+        !_privateMediaAvailability.allowsMediaDerivatives(
+          message.privateMediaPolicy,
+        )) {
+      return null;
+    }
+    final isPrivate = message.privateMediaPolicy.isPrivate;
+    final attachments = isPrivate || _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.group,
+          );
+    return (
+      timestamp: message.timestamp.toUtc(),
+      replacement: CanonicalConversationNotificationReplacement(
+        senderUsername: isPrivate ? 'Mknoon' : groupName,
+        messageText: isPrivate
+            ? localizedGroupPrivateMediaNotificationBody()
+            : '${message.senderUsername ?? ''}: '
+                  '${notificationBodyForMessage(message.text, attachments)}',
+        routePayload: NotificationRouteTarget.group(
+          groupId,
+          messageId: message.id,
+        ).toPayload(),
+        contentKind: ConversationNotificationContentKind.message,
+        eventIdentity: message.id,
+      ),
+    );
+  }
+
+  Future<
+    ({
+      DateTime timestamp,
+      CanonicalConversationNotificationReplacement replacement,
+    })?
+  >
+  _canonicalReactionReplacementCandidate({
+    required String groupId,
+    required String groupName,
+    required String selfPeerId,
+    required GroupNotificationCanonicalReaction? reaction,
+  }) async {
+    if (reaction == null ||
+        reaction.messageId.trim().isEmpty ||
+        reaction.actorPeerId.trim().isEmpty ||
+        reaction.eventIdentity.trim().isEmpty) {
+      return null;
+    }
+    final target = await _msgRepo.getMessage(reaction.messageId);
+    if (target == null) {
+      final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
+        reaction.messageId,
+      );
+      if (deletionGroup == groupId) return null;
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (target.groupId != groupId ||
+        target.senderPeerId != selfPeerId ||
+        target.isIncoming ||
+        !target.privateMediaPolicy.isOrdinary) {
+      return null;
+    }
+    var actorName = '';
+    try {
+      actorName =
+          (await _groupRepo.getMember(
+            groupId,
+            reaction.actorPeerId,
+          ))?.username?.trim() ??
+          '';
+    } catch (_) {}
+    final targetAttachments = _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            target.id,
+            owner: MediaOwnerLane.group,
+          );
+    return (
+      timestamp: reaction.timestamp.toUtc(),
+      replacement: CanonicalConversationNotificationReplacement(
+        senderUsername: groupName,
+        messageText: localizedGroupReactionNotificationBody(
+          actorName: actorName,
+          targetAttachments: targetAttachments,
+        ),
+        routePayload: NotificationRouteTarget.group(
+          groupId,
+          messageId: target.id,
+        ).toPayload(),
+        contentKind: ConversationNotificationContentKind.reaction,
+        eventIdentity: reaction.eventIdentity.trim(),
+      ),
+    );
+  }
+
+  void _scheduleNotificationDisplayRetry(Duration requestedDelay) {
+    if (_isStopping || _isDisposed) return;
+    final delay = requestedDelay.isNegative ? Duration.zero : requestedDelay;
+    final dueAt = DateTime.now().toUtc().add(delay);
+    final existingDueAt = _notificationDisplayRetryDueAt;
+    if (_notificationDisplayRetryTimer?.isActive == true &&
+        existingDueAt != null &&
+        !dueAt.isBefore(existingDueAt)) {
+      return;
+    }
+    _notificationDisplayRetryTimer?.cancel();
+    _notificationDisplayRetryDueAt = dueAt;
+    _notificationDisplayRetryTimer = Timer(delay, () {
+      _notificationDisplayRetryTimer = null;
+      _notificationDisplayRetryDueAt = null;
+      if (_isStopping || _isDisposed) return;
+      _retryPendingNotificationDisplaysUnawaited('timer');
+    });
+  }
+
+  /// Runs one bounded canonical display-outbox pass. Startup/resume callers
+  /// invoke this only after their canonical drains have completed.
+  Future<void> retryPendingNotificationDisplays() {
+    if (_isStopping || _isDisposed) return Future<void>.value();
+    return _trackInFlight(_retryPendingNotificationDisplays());
+  }
+
+  Future<void> _retryPendingNotificationDisplays() async {
+    if (_canonicalNotificationRecoveryDepth > 0 ||
+        _canonicalNotificationStateIncomplete) {
+      return;
+    }
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    try {
+      await _notificationDisplayRetryCoordinator?.retryNow();
+    } catch (error, stackTrace) {
+      firstError = error;
+      firstStackTrace = stackTrace;
+    }
+    try {
+      await _notificationReconciliationRetryCoordinator?.retryNow();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+
+  void _retryPendingNotificationDisplaysUnawaited(String trigger) {
+    unawaited(
+      retryPendingNotificationDisplays().catchError((Object error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_NOTIFICATION_DISPLAY_BACKGROUND_RETRY_ERROR',
+          details: {
+            'trigger': trigger,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+      }),
+    );
+  }
+
+  /// Defers every display projection while a canonical inbox recovery may
+  /// still contain a later delete, read, reaction removal, or policy change.
+  /// Concurrent drain owners share one generation.
+  void beginCanonicalNotificationRecovery() {
+    if ((_notificationDisplayOutbox == null &&
+            _notificationReconciliationOutbox == null) ||
+        _isDisposed) {
+      return;
+    }
+    if (_canonicalNotificationRecoveryDepth == 0) {
+      _canonicalNotificationRecoveryFailed = false;
+    }
+    _canonicalNotificationRecoveryDepth++;
+  }
+
+  /// Releases one canonical-recovery owner and projects only after every
+  /// overlapping owner proved an exhausted, error-free drain.
+  Future<void> endCanonicalNotificationRecovery({
+    required bool canonicalStateComplete,
+    bool releaseStartupHold = false,
+  }) async {
+    if ((_notificationDisplayOutbox == null &&
+            _notificationReconciliationOutbox == null) ||
+        _isDisposed) {
+      return;
+    }
+    if (_canonicalNotificationRecoveryDepth <= 0) {
+      throw StateError('canonical notification recovery was not started');
+    }
+    if (!canonicalStateComplete) {
+      _canonicalNotificationRecoveryFailed = true;
+    }
+    var releaseCount = 1;
+    if (releaseStartupHold && _startupCanonicalNotificationRecoveryPending) {
+      _startupCanonicalNotificationRecoveryPending = false;
+      releaseCount++;
+    }
+    if (_canonicalNotificationRecoveryDepth < releaseCount) {
+      throw StateError('canonical notification recovery owner mismatch');
+    }
+    _canonicalNotificationRecoveryDepth -= releaseCount;
+    if (_canonicalNotificationRecoveryDepth > 0) return;
+
+    final mayProject = !_canonicalNotificationRecoveryFailed;
+    _canonicalNotificationRecoveryFailed = false;
+    if (!mayProject) {
+      _canonicalNotificationStateIncomplete = true;
+      _notificationReadProjector?.completeStartupCanonicalRecovery(
+        canonicalStateComplete: false,
+      );
+      return;
+    }
+    _canonicalNotificationStateIncomplete = false;
+    _notificationReadProjector?.completeStartupCanonicalRecovery(
+      canonicalStateComplete: true,
+    );
+    try {
+      await retryPendingNotificationDisplays();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_NOTIFICATION_DISPLAY_POST_DRAIN_RETRY_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<void> _stageMessageNotificationDisplayCustody(
+    GroupMessage message,
+  ) async {
+    final outbox = _notificationDisplayOutbox;
+    if (outbox == null ||
+        _notificationService == null ||
+        _groupConversationTracker == null ||
+        _getAppLifecycleState == null ||
+        !message.isIncoming) {
+      return;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      // Identity is projection authority, not an optional display hint. If it
+      // is temporarily unavailable we cannot distinguish a self echo or
+      // evaluate current local membership, so abort before canonical mutation
+      // and let the existing inbox/relay owner retry.
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (message.senderPeerId == selfPeerId) return;
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      message.groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay) return;
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    await outbox.stage(
+      GroupNotificationDisplayOutboxEntry.message(
+        eventId: message.id,
+        groupId: message.groupId,
+        messageId: message.id,
+        actorPeerId: message.senderPeerId,
+        eventTimestamp: message.timestamp.toUtc().toIso8601String(),
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  Future<void> _markNotificationDisplayCustodyReady(String eventId) async {
+    final outbox = _notificationDisplayOutbox;
+    if (outbox == null) return;
+    var entry = await outbox.loadByEventId(eventId);
+    if (entry == null || entry.isReady) return;
+    final promoted = await outbox.promoteReadyIfExact(
+      eventId: eventId,
+      expectedRevision: entry.revision,
+    );
+    if (promoted) return;
+    entry = await outbox.loadByEventId(eventId);
+    if (entry?.isReady == true) return;
+    throw StateError('group notification display custody ready CAS failed');
+  }
+
+  Future<void> _stageReactionNotificationDisplayCustody(
+    GroupReactionPayload payload,
+    String groupId,
+  ) async {
+    final outbox = _notificationDisplayOutbox;
+    if (outbox == null ||
+        payload.action != GroupReactionPayload.actionAdd ||
+        _notificationService == null ||
+        _groupConversationTracker == null ||
+        _getAppLifecycleState == null) {
+      return;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (payload.senderPeerId == selfPeerId) return;
+    final target = await _msgRepo.getMessage(payload.messageId);
+    if (target == null ||
+        target.groupId != groupId ||
+        target.senderPeerId != selfPeerId ||
+        target.isIncoming ||
+        !target.privateMediaPolicy.isOrdinary) {
+      return;
+    }
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay) return;
+
+    final eventId = payload.notificationTransitionId;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await outbox.stage(
+      GroupNotificationDisplayOutboxEntry.reaction(
+        eventId: eventId,
+        groupId: groupId,
+        messageId: payload.messageId,
+        actorPeerId: payload.senderPeerId,
+        eventTimestamp: payload.timestamp,
+        reactionId: payload.id,
+        reactionAction: payload.action,
+        reactionTombstone: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  Future<GroupNotificationDisplayRetryDisposition>
+  _projectNotificationDisplayEntry(GroupNotificationDisplayOutboxEntry entry) {
+    final coordinator = _notificationPresentationCoordinator;
+    if (coordinator == null) {
+      return Future<GroupNotificationDisplayRetryDisposition>.value(
+        GroupNotificationDisplayRetryDisposition.retryLater,
+      );
+    }
+    return coordinator.runForGroup(
+      entry.groupId,
+      () => _projectNotificationDisplayEntryInsideKey(entry),
+    );
+  }
+
+  Future<GroupNotificationDisplayRetryDisposition>
+  _projectNotificationDisplayEntryInsideKey(
+    GroupNotificationDisplayOutboxEntry entry,
+  ) async {
+    return switch (entry.eventKind) {
+      GroupNotificationDisplayOutboxKind.message =>
+        _projectMessageNotificationDisplay(entry),
+      GroupNotificationDisplayOutboxKind.reaction =>
+        _projectReactionNotificationDisplay(entry),
+      _ => GroupNotificationDisplayRetryDisposition.completed,
+    };
+  }
+
+  Future<GroupNotificationDisplayRetryDisposition>
+  _projectMessageNotificationDisplay(
+    GroupNotificationDisplayOutboxEntry entry,
+  ) async {
+    final message = await _msgRepo.getMessage(entry.messageId);
+    if (message == null) {
+      final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
+        entry.messageId,
+      );
+      if (deletionGroup == entry.groupId) {
+        return GroupNotificationDisplayRetryDisposition.completed;
+      }
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (message.groupId != entry.groupId ||
+        message.senderPeerId != entry.actorPeerId ||
+        !_sameNotificationEventTime(message.timestamp, entry.eventTimestamp) ||
+        !message.isIncoming ||
+        message.readAt != null ||
+        !_privateMediaAvailability.allowsMediaDerivatives(
+          message.privateMediaPolicy,
+        )) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      entry.groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final service = _notificationService;
+    final tracker = _groupConversationTracker;
+    final lifecycle = _getAppLifecycleState;
+    if (service == null || tracker == null || lifecycle == null) {
+      return GroupNotificationDisplayRetryDisposition.retryLater;
+    }
+    final group = await _groupRepo.getGroup(entry.groupId);
+    if (group == null) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final isPrivate = message.privateMediaPolicy.isPrivate;
+    final attachments = isPrivate || _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.group,
+          );
+    if (await _isNotificationEventAcknowledged(
+      groupId: entry.groupId,
+      contentKind: ConversationNotificationContentKind.message,
+      eventIdentity: message.id,
+    )) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final result = await maybeShowNotification(
+      notificationService: service,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: 'group:${entry.groupId}',
+      routePayload: NotificationRouteTarget.group(
+        entry.groupId,
+        messageId: message.id,
+      ).toPayload(),
+      senderUsername: isPrivate ? 'Mknoon' : group.name,
+      messageText: isPrivate
+          ? localizedGroupPrivateMediaNotificationBody()
+          : '${message.senderUsername ?? ''}: '
+                '${notificationBodyForMessage(message.text, attachments)}',
+      messageId: message.id,
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      notificationEventType: 'group_message',
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+      markRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) => _remoteNotificationGate
+              .markAnnouncement(payload: payload, messageId: messageId),
+      backgroundDuplicateGuardDelay: Duration.zero,
+    );
+    return _retryDispositionForPresentation(result);
+  }
+
+  Future<GroupNotificationDisplayRetryDisposition>
+  _projectReactionNotificationDisplay(
+    GroupNotificationDisplayOutboxEntry entry,
+  ) async {
+    if (entry.reactionAction != GroupReactionPayload.actionAdd ||
+        entry.reactionTombstone != false ||
+        entry.reactionId == null) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final target = await _msgRepo.getMessage(entry.messageId);
+    if (target == null) {
+      final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
+        entry.messageId,
+      );
+      if (deletionGroup == entry.groupId) {
+        return GroupNotificationDisplayRetryDisposition.completed;
+      }
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (target.groupId != entry.groupId ||
+        !target.privateMediaPolicy.isOrdinary) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null || selfPeerId.isEmpty) {
+      throw const GroupNotificationDisplayStateUnavailableException();
+    }
+    if (target.senderPeerId != selfPeerId || target.isIncoming) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final reactionRepo = _reactionRepo;
+    if (reactionRepo == null) {
+      return GroupNotificationDisplayRetryDisposition.retryLater;
+    }
+    final reaction = await reactionRepo.getReactionForSenderIncludingRemoved(
+      messageId: entry.messageId,
+      senderPeerId: entry.actorPeerId,
+    );
+    if (reaction == null ||
+        reaction.id != entry.reactionId ||
+        reaction.isRemoved ||
+        reaction.timestamp != entry.eventTimestamp) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    if (reaction.notificationAcknowledgedAt != null) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final eligibility = await _resolveGroupNotificationDisplayEligibility(
+      entry.groupId,
+      selfPeerId,
+    );
+    if (!eligibility.shouldDisplay) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final service = _notificationService;
+    final tracker = _groupConversationTracker;
+    final lifecycle = _getAppLifecycleState;
+    if (service == null || tracker == null || lifecycle == null) {
+      return GroupNotificationDisplayRetryDisposition.retryLater;
+    }
+    final group = await _groupRepo.getGroup(entry.groupId);
+    if (group == null) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    var actorName = '';
+    try {
+      final actor = await _groupRepo.getMember(
+        entry.groupId,
+        entry.actorPeerId,
+      );
+      actorName = actor?.username?.trim() ?? '';
+    } catch (_) {}
+    final attachments = _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            target.id,
+            owner: MediaOwnerLane.group,
+          );
+    if (await _isNotificationEventAcknowledged(
+      groupId: entry.groupId,
+      contentKind: ConversationNotificationContentKind.reaction,
+      eventIdentity: boundedReactionEventIdentity(entry.eventId),
+    )) {
+      return GroupNotificationDisplayRetryDisposition.completed;
+    }
+    final result = await maybeShowNotification(
+      notificationService: service,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: 'group:${entry.groupId}',
+      routePayload: NotificationRouteTarget.group(
+        entry.groupId,
+        messageId: entry.messageId,
+      ).toPayload(),
+      senderUsername: group.name,
+      messageText: localizedGroupReactionNotificationBody(
+        actorName: actorName,
+        targetAttachments: attachments,
+      ),
+      messageId: entry.eventId,
+      notificationEventIdentity: boundedReactionEventIdentity(entry.eventId),
+      notificationEventType: 'message_reaction',
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+    );
+    return _retryDispositionForPresentation(result);
+  }
+
+  GroupNotificationDisplayRetryDisposition _retryDispositionForPresentation(
+    NotificationPresentationResult result,
+  ) => result == NotificationPresentationResult.contendedRetryable
+      ? GroupNotificationDisplayRetryDisposition.retryLater
+      : GroupNotificationDisplayRetryDisposition.completed;
+
+  Future<bool> _isNotificationEventAcknowledged({
+    required String groupId,
+    required ConversationNotificationContentKind contentKind,
+    required String eventIdentity,
+  }) async {
+    final resolver = _isGroupNotificationEventAcknowledged;
+    return resolver != null &&
+        await resolver(
+          groupId: groupId,
+          contentKind: contentKind,
+          eventIdentity: eventIdentity,
+        );
+  }
+
+  bool _sameNotificationEventTime(DateTime canonical, String encoded) {
+    final eventTime = DateTime.tryParse(encoded);
+    return eventTime != null &&
+        canonical.toUtc().isAtSameMomentAs(eventTime.toUtc());
   }
 
   /// Stream of new incoming group messages for the UI to listen to.
@@ -414,10 +1458,17 @@ class GroupMessageListener {
         : getSelfPeerId();
     _selfPeerIdLoadFuture = loader.then(
       (value) {
-        _cachedSelfPeerId = value;
-        _hasResolvedSelfPeerId = true;
+        final normalized = value?.trim();
+        final resolved = normalized == null || normalized.isEmpty
+            ? null
+            : normalized;
+        _cachedSelfPeerId = resolved;
+        // A transient null during startup is not an authoritative identity
+        // result. Keep the resolver retryable so durable custody can converge
+        // without requiring a process restart.
+        _hasResolvedSelfPeerId = resolved != null;
         _selfPeerIdLoadFuture = null;
-        return value;
+        return resolved;
       },
       onError: (Object error, StackTrace stackTrace) {
         _selfPeerIdLoadFuture = null;
@@ -434,6 +1485,28 @@ class GroupMessageListener {
   }) {
     if (_isDisposed || _subscription != null) return;
     _isStopping = false;
+    // Live streams and startup durable-buffer flushes begin before the native
+    // group inbox can be drained. Keep every staged display marker fail-closed
+    // until that first canonical recovery proves it exhausted the inbox; a
+    // later page may still contain a read, delete, dissolve, or reaction
+    // REMOVE that terminalizes an earlier ADD.
+    if ((_notificationDisplayOutbox != null ||
+            _notificationReconciliationOutbox != null) &&
+        !_startupCanonicalNotificationRecoveryPending) {
+      _startupCanonicalNotificationRecoveryPending = true;
+      beginCanonicalNotificationRecovery();
+    }
+    _notificationReadProjector?.start(
+      deferStartupReconciliation: _startupCanonicalNotificationRecoveryPending,
+    );
+    if (_notificationReconciliationRetryCoordinator != null &&
+        _notificationReconciliationSignalSubscription == null) {
+      _notificationReconciliationSignalSubscription =
+          groupNotificationReconciliationSignals.listen((_) {
+            if (_isStopping || _isDisposed) return;
+            _retryPendingNotificationDisplaysUnawaited('signal');
+          });
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -1119,11 +2192,43 @@ class GroupMessageListener {
         mediaAttachmentRepo: _mediaAttachmentRepo,
         appendGroupEventLogEntry: _appendGroupEventLogEntry,
         deliverySource: deliverySource,
+        stageNotificationDisplayCustody: _notificationDisplayOutbox == null
+            ? null
+            : _stageMessageNotificationDisplayCustody,
+        markNotificationDisplayCustodyReady: _notificationDisplayOutbox == null
+            ? null
+            : (message) => _markNotificationDisplayCustodyReady(message.id),
       );
 
-      if (outcome is IncomingGroupMessageDuplicateEnriched) {
+      if (outcome is IncomingGroupMessageIgnored &&
+          outcome.canonicalMessage != null &&
+          _notificationDisplayOutbox != null &&
+          wireMessageId?.trim() == outcome.canonicalMessage!.id) {
+        // Only an authority-exact stable-ID replay may recover custody left
+        // not-ready by a crash after canonical persistence. Rejected events
+        // carry no canonical authority and can never promote a reused wire ID.
+        await _notificationDisplayOutbox.reconcileMessageAliasReady(
+          aliasEventId: outcome.canonicalMessage!.id,
+          canonicalMessage: outcome.canonicalMessage!,
+        );
+        await retryPendingNotificationDisplays();
+      }
+
+      if (outcome is IncomingGroupMessageDuplicate) {
         final canonicalMessage = outcome.canonicalMessage;
-        if (_privateMediaAvailability.allowsMediaDerivatives(
+        final displayOutbox = _notificationDisplayOutbox;
+        if (displayOutbox != null) {
+          final aliasEventId = wireMessageId?.trim().isNotEmpty == true
+              ? wireMessageId!.trim()
+              : canonicalMessage.id;
+          await displayOutbox.reconcileMessageAliasReady(
+            aliasEventId: aliasEventId,
+            canonicalMessage: canonicalMessage,
+          );
+          await retryPendingNotificationDisplays();
+        }
+        if (outcome.persistedAttachmentIds.isNotEmpty &&
+            _privateMediaAvailability.allowsMediaDerivatives(
               canonicalMessage.privateMediaPolicy,
             ) &&
             _mediaReceiveCoordinator._hasAutomaticMediaRecovery) {
@@ -1198,15 +2303,27 @@ class GroupMessageListener {
                 owner: MediaOwnerLane.group,
               );
 
-        // Show notification for incoming group messages (skip own messages)
-        if (senderId != selfPeerId &&
+        // The durable path projects the ready marker through the same keyed
+        // lane as read cancellation. Plugin failure is retained in SQLCipher
+        // and no longer controls relay cursor progress.
+        if (_notificationDisplayOutbox != null) {
+          await retryPendingNotificationDisplays();
+        }
+
+        // Compatibility path for tests/non-production compositions without
+        // the v106 outbox.
+        if (_notificationDisplayOutbox == null &&
+            senderId != selfPeerId &&
             _notificationService != null &&
             _groupConversationTracker != null &&
             _getAppLifecycleState != null) {
           final group = await _groupRepo.getGroup(groupId);
-          final isMuted = group?.isMuted ?? false;
-          final isArchived = group?.isArchived ?? false;
           final groupName = group?.name ?? 'Group';
+          final displayEligibility =
+              await _resolveGroupNotificationDisplayEligibility(
+                groupId,
+                selfPeerId,
+              );
           // Local notifications + the mute that suppresses them are device-local:
           // muting on one device must never silence another device.
           assert(
@@ -1217,8 +2334,9 @@ class GroupMessageListener {
           assert(
             isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference),
           );
-          if (!isMuted && !isArchived) {
-            await maybeShowNotification(
+          if (displayEligibility.shouldDisplay) {
+            Future<NotificationPresentationResult>
+            present() => maybeShowNotification(
               notificationService: _notificationService,
               conversationTracker: _groupConversationTracker,
               getAppLifecycleState: _getAppLifecycleState,
@@ -1260,6 +2378,13 @@ class GroupMessageListener {
                       ),
               backgroundDuplicateGuardDelay: Duration.zero,
             );
+            final presentationCoordinator =
+                _notificationPresentationCoordinator;
+            if (presentationCoordinator == null) {
+              await present();
+            } else {
+              await presentationCoordinator.runForGroup(groupId, present);
+            }
           }
         }
 
@@ -1394,6 +2519,9 @@ class GroupMessageListener {
     if (existingStop != null) return existingStop;
 
     _isStopping = true;
+    _notificationDisplayRetryTimer?.cancel();
+    _notificationDisplayRetryTimer = null;
+    _notificationDisplayRetryDueAt = null;
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_MESSAGE_LISTENER_STOP',
@@ -1406,14 +2534,38 @@ class GroupMessageListener {
     _reactionSubscription = null;
     final diagnosticSubscription = _diagnosticSubscription;
     _diagnosticSubscription = null;
+    final reconciliationSignalSubscription =
+        _notificationReconciliationSignalSubscription;
+    _notificationReconciliationSignalSubscription = null;
 
     late final Future<void> stopFuture;
     stopFuture =
-        Future.wait<void>([
-          if (messageSubscription != null) messageSubscription.cancel(),
-          if (reactionSubscription != null) reactionSubscription.cancel(),
-          if (diagnosticSubscription != null) diagnosticSubscription.cancel(),
-        ]).then((_) => _awaitInFlightHandlers()).whenComplete(() {
+        () async {
+          Object? cancellationError;
+          StackTrace? cancellationStackTrace;
+          try {
+            await Future.wait<void>([
+              if (messageSubscription != null) messageSubscription.cancel(),
+              if (reactionSubscription != null) reactionSubscription.cancel(),
+              if (diagnosticSubscription != null)
+                diagnosticSubscription.cancel(),
+              if (reconciliationSignalSubscription != null)
+                reconciliationSignalSubscription.cancel(),
+            ]);
+          } catch (error, stackTrace) {
+            cancellationError = error;
+            cancellationStackTrace = stackTrace;
+          }
+          // Subscription cancellation can fail, but teardown must still quiesce
+          // every handler that was already admitted before surfacing that error.
+          await _awaitInFlightHandlers();
+          if (cancellationError != null) {
+            Error.throwWithStackTrace(
+              cancellationError,
+              cancellationStackTrace!,
+            );
+          }
+        }().whenComplete(() {
           if (identical(_stopFuture, stopFuture)) {
             _stopFuture = null;
           }
@@ -1427,6 +2579,12 @@ class GroupMessageListener {
     if (_isDisposed) return;
     _isDisposed = true;
     _isStopping = true;
+    _notificationDisplayRetryTimer?.cancel();
+    _notificationDisplayRetryTimer = null;
+    _notificationDisplayRetryDueAt = null;
+    _notificationDisplayRetryCoordinator?.dispose();
+    _notificationReconciliationRetryCoordinator?.dispose();
+    unawaited(_notificationReadProjector?.dispose());
     unawaited(stop());
     if (!_messageController.isClosed) {
       unawaited(_messageController.close());

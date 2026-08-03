@@ -104,9 +104,9 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 105);
-      expect(productionCreateMigrations.last.version, 105);
-      expect(productionUpgradeMigrations.last.version, 105);
+      expect(currentIdentityDatabaseVersion, 106);
+      expect(productionCreateMigrations.last.version, 106);
+      expect(productionUpgradeMigrations.last.version, 106);
       expect(
         productionUpgradeMigrations
             .singleWhere((entry) => entry.version == 103)
@@ -121,7 +121,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '105_reaction_outbox_needs_build',
+        '106_group_notification_display_outbox',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

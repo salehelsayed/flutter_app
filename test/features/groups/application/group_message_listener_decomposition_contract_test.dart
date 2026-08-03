@@ -277,6 +277,8 @@ const _expectedConstructorParameters = <String>[
   'NotificationService? notificationService',
   'ActiveConversationTracker? groupConversationTracker',
   'NotificationToneTracker? notificationToneTracker',
+  'GroupNotificationPresentationCoordinator? '
+      'notificationPresentationCoordinator',
   'Future<DurableNotificationToneLease> Function()? '
       'durableNotificationCoordinatorResolver',
   'AppLifecycleState Function()? getAppLifecycleState',
@@ -300,6 +302,16 @@ const _expectedConstructorParameters = <String>[
   'GroupPrivateMediaAvailability privateMediaAvailability = '
       'productionGroupPrivateMediaAvailability',
   'GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator',
+  'GroupNotificationDisplayOutboxRepository? notificationDisplayOutbox',
+  'GroupNotificationReconciliationOutboxRepository? '
+      'notificationReconciliationOutbox',
+  'LoadLatestUnreadGroupNotificationMessage? '
+      'loadLatestUnreadNotificationMessage',
+  'IsActiveGroupNotificationReaction? isActiveGroupNotificationReaction',
+  'LoadLatestActiveGroupNotificationReaction? '
+      'loadLatestActiveNotificationReaction',
+  'GroupNotificationEventAcknowledgedResolver? '
+      'isGroupNotificationEventAcknowledged',
   'BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask',
   'EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask',
 ];
@@ -318,6 +330,14 @@ const _expectedPublicMembers = <String>{
   // its canonical reaction dependencies are composed. This exposes capability,
   // not collaborator state.
   'getter|canHandleReplayReactions|bool|',
+  // Plan 330: canonical recovery brackets presentation so an early-page ADD
+  // cannot alert before a later-page REMOVE. These are lifecycle commands,
+  // not exposed collaborator state.
+  'method|retryPendingNotificationDisplays|Future<void>|()',
+  'method|beginCanonicalNotificationRecovery|void|()',
+  'method|endCanonicalNotificationRecovery|Future<void>|'
+      '({required bool canonicalStateComplete, '
+      'bool releaseStartupHold = false})',
   'method|handleReplayEnvelope|Future<void>|'
       '(Map<String, dynamic> data, {GroupMessageRepository? msgRepoOverride, '
       'bool rethrowOnError = false, bool allowMembershipBuffer = false, '
@@ -484,7 +504,7 @@ void _expectPublicFacadeContract(
     publicMembers,
     _expectedPublicMembers,
     reason:
-        'the six overridable getters and replay/start/flush/retry/reserve/'
+        'the overridable getters and replay/recovery/start/flush/retry/reserve/'
         'stop/dispose public methods are the complete stable facade API',
   );
 

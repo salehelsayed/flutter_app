@@ -303,6 +303,8 @@ class _RecordingNotificationService implements NotificationService {
     required String messageText,
     String? payload,
     bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
   }) async {
     final resolvedPayload = payload ?? contactPeerId;
     await _inner.showMessageNotification(
@@ -311,6 +313,8 @@ class _RecordingNotificationService implements NotificationService {
       messageText: messageText,
       payload: resolvedPayload,
       silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
     );
     shown.add(
       _RecordedShow(

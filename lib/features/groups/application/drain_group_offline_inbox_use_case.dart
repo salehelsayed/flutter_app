@@ -101,6 +101,48 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
   int maxConcurrentGroupDrains = defaultMaxConcurrentGroupInboxDrains,
+}) {
+  return _drainGroupOfflineInbox(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    pendingReactionRepo: pendingReactionRepo,
+    groupMessageListener: groupMessageListener,
+    pendingKeyRepairRepo: pendingKeyRepairRepo,
+    historyGapRepairRepo: historyGapRepairRepo,
+    requestGroupKeyRepair: requestGroupKeyRepair,
+    requestHistoryRepairRange: requestHistoryRepairRange,
+    selfPeerId: selfPeerId,
+    retentionNowUtc: retentionNowUtc,
+    drainAllPages: drainAllPages,
+    pageSize: pageSize,
+    maxPages: maxPages,
+    maxConcurrentGroupDrains: maxConcurrentGroupDrains,
+    releaseStartupHold: true,
+  );
+}
+
+Future<GroupOfflineInboxDrainResult> _drainGroupOfflineInbox({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
+  GroupMessageListener? groupMessageListener,
+  GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+  GroupHistoryGapRepairRepository? historyGapRepairRepo,
+  RequestGroupKeyRepair? requestGroupKeyRepair,
+  RequestGroupHistoryRepairRange? requestHistoryRepairRange,
+  String? selfPeerId,
+  DateTime? retentionNowUtc,
+  bool drainAllPages = true,
+  int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
+  int maxConcurrentGroupDrains = defaultMaxConcurrentGroupInboxDrains,
+  required bool releaseStartupHold,
 }) async {
   if (maxConcurrentGroupDrains < 1) {
     throw ArgumentError.value(
@@ -109,109 +151,124 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
       'must be >= 1',
     );
   }
-  final drainStopwatch = Stopwatch()..start();
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_DRAIN_OFFLINE_INBOX_BEGIN',
-    details: {},
-  );
+  groupMessageListener?.beginCanonicalNotificationRecovery();
+  try {
+    final drainStopwatch = Stopwatch()..start();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_BEGIN',
+      details: {},
+    );
 
-  final groups = await groupRepo.getAllGroups();
-  final groupSucceeded = List<bool>.filled(groups.length, false);
-  var anyPagesRemaining = false;
-  var nextGroupIndex = 0;
-  final workerCount = min(maxConcurrentGroupDrains, groups.length);
+    final groups = await groupRepo.getAllGroups();
+    final groupSucceeded = List<bool>.filled(groups.length, false);
+    var anyPagesRemaining = false;
+    var nextGroupIndex = 0;
+    final workerCount = min(maxConcurrentGroupDrains, groups.length);
 
-  Future<void> drainNextGroup() async {
-    while (true) {
-      final groupIndex = nextGroupIndex;
-      nextGroupIndex++;
-      if (groupIndex >= groups.length) {
-        return;
-      }
-      final group = groups[groupIndex];
-      final groupStopwatch = Stopwatch()..start();
-      try {
-        await _drainGroupInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupId: group.id,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          reactionRepo: reactionRepo,
-          pendingReactionRepo: pendingReactionRepo,
-          groupMessageListener: groupMessageListener,
-          pendingKeyRepairRepo: pendingKeyRepairRepo,
-          historyGapRepairRepo: historyGapRepairRepo,
-          requestGroupKeyRepair: requestGroupKeyRepair,
-          requestHistoryRepairRange: requestHistoryRepairRange,
-          selfPeerId: selfPeerId,
-          retentionNowUtc: retentionNowUtc,
-          drainAllPages: drainAllPages,
-          pageSize: pageSize,
-          maxPages: maxPages,
-          onPagesRemaining: () => anyPagesRemaining = true,
-        );
-        groupSucceeded[groupIndex] = true;
-      } catch (e) {
-        // A group-level exception means convergence is unknown even when the
-        // relay cursor on the failed page was empty. Keep dropped-push recovery
-        // fail-closed and retryable.
-        anyPagesRemaining = true;
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
-          details: {
-            'groupId': group.id.length > 8
-                ? group.id.substring(0, 8)
-                : group.id,
-            'error': e.toString(),
-          },
-        );
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
-          details: {
-            'scope': 'group',
-            'elapsedMs': groupStopwatch.elapsedMilliseconds,
-            'outcome': 'error',
-            'groupId': group.id.length > 8
-                ? group.id.substring(0, 8)
-                : group.id,
-          },
-        );
+    Future<void> drainNextGroup() async {
+      while (true) {
+        final groupIndex = nextGroupIndex;
+        nextGroupIndex++;
+        if (groupIndex >= groups.length) {
+          return;
+        }
+        final group = groups[groupIndex];
+        final groupStopwatch = Stopwatch()..start();
+        try {
+          await _drainGroupInbox(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: group.id,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            reactionRepo: reactionRepo,
+            pendingReactionRepo: pendingReactionRepo,
+            groupMessageListener: groupMessageListener,
+            pendingKeyRepairRepo: pendingKeyRepairRepo,
+            historyGapRepairRepo: historyGapRepairRepo,
+            requestGroupKeyRepair: requestGroupKeyRepair,
+            requestHistoryRepairRange: requestHistoryRepairRange,
+            selfPeerId: selfPeerId,
+            retentionNowUtc: retentionNowUtc,
+            drainAllPages: drainAllPages,
+            pageSize: pageSize,
+            maxPages: maxPages,
+            onPagesRemaining: () => anyPagesRemaining = true,
+          );
+          groupSucceeded[groupIndex] = true;
+        } catch (e) {
+          // A group-level exception means convergence is unknown even when the
+          // relay cursor on the failed page was empty. Keep dropped-push recovery
+          // fail-closed and retryable.
+          anyPagesRemaining = true;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
+            details: {
+              'groupId': group.id.length > 8
+                  ? group.id.substring(0, 8)
+                  : group.id,
+              'error': e.toString(),
+            },
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+            details: {
+              'scope': 'group',
+              'elapsedMs': groupStopwatch.elapsedMilliseconds,
+              'outcome': 'error',
+              'groupId': group.id.length > 8
+                  ? group.id.substring(0, 8)
+                  : group.id,
+            },
+          );
+        }
       }
     }
+
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => drainNextGroup()),
+    );
+    final errorCount = groupSucceeded.where((succeeded) => !succeeded).length;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_DONE',
+      details: {'groupCount': groups.length, 'errorCount': errorCount},
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+      details: {
+        'scope': 'batch',
+        'elapsedMs': drainStopwatch.elapsedMilliseconds,
+        'outcome': 'complete',
+        'groupCount': groups.length,
+        'drainAllPages': drainAllPages,
+        'pageSize': pageSize,
+        'errorCount': errorCount,
+      },
+    );
+    final result = GroupOfflineInboxDrainResult(
+      groupCount: groups.length,
+      errorCount: errorCount,
+      hasMorePages: anyPagesRemaining,
+    );
+    await groupMessageListener?.endCanonicalNotificationRecovery(
+      canonicalStateComplete:
+          drainAllPages && result.isSuccessful && !result.hasMorePages,
+      releaseStartupHold: releaseStartupHold,
+    );
+    return result;
+  } catch (_) {
+    await groupMessageListener?.endCanonicalNotificationRecovery(
+      canonicalStateComplete: false,
+      releaseStartupHold: releaseStartupHold,
+    );
+    rethrow;
   }
-
-  await Future.wait(
-    List<Future<void>>.generate(workerCount, (_) => drainNextGroup()),
-  );
-  final errorCount = groupSucceeded.where((succeeded) => !succeeded).length;
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_DRAIN_OFFLINE_INBOX_DONE',
-    details: {'groupCount': groups.length, 'errorCount': errorCount},
-  );
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
-    details: {
-      'scope': 'batch',
-      'elapsedMs': drainStopwatch.elapsedMilliseconds,
-      'outcome': 'complete',
-      'groupCount': groups.length,
-      'drainAllPages': drainAllPages,
-      'pageSize': pageSize,
-      'errorCount': errorCount,
-    },
-  );
-  return GroupOfflineInboxDrainResult(
-    groupCount: groups.length,
-    errorCount: errorCount,
-    hasMorePages: anyPagesRemaining,
-  );
 }
 
 /// Background continuation of [drainGroupOfflineInbox] after a fast first-page
@@ -251,7 +308,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInboxContinuation({
     event: 'GROUP_DRAIN_OFFLINE_INBOX_CONTINUATION_BEGIN',
     details: {},
   );
-  final result = await drainGroupOfflineInbox(
+  final result = await _drainGroupOfflineInbox(
     bridge: bridge,
     groupRepo: groupRepo,
     msgRepo: msgRepo,
@@ -269,6 +326,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInboxContinuation({
     pageSize: pageSize,
     maxPages: maxPages,
     maxConcurrentGroupDrains: maxConcurrentGroupDrains,
+    releaseStartupHold: false,
   );
   emitFlowEvent(
     layer: 'FL',
@@ -297,6 +355,8 @@ Future<void> drainGroupOfflineInboxForGroup({
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
 }) async {
+  groupMessageListener?.beginCanonicalNotificationRecovery();
+  var pagesRemaining = false;
   final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
@@ -325,6 +385,7 @@ Future<void> drainGroupOfflineInboxForGroup({
       drainAllPages: drainAllPages,
       pageSize: pageSize,
       maxPages: maxPages,
+      onPagesRemaining: () => pagesRemaining = true,
     );
 
     emitFlowEvent(
@@ -346,7 +407,13 @@ Future<void> drainGroupOfflineInboxForGroup({
         'pageSize': pageSize,
       },
     );
+    await groupMessageListener?.endCanonicalNotificationRecovery(
+      canonicalStateComplete: drainAllPages && !pagesRemaining,
+    );
   } catch (_) {
+    await groupMessageListener?.endCanonicalNotificationRecovery(
+      canonicalStateComplete: false,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',

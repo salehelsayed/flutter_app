@@ -23,6 +23,10 @@ import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_forward_authorization_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_canonical_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_read_acknowledgement_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_revocations_db_helpers.dart';
@@ -133,6 +137,8 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_key_dist
 import 'package:flutter_app/features/groups/data/repositories/group_pending_key_distribution_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_pending_membership_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_pending_reaction_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_notification_display_outbox_repository_impl.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_notification_reconciliation_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_invite_delivery_attempt_repository_impl.dart';
@@ -170,6 +176,7 @@ import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_exit_diagnostic_repository_impl.dart';
@@ -220,6 +227,7 @@ import 'package:flutter_app/core/notifications/durable_notification_tone_lease.d
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -1644,6 +1652,31 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           ),
         };
       },
+      dbApplyGroupAdd:
+          ({
+            required groupId,
+            required notificationEventId,
+            required row,
+          }) async {
+            final result = await dbApplyIncomingReactionMutation(
+              db,
+              row,
+              mutation: DbIncomingReactionMutation.add,
+              groupIdForNotificationCleanup: groupId,
+              notificationEventIdForStaleAddCleanup: notificationEventId,
+            );
+            return switch (result) {
+              DbIncomingReactionApplyResult.inserted =>
+                ReactionAddApplyResult.inserted,
+              DbIncomingReactionApplyResult.updated =>
+                ReactionAddApplyResult.updated,
+              DbIncomingReactionApplyResult.exactReplay =>
+                ReactionAddApplyResult.exactReplay,
+              DbIncomingReactionApplyResult.stale ||
+              DbIncomingReactionApplyResult.removed =>
+                ReactionAddApplyResult.stale,
+            };
+          },
       dbApplyIncomingRemove: (row) async {
         final result = await dbApplyIncomingReactionMutation(
           db,
@@ -1660,6 +1693,26 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           DbIncomingReactionApplyResult.inserted ||
           DbIncomingReactionApplyResult.updated => throw StateError(
             'REMOVE transaction returned ADD result',
+          ),
+        };
+      },
+      dbApplyGroupRemove: ({required groupId, required row}) async {
+        final result = await dbApplyIncomingReactionMutation(
+          db,
+          row,
+          mutation: DbIncomingReactionMutation.remove,
+          groupIdForNotificationCleanup: groupId,
+        );
+        return switch (result) {
+          DbIncomingReactionApplyResult.removed =>
+            ReactionRemoveApplyResult.applied,
+          DbIncomingReactionApplyResult.exactReplay =>
+            ReactionRemoveApplyResult.exactReplay,
+          DbIncomingReactionApplyResult.stale =>
+            ReactionRemoveApplyResult.stale,
+          DbIncomingReactionApplyResult.inserted ||
+          DbIncomingReactionApplyResult.updated => throw StateError(
+            'group REMOVE transaction returned ADD result',
           ),
         };
       },
@@ -1750,6 +1803,155 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
               dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
         );
+    final groupNotificationDisplayOutboxRepository =
+        GroupNotificationDisplayOutboxRepositoryImpl(
+          dbStage: (row) => dbStageGroupNotificationDisplayOutboxEntry(db, row),
+          dbLoadByEventId: (eventId) =>
+              dbLoadGroupNotificationDisplayOutboxEntry(db, eventId),
+          dbPromoteReadyIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required updatedAt,
+              }) => dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                updatedAt: updatedAt,
+              ),
+          dbLoadReady: ({limit = 20, required eligibleAt}) =>
+              dbLoadReadyGroupNotificationDisplayOutboxEntries(
+                db,
+                limit: limit,
+                eligibleAt: eligibleAt,
+              ),
+          dbLoadEarliestNextAttemptAt: () =>
+              dbLoadEarliestGroupNotificationDisplayOutboxNextAttemptAt(db),
+          dbRecordRetryIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required lastErrorCode,
+                required lastAttemptAt,
+                required nextAttemptAt,
+                required updatedAt,
+              }) => dbRecordGroupNotificationDisplayOutboxRetryIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                lastErrorCode: lastErrorCode,
+                lastAttemptAt: lastAttemptAt,
+                nextAttemptAt: nextAttemptAt,
+                updatedAt: updatedAt,
+              ),
+          dbCompleteIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required expectedEventKind,
+                required expectedGroupId,
+                required expectedMessageId,
+                required expectedActorPeerId,
+                required expectedEventTimestamp,
+                required expectedReactionId,
+                required expectedReactionAction,
+                required expectedReactionTombstone,
+              }) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                expectedEventKind: expectedEventKind,
+                expectedGroupId: expectedGroupId,
+                expectedMessageId: expectedMessageId,
+                expectedActorPeerId: expectedActorPeerId,
+                expectedEventTimestamp: expectedEventTimestamp,
+                expectedReactionId: expectedReactionId,
+                expectedReactionAction: expectedReactionAction,
+                expectedReactionTombstone: expectedReactionTombstone,
+              ),
+          dbReconcileMessageAliasReady:
+              ({
+                required aliasEventId,
+                required canonicalEventId,
+                required groupId,
+                required actorPeerId,
+                required eventTimestamp,
+                required updatedAt,
+              }) => dbReconcileGroupNotificationDisplayOutboxMessageAliasReady(
+                db,
+                aliasEventId: aliasEventId,
+                canonicalEventId: canonicalEventId,
+                groupId: groupId,
+                actorPeerId: actorPeerId,
+                eventTimestamp: eventTimestamp,
+                updatedAt: updatedAt,
+              ),
+          dbDeleteForGroup: (groupId) =>
+              dbDeleteGroupNotificationDisplayOutboxForGroup(db, groupId),
+          dbDeleteForMessage: ({required groupId, required messageId}) =>
+              dbDeleteGroupNotificationDisplayOutboxForMessage(
+                db,
+                groupId: groupId,
+                messageId: messageId,
+              ),
+          dbDeleteForReaction:
+              ({required groupId, required messageId, required reactionId}) =>
+                  dbDeleteGroupNotificationDisplayOutboxForReaction(
+                    db,
+                    groupId: groupId,
+                    messageId: messageId,
+                    reactionId: reactionId,
+                  ),
+          dbDeleteForReactionActor:
+              ({required groupId, required messageId, required actorPeerId}) =>
+                  dbDeleteGroupNotificationDisplayOutboxForReactionActor(
+                    db,
+                    groupId: groupId,
+                    messageId: messageId,
+                    actorPeerId: actorPeerId,
+                  ),
+        );
+    final groupNotificationReconciliationOutboxRepository =
+        GroupNotificationReconciliationOutboxRepositoryImpl(
+          dbLoadEligible: ({limit = 20, required eligibleAt}) =>
+              dbLoadEligibleGroupNotificationReconciliationOutboxEntries(
+                db,
+                limit: limit,
+                eligibleAt: eligibleAt,
+              ),
+          dbLoadEarliestNextAttemptAt: () =>
+              dbLoadEarliestGroupNotificationReconciliationOutboxNextAttemptAt(
+                db,
+              ),
+          dbRecordFailureIfExact:
+              ({
+                required groupId,
+                required expectedIncarnationId,
+                required expectedRevision,
+                required lastAttemptAt,
+                required nextAttemptAt,
+                required updatedAt,
+              }) => dbRecordGroupNotificationReconciliationOutboxFailureIfExact(
+                db,
+                groupId: groupId,
+                expectedIncarnationId: expectedIncarnationId,
+                expectedRevision: expectedRevision,
+                lastAttemptAt: lastAttemptAt,
+                nextAttemptAt: nextAttemptAt,
+                updatedAt: updatedAt,
+              ),
+          dbCompleteIfExact:
+              ({
+                required groupId,
+                required expectedIncarnationId,
+                required expectedRevision,
+              }) => dbCompleteGroupNotificationReconciliationOutboxIfExact(
+                db,
+                groupId: groupId,
+                expectedIncarnationId: expectedIncarnationId,
+                expectedRevision: expectedRevision,
+              ),
+        );
 
     // Create group repository
     final groupRepository = GroupRepositoryImpl(
@@ -1757,6 +1959,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       dbLoadAllGroups: () => dbLoadAllGroups(db),
       dbLoadGroup: (id) => dbLoadGroup(db, id),
       dbUpdateGroup: (row) => dbUpdateGroup(db, row),
+      dbCommitDissolvedGroup: (row) =>
+          dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(db, row),
       dbDeleteGroup: (id) => dbDeleteGroup(db, id),
       dbLoadActiveGroups: () => dbLoadActiveGroups(db),
       dbArchiveGroup: (id) => dbArchiveGroup(db, id),
@@ -2124,6 +2328,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               dbDeleteGroupInviteDeliveryAttemptsForGroup(db, groupId),
         );
 
+    // The repository read boundary and every foreground group presentation
+    // share this key. Capturing the currently managed generation before the SQL
+    // read commit therefore cannot race a foreground final-show call.
+    final notificationService = FlutterNotificationService(
+      requestApplePermissions: !kE2ETestMode,
+    );
+    final groupNotificationPresentationCoordinator =
+        GroupNotificationPresentationCoordinator();
+
     GroupMessageRepositoryImpl createGroupMessageRepository(
       dynamic executor, {
       bool enableInboxPageTransactions = false,
@@ -2180,7 +2393,43 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         dbCountTotalUnreadGroupMessages: () =>
             dbCountTotalUnreadGroupMessages(executor),
         dbMarkGroupMessagesAsRead: (groupId) =>
-            dbMarkGroupMessagesAsRead(executor, groupId),
+            groupNotificationPresentationCoordinator.runForGroup(
+              groupId,
+              () async {
+                ConversationNotificationContentMetadata? metadata;
+                if (!isDesktop) {
+                  try {
+                    metadata = await notificationService
+                        .lookupConversationNotificationContentMetadata(
+                          'group:$groupId',
+                        );
+                  } catch (error) {
+                    emitFlowEvent(
+                      layer: 'FL',
+                      event:
+                          'GROUP_NOTIFICATION_READ_METADATA_CAPTURE_UNAVAILABLE',
+                      details: {'errorType': error.runtimeType.toString()},
+                    );
+                  }
+                }
+                final eventIdentity = metadata?.eventIdentity?.trim();
+                final generation = metadata?.generation?.trim();
+                if (metadata == null ||
+                    eventIdentity == null ||
+                    eventIdentity.isEmpty ||
+                    generation == null ||
+                    generation.isEmpty) {
+                  return dbMarkGroupMessagesAsRead(executor, groupId);
+                }
+                return dbMarkGroupMessagesAsRead(
+                  executor,
+                  groupId,
+                  acknowledgedContentKind: metadata.kind.name,
+                  acknowledgedEventIdentity: eventIdentity,
+                  acknowledgedGeneration: generation,
+                );
+              },
+            ),
         dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
         dbDeleteGroupMessageForMembershipRepairFn: (id) =>
             dbDeleteGroupMessageForMembershipRepair(executor, id),
@@ -3414,10 +3663,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       autoAcceptAndReciprocate: null,
     );
 
-    // Create notification service and conversation trackers
-    final notificationService = FlutterNotificationService(
-      requestApplePermissions: !kE2ETestMode,
-    );
+    // Create conversation trackers (the notification service and shared group
+    // presentation coordinator were created at the repository read boundary).
     final PushRegistrationCoordinator? pushRegistrationCoordinator =
         shouldEnableProductionPushRegistration(isDesktop: isDesktop)
         ? PushRegistrationCoordinator(
@@ -3788,6 +4035,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       notificationToneTracker: notificationToneTracker,
+      notificationPresentationCoordinator:
+          groupNotificationPresentationCoordinator,
       durableNotificationCoordinatorResolver: () async =>
           durableReactionNotificationCoordinator,
       getAppLifecycleState: () =>
@@ -3798,6 +4047,66 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       pendingKeyRepairRepo: groupPendingKeyRepairRepository,
       pendingMembershipMessageRepo: groupPendingMembershipMessageRepository,
       pendingReactionRepo: groupPendingReactionRepository,
+      notificationDisplayOutbox: groupNotificationDisplayOutboxRepository,
+      notificationReconciliationOutbox:
+          groupNotificationReconciliationOutboxRepository,
+      loadLatestUnreadNotificationMessage: (groupId) async {
+        final row = await dbLoadLatestUnreadGroupNotificationMessage(
+          db,
+          groupId,
+        );
+        return row == null ? null : GroupMessage.fromMap(row);
+      },
+      isActiveGroupNotificationReaction:
+          ({required groupId, required selfPeerId, required eventIdentity}) =>
+              dbIsActiveGroupNotificationReaction(
+                db,
+                groupId: groupId,
+                selfPeerId: selfPeerId,
+                eventIdentity: eventIdentity,
+              ),
+      loadLatestActiveNotificationReaction:
+          ({required groupId, required selfPeerId}) async {
+            final row = await dbLoadLatestActiveGroupNotificationReaction(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+            );
+            if (row == null) return null;
+            final messageId = (row['message_id'] as String?)?.trim();
+            final actorPeerId = (row['sender_peer_id'] as String?)?.trim();
+            final eventIdentity =
+                (row['notification_display_terminal_event_id'] as String?)
+                    ?.trim();
+            final timestamp = DateTime.tryParse(
+              (row['timestamp'] as String?)?.trim() ?? '',
+            );
+            if (messageId == null ||
+                messageId.isEmpty ||
+                actorPeerId == null ||
+                actorPeerId.isEmpty ||
+                eventIdentity == null ||
+                eventIdentity.isEmpty ||
+                timestamp == null) {
+              throw StateError(
+                'canonical group reaction descriptor is malformed',
+              );
+            }
+            return GroupNotificationCanonicalReaction(
+              messageId: messageId,
+              actorPeerId: actorPeerId,
+              eventIdentity: eventIdentity,
+              timestamp: timestamp.toUtc(),
+            );
+          },
+      isGroupNotificationEventAcknowledged:
+          ({required groupId, required contentKind, required eventIdentity}) =>
+              dbIsGroupNotificationEventAcknowledged(
+                db,
+                groupId: groupId,
+                contentKind: contentKind,
+                eventIdentity: eventIdentity,
+              ),
       requestGroupKeyRepair: requestGroupKeyRepairViaSender,
       rotateGroupKeyAfterRemoteRemoval: (groupId) async {
         // Forward secrecy after a remote member leave/removal the local device
@@ -5076,6 +5385,21 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         reactionRepository: reactionRepository,
         isDesktop: isDesktop,
         notificationService: notificationService,
+        groupNotificationPresentationCoordinator:
+            groupNotificationPresentationCoordinator,
+        groupNotificationPendingReadAcknowledgementResolver:
+            ({
+              required groupId,
+              required contentKind,
+              required eventIdentity,
+            }) async =>
+                await dbLoadExactGroupNotificationReadAcknowledgement(
+                  db,
+                  groupId: groupId,
+                  contentKind: contentKind.name,
+                  eventIdentity: eventIdentity,
+                ) !=
+                null,
         droppedPushRecoveryCoordinator: droppedPushRecoveryCoordinator,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,

@@ -2890,13 +2890,16 @@ final class _GroupMessageSystemTransitionProcessor {
         // through native leave. B3-first skips every effect; dissolve-first
         // completes before B3 can mark the shell.
         if (group.isDissolved) {
+          // An accepted replay is the retry seam for exact terminal display
+          // custody cleanup after a prior interrupted process.
+          await _groupRepo.commitDissolvedGroupTerminally(group);
           await _terminalizeExitWorkAfterRemoteDissolve(groupId);
           return null;
         }
 
         await appendSystemEventLog();
         final resolvedEventAt = (eventAt ?? DateTime.now().toUtc()).toUtc();
-        await _groupRepo.updateGroup(
+        await _groupRepo.commitDissolvedGroupTerminally(
           group.copyWith(
             isDissolved: true,
             dissolvedAt: resolvedEventAt,

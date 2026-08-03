@@ -153,6 +153,42 @@ void main() {
   });
 
   test(
+    'typed acquisition distinguishes fresh pending from committed ownership',
+    () async {
+      final owner =
+          await lease(
+            pendingWait: Duration.zero,
+            claimTokenFactory: () => 'typed-owner',
+          ).acquireMessageEventClaim(
+            type: 'group_message',
+            eventIdentity: 'typed-event',
+          );
+      expect(owner.disposition, DurableNotificationClaimDisposition.acquired);
+      expect(owner.claim, isNotNull);
+
+      final pending = await lease(pendingWait: Duration.zero)
+          .acquireMessageEventClaim(
+            type: 'group_message',
+            eventIdentity: 'typed-event',
+          );
+      expect(pending.disposition, DurableNotificationClaimDisposition.pending);
+      expect(pending.claim, isNull);
+
+      expect(await owner.claim!.commit(), isTrue);
+      final committed = await lease(pendingWait: Duration.zero)
+          .acquireMessageEventClaim(
+            type: 'group_message',
+            eventIdentity: 'typed-event',
+          );
+      expect(
+        committed.disposition,
+        DurableNotificationClaimDisposition.committedOrUnavailable,
+      );
+      expect(committed.claim, isNull);
+    },
+  );
+
+  test(
     'stale pending message owner is atomically replaced and loses CAS authority',
     () async {
       final stale =

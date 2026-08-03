@@ -321,9 +321,10 @@ extension GroupMessageAroundReader on GroupMessageRepository {
 
 /// Optional source for conversation-level group read commits.
 ///
-/// Implementations emit the exact group id only when [GroupMessageRepository]
-/// changes at least one incoming unread row. Consumers can therefore refresh
-/// derived unread UI without treating a no-op re-mark as new activity.
+/// Implementations emit the exact group id after every successful
+/// conversation-level mark-as-read call. A no-op message update is still a
+/// user-view acknowledgement and lets notification projection retire a current
+/// reaction card without inventing reaction unread state.
 abstract class GroupConversationReadEventSource {
   Stream<String> get groupConversationReadStream;
 }

@@ -565,6 +565,8 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/send_group_message_recipient_eligibility_test.dart"
   "test/features/push/application/background_message_handler_test.dart"
   "test/core/database/migrations/105_reaction_outbox_needs_build_test.dart"
+  # 330: identifier-only v106 group notification display custody.
+  "test/core/database/migrations/106_group_notification_display_outbox_test.dart"
   "test/features/groups/application/retry_failed_group_messages_use_case_test.dart"
   "test/features/groups/integration/external_share_group_media_liveness_test.dart"
   "test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart"
@@ -573,6 +575,8 @@ readonly GROUP_TESTS=(
   "test/core/database/helpers/group_messages_db_helpers_sending_test.dart"
   "test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart"
   "test/features/groups/application/group_message_listener_test.dart"
+  "test/features/groups/application/group_notification_display_outbox_wiring_test.dart"
+  "test/features/groups/application/group_notification_display_retry_coordinator_test.dart"
   "test/features/groups/application/group_message_listener_decomposition_contract_test.dart"
   "test/features/groups/application/group_message_listener_device_announce_test.dart"
   "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
@@ -587,6 +591,12 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/contact_picker_wired_test.dart"
   "test/features/conversation/application/upload_media_use_case_test.dart"
   "test/features/groups/application/group_avatar_storage_test.dart"
+  # 330: one fail-closed group notification policy across model/row/fallback
+  # producers, plus content-minimized localized reaction target-kind copy.
+  "test/features/push/application/group_notification_display_policy_test.dart"
+  "test/features/push/application/group_reaction_notification_copy_test.dart"
+  "test/features/push/application/resolve_group_notification_route_target_use_case_test.dart"
+  "test/features/push/application/background_push_notification_fallback_test.dart"
   # 269 W3: durable ordinary-group media failure transitions, recoverable
   # paging/coalesced retry, resume/ready recovery, and production wiring.
   "test/features/conversation/application/download_media_use_case_test.dart"
@@ -613,6 +623,23 @@ readonly GROUP_TESTS=(
   "test/tool/sims/sims_ios_group_media_269_profile_test.dart"
   "test/core/notifications/durable_conversation_notification_id_registry_test.dart"
   "test/core/notifications/durable_notification_tone_lease_test.dart"
+  # 330: exact per-group read cancellation shares one keyed operation queue
+  # with final presentation, while typed pending claims remain retryable.
+  "test/core/notifications/flutter_notification_service_test.dart"
+  "test/core/notifications/group_notification_read_projector_test.dart"
+  "test/core/notifications/account_migration_receiver_display_custody_test.dart"
+  "test/core/notifications/group_notification_runtime_wiring_test.dart"
+  # 330 final review: durable invalidation, tri-state/cross-kind canonical
+  # rebuild, and exact-generation headless post-show fencing.
+  "test/core/database/migrations/106_group_notification_reconciliation_outbox_test.dart"
+  "test/core/database/helpers/group_notification_canonical_state_db_helpers_test.dart"
+  "test/core/database/helpers/reactions_db_helpers_test.dart"
+  "test/core/notifications/group_notification_canonical_reconciler_test.dart"
+  "test/features/groups/application/group_notification_reconciliation_wiring_test.dart"
+  "test/features/push/application/background_group_notification_post_show_fence_test.dart"
+  "test/core/debug/group_notification_projection_e2e_test.dart"
+  "test/integration/group_notification_projection_android_criteria_test.dart"
+  "test/features/push/application/show_notification_use_case_test.dart"
   "test/shared/widgets/media/audio_player_widget_test.dart"
   "test/shared/widgets/media/media_thumbnail_image_test.dart"
   # 240 announcement received-media forwarding: announcement source adapter,

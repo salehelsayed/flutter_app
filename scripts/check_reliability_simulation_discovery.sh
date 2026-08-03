@@ -142,6 +142,8 @@ classify_path() {
     lib/core/debug/keepalive_drop_e2e.dart|\
     lib/core/debug/keepalive_drop_e2e_contract.dart|\
     lib/core/debug/group_reaction_e2e_probe.dart|\
+    lib/core/debug/group_notification_projection_e2e.dart|\
+    lib/debug/group_notification_projection_e2e_action.dart|\
     lib/core/debug/android_notification_payload_e2e.dart|\
     lib/core/debug/android_notification_payload_e2e_protocol.dart|\
     lib/core/debug/private_media_outbox_e2e.dart|\
@@ -224,6 +226,10 @@ classify_path() {
     integration_test/scripts/capture_group_reaction_notification_device.dart|\
     integration_test/group_reaction_notification_sqlcipher_probe_test.dart)
       record "support" "$path" "support" "257 staged group/announcement reaction-notification capture, SQLCipher observer, and strict evidence criteria"
+      return
+      ;;
+    integration_test/scripts/group_notification_projection_android_criteria.dart)
+      record "support" "$path" "support" "330 strict Android group notification projection raw-evidence criteria"
       return
       ;;
     integration_test/scripts/direct_private_media_device_local_journey_criteria.dart|\
@@ -413,6 +419,10 @@ classify_path() {
       record "support" "$path" "support" "252 capture-owned TC-12/TC-13 intro-accept artifact binding; not a device execution row"
       return
       ;;
+    integration_test/group_notification_projection_android_proof_test.dart)
+      record "support" "$path" "support" "330 capture-owned Android projection artifact binding; manifest owns execution"
+      return
+      ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
     integration_test/scripts/run_media_delivery_ui_smoke.dart)
       record "1to1" "$path" "runner" "1:1 media simulator smoke"
@@ -487,6 +497,10 @@ classify_path() {
       record "support" "$path" "support" "typed sims adapter for the group reaction-notification campaign; manifest owns the executable proof row"
       return
       ;;
+    integration_test/scripts/run_group_notification_projection_android.dart)
+      record "support" "$path" "support" "typed Sims adapter for Android group notification projection durability; manifest owns execution"
+      return
+      ;;
     integration_test/scripts/run_group_media_send_reliability.dart)
       record "group" "$path" "runner" "269 prepared-artifact two-role group-media reliability runner (--list-scenarios)"
       return
@@ -533,6 +547,10 @@ classify_path() {
       ;;
     integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart)
       record "group" "$path" "test" "266 PB266-15 release SQLCipher diagnostic reopen and Settings remount proof"
+      return
+      ;;
+    integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart)
+      record "group" "$path" "test" "330 Android SQLCipher v105-to-v106 group notification display-outbox proof"
       return
       ;;
     integration_test/group_private_media_platform_proof_test.dart)
@@ -646,7 +664,8 @@ discover_candidates() {
     find lib/core/debug -maxdepth 1 -type f \( -name '*e2e*.dart' -o -name '*smoke*.dart' \) -print 2>/dev/null
     for path in \
       lib/core/debug/group_media_ios_disposable_profile.dart \
-      lib/core/debug/group_media_ios_disposable_reset.dart; do
+      lib/core/debug/group_media_ios_disposable_reset.dart \
+      lib/debug/group_notification_projection_e2e_action.dart; do
       [ ! -f "$path" ] || printf '%s\n' "$path"
     done
     [ -f smoke_test_friends.sh ] && printf '%s\n' smoke_test_friends.sh

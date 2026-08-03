@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
@@ -645,6 +646,18 @@ void main() {
     expect(methodStart, greaterThan(0));
     expect(methodEnd, greaterThan(methodStart));
     final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('enterGroupComposeMarkerOnce('));
+    expect(
+      method,
+      contains('markerEntry != GroupComposeMarkerEntryOutcome.accepted'),
+    );
+    expect(method, contains('maximumFocusPolls: 80'));
+    expect(method, contains('maximumAcceptancePolls: 80'));
+    expect(method, contains('group compose marker accepted on'));
+    expect(method, isNot(contains('group compose draft restored on')));
+    expect(method, contains('findEnabledFocusableGroupComposeEditorBounds('));
+    expect(method, contains('requireFocused: true'));
+    expect(method, contains('exactText: marker'));
     expect(method, contains('baselineOutcomeCount'));
     expect(method, contains('extractGroupSendTimingObservations('));
     expect(method, contains('outcome.isRecoveryPending'));
@@ -830,9 +843,7 @@ void main() {
         'integration_test/scripts/'
         'capture_group_reaction_notification_device.dart',
       ).readAsStringSync();
-      final methodStart = source.indexOf(
-        'Future<void> _createAndAcceptGroup()',
-      );
+      final methodStart = source.indexOf('Future<void> _createAndAcceptGroup(');
       final methodEnd = source.indexOf(
         'Future<void> _runAndroidUnreadLifecycle()',
         methodStart,
@@ -1205,6 +1216,34 @@ I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success
   });
 
   group('extractActiveNotificationCards', () {
+    test('normalizes managed payload envelopes to the navigation route', () {
+      final payload = encodeConversationNotificationPayload(
+        routePayload: 'group:proof-group|message:proof-message',
+        conversationKey: 'group:proof-group',
+        metadata: const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: 'proof-message',
+          generation: 'proof-generation',
+        ),
+      );
+      final dump =
+          '''
+Active Notifications:
+  NotificationRecord(0x2: pkg=com.mknoon.app user=UserHandle{0} id=2 tag=null importance=3)
+    android.title=New Message
+    android.text=You have a new message
+    payload=String ($payload)
+Ranking Config:
+''';
+
+      final card = extractActiveNotificationCards(
+        dump,
+        packageName: 'com.mknoon.app',
+      ).single;
+
+      expect(card.routePayload, 'group:proof-group|message:proof-message');
+    });
+
     test('returns only active records for the requested package', () {
       const dump = '''
 Active Notifications:
@@ -1240,6 +1279,70 @@ Ranking Config:
         extractActiveNotificationCards(dump, packageName: 'com.mknoon.app'),
         isEmpty,
       );
+    });
+
+    test(
+      'marks Android auto-group summaries separately from content cards',
+      () {
+        const dump = '''
+Active Notifications:
+  NotificationRecord(0x1: pkg=com.mknoon.app user=UserHandle{0} id=0 tag=0|com.mknoon.app|g:Aggregate_AlertingSection importance=4)
+    flags=AUTO_CANCEL|LOCAL_ONLY|GROUP_SUMMARY|AUTOGROUP_SUMMARY
+    android.title=null
+    android.text=null
+  NotificationRecord(0x2: pkg=com.mknoon.app user=UserHandle{0} id=11 tag=null importance=4)
+    flags=AUTO_CANCEL
+    android.title=Plan330A
+    android.text=Alice: message A
+  NotificationRecord(0x3: pkg=com.mknoon.app user=UserHandle{0} id=12 tag=null importance=4)
+    flags=AUTO_CANCEL
+    android.title=Plan330B
+    android.text=Alice: message B
+Ranking Config:
+''';
+
+        final cards = extractActiveNotificationCards(
+          dump,
+          packageName: 'com.mknoon.app',
+        );
+
+        expect(cards, hasLength(3));
+        expect(cards.where((card) => card.isGroupSummary), hasLength(1));
+        expect(
+          cards.where((card) => !card.isGroupSummary).map((card) => card.title),
+          orderedEquals(const <String>['Plan330A', 'Plan330B']),
+        );
+
+        final contentCards = extractActiveContentNotificationCards(
+          dump,
+          packageName: 'com.mknoon.app',
+        );
+        expect(contentCards, hasLength(2));
+        expect(
+          contentCards.map((card) => card.title),
+          orderedEquals(const <String>['Plan330A', 'Plan330B']),
+        );
+      },
+    );
+
+    test('keeps an app-owned group summary in fail-closed content', () {
+      const dump = '''
+Active Notifications:
+  NotificationRecord(0x1: pkg=com.mknoon.app user=UserHandle{0} id=42 tag=null importance=4)
+    flags=AUTO_CANCEL|GROUP_SUMMARY
+    android.title=Unexpected app summary
+    android.text=Must remain observable
+Ranking Config:
+''';
+
+      final cards = extractActiveContentNotificationCards(
+        dump,
+        packageName: 'com.mknoon.app',
+      );
+
+      expect(cards, hasLength(1));
+      expect(cards.single.id, 42);
+      expect(cards.single.isGroupSummary, isFalse);
     });
   });
 
@@ -1383,6 +1486,7 @@ Ranking Config:
         const dump = '''
 <hierarchy>
   <node content-desc="TC257Group123" bounds="[284,182][767,242]" />
+  <node content-desc="Discussion" bounds="[796,195][920,229]" />
   <node class="android.widget.EditText" hint="Write something..." bounds="[192,2177][888,2303]" />
 </hierarchy>
 ''';
@@ -1390,6 +1494,17 @@ Ranking Config:
         expect(isAcceptedGroupSurface(dump, 'TC257Group123'), isTrue);
       },
     );
+
+    test('rejects an invite card whose Accept action became a spinner', () {
+      const dump = '''
+<hierarchy>
+  <node content-desc="TC257Group123" bounds="[42,600][1038,800]" />
+  <node class="android.widget.ProgressBar" bounds="[820,820][900,900]" />
+</hierarchy>
+''';
+
+      expect(isAcceptedGroupSurface(dump, 'TC257Group123'), isFalse);
+    });
   });
 
   group('isGroupConversationSurface', () {
@@ -1482,6 +1597,192 @@ Ranking Config:
           'TC257First123',
         ),
         isNull,
+      );
+    });
+  });
+
+  group('enterGroupComposeMarkerOnce', () {
+    const marker = 'Plan330TextA123';
+    const unfocusedEditor = '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="false" text="" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+    const focusedEditor = '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+    const acceptedMarker =
+        '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="$marker" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+
+    test(
+      'waits for exact editor focus before injecting exactly once',
+      () async {
+        final dumps = <String>[
+          unfocusedEditor,
+          unfocusedEditor,
+          focusedEditor,
+          acceptedMarker,
+        ];
+        final events = <String>[];
+
+        final outcome = await enterGroupComposeMarkerOnce(
+          marker: marker,
+          readUiDump: () async {
+            events.add('read');
+            return dumps.removeAt(0);
+          },
+          tapEditor: (center) async =>
+              events.add('tap:${center.$1},${center.$2}'),
+          injectMarker: (value) async => events.add('inject:$value'),
+          maximumFocusPolls: 2,
+          maximumAcceptancePolls: 1,
+          pollInterval: Duration.zero,
+        );
+
+        expect(outcome, GroupComposeMarkerEntryOutcome.accepted);
+        expect(events, <String>[
+          'read',
+          'tap:540,1391',
+          'read',
+          'read',
+          'inject:$marker',
+          'read',
+        ]);
+        expect(
+          events.where((event) => event.startsWith('inject:')),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('does not inject before the exact editor acquires focus', () async {
+      var injections = 0;
+
+      final outcome = await enterGroupComposeMarkerOnce(
+        marker: marker,
+        readUiDump: () async => unfocusedEditor,
+        tapEditor: (_) async {},
+        injectMarker: (_) async => injections += 1,
+        maximumFocusPolls: 2,
+        maximumAcceptancePolls: 1,
+        pollInterval: Duration.zero,
+      );
+
+      expect(outcome, GroupComposeMarkerEntryOutcome.focusNotAcquired);
+      expect(injections, 0);
+    });
+
+    test('fails closed on partial content without reinjection', () async {
+      final dumps = <String>[
+        unfocusedEditor,
+        focusedEditor,
+        '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="Plan330TextA" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''',
+        acceptedMarker,
+      ];
+      var injections = 0;
+
+      final outcome = await enterGroupComposeMarkerOnce(
+        marker: marker,
+        readUiDump: () async => dumps.removeAt(0),
+        tapEditor: (_) async {},
+        injectMarker: (_) async => injections += 1,
+        maximumFocusPolls: 1,
+        maximumAcceptancePolls: 2,
+        pollInterval: Duration.zero,
+      );
+
+      expect(outcome, GroupComposeMarkerEntryOutcome.markerMismatch);
+      expect(injections, 1);
+      expect(dumps, hasLength(1), reason: 'must stop at the partial value');
+    });
+
+    test(
+      'fails closed on different pre-existing content without injection',
+      () async {
+        const focusedDifferent = '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="another draft" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+        final dumps = <String>[unfocusedEditor, focusedDifferent];
+        var injections = 0;
+
+        final outcome = await enterGroupComposeMarkerOnce(
+          marker: marker,
+          readUiDump: () async => dumps.removeAt(0),
+          tapEditor: (_) async {},
+          injectMarker: (_) async => injections += 1,
+          maximumFocusPolls: 1,
+          maximumAcceptancePolls: 1,
+          pollInterval: Duration.zero,
+        );
+
+        expect(outcome, GroupComposeMarkerEntryOutcome.composeNotEmpty);
+        expect(injections, 0);
+      },
+    );
+
+    test(
+      'does not accept a marker that exists only in a message bubble',
+      () async {
+        const bubbleOnly =
+            '''
+<hierarchy>
+  <node class="android.view.View" content-desc="$marker" bounds="[42,900][1038,1040]" />
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+        final dumps = <String>[
+          unfocusedEditor,
+          focusedEditor,
+          bubbleOnly,
+          bubbleOnly,
+        ];
+        var injections = 0;
+
+        final outcome = await enterGroupComposeMarkerOnce(
+          marker: marker,
+          readUiDump: () async => dumps.removeAt(0),
+          tapEditor: (_) async {},
+          injectMarker: (_) async => injections += 1,
+          maximumFocusPolls: 1,
+          maximumAcceptancePolls: 2,
+          pollInterval: Duration.zero,
+        );
+
+        expect(outcome, GroupComposeMarkerEntryOutcome.markerNotObserved);
+        expect(injections, 1);
+      },
+    );
+
+    test('selector requires enabled, focusable, and focused EditText', () {
+      const dump =
+          '''
+<hierarchy>
+  <node class="android.widget.EditText" enabled="false" focusable="true" focused="true" text="$marker" bounds="[0,0][20,20]" />
+  <node class="android.widget.EditText" enabled="true" focusable="false" focused="true" text="$marker" bounds="[20,0][40,20]" />
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="false" text="$marker" bounds="[40,0][60,20]" />
+  <node class="android.widget.EditText" enabled="true" focusable="true" focused="true" text="$marker" bounds="[100,200][140,260]" />
+</hierarchy>
+''';
+
+      expect(
+        findEnabledFocusableGroupComposeEditorBounds(
+          dump,
+          requireFocused: true,
+          exactText: marker,
+        ),
+        (100, 200, 140, 260),
       );
     });
   });

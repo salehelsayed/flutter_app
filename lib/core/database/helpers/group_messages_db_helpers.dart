@@ -1,8 +1,12 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../notifications/deterministic_notification_id.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'group_message_local_deletions_db_helpers.dart';
+import 'group_notification_display_outbox_db_helpers.dart';
+import 'group_notification_read_acknowledgement_db_helpers.dart';
+import 'group_notification_reconciliation_outbox_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 
 const _groupRemovalCutoffMessageIdLike = 'sys-member_removed_cutoff:%';
@@ -837,8 +841,26 @@ Future<int> dbCountTotalUnreadGroupMessages(DatabaseExecutor db) async {
 /// Marks all unread incoming messages for a group as read.
 Future<int> dbMarkGroupMessagesAsRead(
   DatabaseExecutor db,
-  String groupId,
-) async {
+  String groupId, {
+  String? acknowledgedContentKind,
+  String? acknowledgedEventIdentity,
+  String? acknowledgedGeneration,
+}) async {
+  final acknowledgementParts = <String?>[
+    acknowledgedContentKind,
+    acknowledgedEventIdentity,
+    acknowledgedGeneration,
+  ];
+  final acknowledgementPartCount = acknowledgementParts
+      .where((value) => value != null)
+      .length;
+  if (acknowledgementPartCount != 0 &&
+      acknowledgementPartCount != acknowledgementParts.length) {
+    throw ArgumentError(
+      'acknowledged content kind, event identity and generation must be '
+      'provided together',
+    );
+  }
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_MARK_READ_START',
@@ -848,11 +870,94 @@ Future<int> dbMarkGroupMessagesAsRead(
   );
 
   try {
-    final now = DateTime.now().toUtc().toIso8601String();
-    final count = await db.rawUpdate(
-      'UPDATE group_messages SET read_at = ? WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL AND id NOT LIKE ?',
-      [now, groupId, _groupRemovalCutoffMessageIdLike],
-    );
+    final count = await _runGroupMessageCleanupTransaction(db, (txn) async {
+      final now = DateTime.now().toUtc().toIso8601String();
+      final updated = await txn.rawUpdate(
+        'UPDATE group_messages SET read_at = ? WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL AND id NOT LIKE ?',
+        [now, groupId, _groupRemovalCutoffMessageIdLike],
+      );
+
+      if (await _hasGroupReactionAcknowledgementColumn(txn)) {
+        // A conversation-level acknowledgement includes reaction-only cards.
+        // Bind it to every reaction that exists in this group *inside the same
+        // transaction*. A later ADD replaces its row with a fresh NULL marker,
+        // so a post-read notification remains eligible.
+        await txn.rawUpdate(
+          'UPDATE message_reactions '
+          'SET notification_acknowledged_at = ? '
+          'WHERE notification_acknowledged_at IS NULL '
+          'AND EXISTS (SELECT 1 FROM group_messages AS target '
+          'WHERE target.id = message_reactions.message_id '
+          'AND target.group_id = ?)',
+          <Object?>[now, groupId],
+        );
+      }
+
+      if (acknowledgementPartCount == acknowledgementParts.length) {
+        if (acknowledgedContentKind == 'reaction') {
+          await _bindAcknowledgedReactionCustodyToCanonicalRow(
+            txn,
+            groupId: groupId,
+            eventIdentity: acknowledgedEventIdentity!,
+          );
+        }
+        final absorbedByCanonicalRow = acknowledgedContentKind == 'message'
+            ? (await txn.query(
+                'group_messages',
+                columns: const <String>['id'],
+                where:
+                    'id = ? AND group_id = ? AND is_incoming = 1 '
+                    'AND read_at IS NOT NULL',
+                whereArgs: <Object?>[acknowledgedEventIdentity, groupId],
+                limit: 1,
+              )).isNotEmpty
+            : (await txn.rawQuery(
+                'SELECT 1 FROM message_reactions AS reaction '
+                'INNER JOIN group_messages AS target '
+                'ON target.id = reaction.message_id '
+                'WHERE target.group_id = ? '
+                'AND reaction.notification_display_terminal_event_id = ? '
+                'AND reaction.notification_acknowledged_at IS NOT NULL '
+                'LIMIT 1',
+                <Object?>[groupId, acknowledgedEventIdentity],
+              )).isNotEmpty;
+        if (!absorbedByCanonicalRow) {
+          await dbRecordExactGroupNotificationReadAcknowledgement(
+            txn,
+            groupId: groupId,
+            contentKind: acknowledgedContentKind!,
+            eventIdentity: acknowledgedEventIdentity!,
+            generation: acknowledgedGeneration!,
+            acknowledgedAt: now,
+          );
+        } else if (acknowledgedContentKind == 'message') {
+          // A partial/older v106 run may already have left the exact tuple.
+          // Canonical read_at now owns the fact, so remove redundant custody.
+          await dbConsumeExactGroupNotificationReadAcknowledgement(
+            txn,
+            groupId: groupId,
+            contentKind: 'message',
+            eventIdentity: acknowledgedEventIdentity!,
+          );
+        } else {
+          await dbConsumeExactGroupNotificationReadAcknowledgement(
+            txn,
+            groupId: groupId,
+            contentKind: 'reaction',
+            eventIdentity: acknowledgedEventIdentity!,
+          );
+        }
+      }
+
+      // Keep ready and not-ready custody until its exact projection lane
+      // observes this durable acknowledgement. Deleting custody here leaves a
+      // loaded retry with no fact to consult and lets it re-publish after read.
+      await dbEnqueueGroupNotificationReconciliationOutbox(
+        txn,
+        groupId: groupId,
+      );
+      return updated;
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -869,6 +974,71 @@ Future<int> dbMarkGroupMessagesAsRead(
     );
     rethrow;
   }
+}
+
+Future<void> _bindAcknowledgedReactionCustodyToCanonicalRow(
+  DatabaseExecutor db, {
+  required String groupId,
+  required String eventIdentity,
+}) async {
+  final table = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'group_notification_display_outbox' LIMIT 1",
+  );
+  if (table.isEmpty) return;
+  final custodyRows = await db.query(
+    'group_notification_display_outbox',
+    columns: const <String>[
+      'event_id',
+      'message_id',
+      'actor_peer_id',
+      'event_timestamp',
+      'reaction_id',
+    ],
+    where:
+        "group_id = ? AND event_kind = 'reaction' "
+        "AND reaction_action = 'add' AND reaction_tombstone = 0",
+    whereArgs: <Object?>[groupId],
+  );
+  final exact = custodyRows
+      .where((row) {
+        final rawEventId = (row['event_id'] as String?)?.trim();
+        return rawEventId != null &&
+            rawEventId.isNotEmpty &&
+            boundedReactionEventIdentity(rawEventId) == eventIdentity;
+      })
+      .toList(growable: false);
+  if (exact.length != 1) return;
+  final custody = exact.single;
+  await db.rawUpdate(
+    'UPDATE message_reactions '
+    'SET notification_display_terminal_event_id = ? '
+    'WHERE id = ? AND message_id = ? AND sender_peer_id = ? '
+    'AND timestamp = ? AND removed_at IS NULL '
+    'AND notification_acknowledged_at IS NOT NULL '
+    'AND (notification_display_terminal_event_id IS NULL '
+    "OR TRIM(notification_display_terminal_event_id) = '' "
+    'OR notification_display_terminal_event_id = ?) '
+    'AND EXISTS (SELECT 1 FROM group_messages AS target '
+    'WHERE target.id = message_reactions.message_id '
+    'AND target.group_id = ?)',
+    <Object?>[
+      eventIdentity,
+      custody['reaction_id'],
+      custody['message_id'],
+      custody['actor_peer_id'],
+      custody['event_timestamp'],
+      eventIdentity,
+      groupId,
+    ],
+  );
+}
+
+Future<bool> _hasGroupReactionAcknowledgementColumn(DatabaseExecutor db) async {
+  final columns = await db.rawQuery('PRAGMA table_info(message_reactions)');
+  return columns.any(
+    (column) => column['name'] == 'notification_acknowledged_at',
+  );
 }
 
 /// Returns true if a group message with the same content already exists.
@@ -909,28 +1079,31 @@ Future<int> dbDeleteGroupMessagesForGroup(
   );
 
   try {
-    final existingRows = await db.query(
-      'group_messages',
-      columns: ['id', 'group_id'],
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-    );
-    for (final row in existingRows) {
-      final messageId = row['id'] as String?;
-      final rowGroupId = row['group_id'] as String?;
-      if (messageId == null || rowGroupId == null) continue;
-      await dbUpsertGroupMessageLocalDeletion(
-        db,
-        messageId: messageId,
-        groupId: rowGroupId,
+    final count = await _runGroupMessageCleanupTransaction(db, (txn) async {
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, groupId);
+      final existingRows = await txn.query(
+        'group_messages',
+        columns: ['id', 'group_id'],
+        where: 'group_id = ?',
+        whereArgs: [groupId],
       );
-    }
+      for (final row in existingRows) {
+        final messageId = row['id'] as String?;
+        final rowGroupId = row['group_id'] as String?;
+        if (messageId == null || rowGroupId == null) continue;
+        await dbUpsertGroupMessageLocalDeletion(
+          txn,
+          messageId: messageId,
+          groupId: rowGroupId,
+        );
+      }
 
-    final count = await db.delete(
-      'group_messages',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-    );
+      return txn.delete(
+        'group_messages',
+        where: 'group_id = ?',
+        whereArgs: [groupId],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -958,25 +1131,31 @@ Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
   );
 
   try {
-    final existingRows = await db.query(
-      'group_messages',
-      columns: ['group_id'],
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    if (existingRows.isNotEmpty) {
-      final groupId = existingRows.first['group_id'] as String?;
-      if (groupId != null && groupId.isNotEmpty) {
-        await dbUpsertGroupMessageLocalDeletion(
-          db,
-          messageId: id,
-          groupId: groupId,
-        );
+    await _runGroupMessageCleanupTransaction(db, (txn) async {
+      final existingRows = await txn.query(
+        'group_messages',
+        columns: ['group_id'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (existingRows.isNotEmpty) {
+        final groupId = existingRows.first['group_id'] as String?;
+        if (groupId != null && groupId.isNotEmpty) {
+          await dbDeleteGroupNotificationDisplayOutboxForMessage(
+            txn,
+            groupId: groupId,
+            messageId: id,
+          );
+          await dbUpsertGroupMessageLocalDeletion(
+            txn,
+            messageId: id,
+            groupId: groupId,
+          );
+        }
       }
-    }
-
-    await db.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+      await txn.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1006,7 +1185,26 @@ Future<void> dbDeleteGroupMessageForMembershipRepair(
   );
 
   try {
-    await db.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+    await _runGroupMessageCleanupTransaction(db, (txn) async {
+      final existingRows = await txn.query(
+        'group_messages',
+        columns: const <String>['group_id'],
+        where: 'id = ?',
+        whereArgs: <Object?>[id],
+        limit: 1,
+      );
+      if (existingRows.isNotEmpty) {
+        final groupId = existingRows.single['group_id'] as String?;
+        if (groupId != null && groupId.isNotEmpty) {
+          await dbDeleteGroupNotificationDisplayOutboxForMessage(
+            txn,
+            groupId: groupId,
+            messageId: id,
+          );
+        }
+      }
+      await txn.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1024,6 +1222,18 @@ Future<void> dbDeleteGroupMessageForMembershipRepair(
     );
     rethrow;
   }
+}
+
+Future<T> _runGroupMessageCleanupTransaction<T>(
+  DatabaseExecutor db,
+  Future<T> Function(DatabaseExecutor txn) body,
+) {
+  if (db is Database) {
+    return dbWriteTransaction(db, (txn) => body(txn));
+  }
+  // A caller such as the group-exit transaction may already own the SQL
+  // transaction. Reuse that executor rather than attempting a nested write.
+  return body(db);
 }
 
 /// Loads outgoing group messages stuck in 'sending' status older than [olderThan].

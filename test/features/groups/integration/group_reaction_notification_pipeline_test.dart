@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -514,6 +515,8 @@ class _DismissibleNotificationService extends FakeNotificationService {
     required String messageText,
     String? payload,
     bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
   }) async {
     await super.showMessageNotification(
       contactPeerId: contactPeerId,
@@ -521,6 +524,8 @@ class _DismissibleNotificationService extends FakeNotificationService {
       messageText: messageText,
       payload: payload,
       silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
     );
     if (!_firstShown.isCompleted) _firstShown.complete();
   }

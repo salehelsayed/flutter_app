@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -185,7 +186,7 @@ class GroupMessageRepositoryImpl
   _outgoingLocalMessageChangesController =
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
   final StreamController<String> _groupConversationReadController =
-      StreamController<String>.broadcast();
+      StreamController<String>.broadcast(sync: true);
   final StreamController<GroupMessageAuthorizationChange>
   _authorizationChangesController =
       StreamController<GroupMessageAuthorizationChange>.broadcast(sync: true);
@@ -875,10 +876,16 @@ class GroupMessageRepositoryImpl
   @override
   Future<void> markAsRead(String groupId) async {
     assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.unreadCounters));
-    final markedCount = await dbMarkGroupMessagesAsRead(groupId);
-    if (markedCount > 0) {
-      _groupConversationReadController.add(groupId);
-    }
+    await dbMarkGroupMessagesAsRead(groupId);
+    // SQL custody is committed by the helper before either in-memory wake.
+    // This signal only removes reconciliation latency; cold start drains the
+    // same durable row if the process stops here.
+    emitGroupNotificationReconciliationSignal(groupId);
+    // This method is called from the visible conversation boundary. Emit after
+    // every successful commit, including a no-op message update, so opening a
+    // reaction-only group can acknowledge its current OS card. A synchronous
+    // controller queues that projection before a later main-runtime show.
+    _groupConversationReadController.add(groupId);
   }
 
   @override
@@ -890,6 +897,7 @@ class GroupMessageRepositoryImpl
         message: previous,
         kind: GroupMessageAuthorizationMutation.removed,
       );
+      emitGroupNotificationReconciliationSignal(previous.groupId);
     }
     await groupReactionProjection?.removeAuthoredTarget(id);
   }
@@ -928,6 +936,9 @@ class GroupMessageRepositoryImpl
         message: GroupMessage.fromMap(previous),
         kind: GroupMessageAuthorizationMutation.removed,
       );
+      emitGroupNotificationReconciliationSignal(
+        GroupMessage.fromMap(previous).groupId,
+      );
     }
     await groupReactionProjection?.removeAuthoredTarget(id);
     _emitOutgoingRowsChangedIfNeeded(previous == null ? 0 : 1);
@@ -944,13 +955,16 @@ class GroupMessageRepositoryImpl
           kind: GroupMessageAuthorizationMutation.removed,
         ),
       );
+      emitGroupNotificationReconciliationSignal(groupId);
     }
     await groupReactionProjection?.removeAuthoredTargetsForGroup(groupId);
     return count;
   }
 
   /// Launch-time self-healing backfill for locally-authored group targets.
-  Future<void> mirrorAllGroupReactionAuthoredTargets() async {
+  Future<void> mirrorAllGroupReactionAuthoredTargets({
+    bool rethrowOnError = false,
+  }) async {
     final projection = groupReactionProjection;
     final loadRows = dbLoadAuthoredGroupMessagesForProjectionFn;
     if (projection == null || loadRows == null) return;
@@ -968,6 +982,7 @@ class GroupMessageRepositoryImpl
         event: 'GROUP_MSG_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
         details: {'error': error.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
   }
 

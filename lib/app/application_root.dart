@@ -77,10 +77,12 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
@@ -111,9 +113,12 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
+import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
+import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_listener_armer.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
@@ -162,6 +167,28 @@ Future<void> openIntroNotificationOrbitRoute({
       appShellController.switchTo(returnTab);
     }
     feedUnreadCountNotifier.dispose();
+  }
+}
+
+/// Rebinds recipient-owned projection state before transferred notification
+/// display custody is allowed to re-project an OS card.
+Future<void> activateAccountMigrationReceiverNotificationState({
+  required void Function() beginCanonicalNotificationRecovery,
+  required void Function() invalidateIdentityCache,
+  required Future<void> Function() rebuildRecipientProjection,
+  required Future<void> Function({required bool canonicalStateComplete})
+  endCanonicalNotificationRecovery,
+}) async {
+  beginCanonicalNotificationRecovery();
+  var canonicalStateComplete = false;
+  try {
+    invalidateIdentityCache();
+    await rebuildRecipientProjection();
+    canonicalStateComplete = true;
+  } finally {
+    await endCanonicalNotificationRecovery(
+      canonicalStateComplete: canonicalStateComplete,
+    );
   }
 }
 
@@ -225,6 +252,10 @@ class MyApp extends StatefulWidget {
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
+  final GroupNotificationPresentationCoordinator?
+  groupNotificationPresentationCoordinator;
+  final ForegroundGroupNotificationPendingReadAcknowledgementResolver?
+  groupNotificationPendingReadAcknowledgementResolver;
   final DroppedPushRecoveryCoordinator? droppedPushRecoveryCoordinator;
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
@@ -339,6 +370,8 @@ class MyApp extends StatefulWidget {
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
+    this.groupNotificationPresentationCoordinator,
+    this.groupNotificationPendingReadAcknowledgementResolver,
     this.droppedPushRecoveryCoordinator,
     required this.appShellController,
     required this.pendingPostTargetStore,
@@ -2060,6 +2093,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
         durableGroupMessageNotificationCoordinatorResolver:
             resolveGroupMessageCoordinator,
+        groupNotificationPresentationCoordinator:
+            widget.groupNotificationPresentationCoordinator,
+        groupNotificationReadAcknowledgementResolver:
+            _isForegroundGroupNotificationReadAcknowledged,
       );
     } catch (e) {
       emitFlowEvent(
@@ -2067,6 +2104,71 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  Future<bool> _isForegroundGroupNotificationReadAcknowledged({
+    required String groupId,
+    required ConversationNotificationContentKind contentKind,
+    required String eventIdentity,
+    required BackgroundManagedGroupNotificationComparand? comparand,
+  }) async {
+    try {
+      return resolveForegroundGroupNotificationReadAcknowledgement(
+        groupId: groupId,
+        contentKind: contentKind,
+        eventIdentity: eventIdentity,
+        pendingReadAcknowledgementResolver:
+            widget.groupNotificationPendingReadAcknowledgementResolver,
+        canonicalReadAcknowledgementResolver: () async {
+          switch (contentKind) {
+            case ConversationNotificationContentKind.message:
+              final canonical = await widget.groupMessageRepository.getMessage(
+                eventIdentity,
+              );
+              return isExactForegroundGroupMessageReadAcknowledgement(
+                groupId: groupId,
+                eventIdentity: eventIdentity,
+                canonicalGroupId: canonical?.groupId,
+                canonicalMessageId: canonical?.id,
+                canonicalIsIncoming: canonical?.isIncoming ?? false,
+                canonicalReadAt: canonical?.readAt,
+              );
+            case ConversationNotificationContentKind.reaction:
+              if (comparand is! BackgroundGroupReactionNotificationComparand ||
+                  comparand.groupId != groupId) {
+                return false;
+              }
+              final target = await widget.groupMessageRepository.getMessage(
+                comparand.messageId,
+              );
+              if (target == null || target.groupId != groupId) return false;
+              final canonical = await widget.reactionRepository
+                  .getReactionForSenderIncludingRemoved(
+                    messageId: comparand.messageId,
+                    senderPeerId: comparand.senderPeerId,
+                  );
+              return isExactForegroundGroupReactionReadAcknowledgement(
+                comparand: comparand,
+                canonicalReactionId: canonical?.id,
+                canonicalMessageId: canonical?.messageId,
+                canonicalSenderPeerId: canonical?.senderPeerId,
+                canonicalTimestamp: canonical?.timestamp,
+                canonicalNotificationAcknowledgedAt:
+                    canonical?.notificationAcknowledgedAt,
+              );
+          }
+        },
+      );
+    } catch (error) {
+      // A repository read failure is unknown, never proof that the user read
+      // this exact event. Preserve the existing foreground fallback contract.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_FOREGROUND_READ_ACKNOWLEDGEMENT_CHECK_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return false;
     }
   }
 
@@ -2128,6 +2230,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final target = await widget.groupMessageRepository.getMessage(
       targetMessageId,
     );
+    final targetAttachments = await widget.mediaAttachmentRepository
+        .getAttachmentsForMessage(targetMessageId, owner: MediaOwnerLane.group);
     final localMember = await widget.groupRepository.getMember(
       groupId,
       localPeerId,
@@ -2152,13 +2256,33 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       verifiedNomination.reactorTransportPeerId,
       allowLegacyFallback: true,
     );
+    final displayEligibility = evaluateGroupReactionNotificationDisplayPolicy(
+      GroupReactionNotificationDisplayPolicyInput(
+        group: GroupNotificationDisplayPolicyInput(
+          groupExists: group != null,
+          hasCurrentLocalMembership: localMember != null,
+          groupType: group?.type.toValue(),
+          isMuted: group?.isMuted ?? false,
+          isArchived: group?.isArchived ?? false,
+          isDissolved: group?.isDissolved ?? false,
+          hasDissolvedAt: group?.dissolvedAt != null,
+          hasSelfRemovedAt: group?.selfRemovedAt != null,
+        ),
+        hasCurrentLocalAuthoredTarget:
+            target != null &&
+            target.groupId == groupId &&
+            target.senderPeerId == localPeerId &&
+            !target.isIncoming,
+        targetRequiresRedaction:
+            target?.privateMediaPolicy.requiresRedaction ?? true,
+      ),
+    );
     final routePayload = NotificationRouteTarget.group(
       groupId,
       messageId: targetMessageId,
     ).toPayload();
     if (group == null ||
-        group.isMuted ||
-        group.isDissolved ||
+        !displayEligibility.shouldDisplay ||
         localMember == null ||
         localDevice == null ||
         actor == null ||
@@ -2168,9 +2292,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         actorName == null ||
         actorName.isEmpty ||
         target == null ||
-        target.groupId != groupId ||
-        target.senderPeerId != localPeerId ||
-        target.isIncoming ||
         key == null ||
         latestKey == null ||
         !isCurrentGroupReactionKeyEpoch(
@@ -2191,9 +2312,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         actorPeerId: actorPeerId,
         actorUsername: actorName,
         targetMessageId: targetMessageId,
+        targetKind: groupReactionTargetKindForAttachments(targetAttachments),
+        currentReactionId: currentReaction?.id,
         currentReactionTimestamp: currentReaction?.timestamp,
         currentReactionRemovedAt: currentReaction?.removedAt,
+        currentReactionAcknowledged:
+            currentReaction?.notificationAcknowledgedAt != null,
       ),
+      locale: WidgetsBinding.instance.platformDispatcher.locale,
       decryptGroup:
           ({
             required groupId,
@@ -2242,19 +2368,30 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleAccountMigrationReceiverActivated() async {
-    widget.repository.invalidateCache();
-    // The imported identity owns a different projection generation. Establish
-    // it first (which clears prior-account rows), then rebuild recipient-owned
-    // group/target state before migrated runtime push eligibility resumes.
-    await widget.repository.loadIdentity();
-    await Future.wait([
-      widget.contactRepository.mirrorAllDirectReactionContacts(),
-      widget.messageRepository.mirrorAllDirectReactionAuthoredTargets(),
-    ]);
-    await widget.groupRepository.mirrorAllGroupReactionNotificationContexts();
-    await widget.groupMessageRepository.mirrorAllGroupReactionAuthoredTargets();
-    await widget.reactionRepository
-        .mirrorAllGroupReactionNotificationComparands();
+    await activateAccountMigrationReceiverNotificationState(
+      beginCanonicalNotificationRecovery:
+          widget.groupMessageListener.beginCanonicalNotificationRecovery,
+      invalidateIdentityCache: widget.repository.invalidateCache,
+      rebuildRecipientProjection: () async {
+        // The imported identity owns a different projection generation.
+        // Establish it first (clearing prior-account rows), then rebuild every
+        // recipient-owned group/reaction comparand before display resumes.
+        await widget.repository.loadIdentity();
+        await Future.wait([
+          widget.contactRepository.mirrorAllDirectReactionContacts(),
+          widget.messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+        ]);
+        await widget.groupRepository.mirrorAllGroupReactionNotificationContexts(
+          rethrowOnError: true,
+        );
+        await widget.groupMessageRepository
+            .mirrorAllGroupReactionAuthoredTargets(rethrowOnError: true);
+        await widget.reactionRepository
+            .mirrorAllGroupReactionNotificationComparands(rethrowOnError: true);
+      },
+      endCanonicalNotificationRecovery:
+          widget.groupMessageListener.endCanonicalNotificationRecovery,
+    );
   }
 
   @override

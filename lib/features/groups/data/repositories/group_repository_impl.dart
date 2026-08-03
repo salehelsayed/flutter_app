@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart'
     as shell_db;
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -39,6 +40,7 @@ class GroupRepositoryImpl
         PendingSiblingDeviceRepository,
         GroupKeyRotationDraftRepository,
         GroupMembershipWatermarkRepository,
+        AtomicGroupDissolveRepository,
         GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository,
         FreshJoinProjectionAtomicity {
@@ -47,6 +49,7 @@ class GroupRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroup;
   final Future<void> Function(Map<String, Object?> row) dbUpdateGroup;
+  final Future<void> Function(Map<String, Object?> row)? dbCommitDissolvedGroup;
   final Future<void> Function(String id) dbDeleteGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadActiveGroups;
   final Future<void> Function(String id) dbArchiveGroup;
@@ -261,6 +264,7 @@ class GroupRepositoryImpl
     required this.dbLoadAllGroups,
     required this.dbLoadGroup,
     required this.dbUpdateGroup,
+    this.dbCommitDissolvedGroup,
     required this.dbDeleteGroup,
     required this.dbLoadActiveGroups,
     required this.dbArchiveGroup,
@@ -337,6 +341,7 @@ class GroupRepositoryImpl
         await dbInsertGroup(group.toMap());
         await _projectAuthoritativeGroup(group.id);
       });
+      emitGroupNotificationReconciliationSignal(group.id);
 
       emitFlowEvent(
         layer: 'FL',
@@ -379,6 +384,34 @@ class GroupRepositoryImpl
         await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
       }
     });
+    emitGroupNotificationReconciliationSignal(group.id);
+  }
+
+  @override
+  Future<void> commitDissolvedGroup(GroupModel group) async {
+    if (!group.isDissolved) {
+      throw ArgumentError.value(
+        group.isDissolved,
+        'group.isDissolved',
+        'must be true for a terminal dissolve commit',
+      );
+    }
+    await _runGroupMutation(group.id, () async {
+      final commit = dbCommitDissolvedGroup;
+      if (commit == null) {
+        // Compatibility for focused repositories without the v106 outbox.
+        // Production injects the atomic dissolved-row + exact-group cleanup
+        // primitive through [dbCommitDissolvedGroup].
+        await dbUpdateGroup(group.toMap());
+      } else {
+        await commit(group.toMap());
+      }
+      final authoritative = await _projectAuthoritativeGroup(group.id);
+      if (authoritative != null && authoritative.selfRemovedAt == null) {
+        await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
+      }
+    });
+    emitGroupNotificationReconciliationSignal(group.id);
   }
 
   @override
@@ -393,6 +426,7 @@ class GroupRepositoryImpl
       await dbDeleteGroup(id);
       await groupReactionProjection?.removeGroup(id);
     });
+    emitGroupNotificationReconciliationSignal(id);
   }
 
   @override
@@ -408,6 +442,7 @@ class GroupRepositoryImpl
       await dbArchiveGroup(id);
       await _mirrorGroupContextForPush(id);
     });
+    emitGroupNotificationReconciliationSignal(id);
   }
 
   @override
@@ -417,6 +452,7 @@ class GroupRepositoryImpl
       await dbUnarchiveGroup(id);
       await _mirrorGroupContextForPush(id);
     });
+    emitGroupNotificationReconciliationSignal(id);
   }
 
   @override
@@ -480,7 +516,7 @@ class GroupRepositoryImpl
     if (load == null || commit == null) {
       throw StateError('Removed-shell persistence capability is unavailable.');
     }
-    return _runGroupMutation(groupId, () async {
+    final outcome = await _runGroupMutation(groupId, () async {
       final expected = await load(groupId: groupId, selfPeerId: selfPeerId);
       if (expected.shape !=
               shell_db
@@ -510,6 +546,10 @@ class GroupRepositoryImpl
       );
       return _mapCommitOutcome(result.disposition);
     });
+    if (outcome == SelfRemovalAuthorityCommitOutcome.committed) {
+      emitGroupNotificationReconciliationSignal(groupId);
+    }
+    return outcome;
   }
 
   @override
@@ -1085,7 +1125,7 @@ class GroupRepositoryImpl
     if (purge == null) {
       throw StateError('Removed-shell purge capability is unavailable.');
     }
-    return _runGroupMutation(expected.groupId, () async {
+    final outcome = await _runGroupMutation(expected.groupId, () async {
       final result = await purge(
         expected: _unwrapShellAuthority(expected),
         floor: _unwrapFreshnessFloor(floor),
@@ -1096,6 +1136,10 @@ class GroupRepositoryImpl
       // group-last SQL commit because its marker retry authority is now gone.
       return _mapMutationOutcome(result.disposition);
     });
+    if (outcome == SelfRemovedShellMutationOutcome.committed) {
+      emitGroupNotificationReconciliationSignal(expected.groupId);
+    }
+    return outcome;
   }
 
   // --- Members ---
@@ -1508,7 +1552,9 @@ class GroupRepositoryImpl
         await mirror.delete(sharedGroupMutedKeyName(groupId));
       }
 
-      return finalizeSql();
+      final result = await finalizeSql();
+      emitGroupNotificationReconciliationSignal(groupId);
+      return result;
     });
   }
 
@@ -1618,7 +1664,9 @@ class GroupRepositoryImpl
   /// Query failures stay best-effort just like the existing group key/mute
   /// mirrors; the extension fails closed until a later mutation or restart
   /// repairs the projection.
-  Future<void> mirrorAllGroupReactionNotificationContexts() async {
+  Future<void> mirrorAllGroupReactionNotificationContexts({
+    bool rethrowOnError = false,
+  }) async {
     final projection = groupReactionProjection;
     if (projection == null) return;
     try {
@@ -1660,6 +1708,7 @@ class GroupRepositoryImpl
         event: 'GROUP_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
         details: {'error': error.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
   }
 

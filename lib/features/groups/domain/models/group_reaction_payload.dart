@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 
 /// Wire-format model for emoji reactions on group messages.
@@ -37,6 +38,28 @@ class GroupReactionPayload {
     required this.timestamp,
     this.eventId,
   });
+
+  /// Stable local transition identity used when an older sender omitted the
+  /// wire [eventId]. Including the immutable transition timestamp prevents a
+  /// REMOVE followed by a same-state re-ADD from reusing display custody.
+  String get notificationTransitionId {
+    final explicit = eventId?.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    final parsedTimestamp = DateTime.tryParse(timestamp);
+    final normalizedTimestamp = parsedTimestamp == null
+        ? timestamp.trim()
+        : parsedTimestamp.toUtc().toIso8601String();
+    final authority = jsonEncode(<String>[
+      id,
+      messageId,
+      emoji,
+      action,
+      senderPeerId,
+      normalizedTimestamp,
+    ]);
+    final digest = sha256.convert(utf8.encode(authority)).toString();
+    return 'legacy-reaction:${digest.substring(0, 48)}';
+  }
 
   /// Serializes the inner payload to a JSON string.
   ///
