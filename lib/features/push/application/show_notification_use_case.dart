@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
@@ -19,6 +21,8 @@ typedef MarkRecentRemoteNotificationAnnouncement =
     Future<void> Function({required String payload, String? messageId});
 typedef ResolveDurableNotificationCoordinator =
     Future<DurableNotificationToneLease?> Function();
+typedef LoadConversationNotificationSnapshot =
+    Future<ConversationNotificationSnapshot?> Function();
 
 /// Returns the notification body text for a message.
 ///
@@ -81,6 +85,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   markRecentRemoteNotificationAnnouncement,
   NotificationToneTracker? toneTracker,
   ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
+  LoadConversationNotificationSnapshot? loadConversationNotificationSnapshot,
   String notificationEventType = 'new_message',
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
 }) async {
@@ -212,6 +217,8 @@ Future<NotificationPresentationResult> maybeShowNotification({
   }
 
   DurableNotificationToneReservation? toneReservation;
+  DurableNotificationClaimedPublicationResult? claimedPublication;
+  DurableNotificationTonePublicationResult? tonePublication;
 
   Future<void> releaseToneReservationAfterDisplayFailure() async {
     final reservation = toneReservation;
@@ -261,7 +268,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
 
   // 118 Phase 4: consult the tone tracker ONLY after every suppression gate has
   // passed. The durable path reserves a token-owned audible right here, but
-  // starts its window only after the OS show succeeds below.
+  // starts its window only after the native publication callback returns below.
   try {
     bool inMemorySilentDecision() =>
         toneTracker != null && !toneTracker.shouldPlayTone(conversationKey);
@@ -285,38 +292,117 @@ Future<NotificationPresentationResult> maybeShowNotification({
       silent = inMemorySilentDecision();
     }
 
-    await notificationService.showMessageNotification(
-      contactPeerId: contactPeerId,
-      senderUsername: senderUsername,
-      messageText: messageText,
-      payload: routePayload,
-      silent: silent,
-      contentKind: !conversationKey.startsWith('group:')
+    final snapshot = await loadConversationNotificationSnapshot?.call();
+    final contentKind = switch (notificationEventType) {
+      'new_message' ||
+      'group_message' => ConversationNotificationContentKind.message,
+      'message_reaction' => ConversationNotificationContentKind.reaction,
+      _ => null,
+    };
+
+    Future<void> publishAtNativeBoundary(
+      NativeMessageNotificationShow showNative,
+    ) async {
+      Future<void> publishWithExactToneOwner() async {
+        final reservation = toneReservation;
+        if (reservation == null) {
+          await showNative(silent: silent);
+          return;
+        }
+        tonePublication = await reservation.publishAndCommit(
+          () => showNative(silent: false),
+        );
+        if (!tonePublication!.publishedAudibly) {
+          await showNative(silent: true);
+        }
+      }
+
+      claimedPublication = messageClaim == null
           ? null
-          : switch (notificationEventType) {
-              'group_message' => ConversationNotificationContentKind.message,
-              'message_reaction' =>
-                ConversationNotificationContentKind.reaction,
-              _ => null,
-            },
-      contentEventIdentity: eventIdentity,
+          : await messageClaim.publishAndCommit(publishWithExactToneOwner);
+      if (claimedPublication == null) {
+        await publishWithExactToneOwner();
+      } else if (!claimedPublication!.published) {
+        throw const _NotificationClaimOwnershipLostBeforeShow();
+      }
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        notificationService is MessageNotificationNativePublicationBoundary) {
+      final publicationBoundary =
+          notificationService as MessageNotificationNativePublicationBoundary;
+      await publicationBoundary.showMessageNotificationAtNativeBoundary(
+        contactPeerId: contactPeerId,
+        senderUsername: senderUsername,
+        messageText: messageText,
+        payload: routePayload,
+        silent: silent,
+        // Direct and group conversations both reuse one stable OS-card id.
+        // Typed generation metadata makes exact read/reconciliation CAS safe.
+        contentKind: contentKind,
+        contentEventIdentity: eventIdentity,
+        snapshot: snapshot,
+        publishNative: publishAtNativeBoundary,
+      );
+    } else {
+      Future<void> fallbackNativeShow({required bool silent}) =>
+          notificationService.showMessageNotification(
+            contactPeerId: contactPeerId,
+            senderUsername: senderUsername,
+            messageText: messageText,
+            payload: routePayload,
+            silent: silent,
+            contentKind: contentKind,
+            contentEventIdentity: eventIdentity,
+            snapshot: snapshot,
+          );
+      await publishAtNativeBoundary(fallbackNativeShow);
+    }
+  } on _NotificationClaimOwnershipLostBeforeShow {
+    await releaseToneReservationAfterDisplayFailure();
+    await releaseMessageClaimAfterDisplayFailure();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_DEFERRED',
+      details: {
+        'reason': 'message_event_claim_ownership_lost_before_show',
+        'type': notificationEventType,
+      },
     );
+    return NotificationPresentationResult.contendedRetryable;
+  } on DurableNotificationPublicationAttemptedException catch (
+    error,
+    stackTrace
+  ) {
+    // Android may already have accepted the notification even though the
+    // method channel failed. A tone owner that never entered its audible native
+    // callback remains safely releasable; detach all effect-unknown
+    // `publishing` owners fail-closed.
+    if (tonePublication?.publishedAudibly == false) {
+      await releaseToneReservationAfterDisplayFailure();
+    }
+    toneReservation = null;
+    messageClaim = null;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_PUBLICATION_OUTCOME_UNKNOWN',
+      details: {'type': notificationEventType, 'errorType': error.errorType},
+    );
+    Error.throwWithStackTrace(error, stackTrace);
   } catch (error, stackTrace) {
-    // No OS card was published. Release both provisional owners independently;
-    // one storage failure must never prevent the other cleanup attempt.
+    // On Android this path did not enter the native publication callback.
+    // Release both provisional owners independently; one storage failure must
+    // never prevent the other cleanup attempt. Non-Android keeps its legacy
+    // error/release behavior.
     await releaseToneReservationAfterDisplayFailure();
     await releaseMessageClaimAfterDisplayFailure();
     Error.throwWithStackTrace(error, stackTrace);
   }
 
-  var toneCommitted = true;
-  if (toneReservation != null) {
-    try {
-      toneCommitted = await toneReservation.commit();
-    } catch (_) {
-      toneCommitted = false;
-    }
-  }
+  final toneCommitted =
+      toneReservation == null ||
+      !tonePublication!.publishedAudibly ||
+      tonePublication!.toneCommitted;
   if (!toneCommitted) {
     emitFlowEvent(
       layer: 'FL',
@@ -330,14 +416,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
     );
   }
 
-  var claimCommitted = true;
-  if (messageClaim != null) {
-    try {
-      claimCommitted = await messageClaim.commit();
-    } catch (_) {
-      claimCommitted = false;
-    }
-  }
+  final claimCommitted = claimedPublication?.claimCommitted ?? true;
   if (!claimCommitted) {
     emitFlowEvent(
       layer: 'FL',
@@ -351,9 +430,9 @@ Future<NotificationPresentationResult> maybeShowNotification({
     );
   }
 
-  // Once showMessageNotification returns, the OS-visible side effect has
-  // happened. Commit failures and all later bookkeeping failures deliberately
-  // retain both owners fail-closed; releasing here could alert twice.
+  // Once the native callback returns, Android has acknowledged the show call.
+  // Commit failures and all later bookkeeping failures deliberately retain
+  // both owners fail-closed; releasing here could alert twice.
 
   // 118 Phase 2 (live-wins handshake): record a dedup marker for this exact
   // message so a LATE FCM background isolate firing for the same messageId
@@ -369,4 +448,8 @@ Future<NotificationPresentationResult> maybeShowNotification({
     );
   }
   return NotificationPresentationResult.shown;
+}
+
+final class _NotificationClaimOwnershipLostBeforeShow implements Exception {
+  const _NotificationClaimOwnershipLostBeforeShow();
 }

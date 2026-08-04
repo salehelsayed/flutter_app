@@ -136,9 +136,9 @@ const _contactSha256 =
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
 const _applicationRootNormalizedSha256 =
-    '7a3c1d993bc8cb8062daaed0a4b035470afd0c3940768f06709f3e6776eb51db';
+    '69f36632cae3df0fa7ba1bc518b5049e503431e1ff16b63c67a8efa758c05b57';
 const _productionBootstrapNormalizedSha256 =
-    '4502b225116ae648c8aff4529c4c312592a01d13217db7dcf12d8e73e1195e25';
+    '55b09d205d4f84c32bf47c8e129acc7138ae34704271a61fad978e8b6c4fb453';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

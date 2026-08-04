@@ -27,13 +27,32 @@ class DroppedPushRecoveryBridgeTest {
             DroppedPushRecoveryStore.PREFERENCES_NAME,
             Context.MODE_PRIVATE,
         ).edit().clear().commit()
+        DroppedPushRecoveryStore(context).setCurrentBinding("installation-a/account-a")
     }
 
     @Test
     fun `method bridge reads without consuming and compare acknowledges exact generation`() {
         val store = DroppedPushRecoveryStore(context)
-        val bridge = DroppedPushRecoveryBridge(context, messenger = null)
+        val bridge = DroppedPushRecoveryBridge(
+            context,
+            messenger = null,
+            bindingScheduler = RecoveryBindingScheduler { },
+        )
         assertEquals(1L, store.recordDeletion())
+
+        val bindingRead = CapturingBridgeResult()
+        bridge.onMethodCall(MethodCall("currentBinding", null), bindingRead)
+        assertEquals("installation-a/account-a", bindingRead.value)
+
+        val markerRead = CapturingBridgeResult()
+        bridge.onMethodCall(MethodCall("pendingRecovery", null), markerRead)
+        assertEquals(
+            mapOf(
+                "generation" to 1L,
+                "binding" to "installation-a/account-a",
+            ),
+            markerRead.value,
+        )
 
         val firstRead = CapturingBridgeResult()
         bridge.onMethodCall(MethodCall("pendingGeneration", null), firstRead)
@@ -52,7 +71,13 @@ class DroppedPushRecoveryBridgeTest {
 
         val exactAck = CapturingBridgeResult()
         bridge.onMethodCall(
-            MethodCall("acknowledgeGeneration", mapOf("generation" to 1L)),
+            MethodCall(
+                "acknowledgeRecovery",
+                mapOf(
+                    "generation" to 1L,
+                    "binding" to "installation-a/account-a",
+                ),
+            ),
             exactAck,
         )
         assertEquals(true, exactAck.value)
@@ -116,6 +141,61 @@ class DroppedPushRecoveryBridgeTest {
             cancelRecoveryNotification = { cancellations += "pending" },
         )
         assertEquals(listOf("orphan"), cancellations)
+    }
+
+    @Test
+    fun `binding rotation retires marker and cancels its visible card exactly once`() {
+        val store = DroppedPushRecoveryStore(context)
+        assertEquals(1L, store.recordDeletion())
+        val rotations = mutableListOf<DroppedPushRecoveryStore.BindingRotation>()
+        var cancellations = 0
+        val bridge = DroppedPushRecoveryBridge(
+            context,
+            messenger = null,
+            cancelRecoveryNotification = { cancellations += 1 },
+            bindingScheduler = RecoveryBindingScheduler(rotations::add),
+        )
+
+        val pending = CapturingBridgeResult()
+        bridge.onMethodCall(MethodCall("pendingRecovery", null), pending)
+        assertEquals(
+            mapOf(
+                "generation" to 1L,
+                "binding" to "installation-a/account-a",
+            ),
+            pending.value,
+        )
+
+        val rotate = CapturingBridgeResult()
+        bridge.onMethodCall(
+            MethodCall(
+                "setCurrentBinding",
+                mapOf(
+                    "binding" to "installation-a/account-b",
+                    "activateRecoveryWork" to false,
+                ),
+            ),
+            rotate,
+        )
+        assertEquals(true, (rotate.value as Map<*, *>)["changed"])
+        assertEquals(false, (rotate.value as Map<*, *>)["recoveryWorkEnabled"])
+        assertEquals(false, rotations.single().recoveryWorkEnabled)
+        assertNull(store.pendingRecovery())
+        assertEquals(1, cancellations)
+
+        val unchanged = CapturingBridgeResult()
+        bridge.onMethodCall(
+            MethodCall(
+                "setCurrentBinding",
+                mapOf(
+                    "binding" to "installation-a/account-b",
+                    "activateRecoveryWork" to false,
+                ),
+            ),
+            unchanged,
+        )
+        assertEquals(false, (unchanged.value as Map<*, *>)["changed"])
+        assertEquals(1, cancellations)
     }
 }
 

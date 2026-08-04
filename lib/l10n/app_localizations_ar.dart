@@ -3689,4 +3689,31 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get direct_batch_forward_close => 'إغلاق';
+
+  @override
+  String get push_registration_health_warning_title =>
+      'تحتاج الإشعارات إلى انتباهك';
+
+  @override
+  String get push_registration_health_permission_denied =>
+      'إشعارات مكنون متوقفة على هذا الجهاز.';
+
+  @override
+  String get push_registration_health_no_token =>
+      'لم يتلقَّ هذا الجهاز رمز إشعارات بعد.';
+
+  @override
+  String get push_registration_health_registration_failed =>
+      'تعذّر تسجيل هذا الجهاز لاستلام إشعارات مكنون.';
+
+  @override
+  String get push_registration_health_temporary_problem =>
+      'حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.';
+
+  @override
+  String get push_registration_health_retry => 'إعادة المحاولة';
+
+  @override
+  String get push_registration_health_open_notification_settings =>
+      'فتح إعدادات الإشعارات';
 }

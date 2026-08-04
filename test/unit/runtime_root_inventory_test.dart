@@ -310,6 +310,15 @@ class FirebaseMessaging {
 @pragma('vm:entry-point')
 void backgroundHandler(Object message) {}
 ''',
+        'lib/native_background.dart': '''
+@pragma('vm:entry-point')
+void nativeBackgroundHandler(List<String> arguments) {}
+''',
+        'android/Worker.kt': '''
+fun launch(loader: Loader) {
+  DartEntrypoint(loader.findAppBundlePath(), "nativeBackgroundHandler")
+}
+''',
         'test/flutter_test_config.dart': '''
 Future<void> testExecutable(Future<void> Function() body) async {
   await body();
@@ -350,6 +359,26 @@ Future<void> testExecutable(Future<void> Function() body) async {
             },
           ],
         ),
+        _restricted(
+          'callback.native-vm',
+          'lib/native_background.dart',
+          'vm-callback',
+          <Map<String, Object?>>[
+            <String, Object?>{
+              'kind': 'dart-annotation',
+              'source': 'lib/native_background.dart',
+              'symbol': 'nativeBackgroundHandler',
+              'annotation': 'pragma',
+              'value': 'vm:entry-point',
+            },
+            <String, Object?>{
+              'kind': 'source-call-token',
+              'source': 'android/Worker.kt',
+              'callee': 'DartEntrypoint',
+              'argument': 'nativeBackgroundHandler',
+            },
+          ],
+        ),
       ];
       final green = fixture.scan(_manifest(restrictedRoots: restricted));
       expect(
@@ -357,7 +386,7 @@ Future<void> testExecutable(Future<void> Function() body) async {
         isEmpty,
         reason: _issues(green),
       );
-      expect(green.restrictedRoots, hasLength(2));
+      expect(green.restrictedRoots, hasLength(3));
       expect(green.restrictedRoots.every((entry) => entry.validated), isTrue);
       expect(
         <String, RuntimeRootKind>{
@@ -366,8 +395,24 @@ Future<void> testExecutable(Future<void> Function() body) async {
         <String, RuntimeRootKind>{
           'callback.test-config': RuntimeRootKind.conventionCallback,
           'callback.vm': RuntimeRootKind.vmCallback,
+          'callback.native-vm': RuntimeRootKind.vmCallback,
         },
       );
+
+      fixture.write('android/Worker.kt', '''
+// DartEntrypoint(loader.findAppBundlePath(), "nativeBackgroundHandler")
+const val decoy = "DartEntrypoint(nativeBackgroundHandler)"
+''');
+      final nativeRed = fixture.scan(_manifest(restrictedRoots: restricted));
+      expect(
+        nativeRed.issues.map((entry) => entry.code),
+        contains('stale-source-call-token'),
+      );
+      fixture.write('android/Worker.kt', '''
+fun launch(loader: Loader) {
+  DartEntrypoint(loader.findAppBundlePath(), "nativeBackgroundHandler")
+}
+''');
 
       fixture.write('lib/main.dart', '''
 import 'background.dart';
@@ -1797,7 +1842,7 @@ flutter:
       'lib/core/bridge/bridge_group_helpers.dart':
           'Future<void> callGroupLeave(',
       'lib/core/database/app_database_version.dart':
-          'const int currentIdentityDatabaseVersion = 106;',
+          'const int currentIdentityDatabaseVersion = 107;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

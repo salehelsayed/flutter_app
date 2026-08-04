@@ -11,7 +11,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart'
@@ -568,6 +568,7 @@ final class _FailOnceDrainNotificationService extends FakeNotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     await beforeShowAttempt?.call();
     showAttempts++;
@@ -582,6 +583,7 @@ final class _FailOnceDrainNotificationService extends FakeNotificationService {
       silent: silent,
       contentKind: contentKind,
       contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
     );
   }
 }

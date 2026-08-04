@@ -220,6 +220,24 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/messages_db_helpers_test.dart"
   "test/core/database/migrations/100_direct_private_media_lifecycle_test.dart"
   "test/core/database/integration/full_migration_chain_test.dart"
+  # 331: v107 typed direct notification durability and bounded retry custody.
+  "test/core/database/migrations/107_direct_notification_durability_test.dart"
+  "test/features/conversation/application/direct_notification_display_retry_coordinator_test.dart"
+  "test/features/conversation/application/direct_notification_display_outbox_wiring_test.dart"
+  "test/features/conversation/application/direct_notification_reconciliation_wiring_test.dart"
+  "test/features/conversation/application/reaction_listener_test.dart"
+  "test/core/notifications/direct_notification_read_projector_test.dart"
+  "test/core/notifications/direct_group_notification_lane_isolation_test.dart"
+  # 331: shared direct/group snapshot and preservation proofs must remain in
+  # both curated messaging lanes, including authenticated-inner-ID recovery.
+  "test/core/notifications/conversation_notification_snapshot_test.dart"
+  "test/features/push/application/pending_conversation_notification_overlay_test.dart"
+  "test/core/notifications/canonical_recovery_runtime_test.dart"
+  "test/core/notifications/android_notification_completion_scope_contract_test.dart"
+  "test/integration/android_notification_recovery_completion_criteria_test.dart"
+  "test/features/push/application/push_decrypt_preview_test.dart"
+  "test/features/push/application/background_push_notification_fallback_test.dart"
+  "test/core/notifications/flutter_notification_service_test.dart"
   # 234 Session 03: direct private-media SQL/CAS, reveal lease, monotonic
   # expiry scheduler, restart/cleanup convergence, and resume ordering.
   "test/core/database/helpers/messages_db_helpers_private_media_lifecycle_test.dart"
@@ -338,6 +356,9 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/screens/feed_reduced_motion_test.dart"
   "test/features/feed/presentation/screens/feed_screen_test.dart"
   "test/features/feed/presentation/screens/feed_wired_test.dart"
+  # 331: one app-shell registration-health owner spans Feed/Orbit/Settings/
+  # Posts, keeps short-screen actions reachable, and clears live.
+  "test/features/push/presentation/push_registration_health_surface_test.dart"
   # 206 avatar removal + 211 connection dot migrated to Orbit top-right
   # (header keeps only the username editor).
   "test/features/feed/presentation/widgets/feed_header_test.dart"
@@ -382,6 +403,13 @@ readonly GROUP_TESTS=(
   # native generation is acknowledged; keep all shared seams in this lane too.
   "test/core/notifications/dropped_push_recovery_bridge_test.dart"
   "test/core/notifications/dropped_push_recovery_coordinator_test.dart"
+  # 331: the bounded unread snapshot is a shared direct/group projection seam.
+  "test/core/notifications/conversation_notification_snapshot_test.dart"
+  "test/features/push/application/pending_conversation_notification_overlay_test.dart"
+  "test/core/notifications/direct_group_notification_lane_isolation_test.dart"
+  "test/core/notifications/canonical_recovery_runtime_test.dart"
+  "test/core/notifications/android_notification_completion_scope_contract_test.dart"
+  "test/integration/android_notification_recovery_completion_criteria_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
   # 282: the duplicate Dart GroupMessagePayload is retired while the live Go
   # v3 envelope/parser/publish/receive boundary remains protected.
@@ -564,6 +592,10 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/send_group_message_use_case_test.dart"
   "test/features/groups/application/send_group_message_recipient_eligibility_test.dart"
   "test/features/push/application/background_message_handler_test.dart"
+  # 334: bounded background storage phases release FlutterFire's serial queue.
+  "test/features/push/application/background_storage_deadline_test.dart"
+  "test/features/push/application/background_storage_liveness_journal_test.dart"
+  "test/core/bootstrap/flutterfire_background_queue_contract_test.dart"
   "test/core/database/migrations/105_reaction_outbox_needs_build_test.dart"
   # 330: identifier-only v106 group notification display custody.
   "test/core/database/migrations/106_group_notification_display_outbox_test.dart"
@@ -621,6 +653,9 @@ readonly GROUP_TESTS=(
   "test/integration/group_media_reliability_runner_contract_test.dart"
   "test/integration/ios_xctestrun_relocator_test.dart"
   "test/tool/sims/sims_ios_group_media_269_profile_test.dart"
+  # 334: Android notification coordination fails closed within its finite
+  # acquisition budget while preserving an already-acquired owner.
+  "test/core/notifications/bounded_posix_flock_test.dart"
   "test/core/notifications/durable_conversation_notification_id_registry_test.dart"
   "test/core/notifications/durable_notification_tone_lease_test.dart"
   # 330: exact per-group read cancellation shares one keyed operation queue

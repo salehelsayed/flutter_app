@@ -77,6 +77,11 @@ dependencies:
 
   sqflite_common: any
 dependency_overrides:
+  # 334: pinned sqflite_sqlcipher 3.4.0 fork with one Android FIFO scheduler
+  # and mutable ownership state per Flutter engine. The causal Pixel RED and
+  # exact allowlisted diff are recorded in the vendored PATCH.md.
+  sqflite_sqlcipher:
+    path: third_party/sqflite_sqlcipher
   # record 5.2.1 caps record_linux at <1.0.0, but record_platform_interface
   # 1.5.0 added startStream + changed hasPermission signature, breaking 0.7.2.
   # Override to 1.3.0 so it compiles (we don't target Linux).

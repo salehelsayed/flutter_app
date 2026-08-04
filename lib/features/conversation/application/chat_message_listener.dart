@@ -13,6 +13,7 @@ import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
@@ -95,6 +96,11 @@ class ChatMessageListener {
   final RecentRemoteNotificationGate? remoteNotificationGate;
   final Duration backgroundNotificationDuplicateGuardDelay;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
+  final StageDirectMessageNotificationDisplayCustody?
+  stageNotificationDisplayCustody;
+  final PromoteDirectMessageNotificationDisplayCustody?
+  promoteNotificationDisplayCustody;
+  final Future<void> Function()? retryNotificationDisplays;
 
   /// 229: user auto-download policy consulted immediately before every
   /// automatic direct media transfer. Null preserves HEAD behavior (allowed);
@@ -138,6 +144,9 @@ class ChatMessageListener {
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.sendDeliveryReceipt,
     this.autoDownloadDecider,
+    this.stageNotificationDisplayCustody,
+    this.promoteNotificationDisplayCustody,
+    this.retryNotificationDisplays,
   }) : _durableNotificationCoordinatorResolver =
            durableNotificationCoordinatorResolver ??
            DurableNotificationToneLease.openMobileDefault;
@@ -164,6 +173,14 @@ class ChatMessageListener {
       return null;
     }
   }
+
+  Future<ConversationNotificationSnapshot?>
+  _loadDirectConversationNotificationSnapshot(String contactPeerId) =>
+      loadDirectConversationNotificationSnapshot(
+        messageRepository: messageRepo,
+        contactPeerId: contactPeerId,
+        mediaAttachmentRepository: mediaAttachmentRepo,
+      );
 
   /// Stream of new incoming chat messages for the UI to listen to.
   Stream<ConversationMessage> get incomingMessageStream =>
@@ -504,6 +521,8 @@ class ChatMessageListener {
                 contactPeerId: message.from,
                 messageIds: [messageId],
               ),
+        stageNotificationDisplayCustody: stageNotificationDisplayCustody,
+        promoteNotificationDisplayCustody: promoteNotificationDisplayCustody,
       );
 
       if (updatedContact != null) {
@@ -565,6 +584,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.duplicate) {
+        await retryNotificationDisplays?.call();
         return finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.duplicate,
@@ -624,6 +644,9 @@ class ChatMessageListener {
                   : conversationMessage.senderPeerId,
             },
           );
+          // The handler already promoted marker-first custody. Retire it from
+          // current policy immediately instead of waiting for a future resume.
+          await retryNotificationDisplays?.call();
           return finish(
             ChatMessageProcessOutcome(
               state: ChatMessageProcessState.stored,
@@ -649,7 +672,9 @@ class ChatMessageListener {
         _messageController.add(conversationMessage);
 
         // Show local notification (suppressed if viewing this conversation)
-        if (notificationService != null &&
+        if (retryNotificationDisplays != null) {
+          await retryNotificationDisplays!.call();
+        } else if (notificationService != null &&
             conversationTracker != null &&
             getAppLifecycleState != null) {
           final username =
@@ -673,6 +698,10 @@ class ChatMessageListener {
               toneTracker: notificationToneTracker,
               durableNotificationCoordinatorResolver:
                   _resolveDurableNotificationCoordinator,
+              loadConversationNotificationSnapshot: () =>
+                  _loadDirectConversationNotificationSnapshot(
+                    conversationMessage.contactPeerId,
+                  ),
               notificationEventType: 'new_message',
               consumeRecentRemoteNotificationAnnouncement:
                   ({required payload, String? messageId}) =>

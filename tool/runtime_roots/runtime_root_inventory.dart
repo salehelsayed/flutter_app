@@ -2050,6 +2050,7 @@ class RuntimeRootInventory {
       RuntimeRootKind.vmCallback: <String>{
         'dart-annotation',
         'dart-call-argument',
+        'source-call-token',
       },
       RuntimeRootKind.conventionCallback: <String>{
         'dart-symbol',
@@ -2152,7 +2153,8 @@ class RuntimeRootInventory {
         if (annotations.any(
           (annotation) => evidence.any(
             (entry) =>
-                entry.kind == 'dart-call-argument' &&
+                (entry.kind == 'dart-call-argument' ||
+                    entry.kind == 'source-call-token') &&
                 entry['argument'] == annotation['symbol'],
           ),
         )) {

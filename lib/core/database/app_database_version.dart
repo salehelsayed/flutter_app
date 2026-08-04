@@ -23,4 +23,7 @@
 // 330: DB v106 adds identifier-only durable group-notification display
 // custody. It intentionally has no foreign keys because the marker precedes
 // canonical message/reaction persistence.
-const int currentIdentityDatabaseVersion = 106;
+// 331: DB v107 adds identifier-only direct-notification display/read/
+// reconciliation custody. Direct reaction terminal facts are peer-scoped in a
+// separate typed table because the shared reaction table has no lane key.
+const int currentIdentityDatabaseVersion = 107;

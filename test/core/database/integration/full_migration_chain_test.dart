@@ -91,6 +91,7 @@ import 'package:flutter_app/core/database/migrations/103_group_exit_intents.dart
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/migrations/105_reaction_outbox_needs_build.dart';
 import 'package:flutter_app/core/database/migrations/106_group_notification_display_outbox.dart';
+import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -1466,7 +1467,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 106);
+        expect(currentIdentityDatabaseVersion, 107);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1486,7 +1487,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 106);
+        expect(currentIdentityDatabaseVersion, 107);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1501,9 +1502,9 @@ void main() {
       },
     );
     test(
-      'production registries preserve v100-v106 and end with display custody v106',
+      'production registries preserve v100-v107 and end with direct durability v107',
       () {
-        expect(currentIdentityDatabaseVersion, 106);
+        expect(currentIdentityDatabaseVersion, 107);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1516,6 +1517,7 @@ void main() {
           final index104 = registry.indexWhere((entry) => entry.version == 104);
           final index105 = registry.indexWhere((entry) => entry.version == 105);
           final index106 = registry.indexWhere((entry) => entry.version == 106);
+          final index107 = registry.indexWhere((entry) => entry.version == 107);
           expect(registry.where((entry) => entry.version == 100), hasLength(1));
           expect(registry.where((entry) => entry.version == 101), hasLength(1));
           expect(registry.where((entry) => entry.version == 102), hasLength(1));
@@ -1523,6 +1525,7 @@ void main() {
           expect(registry.where((entry) => entry.version == 104), hasLength(1));
           expect(registry.where((entry) => entry.version == 105), hasLength(1));
           expect(registry.where((entry) => entry.version == 106), hasLength(1));
+          expect(registry.where((entry) => entry.version == 107), hasLength(1));
           expect(index99, greaterThanOrEqualTo(0));
           expect(index100, index99 + 1);
           expect(index101, index100 + 1);
@@ -1531,7 +1534,8 @@ void main() {
           expect(index104, index103 + 1);
           expect(index105, index104 + 1);
           expect(index106, index105 + 1);
-          expect(index106, registry.length - 1);
+          expect(index107, index106 + 1);
+          expect(index107, registry.length - 1);
           expect(registry[index100].name, '100_direct_private_media_lifecycle');
           expect(
             registry[index100].run,
@@ -1563,6 +1567,11 @@ void main() {
           expect(
             registry[index106].run,
             same(runGroupNotificationDisplayOutboxMigration),
+          );
+          expect(registry[index107].name, '107_direct_notification_durability');
+          expect(
+            registry[index107].run,
+            same(runDirectNotificationDurabilityMigration),
           );
         }
       },
@@ -1961,7 +1970,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 106);
+      expect(currentIdentityDatabaseVersion, 107);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

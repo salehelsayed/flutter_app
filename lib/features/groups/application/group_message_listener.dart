@@ -28,6 +28,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
@@ -62,6 +63,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_notificati
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_reconciliation_outbox_repository.dart';
 import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
 import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/push/application/private_media_notification_body.dart';
 
@@ -199,6 +201,8 @@ class GroupMessageListener {
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final GroupPrivateMediaAvailability _privateMediaAvailability;
+  final PendingConversationNotificationOverlayStore?
+  _pendingConversationNotificationOverlay;
   final GroupNotificationDisplayOutboxRepository? _notificationDisplayOutbox;
   final GroupNotificationReconciliationOutboxRepository?
   _notificationReconciliationOutbox;
@@ -285,6 +289,8 @@ class GroupMessageListener {
     HoldPendingSiblingDeviceFn? holdPendingSiblingDevice,
     GroupPrivateMediaAvailability privateMediaAvailability =
         productionGroupPrivateMediaAvailability,
+    PendingConversationNotificationOverlayStore?
+    pendingConversationNotificationOverlay,
     GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
     GroupNotificationDisplayOutboxRepository? notificationDisplayOutbox,
     GroupNotificationReconciliationOutboxRepository?
@@ -328,6 +334,8 @@ class GroupMessageListener {
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _privateMediaAvailability = privateMediaAvailability,
+       _pendingConversationNotificationOverlay =
+           pendingConversationNotificationOverlay,
        _notificationDisplayOutbox = notificationDisplayOutbox,
        _notificationReconciliationOutbox = notificationReconciliationOutbox,
        _loadLatestUnreadNotificationMessage =
@@ -502,6 +510,8 @@ class GroupMessageListener {
       resolveSelfPeerId: _resolveSelfPeerId,
       resolveDurableNotificationCoordinator:
           _resolveDurableNotificationCoordinator,
+      loadGroupConversationNotificationSnapshot:
+          _loadGroupConversationNotificationSnapshot,
       emitReactionChange: _emitReactionChange,
       stageNotificationDisplayCustody: _notificationDisplayOutbox == null
           ? null
@@ -679,6 +689,7 @@ class GroupMessageListener {
     }
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) return null;
+    final snapshot = await _loadGroupConversationNotificationSnapshot(groupId);
     final latestMessage = await _loadLatestUnreadNotificationMessage!(groupId);
     final currentMessageEvent =
         currentMetadata.kind == ConversationNotificationContentKind.message
@@ -715,25 +726,59 @@ class GroupMessageListener {
       selfPeerId: selfPeerId,
       reaction: reaction,
     );
-    if (messageCandidate == null) return reactionCandidate?.replacement;
-    if (reactionCandidate == null) return messageCandidate.replacement;
+    if (messageCandidate == null) {
+      return _replacementWithSnapshot(reactionCandidate?.replacement, snapshot);
+    }
+    if (reactionCandidate == null) {
+      return _replacementWithSnapshot(messageCandidate.replacement, snapshot);
+    }
     final eventOrder = messageCandidate.timestamp.compareTo(
       reactionCandidate.timestamp,
     );
     if (eventOrder != 0) {
-      return eventOrder > 0
-          ? messageCandidate.replacement
-          : reactionCandidate.replacement;
+      return _replacementWithSnapshot(
+        eventOrder > 0
+            ? messageCandidate.replacement
+            : reactionCandidate.replacement,
+        snapshot,
+      );
     }
     // Canonical timestamps are normally unique; identity ordering makes the
     // rare tie deterministic across retries and process restarts.
-    return messageCandidate.replacement.eventIdentity.compareTo(
+    final replacement =
+        messageCandidate.replacement.eventIdentity.compareTo(
               reactionCandidate.replacement.eventIdentity,
             ) >=
             0
         ? messageCandidate.replacement
         : reactionCandidate.replacement;
+    return _replacementWithSnapshot(replacement, snapshot);
   }
+
+  CanonicalConversationNotificationReplacement? _replacementWithSnapshot(
+    CanonicalConversationNotificationReplacement? replacement,
+    ConversationNotificationSnapshot? snapshot,
+  ) {
+    if (replacement == null) return null;
+    return CanonicalConversationNotificationReplacement(
+      senderUsername: replacement.senderUsername,
+      messageText: replacement.messageText,
+      routePayload: replacement.routePayload,
+      contentKind: replacement.contentKind,
+      eventIdentity: replacement.eventIdentity,
+      snapshot: snapshot,
+    );
+  }
+
+  Future<ConversationNotificationSnapshot?>
+  _loadGroupConversationNotificationSnapshot(String groupId) =>
+      loadGroupConversationNotificationSnapshot(
+        messageRepository: _msgRepo,
+        groupId: groupId,
+        mediaAttachmentRepository: _mediaAttachmentRepo,
+        privateMediaAvailability: _privateMediaAvailability,
+        pendingNotificationOverlay: _pendingConversationNotificationOverlay,
+      );
 
   ({
     DateTime timestamp,
@@ -1214,6 +1259,8 @@ class GroupMessageListener {
       toneTracker: _notificationToneTracker,
       durableNotificationCoordinatorResolver:
           _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(entry.groupId),
       notificationEventType: 'group_message',
       consumeRecentRemoteNotificationAnnouncement:
           ({required payload, String? messageId}) =>
@@ -1334,6 +1381,8 @@ class GroupMessageListener {
       toneTracker: _notificationToneTracker,
       durableNotificationCoordinatorResolver:
           _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(entry.groupId),
       consumeRecentRemoteNotificationAnnouncement:
           ({required payload, String? messageId}) =>
               _remoteNotificationGate.consumeIfRecentAnnouncement(
@@ -2359,6 +2408,8 @@ class GroupMessageListener {
               toneTracker: _notificationToneTracker,
               durableNotificationCoordinatorResolver:
                   _resolveDurableNotificationCoordinator,
+              loadConversationNotificationSnapshot: () =>
+                  _loadGroupConversationNotificationSnapshot(groupId),
               notificationEventType: 'group_message',
               consumeRecentRemoteNotificationAnnouncement:
                   ({required payload, String? messageId}) =>

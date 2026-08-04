@@ -19,6 +19,7 @@ class StagedPushEnvelope {
   final String? eventId;
   final String? action;
   final String? targetMessageId;
+  final bool identityResolutionPending;
   final int receivedAtMs;
 
   const StagedPushEnvelope({
@@ -31,6 +32,7 @@ class StagedPushEnvelope {
     this.eventId,
     this.action,
     this.targetMessageId,
+    this.identityResolutionPending = false,
     required this.receivedAtMs,
   });
 
@@ -47,6 +49,8 @@ class StagedPushEnvelope {
       if (eventId != null) 'eventId': eventId,
       if (action != null) 'action': action,
       if (targetMessageId != null) 'targetMessageId': targetMessageId,
+      if (identityResolutionPending)
+        'identityResolutionPending': identityResolutionPending,
       'receivedAtMs': receivedAtMs,
     };
   }
@@ -78,6 +82,7 @@ class StagedPushEnvelope {
       eventId: _optionalString(json['eventId']),
       action: _optionalString(json['action']),
       targetMessageId: _optionalString(json['targetMessageId']),
+      identityResolutionPending: json['identityResolutionPending'] == true,
       receivedAtMs: receivedAtMs.toInt(),
     );
   }

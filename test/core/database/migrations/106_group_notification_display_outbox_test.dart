@@ -136,10 +136,10 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 106);
+      expect(currentIdentityDatabaseVersion, 107);
       expect(
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
-        106,
+        107,
       );
       expect(await db.query('group_reaction_replay_outbox'), hasLength(1));
 
@@ -261,9 +261,10 @@ void main() {
       );
       expect(migration.name, '106_group_notification_display_outbox');
       expect(migration.run, same(runGroupNotificationDisplayOutboxMigration));
-      expect(productionCreateMigrations.last.version, migration.version);
-      expect(productionCreateMigrations.last.name, migration.name);
-      expect(productionCreateMigrations.last.run, same(migration.run));
+      final createIndex = productionCreateMigrations.indexWhere(
+        (entry) => entry.version == 106,
+      );
+      expect(productionCreateMigrations[createIndex + 1].version, 107);
       await migration.run(db);
       await migration.run(db);
       expect(await db.query('group_notification_display_outbox'), isEmpty);
@@ -295,7 +296,7 @@ void main() {
       );
       expect(
         (await fresh.rawQuery('PRAGMA user_version')).single.values.single,
-        106,
+        107,
       );
       await fresh.close();
     },

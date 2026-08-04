@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -14,6 +15,11 @@ import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_read_projection_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
@@ -103,12 +109,20 @@ import 'package:flutter_app/features/account_migration/application/migration_seg
 import 'package:flutter_app/features/account_migration/application/migration_storage_preflight.dart';
 import 'package:flutter_app/features/account_migration/application/migration_transfer_checkpoint_store.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/direct_notification_display_outbox_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/direct_notification_reaction_terminal_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/direct_notification_read_acknowledgement_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/direct_notification_reconciliation_outbox_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
+import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
@@ -124,6 +138,11 @@ import 'package:flutter_app/features/conversation/application/recovered_inbox_si
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
+import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
+import 'package:flutter_app/core/notifications/direct_notification_read_projector.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_direct_private_committed_pending_cleanup.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
@@ -230,6 +249,7 @@ import 'package:flutter_app/core/notifications/flutter_notification_service.dart
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
@@ -249,12 +269,15 @@ import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dar
 import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/push_registration_health_notifier.dart';
 import 'package:flutter_app/features/push/application/push_relay_registration_proof.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
     as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
+import 'package:flutter_app/features/push/infrastructure/push_registration_health_store.dart';
 import 'package:flutter_app/features/push/infrastructure/received_wake_token_store_impl.dart';
 import 'package:flutter_app/features/push/infrastructure/wake_token_store_impl.dart';
 import 'package:flutter_app/features/push/application/issue_wake_tokens_use_case.dart';
@@ -459,6 +482,32 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile
         ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
         : null;
+    final droppedPushRecoveryBridge = DroppedPushRecoveryBridge();
+    final CanonicalRuntimeLeaseGateway? canonicalRuntimeLeaseGateway =
+        !kIsWeb && Platform.isAndroid
+        ? MethodChannelCanonicalRuntimeLeaseGateway()
+        : null;
+    final canonicalWritableRuntimeSession = canonicalRuntimeLeaseGateway == null
+        ? null
+        : CanonicalWritableRuntimeSession(
+            gateway: canonicalRuntimeLeaseGateway,
+          );
+    final pendingNotificationOverlayBindingPublisher =
+        canonicalRuntimeLeaseGateway == null
+        ? null
+        : await PendingConversationNotificationOverlayStore.openDefault();
+    final canonicalRuntimeBindingCoordinator =
+        canonicalRuntimeLeaseGateway == null
+        ? null
+        : CanonicalRuntimeBindingCoordinator(
+            secureKeyStore: secureKeyStore,
+            leaseGateway: canonicalRuntimeLeaseGateway,
+            droppedPushBindingPublisher: droppedPushRecoveryBridge,
+            rebindPendingNotificationOverlay:
+                pendingNotificationOverlayBindingPublisher?.rebind,
+          );
+    final canonicalRuntimeStartupBinding =
+        await canonicalRuntimeBindingCoordinator?.loadStartupBinding();
     final directReactionNotificationProjection = sharedPushKeyStore == null
         ? null
         : DirectReactionNotificationProjection(store: sharedPushKeyStore);
@@ -509,8 +558,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           authorityRepository: accountMigrationAuthorityRepository,
         );
 
-    // 2. Open encrypted database (handles plaintext→encrypted migration)
-    final db = await openEncryptedDatabase(
+    // 2. Acquire Android's process-wide writable lease before SQLCipher. Other
+    // platforms retain their existing single-engine open path.
+    Future<Database> openIdentityDatabase() => openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
       dbName: 'identity.db',
       version: currentIdentityDatabaseVersion,
@@ -521,6 +571,76 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       onCreate: runProductionOnCreate,
       onUpgrade: runProductionOnUpgrade,
     );
+    final db = canonicalWritableRuntimeSession == null
+        ? await openIdentityDatabase()
+        : await canonicalWritableRuntimeSession.acquireThenOpen(
+            binding: canonicalRuntimeStartupBinding!.leaseBinding,
+            openDatabase: openIdentityDatabase,
+            closeDatabaseOnRuntimeAttachFailure: (database) async {
+              await database.close();
+              return true;
+            },
+          );
+    Future<bool>? canonicalRuntimeShutdownInFlight;
+    Future<bool> shutdownCanonicalRuntime() {
+      final current = canonicalRuntimeShutdownInFlight;
+      if (current != null) return current;
+      final writableSession = canonicalWritableRuntimeSession;
+      if (writableSession == null) return Future<bool>.value(true);
+      late final Future<bool> operation;
+      operation = () async {
+        try {
+          await writableSession.drainCloseRelease(
+            stopRuntime: () async {
+              if (!await canonicalRuntimeLeaseGateway!.quiesceRuntime()) {
+                throw StateError('Go runtime did not quiesce');
+              }
+            },
+            closeDatabase: () async {
+              if (db.isOpen) {
+                await db.close().timeout(const Duration(seconds: 2));
+              }
+            },
+          );
+          final snapshot = await canonicalRuntimeLeaseGateway!.status();
+          return snapshot.state == CanonicalRuntimeLeaseState.released &&
+              !db.isOpen;
+        } catch (error) {
+          // Failure is deliberately sticky in native DRAINING state. The
+          // Activity retains its engine until this attempt replies/times out;
+          // neither side may infer DB close from plugin detach.
+          if (kDebugMode) {
+            debugPrint('[TEARDOWN] canonical runtime retained: $error');
+          }
+          return false;
+        } finally {
+          if (identical(canonicalRuntimeShutdownInFlight, operation)) {
+            canonicalRuntimeShutdownInFlight = null;
+          }
+        }
+      }();
+      canonicalRuntimeShutdownInFlight = operation;
+      return operation;
+    }
+
+    if (canonicalWritableRuntimeSession != null) {
+      const MethodChannel(
+        'mknoon/canonical_runtime_shutdown',
+      ).setMethodCallHandler((call) async {
+        if (call.method != 'shutdown') {
+          throw MissingPluginException(
+            'Unsupported canonical runtime shutdown method: ${call.method}',
+          );
+        }
+        final released = await shutdownCanonicalRuntime();
+        final snapshot = await canonicalRuntimeLeaseGateway!.status();
+        return <String, Object?>{
+          'released': released,
+          'databaseClosed': !db.isOpen,
+          'leaseState': snapshot.state.name,
+        };
+      });
+    }
     StartupTiming.instance.mark('database_ready');
 
     // 3. Run one-time secrets migration (DB → secure storage)
@@ -559,6 +679,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       pushSharedKeyStore: sharedPushKeyStore,
       directReactionProjection: directReactionNotificationProjection,
       groupReactionProjection: groupReactionNotificationProjection,
+      publishCanonicalAccountBinding: canonicalRuntimeBindingCoordinator == null
+          ? null
+          : (accountPeerId) async {
+              await canonicalRuntimeBindingCoordinator.publishAccount(
+                accountPeerId,
+              );
+            },
+      retireCanonicalAccountBinding: canonicalRuntimeBindingCoordinator == null
+          ? null
+          : () async {
+              await canonicalRuntimeBindingCoordinator.retireAccount();
+            },
     );
     // Establish (or clear) projection ownership off the pre-runApp critical path.
     // Both group backfills and deferred Firebase/push eligibility await this
@@ -637,6 +769,309 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       dbRequestExists: (peerId) => dbRequestExists(db, peerId),
     );
 
+    // v107 direct notification durability is production-owned from the first
+    // canonical direct mutation. Repositories are created against the same
+    // writable database generation as MessageRepositoryImpl.
+    final directNotificationDisplayOutboxRepository =
+        DirectNotificationDisplayOutboxRepositoryImpl(
+          dbStage: (row) =>
+              dbStageDirectNotificationDisplayOutboxEntry(db, row),
+          dbLoadExact:
+              ({required peerId, required eventKind, required eventId}) =>
+                  dbLoadDirectNotificationDisplayOutboxEntry(
+                    db,
+                    peerId: peerId,
+                    eventKind: eventKind,
+                    eventId: eventId,
+                  ),
+          dbPromoteReadyIfExact:
+              ({
+                required peerId,
+                required eventKind,
+                required eventId,
+                required expectedRevision,
+                required updatedAt,
+              }) => dbPromoteDirectNotificationDisplayOutboxReadyIfExact(
+                db,
+                peerId: peerId,
+                eventKind: eventKind,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                updatedAt: updatedAt,
+              ),
+          dbLoadReady: ({limit = 20, required eligibleAt}) =>
+              dbLoadReadyDirectNotificationDisplayOutboxEntries(
+                db,
+                limit: limit,
+                eligibleAt: eligibleAt,
+              ),
+          dbLoadEarliestNextAttemptAt: () =>
+              dbLoadEarliestDirectNotificationDisplayOutboxNextAttemptAt(db),
+          dbRecordRetryIfExact:
+              ({
+                required peerId,
+                required eventKind,
+                required eventId,
+                required expectedRevision,
+                required lastErrorCode,
+                required lastAttemptAt,
+                required nextAttemptAt,
+                required updatedAt,
+              }) => dbRecordDirectNotificationDisplayOutboxRetryIfExact(
+                db,
+                peerId: peerId,
+                eventKind: eventKind,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                lastErrorCode: lastErrorCode,
+                lastAttemptAt: lastAttemptAt,
+                nextAttemptAt: nextAttemptAt,
+                updatedAt: updatedAt,
+              ),
+          dbCompleteIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required expectedEventKind,
+                required expectedPeerId,
+                required expectedMessageId,
+                required expectedActorPeerId,
+                required expectedEventTimestamp,
+                required expectedReactionId,
+                required expectedReactionAction,
+                required expectedReactionTombstone,
+                required completedAt,
+              }) => dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                expectedEventKind: expectedEventKind,
+                expectedPeerId: expectedPeerId,
+                expectedMessageId: expectedMessageId,
+                expectedActorPeerId: expectedActorPeerId,
+                expectedEventTimestamp: expectedEventTimestamp,
+                expectedReactionId: expectedReactionId,
+                expectedReactionAction: expectedReactionAction,
+                expectedReactionTombstone: expectedReactionTombstone,
+                completedAt: completedAt,
+              ),
+          dbRetireIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required expectedEventKind,
+                required expectedPeerId,
+                required expectedMessageId,
+                required expectedActorPeerId,
+                required expectedEventTimestamp,
+                required expectedReactionId,
+                required expectedReactionAction,
+                required expectedReactionTombstone,
+              }) => dbRetireDirectNotificationDisplayOutboxEntryIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                expectedEventKind: expectedEventKind,
+                expectedPeerId: expectedPeerId,
+                expectedMessageId: expectedMessageId,
+                expectedActorPeerId: expectedActorPeerId,
+                expectedEventTimestamp: expectedEventTimestamp,
+                expectedReactionId: expectedReactionId,
+                expectedReactionAction: expectedReactionAction,
+                expectedReactionTombstone: expectedReactionTombstone,
+              ),
+          dbDeleteForPeer: (peerId) =>
+              dbDeleteDirectNotificationDisplayOutboxForPeer(db, peerId),
+          dbDeleteForMessage: ({required peerId, required messageId}) =>
+              dbDeleteDirectNotificationDisplayOutboxForMessage(
+                db,
+                peerId: peerId,
+                messageId: messageId,
+              ),
+          dbDeleteForReactionActor:
+              ({required peerId, required messageId, required actorPeerId}) =>
+                  dbDeleteDirectNotificationDisplayOutboxForReactionActor(
+                    db,
+                    peerId: peerId,
+                    messageId: messageId,
+                    actorPeerId: actorPeerId,
+                  ),
+        );
+    final directNotificationReadAcknowledgementRepository =
+        DirectNotificationReadAcknowledgementRepositoryImpl(
+          dbRecord:
+              ({
+                required peerId,
+                required contentKind,
+                required eventIdentity,
+                required messageId,
+                required actorPeerId,
+                required generation,
+                required acknowledgedAt,
+              }) => dbRecordDirectNotificationReadAcknowledgement(
+                db,
+                peerId: peerId,
+                contentKind: contentKind,
+                eventIdentity: eventIdentity,
+                messageId: messageId,
+                actorPeerId: actorPeerId,
+                generation: generation,
+                acknowledgedAt: acknowledgedAt,
+              ),
+          dbLoadExact:
+              ({
+                required peerId,
+                required contentKind,
+                required eventIdentity,
+                generation,
+              }) => dbLoadExactDirectNotificationReadAcknowledgement(
+                db,
+                peerId: peerId,
+                contentKind: contentKind,
+                eventIdentity: eventIdentity,
+                generation: generation,
+              ),
+          dbConsumeExact:
+              ({
+                required peerId,
+                required contentKind,
+                required eventIdentity,
+              }) => dbConsumeExactDirectNotificationReadAcknowledgement(
+                db,
+                peerId: peerId,
+                contentKind: contentKind,
+                eventIdentity: eventIdentity,
+              ),
+          dbDeleteForPeer: (peerId) =>
+              dbDeleteDirectNotificationReadAcknowledgementsForPeer(db, peerId),
+        );
+    final directNotificationReactionTerminalRepository =
+        DirectNotificationReactionTerminalRepositoryImpl(
+          dbUpsert:
+              ({
+                required peerId,
+                required messageId,
+                required actorPeerId,
+                required reactionId,
+                required terminalEventId,
+                required updatedAt,
+              }) => dbUpsertDirectNotificationReactionTerminalEvent(
+                db,
+                peerId: peerId,
+                messageId: messageId,
+                actorPeerId: actorPeerId,
+                reactionId: reactionId,
+                terminalEventId: terminalEventId,
+                updatedAt: updatedAt,
+              ),
+          dbLoadExact:
+              ({required peerId, required messageId, required actorPeerId}) =>
+                  dbLoadDirectNotificationReactionTerminalEvent(
+                    db,
+                    peerId: peerId,
+                    messageId: messageId,
+                    actorPeerId: actorPeerId,
+                  ),
+          dbLoadByTerminalEvent:
+              ({required peerId, required terminalEventId}) =>
+                  dbLoadDirectNotificationReactionTerminalEventByIdentity(
+                    db,
+                    peerId: peerId,
+                    terminalEventId: terminalEventId,
+                  ),
+          dbMarkAcknowledgedIfExact:
+              ({
+                required peerId,
+                required messageId,
+                required actorPeerId,
+                required terminalEventId,
+                required acknowledgedAt,
+              }) => dbMarkDirectNotificationReactionTerminalAcknowledgedIfExact(
+                db,
+                peerId: peerId,
+                messageId: messageId,
+                actorPeerId: actorPeerId,
+                terminalEventId: terminalEventId,
+                acknowledgedAt: acknowledgedAt,
+              ),
+          dbConsumeAcknowledgementIfExact:
+              ({
+                required peerId,
+                required messageId,
+                required actorPeerId,
+                required terminalEventId,
+                required generation,
+              }) =>
+                  dbConsumeDirectNotificationReactionAcknowledgementIntoTerminalIfExact(
+                    db,
+                    peerId: peerId,
+                    messageId: messageId,
+                    actorPeerId: actorPeerId,
+                    terminalEventId: terminalEventId,
+                    generation: generation,
+                  ),
+          dbDeleteForActor:
+              ({required peerId, required messageId, required actorPeerId}) =>
+                  dbDeleteDirectNotificationReactionTerminalForActor(
+                    db,
+                    peerId: peerId,
+                    messageId: messageId,
+                    actorPeerId: actorPeerId,
+                  ),
+          dbDeleteForMessage: ({required peerId, required messageId}) =>
+              dbDeleteDirectNotificationReactionTerminalsForMessage(
+                db,
+                peerId: peerId,
+                messageId: messageId,
+              ),
+          dbDeleteForPeer: (peerId) =>
+              dbDeleteDirectNotificationReactionTerminalsForPeer(db, peerId),
+        );
+    final directNotificationReconciliationOutboxRepository =
+        DirectNotificationReconciliationOutboxRepositoryImpl(
+          dbLoadEligible: ({limit = 20, required eligibleAt}) =>
+              dbLoadEligibleDirectNotificationReconciliationOutboxEntries(
+                db,
+                limit: limit,
+                eligibleAt: eligibleAt,
+              ),
+          dbLoadEarliestNextAttemptAt: () =>
+              dbLoadEarliestDirectNotificationReconciliationOutboxNextAttemptAt(
+                db,
+              ),
+          dbRecordFailureIfExact:
+              ({
+                required peerId,
+                required expectedIncarnationId,
+                required expectedRevision,
+                required lastAttemptAt,
+                required nextAttemptAt,
+                required updatedAt,
+              }) =>
+                  dbRecordDirectNotificationReconciliationOutboxFailureIfExact(
+                    db,
+                    peerId: peerId,
+                    expectedIncarnationId: expectedIncarnationId,
+                    expectedRevision: expectedRevision,
+                    lastAttemptAt: lastAttemptAt,
+                    nextAttemptAt: nextAttemptAt,
+                    updatedAt: updatedAt,
+                  ),
+          dbCompleteIfExact:
+              ({
+                required peerId,
+                required expectedIncarnationId,
+                required expectedRevision,
+              }) => dbCompleteDirectNotificationReconciliationOutboxIfExact(
+                db,
+                peerId: peerId,
+                expectedIncarnationId: expectedIncarnationId,
+                expectedRevision: expectedRevision,
+              ),
+        );
+    late final Future<int> Function(String peerId)
+    projectDirectConversationRead;
+
     // Create message repository
     final messageRepository = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
@@ -651,6 +1086,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           dbCountMessagesForContact(db, contactPeerId),
       dbMarkConversationAsRead: (contactPeerId) =>
           dbMarkConversationAsRead(db, contactPeerId),
+      projectConversationRead: (contactPeerId) =>
+          projectDirectConversationRead(contactPeerId),
       dbCountUnreadForContact: (contactPeerId) =>
           dbCountUnreadForContact(db, contactPeerId),
       dbCountTotalUnread: () => dbCountTotalUnread(db),
@@ -3195,6 +3632,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         ),
         cutoverCoordinator: accountMigrationCutoverCoordinator,
         authorityRepository: accountMigrationAuthorityRepository,
+        publishCanonicalAccountBinding:
+            canonicalRuntimeBindingCoordinator == null
+            ? null
+            : (accountPeerId) async {
+                await canonicalRuntimeBindingCoordinator.publishAccount(
+                  accountPeerId,
+                );
+              },
         stagingDirectoryPath: '${appDocDir.path}/account_migration/import',
         documentsRootPath: appDocDir.path,
       ),
@@ -3203,6 +3648,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         bridge: bridge,
         clearLocalStalePushToken: () async {
           await pushTokenStore.clearToken();
+          await canonicalRuntimeBindingCoordinator?.retireAccount();
           await directReactionNotificationProjection?.clearForLogout();
           await groupReactionNotificationProjection?.clearForLogout();
         },
@@ -3346,6 +3792,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       DurableNotificationToneLease durableCoordinator,
     })?
     reactionNotifyDeps;
+    DirectNotificationProjectionOwner? directNotificationOwner;
     void Function(ReactionChange change)? publishPersistedReactionChange;
 
     // F7: reactions/deletions get the same stage-before-ack/commit durability as
@@ -3375,6 +3822,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         durableNotificationCoordinatorResolver: notify == null
             ? null
             : () async => notify.durableCoordinator,
+        loadConversationNotificationSnapshot: () =>
+            loadDirectConversationNotificationSnapshot(
+              messageRepository: messageRepository,
+              contactPeerId: message.from,
+              mediaAttachmentRepository: mediaAttachmentRepository,
+              pendingNotificationOverlay:
+                  pendingNotificationOverlayBindingPublisher,
+            ),
         consumeRecentRemoteNotificationAnnouncement:
             ({required payload, String? messageId}) =>
                 recentRemoteNotificationGate.consumeIfRecentAnnouncement(
@@ -3387,6 +3842,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   payload: payload,
                   messageId: messageId,
                 ),
+        stageNotificationDisplayCustody: directNotificationOwner?.stageReaction,
+        promoteNotificationDisplayCustody:
+            directNotificationOwner?.promoteReactionReadyIfExact,
+        commitNotificationRemove:
+            directNotificationOwner?.onReactionRemoveCommitted,
+        retryNotificationDisplays: directNotificationOwner?.retryNow,
       );
       if (result == HandleReactionResult.success && change != null) {
         publishPersistedReactionChange?.call(change);
@@ -3665,8 +4126,35 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create conversation trackers (the notification service and shared group
     // presentation coordinator were created at the repository read boundary).
+    final pushRegistrationEnabled = shouldEnableProductionPushRegistration(
+      isDesktop: isDesktop,
+    );
+    final pushRegistrationHealthNotifier = pushRegistrationEnabled
+        ? PushRegistrationHealthNotifier()
+        : null;
+    final PushRegistrationHealthStorage? pushRegistrationHealthStore =
+        pushRegistrationEnabled
+        ? ResolvingPushRegistrationHealthStore(
+            secureKeyStore: secureKeyStore,
+            resolveBinding: () async {
+              final identity = await repository.loadIdentity();
+              final transportPeerId = p2pService.currentState.peerId;
+              if (identity == null ||
+                  transportPeerId == null ||
+                  transportPeerId.trim().isEmpty) {
+                throw StateError(
+                  'Push registration health binding is unavailable.',
+                );
+              }
+              return (
+                accountPeerId: identity.peerId,
+                installationId: transportPeerId,
+              );
+            },
+          )
+        : null;
     final PushRegistrationCoordinator? pushRegistrationCoordinator =
-        shouldEnableProductionPushRegistration(isDesktop: isDesktop)
+        pushRegistrationEnabled
         ? PushRegistrationCoordinator(
             requestPermission: requestPushPermission,
             registerPushToken: () async {
@@ -3728,6 +4216,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 : () => pushRelayRegistrationProof.safeDetails(
                     platform: Platform.isAndroid ? 'android' : 'ios',
                   ),
+            healthStore: pushRegistrationHealthStore,
+            healthNotifier: pushRegistrationHealthNotifier,
           )
         : null;
     // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the
@@ -3738,6 +4228,329 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final notificationToneTracker = NotificationToneTracker();
     final durableReactionNotificationCoordinator =
         await DurableNotificationToneLease.openDefault();
+    final directNotificationPresentationCoordinator =
+        DirectNotificationPresentationCoordinator();
+    final directNotificationReadProjector = DirectNotificationReadProjector(
+      coordinator: directNotificationPresentationCoordinator,
+      cancellation: notificationService,
+      commitRead: (peerId, metadata) =>
+          dbMarkDirectConversationReadAndAcknowledge(
+            db,
+            peerId: peerId,
+            metadata: metadata,
+          ),
+    );
+    projectDirectConversationRead =
+        directNotificationReadProjector.markConversationRead;
+
+    Future<bool> directPeerAllowsNotification(String peerId) async {
+      final contact = await contactRepository.getContact(peerId);
+      return contact != null && !contact.isBlocked && !contact.isArchived;
+    }
+
+    Future<DirectNotificationCanonicalContentDecision>
+    resolveDirectCanonicalContent(
+      String peerId,
+      ConversationNotificationContentMetadata metadata,
+    ) async {
+      final eventIdentity = metadata.eventIdentity?.trim();
+      if (eventIdentity == null || eventIdentity.isEmpty) {
+        return DirectNotificationCanonicalContentDecision.unknown;
+      }
+      if (!await directPeerAllowsNotification(peerId)) {
+        return DirectNotificationCanonicalContentDecision.retire;
+      }
+      switch (metadata.kind) {
+        case ConversationNotificationContentKind.message:
+          final message = await messageRepository.getMessage(eventIdentity);
+          if (message == null) {
+            final acknowledgement =
+                await directNotificationReadAcknowledgementRepository.loadExact(
+                  peerId: peerId,
+                  contentKind: 'message',
+                  eventIdentity: eventIdentity,
+                  generation: metadata.generation,
+                );
+            return acknowledgement == null
+                ? DirectNotificationCanonicalContentDecision.unknown
+                : DirectNotificationCanonicalContentDecision.retire;
+          }
+          return message.contactPeerId == peerId &&
+                  message.isIncoming &&
+                  message.readAt == null &&
+                  !message.isDeleted &&
+                  message.hiddenAt == null
+              ? DirectNotificationCanonicalContentDecision.keep
+              : DirectNotificationCanonicalContentDecision.retire;
+        case ConversationNotificationContentKind.reaction:
+          final terminal = await directNotificationReactionTerminalRepository
+              .loadByTerminalEvent(
+                peerId: peerId,
+                terminalEventId: eventIdentity,
+              );
+          if (terminal == null) {
+            final acknowledgement =
+                await directNotificationReadAcknowledgementRepository.loadExact(
+                  peerId: peerId,
+                  contentKind: 'reaction',
+                  eventIdentity: eventIdentity,
+                  generation: metadata.generation,
+                );
+            return acknowledgement == null
+                ? DirectNotificationCanonicalContentDecision.unknown
+                : DirectNotificationCanonicalContentDecision.retire;
+          }
+          if (terminal.notificationAcknowledgedAt != null) {
+            return DirectNotificationCanonicalContentDecision.retire;
+          }
+          final target = await messageRepository.getMessage(terminal.messageId);
+          final reaction = await reactionRepository
+              .getReactionForSenderIncludingRemoved(
+                messageId: terminal.messageId,
+                senderPeerId: terminal.actorPeerId,
+              );
+          return target != null &&
+                  target.contactPeerId == peerId &&
+                  !target.isIncoming &&
+                  !target.isDeleted &&
+                  reaction != null &&
+                  !reaction.isRemoved &&
+                  reaction.id == terminal.reactionId
+              ? DirectNotificationCanonicalContentDecision.keep
+              : DirectNotificationCanonicalContentDecision.retire;
+      }
+    }
+
+    Future<CanonicalConversationNotificationReplacement?>
+    loadDirectCanonicalReplacement(
+      String peerId,
+      ConversationNotificationContentMetadata currentMetadata,
+    ) async {
+      final contact = await contactRepository.getContact(peerId);
+      if (contact == null || contact.isBlocked || contact.isArchived) {
+        return null;
+      }
+      final messages = await messageRepository.getMessagesForContact(peerId);
+      final unread =
+          messages
+              .where(
+                (message) =>
+                    message.isIncoming &&
+                    message.readAt == null &&
+                    !message.isDeleted &&
+                    message.hiddenAt == null,
+              )
+              .toList(growable: false)
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      if (unread.isNotEmpty) {
+        final message = unread.first;
+        return CanonicalConversationNotificationReplacement(
+          senderUsername: contact.username,
+          messageText: notificationBodyForMessage(
+            message.text,
+            message.media,
+            privateMediaPolicy: message.privateMediaPolicy,
+          ),
+          routePayload: NotificationRouteTarget.conversation(
+            peerId,
+            messageId: message.id,
+          ).toPayload(),
+          contentKind: ConversationNotificationContentKind.message,
+          eventIdentity: message.id,
+          snapshot: await loadDirectConversationNotificationSnapshot(
+            messageRepository: messageRepository,
+            contactPeerId: peerId,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            pendingNotificationOverlay:
+                pendingNotificationOverlayBindingPublisher,
+          ),
+        );
+      }
+      if (currentMetadata.kind ==
+          ConversationNotificationContentKind.reaction) {
+        final eventIdentity = currentMetadata.eventIdentity?.trim();
+        if (eventIdentity == null || eventIdentity.isEmpty) return null;
+        final terminal = await directNotificationReactionTerminalRepository
+            .loadByTerminalEvent(
+              peerId: peerId,
+              terminalEventId: eventIdentity,
+            );
+        if (terminal == null || terminal.notificationAcknowledgedAt != null) {
+          return null;
+        }
+        final reaction = await reactionRepository
+            .getReactionForSenderIncludingRemoved(
+              messageId: terminal.messageId,
+              senderPeerId: terminal.actorPeerId,
+            );
+        if (reaction == null ||
+            reaction.isRemoved ||
+            reaction.id != terminal.reactionId) {
+          return null;
+        }
+        return CanonicalConversationNotificationReplacement(
+          senderUsername: contact.username,
+          messageText: 'Reacted ${reaction.emoji} to your message',
+          routePayload: NotificationRouteTarget.conversation(
+            peerId,
+            messageId: terminal.messageId,
+          ).toPayload(),
+          contentKind: ConversationNotificationContentKind.reaction,
+          eventIdentity: terminal.terminalEventId,
+          snapshot: await loadDirectConversationNotificationSnapshot(
+            messageRepository: messageRepository,
+            contactPeerId: peerId,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            pendingNotificationOverlay:
+                pendingNotificationOverlayBindingPublisher,
+          ),
+        );
+      }
+      return null;
+    }
+
+    final directCanonicalReconciler = DirectNotificationCanonicalReconciler(
+      coordinator: directNotificationPresentationCoordinator,
+      generationCancellation: notificationService,
+      generationReplacement: notificationService,
+      isCurrentContentCanonical: resolveDirectCanonicalContent,
+      loadReplacement: loadDirectCanonicalReplacement,
+    );
+    directNotificationOwner = DirectNotificationProjectionOwner(
+      displayOutbox: directNotificationDisplayOutboxRepository,
+      reconciliationOutbox: directNotificationReconciliationOutboxRepository,
+      reactionTerminal: directNotificationReactionTerminalRepository,
+      coordinator: directNotificationPresentationCoordinator,
+      canonicalReconciler: directCanonicalReconciler,
+      enqueueReconciliation: (peerId) =>
+          dbEnqueueDirectNotificationReconciliationOutbox(db, peerId: peerId),
+      projectDisplay: (entry) async {
+        if (!await directPeerAllowsNotification(entry.peerId)) return null;
+        final contact = await contactRepository.getContact(entry.peerId);
+        if (contact == null) return null;
+        switch (entry.eventKind) {
+          case DirectNotificationDisplayOutboxKind.message:
+            final message = await messageRepository.getMessage(entry.messageId);
+            if (message == null) {
+              throw const DirectNotificationDisplayStateUnavailableException();
+            }
+            if (message.contactPeerId != entry.peerId ||
+                message.senderPeerId != entry.actorPeerId ||
+                message.timestamp != entry.eventTimestamp ||
+                !message.isIncoming ||
+                message.readAt != null ||
+                message.isDeleted ||
+                message.hiddenAt != null) {
+              return null;
+            }
+            return maybeShowNotification(
+              notificationService: notificationService,
+              conversationTracker: conversationTracker,
+              getAppLifecycleState: () =>
+                  WidgetsBinding.instance.lifecycleState ??
+                  AppLifecycleState.resumed,
+              contactPeerId: entry.peerId,
+              routePayload: NotificationRouteTarget.conversation(
+                entry.peerId,
+                messageId: entry.messageId,
+              ).toPayload(),
+              senderUsername: contact.username,
+              messageText: notificationBodyForMessage(
+                message.text,
+                message.media,
+                privateMediaPolicy: message.privateMediaPolicy,
+              ),
+              messageId: entry.messageId,
+              notificationEventIdentity: entry.eventId,
+              notificationEventType: 'new_message',
+              toneTracker: notificationToneTracker,
+              durableNotificationCoordinatorResolver: () async =>
+                  durableReactionNotificationCoordinator,
+              loadConversationNotificationSnapshot: () =>
+                  loadDirectConversationNotificationSnapshot(
+                    messageRepository: messageRepository,
+                    contactPeerId: entry.peerId,
+                    mediaAttachmentRepository: mediaAttachmentRepository,
+                    pendingNotificationOverlay:
+                        pendingNotificationOverlayBindingPublisher,
+                  ),
+              consumeRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
+              markRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      recentRemoteNotificationGate.markAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
+            );
+          case DirectNotificationDisplayOutboxKind.reaction:
+            final target = await messageRepository.getMessage(entry.messageId);
+            final reaction = await reactionRepository
+                .getReactionForSenderIncludingRemoved(
+                  messageId: entry.messageId,
+                  senderPeerId: entry.actorPeerId,
+                );
+            if (target == null) {
+              throw const DirectNotificationDisplayStateUnavailableException();
+            }
+            if (target.contactPeerId != entry.peerId ||
+                target.isIncoming ||
+                target.isDeleted ||
+                reaction == null ||
+                reaction.isRemoved ||
+                reaction.id != entry.reactionId ||
+                reaction.timestamp != entry.eventTimestamp) {
+              return null;
+            }
+            return maybeShowNotification(
+              notificationService: notificationService,
+              conversationTracker: conversationTracker,
+              getAppLifecycleState: () =>
+                  WidgetsBinding.instance.lifecycleState ??
+                  AppLifecycleState.resumed,
+              contactPeerId: entry.peerId,
+              routePayload: NotificationRouteTarget.conversation(
+                entry.peerId,
+                messageId: entry.messageId,
+              ).toPayload(),
+              senderUsername: contact.username,
+              messageText: 'Reacted ${reaction.emoji} to your message',
+              messageId: entry.reactionId,
+              notificationEventIdentity: entry.eventId,
+              notificationEventType: 'message_reaction',
+              toneTracker: notificationToneTracker,
+              durableNotificationCoordinatorResolver: () async =>
+                  durableReactionNotificationCoordinator,
+              loadConversationNotificationSnapshot: () =>
+                  loadDirectConversationNotificationSnapshot(
+                    messageRepository: messageRepository,
+                    contactPeerId: entry.peerId,
+                    mediaAttachmentRepository: mediaAttachmentRepository,
+                    pendingNotificationOverlay:
+                        pendingNotificationOverlayBindingPublisher,
+                  ),
+              consumeRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
+              markRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      recentRemoteNotificationGate.markAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
+            );
+          default:
+            return null;
+        }
+      },
+    );
     final appShellController = AppShellController();
     final pendingPostTargetStore = PendingPostTargetStore();
 
@@ -3761,6 +4574,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       getAppLifecycleState: () =>
           WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
       sendDeliveryReceipt: sendDeliveryReceiptForPeer,
+      stageNotificationDisplayCustody: directNotificationOwner.stageMessage,
+      promoteNotificationDisplayCustody:
+          directNotificationOwner.promoteMessageReadyIfExact,
+      retryNotificationDisplays: directNotificationOwner.retryNow,
     );
 
     // 127-Bug-C: the notification stack now exists — enable reaction-receive
@@ -3896,6 +4713,40 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         final identity = await repository.loadIdentity();
         return identity?.mlKemSecretKey;
       },
+      resolveNotificationDependencies: (contactPeerId) {
+        final notify = reactionNotifyDeps;
+        if (notify == null) return null;
+        return (
+          service: notify.service,
+          tracker: notify.tracker,
+          lifecycle: notify.lifecycle,
+          toneTracker: notify.toneTracker,
+          durableCoordinatorResolver: () async => notify.durableCoordinator,
+          consumeRemoteAnnouncement: ({required payload, String? messageId}) =>
+              recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+          markRemoteAnnouncement: ({required payload, String? messageId}) =>
+              recentRemoteNotificationGate.markAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+          loadSnapshot: () => loadDirectConversationNotificationSnapshot(
+            messageRepository: messageRepository,
+            contactPeerId: contactPeerId,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            pendingNotificationOverlay:
+                pendingNotificationOverlayBindingPublisher,
+          ),
+        );
+      },
+      stageNotificationDisplayCustody: directNotificationOwner.stageReaction,
+      promoteNotificationDisplayCustody:
+          directNotificationOwner.promoteReactionReadyIfExact,
+      commitNotificationRemove:
+          directNotificationOwner.onReactionRemoveCommitted,
+      retryNotificationDisplays: directNotificationOwner.retryNow,
     );
     publishPersistedReactionChange = reactionListener.publishPersistedChange;
 
@@ -4037,6 +4888,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       notificationToneTracker: notificationToneTracker,
       notificationPresentationCoordinator:
           groupNotificationPresentationCoordinator,
+      pendingConversationNotificationOverlay:
+          pendingNotificationOverlayBindingPublisher,
       durableNotificationCoordinatorResolver: () async =>
           durableReactionNotificationCoordinator,
       getAppLifecycleState: () =>
@@ -5284,7 +6137,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           );
 
       final droppedPushRecoveryCoordinator = DroppedPushRecoveryCoordinator(
-        gateway: DroppedPushRecoveryBridge(),
+        gateway: droppedPushRecoveryBridge,
         ensureRuntimeReady: () async {
           // All production entry points route through ApplicationRoot's
           // AccountMigrationRuntimeStartupLatch before reaching this guard.
@@ -5385,6 +6238,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         reactionRepository: reactionRepository,
         isDesktop: isDesktop,
         notificationService: notificationService,
+        retryDirectNotificationProjection: directNotificationOwner!.retryNow,
         groupNotificationPresentationCoordinator:
             groupNotificationPresentationCoordinator,
         groupNotificationPendingReadAcknowledgementResolver:
@@ -5435,6 +6289,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         introductionListener: introductionListener,
         shareIntentService: shareIntentService,
         pushRegistrationCoordinator: pushRegistrationCoordinator,
+        pushRegistrationHealthNotifier: pushRegistrationHealthNotifier,
         accountMigrationRunTransfer:
             accountMigrationTransferRuntime.runOldPhoneTransfer,
         accountMigrationSizeGate: accountMigrationSizeGate,
@@ -5457,12 +6312,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         },
         firebaseReadiness: firebaseReadiness,
         onAppDetached: () async {
-          // Best-effort graceful teardown on app termination. Stopping the node
-          // lets libp2p close streams and release its relay reservation / QUIC
-          // sockets server-side; closing the DB drops the SQLCipher file lock
-          // cleanly. Together these prevent the next cold start from stalling on
-          // the splash screen (which previously only a phone reboot cleared).
-          // The OS gives us a brief window, so each step is time-bounded.
+          if (canonicalWritableRuntimeSession != null) {
+            await shutdownCanonicalRuntime();
+            return;
+          }
+
+          // Non-Android platforms retain their prior best-effort teardown.
           try {
             await p2pService.stopNode().timeout(const Duration(seconds: 2));
           } catch (e) {

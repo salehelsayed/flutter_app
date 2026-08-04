@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show Locale, PlatformDispatcher;
 
@@ -9,6 +10,7 @@ import 'package:background_push_crypto/background_push_crypto.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
@@ -22,10 +24,11 @@ import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
@@ -37,13 +40,20 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
+import 'package:flutter_app/features/push/application/background_storage_liveness_journal.dart';
 import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
 import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
@@ -54,6 +64,122 @@ const String _backgroundDbEncryptionKey = 'db_encryption_key';
 const String _backgroundMlKemSecretKey = 'identity_ml_kem_secret_key';
 const String _backgroundPushTransportPeerId =
     'push_registration_transport_peer_id';
+const Duration _productionBackgroundStorageAggregateDeadline = Duration(
+  seconds: 8,
+);
+const Duration _productionBackgroundStoragePhaseDeadline = Duration(seconds: 2);
+Duration _backgroundStorageAggregateDeadline =
+    _productionBackgroundStorageAggregateDeadline;
+Duration _backgroundStoragePhaseDeadline =
+    _productionBackgroundStoragePhaseDeadline;
+BackgroundStorageLivenessJournal _backgroundStorageLivenessJournal =
+    BackgroundStorageLivenessJournal.mobileDefault();
+typedef BackgroundStorageMonotonicClock = Duration Function();
+BackgroundStorageMonotonicClock Function()
+_backgroundStorageMonotonicClockFactory = _newBackgroundStorageStopwatchClock;
+
+BackgroundStorageMonotonicClock _newBackgroundStorageStopwatchClock() {
+  final stopwatch = Stopwatch()..start();
+  return () => stopwatch.elapsed;
+}
+
+final class BackgroundStorageDeadlineExceeded implements Exception {
+  const BackgroundStorageDeadlineExceeded({
+    required this.phase,
+    required this.elapsed,
+  });
+
+  final String phase;
+  final Duration elapsed;
+
+  @override
+  String toString() =>
+      'BackgroundStorageDeadlineExceeded($phase, ${elapsed.inMilliseconds}ms)';
+}
+
+final class _BackgroundStorageDeadline {
+  _BackgroundStorageDeadline({
+    required this.aggregate,
+    required this.phase,
+    required this.enabled,
+    required BackgroundStorageMonotonicClock elapsed,
+  }) : _elapsed = elapsed,
+       _startedAt = elapsed();
+
+  final Duration aggregate;
+  final Duration phase;
+  final bool enabled;
+  final BackgroundStorageMonotonicClock _elapsed;
+  final Duration _startedAt;
+
+  Duration get elapsed {
+    final value = _elapsed() - _startedAt;
+    return value.isNegative ? Duration.zero : value;
+  }
+
+  Future<T> run<T>(String phaseName, Future<T> Function() action) {
+    if (!enabled) return action();
+    final remaining = aggregate - elapsed;
+    if (remaining <= Duration.zero) {
+      throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+      );
+    }
+    final bound = remaining < phase ? remaining : phase;
+    return action().timeout(
+      bound,
+      onTimeout: () => throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+      ),
+    );
+  }
+}
+
+@visibleForTesting
+void debugSetBackgroundStorageDeadlineDurations({
+  required Duration aggregate,
+  required Duration phase,
+}) {
+  if (aggregate <= Duration.zero || phase <= Duration.zero) {
+    throw ArgumentError('background storage deadlines must be positive');
+  }
+  _backgroundStorageAggregateDeadline = aggregate;
+  _backgroundStoragePhaseDeadline = phase;
+}
+
+@visibleForTesting
+void debugResetBackgroundStorageDeadlineDurations() {
+  _backgroundStorageAggregateDeadline =
+      _productionBackgroundStorageAggregateDeadline;
+  _backgroundStoragePhaseDeadline = _productionBackgroundStoragePhaseDeadline;
+}
+
+@visibleForTesting
+void debugSetBackgroundStorageLivenessJournal(
+  BackgroundStorageLivenessJournal journal,
+) {
+  _backgroundStorageLivenessJournal = journal;
+}
+
+@visibleForTesting
+void debugResetBackgroundStorageLivenessJournal() {
+  _backgroundStorageLivenessJournal =
+      BackgroundStorageLivenessJournal.mobileDefault();
+}
+
+@visibleForTesting
+void debugSetBackgroundStorageMonotonicClockFactory(
+  BackgroundStorageMonotonicClock Function() factory,
+) {
+  _backgroundStorageMonotonicClockFactory = factory;
+}
+
+@visibleForTesting
+void debugResetBackgroundStorageMonotonicClockFactory() {
+  _backgroundStorageMonotonicClockFactory = _newBackgroundStorageStopwatchClock;
+}
 
 @visibleForTesting
 void debugResetBackgroundNotificationsInitialization() {
@@ -68,6 +194,8 @@ typedef BackgroundPushNotificationDisplayEligibilityResolver =
     );
 typedef BackgroundPushEnvelopeStager =
     Future<void> Function(StagedPushEnvelope entry);
+typedef BackgroundPendingConversationNotificationOverlayResolver =
+    Future<PendingConversationNotificationOverlayStore> Function();
 typedef BackgroundDirectReactionLocalStateResolver =
     Future<BackgroundDirectReactionLocalState?> Function(RemoteMessage message);
 typedef BackgroundDirectMessageLocalStateResolver =
@@ -88,26 +216,32 @@ typedef BackgroundGroupNotificationPostShowValidator =
       BackgroundManagedGroupNotificationComparand comparand,
     );
 
+enum BackgroundDirectNotificationPostShowDecision { keep, retire, unknown }
+
 class BackgroundDirectReactionLocalState {
   const BackgroundDirectReactionLocalState({
     required this.previewContext,
     required this.mlKemSecretKey,
+    this.snapshot,
   });
 
   final DirectReactionNotificationContext previewContext;
   final String? mlKemSecretKey;
+  final ConversationNotificationSnapshot? snapshot;
 }
 
 class BackgroundDirectMessageLocalState {
   const BackgroundDirectMessageLocalState({
     required this.previewContext,
     required this.mlKemSecretKeys,
+    this.snapshot,
   });
 
   final DirectMessageNotificationContext previewContext;
 
   /// Current key first, followed by prior identity keys newest-first.
   final List<String> mlKemSecretKeys;
+  final ConversationNotificationSnapshot? snapshot;
 }
 
 class BackgroundGroupMessageLocalState {
@@ -115,11 +249,13 @@ class BackgroundGroupMessageLocalState {
     required this.previewContext,
     required this.groupKey,
     required this.keyEpoch,
+    this.snapshot,
   });
 
   final GroupMessageNotificationContext previewContext;
   final String? groupKey;
   final int? keyEpoch;
+  final ConversationNotificationSnapshot? snapshot;
 }
 
 class BackgroundGroupReactionLocalState {
@@ -128,12 +264,14 @@ class BackgroundGroupReactionLocalState {
     required this.groupKey,
     required this.keyEpoch,
     required this.nominationVerified,
+    this.snapshot,
   });
 
   final GroupReactionNotificationContext previewContext;
   final String groupKey;
   final int keyEpoch;
   final bool nominationVerified;
+  final ConversationNotificationSnapshot? snapshot;
 }
 
 /// Persists the exact transport installation whose FCM token is about to be
@@ -161,6 +299,9 @@ AccountMigrationNetworkGate _backgroundAccountMigrationNetworkGate =
     _defaultBackgroundAccountMigrationNetworkGate;
 BackgroundPushEnvelopeStager _backgroundPushEnvelopeStager =
     _defaultBackgroundPushEnvelopeStager;
+BackgroundPendingConversationNotificationOverlayResolver
+_backgroundPendingConversationNotificationOverlayResolver =
+    PendingConversationNotificationOverlayStore.openDefault;
 BackgroundDirectReactionLocalStateResolver
 _backgroundDirectReactionLocalStateResolver =
     _resolveDirectReactionLocalStateFromEncryptedDb;
@@ -358,6 +499,19 @@ void debugResetBackgroundPushEnvelopeStager() {
   _backgroundPushEnvelopeStager = _defaultBackgroundPushEnvelopeStager;
 }
 
+@visibleForTesting
+void debugSetBackgroundPendingConversationNotificationOverlayResolver(
+  BackgroundPendingConversationNotificationOverlayResolver resolver,
+) {
+  _backgroundPendingConversationNotificationOverlayResolver = resolver;
+}
+
+@visibleForTesting
+void debugResetBackgroundPendingConversationNotificationOverlayResolver() {
+  _backgroundPendingConversationNotificationOverlayResolver =
+      PendingConversationNotificationOverlayStore.openDefault;
+}
+
 Future<void> _initializeBackgroundNotifications() async {
   if (_backgroundNotificationsInitialized) return;
 
@@ -410,6 +564,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
     message.data,
   );
+  final storageDeadline = _BackgroundStorageDeadline(
+    aggregate: _backgroundStorageAggregateDeadline,
+    phase: _backgroundStoragePhaseDeadline,
+    enabled: defaultTargetPlatform == TargetPlatform.android,
+    elapsed: _backgroundStorageMonotonicClockFactory(),
+  );
   Future<void> markVisibleRemoteAnnouncement() async {
     final target = routeTarget;
     if (target == null) {
@@ -419,10 +579,21 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final messageId = routeTargetSupportsMessageAwareRemoteDedupe(target.kind)
         ? remoteNotificationMessageIdFromData(message.data)
         : null;
-    await recentRemoteNotificationGate.markAnnouncement(
-      payload: payload,
-      messageId: messageId,
-    );
+    try {
+      await storageDeadline.run(
+        'recent_remote_mark',
+        () => recentRemoteNotificationGate.markAnnouncement(
+          payload: payload,
+          messageId: messageId,
+        ),
+      );
+    } on BackgroundStorageDeadlineExceeded catch (error) {
+      await _recordBackgroundStorageDeferred(
+        message,
+        error,
+        outcome: 'post_show_unknown',
+      );
+    }
   }
 
   if (!shouldShowBackgroundPushFallbackNotification(message)) {
@@ -432,8 +603,36 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
 
-  final displayEligibility =
-      await _backgroundPushNotificationDisplayEligibilityResolver(message);
+  try {
+    await storageDeadline.run(
+      'direct_stage',
+      () => _stagePushEnvelopeIfPresent(message),
+    );
+  } on BackgroundStorageDeadlineExceeded catch (error) {
+    // Direct staging is nonce-keyed and idempotent. Its detached write may
+    // finish later, but it cannot display or retire a notification.
+    await _recordBackgroundStorageDeferred(
+      message,
+      error,
+      outcome: 'custody_write_pending',
+    );
+    return;
+  }
+
+  late final PushFallbackNotificationDisplayEligibility displayEligibility;
+  try {
+    displayEligibility = await storageDeadline.run(
+      'display_eligibility',
+      () => _backgroundPushNotificationDisplayEligibilityResolver(message),
+    );
+  } on BackgroundStorageDeadlineExceeded catch (error) {
+    await _recordBackgroundStorageDeferred(
+      message,
+      error,
+      outcome: 'storage_deferred',
+    );
+    return;
+  }
   if (!displayEligibility.shouldDisplay) {
     emitFlowEvent(
       layer: 'FL',
@@ -449,13 +648,54 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   DurableNotificationEventClaim? notificationEventClaim;
   DurableNotificationToneReservation? notificationToneReservation;
+  DurableNotificationTonePublicationResult? tonePublication;
   try {
-    await _stagePushEnvelopeIfPresent(message);
     await _initializeBackgroundNotifications();
-    final fallback = await _backgroundPushNotificationResolver(message);
+    late BackgroundPushNotificationFallback fallback;
+    try {
+      fallback = await storageDeadline.run(
+        'preview_resolution',
+        () => _backgroundPushNotificationResolver(message),
+      );
+    } on BackgroundStorageDeadlineExceeded catch (error) {
+      await _recordBackgroundStorageDeferred(
+        message,
+        error,
+        outcome: 'storage_deferred',
+      );
+      return;
+    }
+    try {
+      await storageDeadline.run(
+        'resolved_stage',
+        () => _stageResolvedPushEnvelopeIfNeeded(message, fallback),
+      );
+    } on BackgroundStorageDeadlineExceeded catch (error) {
+      await _recordBackgroundStorageDeferred(
+        message,
+        error,
+        outcome: 'custody_write_pending',
+      );
+      return;
+    }
     final dedupeKey = backgroundPushFallbackDedupeKey(message);
-    if (dedupeKey != null &&
-        await recentBackgroundNotificationGate.wasRecentlyShown(dedupeKey)) {
+    var wasRecentlyShown = false;
+    if (dedupeKey != null) {
+      try {
+        wasRecentlyShown = await storageDeadline.run(
+          'recent_background_read',
+          () => recentBackgroundNotificationGate.wasRecentlyShown(dedupeKey),
+        );
+      } on BackgroundStorageDeadlineExceeded catch (error) {
+        await _recordBackgroundStorageDeferred(
+          message,
+          error,
+          outcome: 'storage_deferred',
+        );
+        return;
+      }
+    }
+    if (wasRecentlyShown) {
       emitFlowEvent(
         layer: 'FL',
         event: 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
@@ -478,13 +718,22 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final isReaction =
         pushType == 'message_reaction' ||
         groupContentKind == ConversationNotificationContentKind.reaction;
+    final resolvedEventIdentity = fallback.resolvedEventIdentity;
     final reactionEventId = isReaction
         ? _trimToNull(message.data['event_id']) ??
-              _trimToNull(message.data['reaction_id'])
+              _trimToNull(message.data['reaction_id']) ??
+              (resolvedEventIdentity?.kind ==
+                      ConversationNotificationContentKind.reaction
+                  ? resolvedEventIdentity?.canonicalEventId
+                  : null)
         : null;
     if (isReaction && reactionEventId == null) return;
     final notificationEventIdentity = isOrdinaryMessage
-        ? remoteNotificationMessageIdFromData(message.data)
+        ? remoteNotificationMessageIdFromData(message.data) ??
+              (resolvedEventIdentity?.kind ==
+                      ConversationNotificationContentKind.message
+                  ? resolvedEventIdentity?.canonicalEventId
+                  : null)
         : reactionEventId == null
         ? null
         : boundedReactionEventIdentity(reactionEventId);
@@ -503,6 +752,57 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         fallback.payload ??
         message.messageId ??
         fallback.title;
+
+    // The overlay is encrypted enrichment, not notification ownership. Run it
+    // before creating a provisional event claim so a stalled secure-store
+    // operation cannot age that claim into a reclaimable duplicate window.
+    if (isOrdinaryMessage || isReaction) {
+      try {
+        final projected = await storageDeadline.run('pending_overlay', () async {
+          final overlay =
+              await _backgroundPendingConversationNotificationOverlayResolver();
+          return overlay.project(
+            conversationKey: conversationKey,
+            canonicalSnapshot: fallback.snapshot,
+            currentMessage:
+                isOrdinaryMessage && notificationEventIdentity != null
+                ? PendingConversationNotificationMessage(
+                    eventId: notificationEventIdentity,
+                    line: fallback.body,
+                    occurredAtMicros:
+                        message.sentTime?.toUtc().microsecondsSinceEpoch ?? 0,
+                  )
+                : null,
+          );
+        });
+        fallback = fallback.withSnapshot(projected);
+      } on BackgroundStorageDeadlineExceeded catch (error) {
+        await _recordBackgroundStorageDeferred(
+          message,
+          error,
+          outcome: 'storage_deferred',
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_NOTIFICATION_OVERLAY_ERROR',
+          details: {
+            'type': pushType,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+      } catch (error) {
+        // The encrypted overlay is an enrichment. Canonical notification
+        // delivery remains available if secure storage is temporarily down.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_NOTIFICATION_OVERLAY_ERROR',
+          details: {
+            'type': pushType,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+      }
+    }
 
     var claimStorageFailedOpen = false;
     var notificationClaimCommitted = false;
@@ -610,7 +910,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       throw allocationError;
     }
 
-    final contentKind = groupContentKind;
+    final directContentKind =
+        routeTarget?.kind == NotificationRouteTargetKind.conversation &&
+            notificationEventIdentity != null
+        ? isReaction
+              ? ConversationNotificationContentKind.reaction
+              : isOrdinaryMessage
+              ? ConversationNotificationContentKind.message
+              : null
+        : null;
+    final contentKind = groupContentKind ?? directContentKind;
     final contentMetadata = contentKind == null
         ? null
         : ConversationNotificationContentMetadata(
@@ -625,49 +934,119 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             conversationKey: conversationKey,
             metadata: contentMetadata,
           );
-    Future<void> show() => _backgroundNotificationsPlugin.show(
-      notificationId,
-      fallback.title,
-      fallback.body,
-      mknoonConversationNotificationDetails(
-        conversationKey: conversationKey,
-        silent: silent,
-        autoCancel: contentMetadata == null,
-      ),
-      payload: nativePayload,
-    );
-    if (contentMetadata == null) {
-      await show();
-    } else {
+    Future<void> show({required bool publicationSilent}) =>
+        _backgroundNotificationsPlugin.show(
+          notificationId,
+          fallback.title,
+          fallback.body,
+          mknoonConversationNotificationDetails(
+            conversationKey: conversationKey,
+            silent: publicationSilent,
+            autoCancel: contentMetadata == null,
+            snapshot: fallback.snapshot,
+          ),
+          payload: nativePayload,
+        );
+    Future<void> publishPrepared({required bool publicationSilent}) async {
+      if (contentMetadata == null) {
+        await show(publicationSilent: publicationSilent);
+        return;
+      }
       await notificationIdRegistry.replaceContent(
         conversationKey: conversationKey,
         notificationId: notificationId,
         metadata: contentMetadata,
         retireCurrent: () =>
             _backgroundNotificationsPlugin.cancel(notificationId),
-        replace: show,
+        replace: () => show(publicationSilent: publicationSilent),
       );
     }
-    // Native display has succeeded. Detach both owners before any subsequent
-    // validation/bookkeeping so no post-show failure can reach the outer catch
-    // and release them for a duplicate audible retry.
+
+    DurableNotificationClaimedPublicationResult? claimedPublication;
+    Future<void> publishAtNativeBoundary() async {
+      Future<void> publishWithExactToneOwner() async {
+        final reservation = notificationToneReservation;
+        if (reservation == null) {
+          await show(publicationSilent: silent);
+          return;
+        }
+        tonePublication = await reservation.publishAndCommit(
+          () => show(publicationSilent: false),
+        );
+        if (!tonePublication!.publishedAudibly) {
+          await show(publicationSilent: true);
+        }
+      }
+
+      claimedPublication = notificationEventClaim == null
+          ? null
+          : await notificationEventClaim.publishAndCommit(
+              publishWithExactToneOwner,
+            );
+      if (claimedPublication == null) {
+        await publishWithExactToneOwner();
+      } else if (!claimedPublication!.published) {
+        throw const _BackgroundNotificationClaimOwnershipLost();
+      }
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      // Registry allocation, retirement, and metadata preparation happen
+      // before Android durable owners enter `publishing`. Only the actual
+      // platform show call is ambiguous if its method-channel result fails.
+      if (contentMetadata == null) {
+        await publishAtNativeBoundary();
+      } else {
+        await notificationIdRegistry.replaceContent(
+          conversationKey: conversationKey,
+          notificationId: notificationId,
+          metadata: contentMetadata,
+          retireCurrent: () =>
+              _backgroundNotificationsPlugin.cancel(notificationId),
+          replace: publishAtNativeBoundary,
+        );
+      }
+    } else {
+      // Preserve the existing Apple/desktop ordering. Their coordination
+      // files are shared with the NSE and do not use Android's `publishing`
+      // recovery protocol.
+      Future<void> publishWithLegacyToneOwner() async {
+        final reservation = notificationToneReservation;
+        if (reservation == null) {
+          await publishPrepared(publicationSilent: silent);
+          return;
+        }
+        tonePublication = await reservation.publishAndCommit(
+          () => publishPrepared(publicationSilent: false),
+        );
+        if (!tonePublication!.publishedAudibly) {
+          await publishPrepared(publicationSilent: true);
+        }
+      }
+
+      claimedPublication = notificationEventClaim == null
+          ? null
+          : await notificationEventClaim.publishAndCommit(
+              publishWithLegacyToneOwner,
+            );
+      if (claimedPublication == null) {
+        await publishWithLegacyToneOwner();
+      } else if (!claimedPublication!.published) {
+        throw const _BackgroundNotificationClaimOwnershipLost();
+      }
+    }
+    // The native callback returned successfully. Detach both owners before any
+    // subsequent validation/bookkeeping so no later failure can reach the
+    // outer catch and release them for a duplicate audible retry.
     final shownToneReservation = notificationToneReservation;
     notificationToneReservation = null;
     final shownMessageClaim = notificationEventClaim;
     notificationEventClaim = null;
-    // Commit durable ownership immediately after native publication. The
-    // canonical fence may need to open SQLCipher or call back into the plugin;
-    // neither operation may enlarge the show-to-commit crash window.
     if (shownToneReservation != null) {
-      var toneCommitted = false;
-      try {
-        toneCommitted = await shownToneReservation.commit();
-      } catch (_) {
-        toneCommitted = false;
-      }
-      // The OS show succeeded, so a later bookkeeping failure must never
-      // release the audible right and permit a second immediate tone.
-      if (!toneCommitted) {
+      // The native callback completed, so a later bookkeeping failure must
+      // never release the audible right and permit a second immediate tone.
+      if (tonePublication!.publishedAudibly &&
+          !tonePublication!.toneCommitted) {
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_BACKGROUND_MESSAGE_TONE_COMMIT_FAILED',
@@ -676,13 +1055,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
     }
     if (shownMessageClaim != null) {
-      try {
-        notificationClaimCommitted = await shownMessageClaim.commit();
-      } catch (_) {
-        notificationClaimCommitted = false;
-      }
-      // The OS show succeeded, so this producer must never release its claim,
-      // even if a later compatibility-gate write fails.
+      notificationClaimCommitted = claimedPublication!.claimCommitted;
+      // The native callback completed, so this producer must never release its
+      // claim, even if a later compatibility-gate write fails.
       if (!notificationClaimCommitted) {
         emitFlowEvent(
           layer: 'FL',
@@ -691,6 +1066,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         );
       }
     }
+    var postShowStorageExpired = false;
     final groupComparand = fallback.groupComparand;
     if (contentMetadata != null && groupComparand != null) {
       try {
@@ -712,8 +1088,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                     reactionComparand.notificationEventIdentity,
         };
         final decision = metadataMatches
-            ? await _backgroundGroupNotificationPostShowValidator(
-                groupComparand,
+            ? await storageDeadline.run(
+                'group_post_show_validation',
+                () => _backgroundGroupNotificationPostShowValidator(
+                  groupComparand,
+                ),
               )
             : BackgroundGroupNotificationPostShowDecision.retire;
         if (decision == BackgroundGroupNotificationPostShowDecision.retire) {
@@ -737,11 +1116,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           );
         }
       } catch (error) {
-        // The native show already succeeded. A read or cancellation failure is
-        // unknown, not a display failure: keep the card. Its tone and event
-        // owners were already committed immediately after native publication,
-        // so the same push cannot re-alert. Durable reconciliation retries the
-        // canonical projection from the foreground runtime.
+        // The native callback already returned. A read or cancellation failure
+        // is unknown, not a publication failure: keep the card. Its tone and
+        // event owners are committed or retained fail-closed, so the same push
+        // cannot re-alert. Durable reconciliation retries the canonical
+        // projection from the foreground runtime.
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_BACKGROUND_GROUP_POST_SHOW_UNKNOWN',
@@ -750,18 +1129,98 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             'errorType': error.runtimeType.toString(),
           },
         );
+        if (error is BackgroundStorageDeadlineExceeded) {
+          postShowStorageExpired = true;
+          await _recordBackgroundStorageDeferred(
+            message,
+            error,
+            outcome: 'post_show_unknown',
+          );
+        }
       }
     }
-    if (dedupeKey != null) {
-      await recentBackgroundNotificationGate.markShown(dedupeKey);
+    if (!postShowStorageExpired &&
+        contentMetadata != null &&
+        directContentKind != null &&
+        routeTarget?.kind == NotificationRouteTargetKind.conversation) {
+      final peerId = _trimToNull(routeTarget?.peerId);
+      if (peerId != null) {
+        try {
+          final decision = await storageDeadline.run(
+            'direct_post_show_validation',
+            () => _validateBackgroundDirectNotificationAfterShow(
+              peerId: peerId,
+              metadata: contentMetadata,
+            ),
+          );
+          if (decision == BackgroundDirectNotificationPostShowDecision.retire) {
+            final retired = await notificationIdRegistry
+                .cancelContentIfGeneration(
+                  conversationKey: conversationKey,
+                  notificationId: notificationId,
+                  generation: contentMetadata.generation!,
+                  cancel: () =>
+                      _backgroundNotificationsPlugin.cancel(notificationId),
+                );
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PUSH_BACKGROUND_DIRECT_POST_SHOW_RETIRED',
+              details: {
+                'type': pushType,
+                'result': retired
+                    ? 'retired_exact_generation'
+                    : 'newer_generation_survived',
+              },
+            );
+          }
+        } catch (error) {
+          // The native callback returned and its claim is committed or retained
+          // fail-closed. Keep the exact managed generation. FlutterFire remains
+          // read-only; the staged encrypted envelope transfers retry ownership
+          // to foreground ingestion, whose canonical commit enqueues v107
+          // reconciliation.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_BACKGROUND_DIRECT_POST_SHOW_UNKNOWN',
+            details: {
+              'type': pushType,
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+          if (error is BackgroundStorageDeadlineExceeded) {
+            postShowStorageExpired = true;
+            await _recordBackgroundStorageDeferred(
+              message,
+              error,
+              outcome: 'post_show_unknown',
+            );
+          }
+        }
+      }
+    }
+    if (!postShowStorageExpired && dedupeKey != null) {
+      try {
+        await storageDeadline.run(
+          'recent_background_mark',
+          () => recentBackgroundNotificationGate.markShown(dedupeKey),
+        );
+      } on BackgroundStorageDeadlineExceeded catch (error) {
+        postShowStorageExpired = true;
+        await _recordBackgroundStorageDeferred(
+          message,
+          error,
+          outcome: 'post_show_unknown',
+        );
+      }
     }
     // Exact committed message claims are the Android live/background dedupe
     // authority. Keep the recent-remote gate only for iOS NSE compatibility,
     // legacy/no-id pushes, or the documented durable-storage fail-open path.
-    if (!isOrdinaryMessage ||
-        defaultTargetPlatform == TargetPlatform.iOS ||
-        notificationEventIdentity == null ||
-        !notificationClaimCommitted) {
+    if (!postShowStorageExpired &&
+        (!isOrdinaryMessage ||
+            defaultTargetPlatform == TargetPlatform.iOS ||
+            notificationEventIdentity == null ||
+            !notificationClaimCommitted)) {
       await markVisibleRemoteAnnouncement();
     }
 
@@ -774,6 +1233,41 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       },
     );
   } catch (e) {
+    if (e is DurableNotificationPublicationAttemptedException) {
+      // Android may already have accepted the card. Preserve the exact event
+      // and any audible tone `publishing` residue fail-closed. If tone
+      // coordination failed before its callback and the silent fallback was
+      // ambiguous, its still-pending audible owner is safe to release.
+      final unattemptedToneReservation =
+          tonePublication?.publishedAudibly == false
+          ? notificationToneReservation
+          : null;
+      notificationToneReservation = null;
+      notificationEventClaim = null;
+      if (unattemptedToneReservation != null) {
+        try {
+          await unattemptedToneReservation.release();
+        } catch (releaseError) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_BACKGROUND_MESSAGE_TONE_RELEASE_FAILED',
+            details: {
+              'kind': 'pre_native_audible_owner',
+              'errorType': releaseError.runtimeType.toString(),
+            },
+          );
+        }
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_BACKGROUND_NOTIFICATION_PUBLICATION_OUTCOME_UNKNOWN',
+        details: {
+          'type': _trimToNull(message.data['type']),
+          'errorType': e.errorType,
+        },
+      );
+      return;
+    }
     final failedToneReservation = notificationToneReservation;
     notificationToneReservation = null;
     if (failedToneReservation != null) {
@@ -820,12 +1314,82 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         );
       }
     }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'PUSH_BACKGROUND_NOTIFICATION_ERROR',
-      details: {'error': e.toString()},
-    );
+    if (e is _BackgroundNotificationClaimOwnershipLost) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        details: {
+          'messageId': message.messageId,
+          'reason': 'event_claim_ownership_lost_before_show',
+        },
+      );
+    } else {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_BACKGROUND_NOTIFICATION_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
+}
+
+final class _BackgroundNotificationClaimOwnershipLost implements Exception {
+  const _BackgroundNotificationClaimOwnershipLost();
+}
+
+Future<void> _recordBackgroundStorageDeferred(
+  RemoteMessage message,
+  BackgroundStorageDeadlineExceeded error, {
+  required String outcome,
+}) async {
+  final rawKind = _trimToNull(message.data['type']);
+  final kind = switch (rawKind) {
+    'new_message' => BackgroundStorageMessageKind.directMessage,
+    'group_message' => BackgroundStorageMessageKind.groupMessage,
+    'message_reaction' => BackgroundStorageMessageKind.directReaction,
+    'group_reaction' => BackgroundStorageMessageKind.groupReaction,
+    _ => BackgroundStorageMessageKind.unknown,
+  };
+  final phase = switch (error.phase) {
+    'direct_stage' ||
+    'resolved_stage' => BackgroundStorageLivenessPhase.directStaging,
+    'display_eligibility' => BackgroundStorageLivenessPhase.displayEligibility,
+    'recent_background_read' ||
+    'recent_background_mark' ||
+    'recent_remote_mark' => BackgroundStorageLivenessPhase.recentGate,
+    'group_post_show_validation' || 'direct_post_show_validation' =>
+      BackgroundStorageLivenessPhase.postShowValidation,
+    'pending_overlay' => BackgroundStorageLivenessPhase.pendingOverlay,
+    _ => BackgroundStorageLivenessPhase.localState,
+  };
+  final terminalOutcome = switch (outcome) {
+    'post_show_unknown' => BackgroundStorageTerminalOutcome.shownStateUnknown,
+    'notification_suppressed' =>
+      BackgroundStorageTerminalOutcome.notificationSuppressed,
+    _ => BackgroundStorageTerminalOutcome.storageDeferred,
+  };
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_BACKGROUND_STORAGE_DEFERRED',
+    details: <String, Object?>{
+      'kind': kind.wireName,
+      'phase': phase.wireName,
+      'outcome': terminalOutcome.wireName,
+      'elapsedBucket': bucketBackgroundStorageElapsed(error.elapsed).wireName,
+      'buildMode': kReleaseMode
+          ? 'release'
+          : kProfileMode
+          ? 'profile'
+          : 'debug',
+      'engineRole': 'flutterfire_background',
+    },
+  );
+  await _backgroundStorageLivenessJournal.recordTerminal(
+    kind: kind,
+    phase: phase,
+    outcome: terminalOutcome,
+    elapsed: error.elapsed,
+  );
 }
 
 Future<void> _stagePushEnvelopeIfPresent(RemoteMessage message) async {
@@ -847,9 +1411,152 @@ Future<void> _stagePushEnvelopeIfPresent(RemoteMessage message) async {
   }
 }
 
-StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
+Future<BackgroundDirectNotificationPostShowDecision>
+_validateBackgroundDirectNotificationAfterShow({
+  required String peerId,
+  required ConversationNotificationContentMetadata metadata,
+}) async {
+  final eventIdentity = _trimToNull(metadata.eventIdentity);
+  if (eventIdentity == null) {
+    return BackgroundDirectNotificationPostShowDecision.unknown;
+  }
+  Database? db;
+  try {
+    final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
+    if (_trimToNull(key) == null) {
+      return BackgroundDirectNotificationPostShowDecision.unknown;
+    }
+    final dbPath = await getDatabasesPath();
+    db = await openBackgroundIdentityDbReadTolerant(
+      path: '$dbPath/identity.db',
+      key: key!,
+    );
+    return validateBackgroundDirectNotificationAfterShowInDatabase(
+      db,
+      peerId: peerId,
+      metadata: metadata,
+    );
+  } finally {
+    await db?.close();
+  }
+}
+
+/// Read-only FlutterFire H0 seam. Unknown canonical materialization remains
+/// owned by the already-staged encrypted envelope; foreground ingestion will
+/// commit canonical state and enqueue v107 reconciliation under its write
+/// lease. This method must never mutate [db].
+@visibleForTesting
+Future<BackgroundDirectNotificationPostShowDecision>
+validateBackgroundDirectNotificationAfterShowInDatabase(
+  Database db, {
+  required String peerId,
+  required ConversationNotificationContentMetadata metadata,
+}) async {
+  final eventIdentity = _trimToNull(metadata.eventIdentity);
+  if (eventIdentity == null) {
+    return BackgroundDirectNotificationPostShowDecision.unknown;
+  }
+  final contact = await dbLoadContact(db, peerId);
+  final contactEligible =
+      _trimToNull(contact?['peer_id']) == peerId &&
+      (contact?['is_blocked'] as num?)?.toInt() != 1 &&
+      (contact?['is_archived'] as num?)?.toInt() != 1;
+  if (!contactEligible) {
+    return BackgroundDirectNotificationPostShowDecision.retire;
+  }
+
+  final acknowledgement =
+      await dbLoadExactDirectNotificationReadAcknowledgement(
+        db,
+        peerId: peerId,
+        contentKind: metadata.kind.name,
+        eventIdentity: eventIdentity,
+        generation: metadata.generation,
+      );
+  if (acknowledgement != null) {
+    return BackgroundDirectNotificationPostShowDecision.retire;
+  }
+
+  switch (metadata.kind) {
+    case ConversationNotificationContentKind.message:
+      final message = await dbLoadMessage(db, eventIdentity);
+      if (message == null) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      final canonical =
+          _trimToNull(message['contact_peer_id']) == peerId &&
+          (message['is_incoming'] as num?)?.toInt() == 1 &&
+          message['read_at'] == null &&
+          message['deleted_at'] == null &&
+          message['hidden_at'] == null;
+      return canonical
+          ? BackgroundDirectNotificationPostShowDecision.keep
+          : BackgroundDirectNotificationPostShowDecision.retire;
+    case ConversationNotificationContentKind.reaction:
+      final terminal =
+          await dbLoadDirectNotificationReactionTerminalEventByIdentity(
+            db,
+            peerId: peerId,
+            terminalEventId: eventIdentity,
+          );
+      if (terminal == null) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      if (terminal['notification_acknowledged_at'] != null) {
+        return BackgroundDirectNotificationPostShowDecision.retire;
+      }
+      final messageId = terminal['message_id'] as String;
+      final actorPeerId = terminal['actor_peer_id'] as String;
+      final target = await dbLoadMessage(db, messageId);
+      final reaction = await dbLoadActiveOrTombstonedReactionForSender(
+        db,
+        messageId,
+        actorPeerId,
+      );
+      final canonical =
+          _trimToNull(target?['contact_peer_id']) == peerId &&
+          (target?['is_incoming'] as num?)?.toInt() == 0 &&
+          target?['deleted_at'] == null &&
+          _trimToNull(reaction?['id']) ==
+              _trimToNull(terminal['reaction_id']) &&
+          reaction?['removed_at'] == null;
+      return canonical
+          ? BackgroundDirectNotificationPostShowDecision.keep
+          : BackgroundDirectNotificationPostShowDecision.retire;
+  }
+}
+
+Future<void> _stageResolvedPushEnvelopeIfNeeded(
   RemoteMessage message,
-) {
+  BackgroundPushNotificationFallback fallback,
+) async {
+  if (defaultTargetPlatform == TargetPlatform.iOS ||
+      fallback.resolvedEventIdentity?.origin !=
+          ResolvedPushEventIdentityOrigin.authenticatedInner) {
+    return;
+  }
+  final entry = _stagedPushEnvelopeFromRemoteMessage(
+    message,
+    resolvedIdentity: fallback.resolvedEventIdentity,
+  );
+  if (entry == null || entry.identityResolutionPending) return;
+  try {
+    // File staging is keyed by nonce, so this atomically promotes the earlier
+    // pending custody record instead of creating a second logical envelope.
+    await _backgroundPushEnvelopeStager(entry);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_ENVELOPE_PROMOTION_ERROR',
+      details: {'messageId': message.messageId, 'error': e.toString()},
+    );
+  }
+}
+
+StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
+  RemoteMessage message, {
+  ResolvedPushEventIdentity? resolvedIdentity,
+}) {
   final data = message.data;
   final type = _trimToNull(data['type']);
   if (type != 'new_message' && type != 'message_reaction') {
@@ -868,10 +1575,16 @@ StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
   }
   if (type == 'message_reaction') {
     final eventId =
-        _trimToNull(data['event_id']) ?? _trimToNull(data['reaction_id']);
-    final action = _trimToNull(data['action']);
-    final targetMessageId = _trimToNull(data['target_message_id']);
-    if (eventId == null || action != 'add' || targetMessageId == null) {
+        _trimToNull(data['event_id']) ??
+        _trimToNull(data['reaction_id']) ??
+        (resolvedIdentity?.kind == ConversationNotificationContentKind.reaction
+            ? resolvedIdentity?.canonicalEventId
+            : null);
+    final action = _trimToNull(data['action']) ?? resolvedIdentity?.action;
+    final targetMessageId =
+        _trimToNull(data['target_message_id']) ??
+        resolvedIdentity?.targetMessageId;
+    if (action != 'add' || targetMessageId == null) {
       return null;
     }
     return StagedPushEnvelope(
@@ -884,6 +1597,7 @@ StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
       eventId: eventId,
       action: action,
       targetMessageId: targetMessageId,
+      identityResolutionPending: eventId == null,
       receivedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
     );
   }
@@ -893,7 +1607,14 @@ StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
     ciphertext: ciphertext,
     nonce: nonce,
     senderPeerId: senderPeerId,
-    messageId: remoteNotificationMessageIdFromData(data),
+    messageId:
+        remoteNotificationMessageIdFromData(data) ??
+        (resolvedIdentity?.kind == ConversationNotificationContentKind.message
+            ? resolvedIdentity?.canonicalEventId
+            : null),
+    identityResolutionPending:
+        remoteNotificationMessageIdFromData(data) == null &&
+        resolvedIdentity?.canonicalEventId == null,
     receivedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
   );
 }
@@ -936,6 +1657,68 @@ String? _remoteNotificationConversationKey(
     case NotificationRouteTargetKind.post:
     case NotificationRouteTargetKind.postComment:
       return _trimToNull(routeTarget.toPayload());
+  }
+}
+
+Future<ConversationNotificationSnapshot?>
+_loadBackgroundDirectConversationSnapshot(Database db, String peerId) async {
+  try {
+    final rows = await dbLoadMessagesForContact(db, peerId);
+    return buildDirectConversationNotificationSnapshot(
+      messages: rows.map(
+        (row) => ConversationMessage.fromMap(Map<String, dynamic>.from(row)),
+      ),
+      contactPeerId: peerId,
+      loadAttachments: (messageId) async =>
+          (await dbLoadMediaForMessage(
+                db,
+                messageId,
+                ownerLane: MediaOwnerLane.direct.dbValue,
+              ))
+              .map(
+                (row) =>
+                    MediaAttachment.fromMap(Map<String, dynamic>.from(row)),
+              )
+              .toList(growable: false),
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_NOTIFICATION_SNAPSHOT_ERROR',
+      details: {'kind': 'direct', 'errorType': error.runtimeType.toString()},
+    );
+    return null;
+  }
+}
+
+Future<ConversationNotificationSnapshot?>
+_loadBackgroundGroupConversationSnapshot(Database db, String groupId) async {
+  try {
+    final rows = await dbLoadAllGroupMessages(db, groupId);
+    return buildGroupConversationNotificationSnapshot(
+      messages: rows.map(
+        (row) => GroupMessage.fromMap(Map<String, dynamic>.from(row)),
+      ),
+      groupId: groupId,
+      loadAttachments: (messageId) async =>
+          (await dbLoadMediaForMessage(
+                db,
+                messageId,
+                ownerLane: MediaOwnerLane.group.dbValue,
+              ))
+              .map(
+                (row) =>
+                    MediaAttachment.fromMap(Map<String, dynamic>.from(row)),
+              )
+              .toList(growable: false),
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_NOTIFICATION_SNAPSHOT_ERROR',
+      details: {'kind': 'group', 'errorType': error.runtimeType.toString()},
+    );
+    return null;
   }
 }
 
@@ -1022,7 +1805,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
       throw StateError('direct message local state became ineligible');
     }
     final secretKeys = localState.mlKemSecretKeys;
-    return resolveBackgroundPushNotification(
+    return (await resolveBackgroundPushNotification(
       message,
       directMessageContext: localState.previewContext,
       locale: _backgroundNotificationLocaleResolver(),
@@ -1070,7 +1853,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
               }
               throw StateError('background direct message decrypt rejected');
             },
-    );
+    )).withSnapshot(localState.snapshot);
   }
   if (type == 'group_message') {
     final localState = await _backgroundGroupMessageLocalStateResolver(message);
@@ -1081,7 +1864,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
     }
     final groupKey = _trimToNull(localState.groupKey);
     final selectedEpoch = localState.keyEpoch;
-    return resolveBackgroundPushNotification(
+    return (await resolveBackgroundPushNotification(
       message,
       groupMessageContext: localState.previewContext,
       locale: _backgroundNotificationLocaleResolver(),
@@ -1123,7 +1906,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
               );
               return plaintext;
             },
-    );
+    )).withSnapshot(localState.snapshot);
   }
   if (type == 'group_reaction') {
     final localState = await _backgroundGroupReactionLocalStateResolver(
@@ -1132,7 +1915,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
     if (localState == null || !localState.nominationVerified) {
       throw StateError('group reaction local state became ineligible');
     }
-    return resolveBackgroundPushNotification(
+    return (await resolveBackgroundPushNotification(
       message,
       groupReactionContext: localState.previewContext,
       locale: _backgroundNotificationLocaleResolver(),
@@ -1174,7 +1957,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
             );
             return plaintext;
           },
-    );
+    )).withSnapshot(localState.snapshot);
   }
   if (type != 'message_reaction') {
     return resolveBackgroundPushNotification(message);
@@ -1190,7 +1973,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
   }
 
   final secretKey = _trimToNull(localState.mlKemSecretKey);
-  return resolveBackgroundPushNotification(
+  return (await resolveBackgroundPushNotification(
     message,
     directReactionContext: localState.previewContext,
     decryptOneToOne: secretKey == null
@@ -1213,7 +1996,7 @@ _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
             );
             return plaintext;
           },
-  );
+  )).withSnapshot(localState.snapshot);
 }
 
 @visibleForTesting
@@ -1223,6 +2006,7 @@ BackgroundDirectMessageLocalState? directMessageLocalStateFromRows({
   required Map<String, Object?>? contactRow,
   required String? currentMlKemSecretKey,
   required List<String> priorMlKemSecretKeys,
+  ConversationNotificationSnapshot? snapshot,
 }) {
   if (_trimToNull(data['type']) != 'new_message') return null;
   final senderPeerId =
@@ -1255,6 +2039,7 @@ BackgroundDirectMessageLocalState? directMessageLocalStateFromRows({
       expectedMessageId: remoteNotificationMessageIdFromData(data),
     ),
     mlKemSecretKeys: List<String>.unmodifiable(keys),
+    snapshot: snapshot,
   );
 }
 
@@ -1316,6 +2101,10 @@ _resolveDirectMessageLocalStateFromEncryptedDb(RemoteMessage message) async {
       contactRow: rows[1],
       currentMlKemSecretKey: currentKey,
       priorMlKemSecretKeys: priorKeys,
+      snapshot: await _loadBackgroundDirectConversationSnapshot(
+        db,
+        senderPeerId,
+      ),
     );
   } catch (e) {
     emitFlowEvent(
@@ -1411,6 +2200,7 @@ BackgroundGroupMessageLocalState? groupMessageLocalStateFromRows({
   required Map<String, Object?>? groupKeyRow,
   Map<String, Object?>? readAcknowledgementRow,
   Map<String, Object?>? canonicalMessageRow,
+  ConversationNotificationSnapshot? snapshot,
 }) {
   if (_trimToNull(data['type']) != 'group_message') return null;
   final groupId = _trimToNull(data['groupId']) ?? _trimToNull(data['group_id']);
@@ -1511,6 +2301,7 @@ BackgroundGroupMessageLocalState? groupMessageLocalStateFromRows({
     ),
     groupKey: groupKey,
     keyEpoch: keyEpoch,
+    snapshot: snapshot,
   );
 }
 
@@ -1583,6 +2374,7 @@ _resolveGroupMessageLocalStateFromEncryptedDb(RemoteMessage message) async {
       groupKeyRow: hydratedGroupKeyRow,
       readAcknowledgementRow: readAcknowledgementRow,
       canonicalMessageRow: canonicalMessageRow,
+      snapshot: await _loadBackgroundGroupConversationSnapshot(db, groupId),
     );
   } catch (e) {
     emitFlowEvent(
@@ -1603,12 +2395,11 @@ BackgroundDirectReactionLocalState? directReactionLocalStateFromRows({
   required Map<String, Object?>? contactRow,
   required Map<String, Object?>? targetMessageRow,
   required String? mlKemSecretKey,
+  ConversationNotificationSnapshot? snapshot,
 }) {
   final action = _trimToNull(data['action']);
   final senderPeerId =
       _trimToNull(data['sender_id']) ?? _trimToNull(data['from']);
-  final eventId =
-      _trimToNull(data['event_id']) ?? _trimToNull(data['reaction_id']);
   final targetMessageId =
       _trimToNull(data['target_message_id']) ??
       _trimToNull(data['targetMessageId']);
@@ -1624,7 +2415,6 @@ BackgroundDirectReactionLocalState? directReactionLocalStateFromRows({
   final deleted = targetMessageRow?['deleted_at'] != null;
 
   if (action != 'add' ||
-      eventId == null ||
       senderPeerId == null ||
       targetMessageId == null ||
       localPeerId == null ||
@@ -1647,6 +2437,7 @@ BackgroundDirectReactionLocalState? directReactionLocalStateFromRows({
       targetMessageId: targetMessageId,
     ),
     mlKemSecretKey: _trimToNull(mlKemSecretKey),
+    snapshot: snapshot,
   );
 }
 
@@ -1685,6 +2476,10 @@ _resolveDirectReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
       contactRow: rows[1],
       targetMessageRow: rows[2],
       mlKemSecretKey: await secureStore.read(_backgroundMlKemSecretKey),
+      snapshot: await _loadBackgroundDirectConversationSnapshot(
+        db,
+        senderPeerId,
+      ),
     );
   } catch (e) {
     emitFlowEvent(
@@ -1733,6 +2528,7 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
   required VerifiedGroupReactionNotificationNomination? verifiedNomination,
   Iterable<Map<String, Object?>> targetAttachmentRows =
       const <Map<String, Object?>>[],
+  ConversationNotificationSnapshot? snapshot,
 }) {
   final action = _trimToNull(data['action']);
   final eventId =
@@ -1835,7 +2631,6 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
         );
 
   if (action != 'add' ||
-      eventId == null ||
       groupId == null ||
       actorPeerId == null ||
       targetMessageId == null ||
@@ -1885,10 +2680,12 @@ BackgroundGroupReactionLocalState? groupReactionLocalStateFromRows({
       currentReactionTimestamp: currentReactionTimestamp,
       currentReactionRemovedAt: currentReactionRemovedAt,
       currentReactionAcknowledged: currentReactionAcknowledged,
+      expectedTransitionId: verifiedNomination.transitionId,
     ),
     groupKey: groupKey,
     keyEpoch: keyEpoch,
     nominationVerified: true,
+    snapshot: snapshot,
   );
 }
 
@@ -1937,7 +2734,6 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
   if (groupId == null ||
       actorPeerId == null ||
       targetMessageId == null ||
-      eventId == null ||
       keyEpoch == null) {
     return null;
   }
@@ -1988,12 +2784,14 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
         targetMessageId,
         actorPeerId,
       ),
-      dbLoadExactGroupNotificationReadAcknowledgement(
-        db,
-        groupId: groupId,
-        contentKind: 'reaction',
-        eventIdentity: boundedReactionEventIdentity(eventId),
-      ),
+      eventId == null
+          ? Future<Map<String, Object?>?>.value(null)
+          : dbLoadExactGroupNotificationReadAcknowledgement(
+              db,
+              groupId: groupId,
+              contentKind: 'reaction',
+              eventIdentity: boundedReactionEventIdentity(eventId),
+            ),
     ]);
     final targetAttachmentRows = await dbLoadMediaForMessage(
       db,
@@ -2018,6 +2816,7 @@ _resolveGroupReactionLocalStateFromEncryptedDb(RemoteMessage message) async {
       localInstallationTransportPeerId: localTransportPeerId,
       verifiedNomination: verifiedNomination,
       targetAttachmentRows: targetAttachmentRows,
+      snapshot: await _loadBackgroundGroupConversationSnapshot(db, groupId),
     );
   } catch (e) {
     emitFlowEvent(
@@ -2260,36 +3059,16 @@ GroupMessageNotificationDisplayEligibility groupMemberMessageDisplayEligibility(
 /// 218 Phase A — read-tolerant identity.db open for the background isolate's
 /// group-eligibility read (the 5th identity.db open site). Tries the raw-key
 /// literal first (post-Phase-B raw DBs, PBKDF2 skipped), falls back to
-/// passphrase for legacy DBs. Always readOnly + singleInstance:false (this runs
-/// in a separate Android background process). Extracted as a testable seam so
-/// SC-B can prove the raw-read path against a manufactured raw fixture without
-/// standing up the full FCM push machinery.
+/// passphrase for legacy DBs. Always readOnly + singleInstance:false: the
+/// FlutterFire engine can share the Android app process with the foreground or
+/// recovery engine, but it never owns the canonical writable-runtime lease.
+/// Extracted as a testable seam so SC-B can prove the raw-read path against a
+/// manufactured raw fixture without standing up the full FCM push machinery.
 @visibleForTesting
 Future<Database> openBackgroundIdentityDbReadTolerant({
   required String path,
   required String key,
-}) async {
-  final record = parseCipherKeyRecord(key);
-  if (!isValid256BitHexKey(record.hex)) {
-    throw StateError('background db_encryption_key is not a 64-hex key');
-  }
-  try {
-    return await openDatabase(
-      path,
-      password: "x'${record.hex}'", // RAW_KEY
-      readOnly: true,
-      singleInstance: false,
-    );
-  } catch (_) {
-    if (record.mode == CipherKeyMode.raw) rethrow;
-    return await openDatabase(
-      path,
-      password: record.hex, // LEGACY_PASSPHRASE_FALLBACK
-      readOnly: true,
-      singleInstance: false,
-    );
-  }
-}
+}) => openEncryptedDatabaseReadOnlyTolerant(path: path, storedKey: key);
 
 Future<GroupMessageNotificationDisplayEligibility>
 _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(

@@ -113,6 +113,14 @@ class IngestStagedPushEnvelopesUseCase {
     var clearedMalformed = 0;
 
     for (final entry in entries) {
+      // A background callback may have durably captured ciphertext before it
+      // finishes recovering a missing outer event id from authenticated
+      // plaintext. Keep that custody entry until the same nonce is atomically
+      // promoted or its normal staging TTL expires.
+      if (entry.identityResolutionPending) {
+        retained++;
+        continue;
+      }
       if (!_isSupportedEntry(entry) ||
           entry.kem.isEmpty ||
           entry.ciphertext.isEmpty ||

@@ -26,6 +26,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/node_readiness.dart';
 
 final _relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
@@ -58,6 +59,12 @@ String _badgeLabel(NodeState state) {
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'background-reconnect-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();

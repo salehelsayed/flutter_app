@@ -1,4 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 
 const mknoonMessagesChannelId = 'mknoon_messages';
 const mknoonMessagesChannelName = 'Messages';
@@ -72,7 +73,13 @@ NotificationDetails mknoonConversationNotificationDetails({
   required String conversationKey,
   bool silent = false,
   bool autoCancel = true,
+  ConversationNotificationSnapshot? snapshot,
 }) {
+  final historyLines = snapshot?.historyLines
+      .where((line) => line.trim().isNotEmpty)
+      .take(5)
+      .toList(growable: false);
+  final unreadMessageCount = snapshot?.totalUnreadMessageCount;
   return NotificationDetails(
     android: AndroidNotificationDetails(
       silent ? mknoonMessagesSilentChannelId : mknoonMessagesChannelId,
@@ -87,6 +94,12 @@ NotificationDetails mknoonConversationNotificationDetails({
       onlyAlertOnce: silent,
       category: AndroidNotificationCategory.message,
       autoCancel: autoCancel,
+      number: unreadMessageCount != null && unreadMessageCount > 0
+          ? unreadMessageCount
+          : null,
+      styleInformation: historyLines == null || historyLines.isEmpty
+          ? null
+          : InboxStyleInformation(historyLines),
     ),
     iOS: DarwinNotificationDetails(
       presentSound: !silent,

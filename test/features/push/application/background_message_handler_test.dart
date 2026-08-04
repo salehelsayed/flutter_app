@@ -7,8 +7,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
@@ -21,11 +22,14 @@ import 'package:flutter_app/features/push/application/background_message_handler
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
+import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  sqfliteFfiInit();
 
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   const cryptoChannel = MethodChannel('com.mknoon/background_push_crypto');
@@ -50,6 +54,59 @@ void main() {
         transportPeerId: ' ',
       );
       expect(await store.read('push_registration_transport_peer_id'), isNull);
+    },
+  );
+
+  test(
+    'FlutterFire direct post-show unknown is read-only and defers to staged ingestion',
+    () async {
+      final path =
+          '${Directory.systemTemp.path}/background-direct-readonly-${DateTime.now().microsecondsSinceEpoch}.db';
+      final writable = await databaseFactoryFfi.openDatabase(path);
+      await writable.execute('''
+        CREATE TABLE contacts (
+          peer_id TEXT PRIMARY KEY,
+          is_blocked INTEGER NOT NULL DEFAULT 0,
+          is_archived INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await writable.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          contact_peer_id TEXT,
+          is_incoming INTEGER,
+          read_at TEXT,
+          deleted_at TEXT,
+          hidden_at TEXT
+        )
+      ''');
+      await writable.insert('contacts', const <String, Object?>{
+        'peer_id': 'peer-readonly',
+        'is_blocked': 0,
+        'is_archived': 0,
+      });
+      await writable.close();
+      final readOnly = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+      );
+      addTearDown(() async {
+        await readOnly.close();
+        await databaseFactoryFfi.deleteDatabase(path);
+      });
+
+      expect(
+        await validateBackgroundDirectNotificationAfterShowInDatabase(
+          readOnly,
+          peerId: 'peer-readonly',
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'not-materialized-yet',
+            generation: 'generation-readonly',
+          ),
+        ),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+      );
     },
   );
 
@@ -150,6 +207,7 @@ void main() {
     debugResetBackgroundReactionNotificationCoordinatorResolver();
     debugResetBackgroundAccountMigrationNetworkGate();
     debugResetBackgroundPushEnvelopeStager();
+    debugResetBackgroundPendingConversationNotificationOverlayResolver();
     debugResetBackgroundNotificationsInitialization();
     TestWidgetsFlutterBinding.instance.platformDispatcher
         .clearLocaleTestValue();
@@ -934,7 +992,177 @@ void main() {
         final showArgs = showCall.arguments as Map;
         expect(showArgs['title'], 'Alice');
         expect(showArgs['body'], 'Reacted 👍 to your message');
-        expect(showArgs['payload'], 'peer-alice');
+        final payload = decodeConversationNotificationPayload(
+          showArgs['payload'] as String?,
+        );
+        expect(payload?.routePayload, 'peer-alice');
+        expect(
+          payload?.metadata.kind,
+          ConversationNotificationContentKind.reaction,
+        );
+      },
+    );
+
+    test(
+      'direct reaction outer versus authenticated-inner mismatch never claims or shows',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundDirectReactionLocalStateResolver(
+          (message) async => _eligibleDirectReactionState(message),
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+              expect(call.method, 'decryptMessage');
+              return '''{"ok":true,"plaintext":"{\\"id\\":\\"reaction-authenticated-inner\\",\\"messageId\\":\\"message-1\\",\\"emoji\\":\\"👍\\",\\"action\\":\\"add\\",\\"senderPeerId\\":\\"peer-alice\\",\\"timestamp\\":\\"2026-08-03T10:00:00.000Z\\"}"}''';
+            });
+        final directory = Directory.systemTemp.createTempSync(
+          'background-direct-reaction-parity-',
+        );
+        final coordinator = DurableNotificationToneLease(directory: directory);
+        debugSetBackgroundReactionNotificationCoordinatorResolver(
+          () async => coordinator,
+        );
+        addTearDown(() {
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'message_reaction',
+              'sender_id': 'peer-alice',
+              'event_id': 'reaction-outer',
+              'target_message_id': 'message-1',
+              'action': 'add',
+              'kem': 'kem',
+              'ciphertext': 'ciphertext',
+              'nonce': 'direct-parity-nonce',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        expect(
+          await coordinator.claimEvent(
+            boundedReactionEventIdentity('reaction-outer'),
+          ),
+          isTrue,
+          reason: 'invalid authenticated plaintext must not poison the claim',
+        );
+      },
+    );
+
+    test(
+      'missing outer direct reaction id decrypts, promotes staged identity, and shows',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final staged = <StagedPushEnvelope>[];
+        debugSetBackgroundPushEnvelopeStager((entry) async {
+          staged.add(entry);
+        });
+        var localStateReads = 0;
+        debugSetBackgroundDirectReactionLocalStateResolver((message) async {
+          localStateReads++;
+          return _eligibleDirectReactionState(message);
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+              expect(call.method, 'decryptMessage');
+              return '''{"ok":true,"plaintext":"{\\"id\\":\\"reaction-inner-only\\",\\"messageId\\":\\"message-1\\",\\"emoji\\":\\"👍\\",\\"action\\":\\"add\\",\\"senderPeerId\\":\\"peer-alice\\",\\"timestamp\\":\\"2026-08-03T10:01:00.000Z\\"}"}''';
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'message_reaction',
+              'sender_id': 'peer-alice',
+              'target_message_id': 'message-1',
+              'action': 'add',
+              'kem': 'kem',
+              'ciphertext': 'ciphertext',
+              'nonce': 'direct-missing-id-nonce',
+            },
+          ),
+        );
+
+        expect(localStateReads, 2, reason: 'eligibility and final authority');
+        expect(staged, hasLength(2));
+        expect(staged.first.identityResolutionPending, isTrue);
+        expect(staged.first.eventId, isNull);
+        expect(staged.last.identityResolutionPending, isFalse);
+        expect(staged.last.eventId, 'reaction-inner-only');
+        final show = log.singleWhere((call) => call.method == 'show');
+        final payload = decodeConversationNotificationPayload(
+          (show.arguments as Map)['payload'] as String?,
+        );
+        expect(
+          payload?.metadata.eventIdentity,
+          boundedReactionEventIdentity('reaction-inner-only'),
+        );
+      },
+    );
+
+    test(
+      'missing outer group reaction id passes local policy and shows authenticated transition',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        var localStateReads = 0;
+        debugSetBackgroundGroupReactionLocalStateResolver((message) async {
+          localStateReads++;
+          return _eligibleGroupReactionState(message);
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+              expect(call.method, 'decryptGroup');
+              return '''{"ok":true,"plaintext":"{\\"id\\":\\"group-reaction-state\\",\\"messageId\\":\\"message-1\\",\\"emoji\\":\\"👍\\",\\"action\\":\\"add\\",\\"senderPeerId\\":\\"peer-alice\\",\\"timestamp\\":\\"2026-08-03T10:02:00.000Z\\",\\"eventId\\":\\"group-inner-transition\\"}"}''';
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-team',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'message-1',
+              'action': 'add',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'group-missing-id-nonce',
+            },
+          ),
+        );
+
+        expect(localStateReads, 2, reason: 'eligibility and final authority');
+        final show = log.singleWhere((call) => call.method == 'show');
+        final payload = decodeConversationNotificationPayload(
+          (show.arguments as Map)['payload'] as String?,
+        );
+        expect(
+          payload?.metadata.eventIdentity,
+          boundedReactionEventIdentity('group-inner-transition'),
+        );
       },
     );
 
@@ -1021,7 +1249,7 @@ void main() {
     );
 
     test(
-      'reaction OS show failure releases exact claim and tone for audible retry',
+      'reaction native-attempt error preserves fail-closed exact ownership',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
@@ -1073,14 +1301,25 @@ void main() {
             'action': 'add',
           },
         );
+        final claimFile = File(
+          '${claimDirectory.path}/'
+          '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'message_reaction', eventIdentity: boundedReactionEventIdentity('reaction-show-retry'))}',
+        );
 
         await firebaseMessagingBackgroundHandler(message);
+        expect(claimFile.existsSync(), isTrue);
+        expect(
+          claimFile.readAsStringSync(),
+          contains('"state":"publishing"'),
+          reason:
+              'a plugin error after the native call was attempted cannot prove '
+              'that no notification was shown',
+        );
         await firebaseMessagingBackgroundHandler(message);
 
-        expect(showAttempts, 2);
-        expect(successfulShows, hasLength(1));
-        final specifics = successfulShows.single['platformSpecifics'] as Map;
-        expect(specifics['playSound'], isTrue);
+        expect(showAttempts, 1);
+        expect(successfulShows, isEmpty);
       },
     );
 
@@ -1368,7 +1607,15 @@ void main() {
           final arguments = show.arguments as Map;
           expect(arguments['title'], 'Alice from contacts DB', reason: id);
           expect(arguments['body'], testCase['expected'], reason: id);
-          expect(arguments['payload'], 'peer-alice', reason: id);
+          final payload = decodeConversationNotificationPayload(
+            arguments['payload'] as String?,
+          );
+          expect(payload?.routePayload, 'peer-alice', reason: id);
+          expect(
+            payload?.metadata.kind,
+            ConversationNotificationContentKind.message,
+            reason: id,
+          );
           expect(cryptoKeys, const <String>['current-key', 'prior-key']);
           expect(
             '${arguments['title']}|${arguments['body']}',
@@ -1903,7 +2150,7 @@ void main() {
     );
 
     test(
-      'direct and group background shows commit exact typed identities only after show',
+      'direct and group background shows fence exact identities before show and commit after',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
@@ -1939,7 +2186,12 @@ void main() {
               if (call.method == 'initialize') return true;
               if (call.method == 'show') {
                 final payload = (call.arguments as Map)['payload'] as String?;
-                final typedIdentity = payload == 'peer-alice'
+                final routePayload =
+                    decodeConversationNotificationPayload(
+                      payload,
+                    )?.routePayload ??
+                    payload;
+                final typedIdentity = routePayload == 'peer-alice'
                     ? (type: 'new_message', id: 'direct/exact id')
                     : (type: 'group_message', id: 'group/exact id');
                 final file = File(
@@ -1974,7 +2226,9 @@ void main() {
         expect(pendingStatesAtShow, hasLength(2));
         expect(
           pendingStatesAtShow,
-          everyElement(allOf(contains('"state":"pending"'), contains('token'))),
+          everyElement(
+            allOf(contains('"state":"publishing"'), contains('token')),
+          ),
         );
         for (final identity in const <({String type, String id})>[
           (type: 'new_message', id: 'direct/exact id'),
@@ -1997,7 +2251,7 @@ void main() {
     );
 
     test(
-      'show error releases exact claim so redelivery can show audibly and commit',
+      'native-attempt error keeps exact event fail-closed on redelivery',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
@@ -2046,12 +2300,21 @@ void main() {
         );
 
         await firebaseMessagingBackgroundHandler(message);
-        expect(claimFile.existsSync(), isFalse);
+        expect(claimFile.existsSync(), isTrue);
+        expect(
+          claimFile.readAsStringSync(),
+          contains('"state":"publishing"'),
+          reason:
+              'the native call was attempted before its acknowledgement failed',
+        );
         await firebaseMessagingBackgroundHandler(message);
 
-        expect(showAttempts, 2);
-        expect(playSound, const <bool>[true, true]);
-        expect(await claimFile.readAsString(), contains('"state":"committed"'));
+        expect(showAttempts, 1);
+        expect(playSound, const <bool>[true]);
+        expect(
+          await claimFile.readAsString(),
+          contains('"state":"publishing"'),
+        );
       },
     );
 
@@ -2678,6 +2941,7 @@ void main() {
         const nomination = VerifiedGroupReactionNotificationNomination(
           reactorTransportPeerId: 'transport-alice-phone',
           senderPublicKey: 'alice-device-key',
+          transitionId: 'reaction-arch-1',
         );
 
         expect(
@@ -2891,6 +3155,7 @@ void main() {
       const nomination = VerifiedGroupReactionNotificationNomination(
         reactorTransportPeerId: 'transport-alice-phone',
         senderPublicKey: 'alice-device-key',
+        transitionId: 'reaction-1',
       );
 
       final eligible = groupReactionLocalStateFromRows(
@@ -3388,7 +3653,14 @@ void main() {
         final showArgs = showCall.arguments as Map;
         expect(showArgs['title'], 'Alice');
         expect(showArgs['body'], 'Hello secret');
-        expect(showArgs['payload'], 'peer-alice');
+        final payload = decodeConversationNotificationPayload(
+          showArgs['payload'] as String?,
+        );
+        expect(payload?.routePayload, 'peer-alice');
+        expect(
+          payload?.metadata.kind,
+          ConversationNotificationContentKind.message,
+        );
       },
     );
 
@@ -3796,8 +4068,43 @@ void main() {
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final overlayDirectory = Directory.systemTemp.createTempSync(
+          'background-direct-overlay-',
+        );
+        final overlay = PendingConversationNotificationOverlayStore(
+          directory: overlayDirectory,
+          resolveBinding: () async => 'v1:test-account',
+          secureStore: FakeSecureKeyStore(),
+        );
+        debugSetBackgroundPendingConversationNotificationOverlayResolver(
+          () async => overlay,
+        );
+        addTearDown(() {
+          if (overlayDirectory.existsSync()) {
+            overlayDirectory.deleteSync(recursive: true);
+          }
+        });
         debugSetBackgroundDirectMessageLocalStateResolver(
-          (message) async => _authorizedDirectMessageState(message),
+          (message) async => _authorizedDirectMessageState(
+            message,
+            snapshot: ConversationNotificationSnapshot(
+              historyLines: const <String>['older direct', 'newest direct'],
+              totalUnreadMessageCount: 7,
+              canonicalEventIds: const <String>['older-a', 'older-b'],
+              orderedHistory: const <ConversationNotificationHistoryEntry>[
+                ConversationNotificationHistoryEntry(
+                  eventId: 'older-a',
+                  line: 'older direct',
+                  occurredAtMicros: 1,
+                ),
+                ConversationNotificationHistoryEntry(
+                  eventId: 'older-b',
+                  line: 'newest direct',
+                  occurredAtMicros: 2,
+                ),
+              ],
+            ),
+          ),
         );
 
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -3847,6 +4154,15 @@ void main() {
         expect(ps0['channelId'], mknoonMessagesChannelId);
         expect(ps0['playSound'], isTrue);
         expect(ps1['playSound'], isFalse);
+        expect(ps0['number'], 8);
+        expect(ps1['number'], 9);
+        expect(ps1['style'], AndroidNotificationStyle.inbox.index);
+        expect((ps1['styleInformation'] as Map)['lines'], const <String>[
+          'older direct',
+          'newest direct',
+          'Message',
+          'Message',
+        ]);
       },
     );
 
@@ -3855,11 +4171,46 @@ void main() {
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final overlayDirectory = Directory.systemTemp.createTempSync(
+          'background-group-overlay-',
+        );
+        final overlay = PendingConversationNotificationOverlayStore(
+          directory: overlayDirectory,
+          resolveBinding: () async => 'v1:test-account',
+          secureStore: FakeSecureKeyStore(),
+        );
+        debugSetBackgroundPendingConversationNotificationOverlayResolver(
+          () async => overlay,
+        );
+        addTearDown(() {
+          if (overlayDirectory.existsSync()) {
+            overlayDirectory.deleteSync(recursive: true);
+          }
+        });
         debugSetBackgroundPushNotificationDisplayEligibilityResolver(
           (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
         );
         debugSetBackgroundGroupMessageLocalStateResolver(
-          (message) async => _authorizedGroupMessageState(message),
+          (message) async => _authorizedGroupMessageState(
+            message,
+            snapshot: ConversationNotificationSnapshot(
+              historyLines: const <String>['Alice: older', 'Bob: newest'],
+              totalUnreadMessageCount: 9,
+              canonicalEventIds: const <String>['group-old-a', 'group-old-b'],
+              orderedHistory: const <ConversationNotificationHistoryEntry>[
+                ConversationNotificationHistoryEntry(
+                  eventId: 'group-old-a',
+                  line: 'Alice: older',
+                  occurredAtMicros: 1,
+                ),
+                ConversationNotificationHistoryEntry(
+                  eventId: 'group-old-b',
+                  line: 'Bob: newest',
+                  occurredAtMicros: 2,
+                ),
+              ],
+            ),
+          ),
         );
 
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -3931,6 +4282,177 @@ void main() {
           secondPlatformSpecifics['category'],
           AndroidNotificationCategory.message.name,
         );
+        expect(firstPlatformSpecifics['number'], 10);
+        expect(secondPlatformSpecifics['number'], 11);
+        expect(
+          (secondPlatformSpecifics['styleInformation'] as Map)['lines'],
+          const <String>['Alice: older', 'Bob: newest', 'Message', 'Message'],
+        );
+      },
+    );
+
+    test(
+      'canonical materialization retires pending push before the next plugin replacement',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final overlayDirectory = Directory.systemTemp.createTempSync(
+          'background-materialized-overlay-',
+        );
+        final overlay = PendingConversationNotificationOverlayStore(
+          directory: overlayDirectory,
+          resolveBinding: () async => 'v1:test-account',
+          secureStore: FakeSecureKeyStore(),
+        );
+        debugSetBackgroundPendingConversationNotificationOverlayResolver(
+          () async => overlay,
+        );
+        addTearDown(() {
+          if (overlayDirectory.existsSync()) {
+            overlayDirectory.deleteSync(recursive: true);
+          }
+        });
+        debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+          final id = message.data['message_id']?.toString();
+          return _authorizedDirectMessageState(
+            message,
+            snapshot: id == 'direct-materialization-b'
+                ? ConversationNotificationSnapshot(
+                    historyLines: const <String>['canonical A'],
+                    totalUnreadMessageCount: 1,
+                    canonicalEventIds: const <String>[
+                      'direct-materialization-a',
+                    ],
+                    orderedHistory:
+                        const <ConversationNotificationHistoryEntry>[
+                          ConversationNotificationHistoryEntry(
+                            eventId: 'direct-materialization-a',
+                            line: 'canonical A',
+                            occurredAtMicros: 1,
+                          ),
+                        ],
+                  )
+                : null,
+          );
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-materialization',
+              'message_id': 'direct-materialization-a',
+            },
+          ),
+        );
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-materialization',
+              'message_id': 'direct-materialization-b',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+        final first =
+            (shows.first.arguments as Map)['platformSpecifics'] as Map;
+        final second =
+            (shows.last.arguments as Map)['platformSpecifics'] as Map;
+        expect(first['number'], 1);
+        expect((first['styleInformation'] as Map)['lines'], <String>[
+          'Message',
+        ]);
+        expect(second['number'], 2, reason: 'canonical A + pending B only');
+        expect((second['styleInformation'] as Map)['lines'], <String>[
+          'canonical A',
+          'Message',
+        ]);
+      },
+    );
+
+    test(
+      'background reaction reads pending history without incrementing it',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final overlayDirectory = Directory.systemTemp.createTempSync(
+          'background-reaction-overlay-',
+        );
+        final overlay = PendingConversationNotificationOverlayStore(
+          directory: overlayDirectory,
+          resolveBinding: () async => 'v1:test-account',
+          secureStore: FakeSecureKeyStore(),
+        );
+        await overlay.project(
+          conversationKey: 'group:group-reaction-overlay',
+          canonicalSnapshot: null,
+          currentMessage: const PendingConversationNotificationMessage(
+            eventId: 'pending-message',
+            line: 'Alice: pending message',
+            occurredAtMicros: 1,
+          ),
+        );
+        debugSetBackgroundPendingConversationNotificationOverlayResolver(
+          () async => overlay,
+        );
+        addTearDown(() {
+          if (overlayDirectory.existsSync()) {
+            overlayDirectory.deleteSync(recursive: true);
+          }
+        });
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Project group',
+            body: 'Alice reacted to your message',
+            payload:
+                'group:group-reaction-overlay|message:reaction-target-message',
+          ),
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-reaction-overlay',
+              'group_id': 'group-reaction-overlay',
+              'event_id': 'reaction-overlay-event',
+              'target_message_id': 'reaction-target-message',
+              'reactor_peer_id': 'peer-reactor',
+              'action': 'add',
+              'payload':
+                  'group:group-reaction-overlay|message:reaction-target-message',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(1), reason: events.toString());
+        final show = shows.single;
+        final specifics = (show.arguments as Map)['platformSpecifics'] as Map;
+        expect(specifics['number'], 1);
+        expect((specifics['styleInformation'] as Map)['lines'], <String>[
+          'Alice: pending message',
+        ]);
       },
     );
 
@@ -4104,8 +4626,9 @@ void main() {
 }
 
 BackgroundDirectMessageLocalState _authorizedDirectMessageState(
-  RemoteMessage message,
-) {
+  RemoteMessage message, {
+  ConversationNotificationSnapshot? snapshot,
+}) {
   final sender =
       message.data['sender_id']?.toString() ??
       message.data['senderId']?.toString() ??
@@ -4122,12 +4645,14 @@ BackgroundDirectMessageLocalState _authorizedDirectMessageState(
       expectedMessageId: messageId,
     ),
     mlKemSecretKeys: const <String>[],
+    snapshot: snapshot,
   );
 }
 
 BackgroundGroupMessageLocalState _authorizedGroupMessageState(
-  RemoteMessage message,
-) {
+  RemoteMessage message, {
+  ConversationNotificationSnapshot? snapshot,
+}) {
   final groupId =
       message.data['groupId']?.toString() ??
       message.data['group_id']?.toString() ??
@@ -4146,8 +4671,95 @@ BackgroundGroupMessageLocalState _authorizedGroupMessageState(
     ),
     groupKey: null,
     keyEpoch: null,
+    snapshot: snapshot,
   );
 }
+
+BackgroundDirectReactionLocalState? _eligibleDirectReactionState(
+  RemoteMessage message,
+) => directReactionLocalStateFromRows(
+  data: message.data,
+  identityRow: const <String, Object?>{'peer_id': 'peer-local'},
+  contactRow: const <String, Object?>{
+    'peer_id': 'peer-alice',
+    'username': 'Alice',
+    'is_blocked': 0,
+    'is_archived': 0,
+  },
+  targetMessageRow: const <String, Object?>{
+    'id': 'message-1',
+    'contact_peer_id': 'peer-alice',
+    'sender_peer_id': 'peer-local',
+    'is_incoming': 0,
+    'deleted_at': null,
+  },
+  mlKemSecretKey: 'recipient-secret',
+);
+
+BackgroundGroupReactionLocalState? _eligibleGroupReactionState(
+  RemoteMessage message,
+) => groupReactionLocalStateFromRows(
+  data: message.data,
+  identityRow: const <String, Object?>{'peer_id': 'peer-local'},
+  groupRow: const <String, Object?>{
+    'id': 'group-team',
+    'name': 'Team Chat',
+    'type': 'chat',
+    'is_muted': 0,
+    'is_archived': 0,
+    'is_dissolved': 0,
+    'dissolved_at': null,
+    'self_removed_at': null,
+  },
+  localMemberRow: <String, Object?>{
+    'group_id': 'group-team',
+    'peer_id': 'peer-local',
+    'devices_json': jsonEncode(<Map<String, Object?>>[
+      <String, Object?>{
+        'deviceId': 'local-phone',
+        'transportPeerId': 'transport-local-phone',
+        'deviceSigningPublicKey': 'local-device-key',
+        'status': 'active',
+      },
+    ]),
+  },
+  actorMemberRow: <String, Object?>{
+    'group_id': 'group-team',
+    'peer_id': 'peer-alice',
+    'username': 'Alice',
+    'devices_json': jsonEncode(<Map<String, Object?>>[
+      <String, Object?>{
+        'deviceId': 'alice-phone',
+        'transportPeerId': 'transport-alice-phone',
+        'deviceSigningPublicKey': 'alice-device-key',
+        'status': 'active',
+      },
+    ]),
+  },
+  targetMessageRow: const <String, Object?>{
+    'id': 'message-1',
+    'group_id': 'group-team',
+    'sender_peer_id': 'peer-local',
+    'is_incoming': 0,
+  },
+  groupKeyRow: const <String, Object?>{
+    'group_id': 'group-team',
+    'key_generation': 7,
+    'encrypted_key': 'group-key',
+  },
+  latestGroupKeyRow: const <String, Object?>{
+    'group_id': 'group-team',
+    'key_generation': 7,
+    'encrypted_key': 'group-key',
+  },
+  currentReactionRow: null,
+  localInstallationTransportPeerId: 'transport-local-phone',
+  verifiedNomination: const VerifiedGroupReactionNotificationNomination(
+    reactorTransportPeerId: 'transport-alice-phone',
+    senderPublicKey: 'alice-device-key',
+    transitionId: 'group-inner-transition',
+  ),
+);
 
 class _ThrowingToneReservationCoordinator extends DurableNotificationToneLease {
   _ThrowingToneReservationCoordinator(Directory directory)

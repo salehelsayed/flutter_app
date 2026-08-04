@@ -301,6 +301,8 @@ const _expectedConstructorParameters = <String>[
   'HoldPendingSiblingDeviceFn? holdPendingSiblingDevice',
   'GroupPrivateMediaAvailability privateMediaAvailability = '
       'productionGroupPrivateMediaAvailability',
+  'PendingConversationNotificationOverlayStore? '
+      'pendingConversationNotificationOverlay',
   'GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator',
   'GroupNotificationDisplayOutboxRepository? notificationDisplayOutbox',
   'GroupNotificationReconciliationOutboxRepository? '

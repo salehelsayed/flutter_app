@@ -11,6 +11,7 @@ const _captureOwnedBindings = <String>{
   'integration_test/notification_tap_message_visible_proof_test.dart',
   'integration_test/intro_accept_notification_android_proof_test.dart',
   'integration_test/group_notification_projection_android_proof_test.dart',
+  'integration_test/android_notification_recovery_completion_proof_test.dart',
   'integration_test/scripts/validate_group_reaction_notification_artifacts.dart',
 };
 
@@ -33,6 +34,13 @@ const _groupNotificationProjectionSupport = <String, String>{
       'typed Sims adapter for Android group notification projection durability; manifest owns execution',
   'integration_test/scripts/group_notification_projection_android_criteria.dart':
       '330 strict Android group notification projection raw-evidence criteria',
+};
+
+const _androidRecoveryCompletionSupport = <String, String>{
+  'integration_test/scripts/run_android_notification_recovery_completion.dart':
+      'manifest-owned paired Android recovery runner; product debug seam remains activation-gated',
+  'integration_test/scripts/android_notification_recovery_completion_criteria.dart':
+      '331 strict content-addressed Android recovery evidence criteria',
 };
 
 void main() {
@@ -371,6 +379,163 @@ void main() {
         );
         expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
       }
+
+      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+      expect(major.selectedIds, contains(capabilityId));
+      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+    },
+  );
+
+  test(
+    'Android notification recovery completion is manifest-owned and fail-closed',
+    () {
+      const capabilityId = 'notifications.android_recovery_completion';
+      const runner =
+          'integration_test/scripts/run_android_notification_recovery_completion.dart';
+      final capability = manifest.capabilityById(capabilityId);
+
+      expect(capability, isNotNull);
+      expect(capability!.toJson(), <String, Object?>{
+        'id': capabilityId,
+        'owner': 'notifications',
+        'proofBoundary':
+            'android.real-relay.canonical-notification-recovery-completion',
+        'assertions': <String>[
+          'notifications.headless_direct_group_recovery',
+          'notifications.foreground_handoff_new_generation',
+          'notifications.direct_custody_recovery',
+          'notifications.synthetic_outer_id_recovery',
+          'notifications.history_count_projection',
+          'notifications.registration_health_live_recovery',
+          'notifications.recovery_copy_locales',
+          'notifications.zero_taps_zero_child_builds',
+        ],
+        'lane': 'reliability',
+        'modes': <String>['full', 'major'],
+        'families': <String>['1to1', 'group', 'notifications'],
+        'required': true,
+        'command': <String>['dart', 'run', runner],
+        'buildProfile': 'android.production_fcm',
+        'dependencies': <String>['build.android.production_fcm'],
+        'resources': <Map<String, String>>[
+          <String, String>{
+            'name': 'build:android.production_fcm',
+            'access': 'read',
+          },
+          <String, String>{
+            'name': 'device:android-physical',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'device:android-emulator',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'relay-mutation:staging',
+            'access': 'exclusive',
+          },
+          <String, String>{
+            'name': 'artifact:android-notification-recovery-completion',
+            'access': 'write',
+          },
+        ],
+        'targetCapabilities': <String>[
+          'android.physical',
+          'android.emulator',
+          'credentials.fcm',
+          'relay.staging',
+        ],
+        'allowedNaReason': targetUnavailableNaReason,
+        'artifactRequired': true,
+        'artifactValidator':
+            'integration_test/android_notification_recovery_completion_proof_test.dart',
+        'active': true,
+        'declaredBuildException': false,
+        'automationReady': false,
+      });
+
+      for (final entry in _androidRecoveryCompletionSupport.entries) {
+        expect(
+          discovery.where(
+            (record) =>
+                record.path == entry.key &&
+                record.category == 'support' &&
+                record.kind == 'support' &&
+                record.note == entry.value,
+          ),
+          hasLength(1),
+          reason: '${entry.key} must remain one exact support-only record',
+        );
+        expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+      }
+
+      final runnerSource = File(runner).readAsStringSync();
+      expect(runnerSource, contains("'KEYCODE_HOME'"));
+      expect(runnerSource, contains("'kill'"));
+      expect(runnerSource, contains("'pidof'"));
+      expect(runnerSource, contains("'stop-app'"));
+      expect(runnerSource, isNot(contains('force-stop')));
+      expect(runnerSource, isNot(contains("'input', 'tap'")));
+      expect(runnerSource, isNot(contains('flutter build')));
+      expect(runnerSource, isNot(contains('gradlew')));
+      expect(
+        runnerSource.indexOf('final credentialPath ='),
+        lessThan(runnerSource.indexOf('final artifactPath =')),
+        reason: 'relay/FCM credentials must fail before APK/device mutation',
+      );
+      expect(
+        runnerSource.indexOf(
+          'final driverAudit = _auditRecoveryDriverSource()',
+        ),
+        lessThan(runnerSource.indexOf('final artifactPath =')),
+        reason: 'missing product seam must fail before APK/device mutation',
+      );
+      expect(runnerSource, contains('--driver-preflight'));
+      expect(runnerSource, contains('_validateBoundReceipt('));
+      expect(runnerSource, contains('_validateLocaleReadiness('));
+
+      for (final requiredSeam in const <String>[
+        'debug_receiver_manifest',
+        'read_only_sqlcipher_observer',
+        'paired_sender_identity_choreography',
+        'sims_automation_enabled',
+      ]) {
+        expect(runnerSource, contains("'$requiredSeam'"));
+      }
+
+      final runtimeSources = <File>[
+        for (final root in <Directory>[
+          Directory('lib'),
+          Directory('android/app/src/debug'),
+          Directory('android/app/src/main'),
+        ])
+          if (root.existsSync())
+            ...root
+                .listSync(recursive: true, followLinks: false)
+                .whereType<File>()
+                .where(
+                  (file) =>
+                      file.path.endsWith('.dart') ||
+                      file.path.endsWith('.kt') ||
+                      file.path.endsWith('.java'),
+                ),
+      ];
+      final hasDebugAction = runtimeSources.any(
+        (file) => file.readAsStringSync().contains(
+          'com.mknoon.app.debug.NOTIFICATION_RECOVERY_COMPLETION',
+        ),
+      );
+      final hasReceiptProducer = runtimeSources.any(
+        (file) => file.readAsStringSync().contains(
+          'plan331_notification_recovery_receipt.json',
+        ),
+      );
+      expect(hasDebugAction && hasReceiptProducer, isFalse);
+      expect(
+        capability.automationReady,
+        isFalse,
+        reason: 'the manifest cannot advertise an absent product proof seam',
+      );
 
       final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
       expect(major.selectedIds, contains(capabilityId));

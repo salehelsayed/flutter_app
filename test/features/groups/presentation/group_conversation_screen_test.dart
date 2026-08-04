@@ -735,7 +735,7 @@ void main() {
   );
 
   testWidgets(
-    'group text, media, and voice long-press overlays each emit one light impact',
+    'group text, image, video, and voice long-press overlays can select reactions and emit one light impact',
     (tester) async {
       final platformCalls = <MethodCall>[];
       final messenger =
@@ -768,12 +768,18 @@ void main() {
         required Finder Function() target,
         required String variant,
       }) async {
+        String? reactedMessageId;
+        String? reactedEmoji;
         await tester.pumpWidget(
           buildTestWidget(
             messages: [message],
             mediaMap: mediaMap,
             initialLoadDone: true,
             onQuoteReply: (_) {},
+            onReactionSelected: (messageId, emoji) {
+              reactedMessageId = messageId;
+              reactedEmoji = emoji;
+            },
           ),
         );
         await tester.pump(const Duration(milliseconds: 300));
@@ -789,6 +795,11 @@ void main() {
           findsOneWidget,
           reason: variant,
         );
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+          reason: '$variant must retain the group reaction picker',
+        );
         final hapticCalls = platformCalls
             .where((call) => call.method == 'HapticFeedback.vibrate')
             .toList(growable: false);
@@ -799,9 +810,11 @@ void main() {
           reason: variant,
         );
 
-        await tester.tap(find.byKey(MessageContextOverlay.backdropKey));
+        await tester.tap(find.text('👍'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 250));
+        expect(reactedMessageId, message.id, reason: variant);
+        expect(reactedEmoji, '👍', reason: variant);
         expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
       }
 
@@ -832,7 +845,31 @@ void main() {
           ],
         },
         target: () => find.byType(MediaGridCell),
-        variant: 'media bubble',
+        variant: 'image bubble',
+      );
+      await expectLightImpact(
+        message: message(id: 'haptic-video'),
+        mediaMap: {
+          'haptic-video': [
+            const MediaAttachment(
+              id: 'haptic-video-attachment',
+              messageId: 'haptic-video',
+              mime: 'video/mp4',
+              size: 2048,
+              mediaType: 'video',
+              localPath: '/tmp/haptic-video.mp4',
+              durationMs: 4200,
+              downloadStatus: 'done',
+              contentHash: _validContentHash,
+              encryptionKeyBase64: _validEncryptionKey,
+              encryptionNonce: _validEncryptionNonce,
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              createdAt: '2026-07-31T12:00:00.000Z',
+            ),
+          ],
+        },
+        target: () => find.byType(MediaGridCell),
+        variant: 'video bubble',
       );
       await expectLightImpact(
         message: message(id: 'haptic-voice'),

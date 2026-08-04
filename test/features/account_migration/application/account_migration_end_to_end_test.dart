@@ -461,6 +461,7 @@ void main() {
           const [
             'activeDbImport',
             'securePromotion',
+            'canonicalAccountBinding',
             'recordOldBlockProof',
             'commitNewActive',
             'cleanup',
@@ -631,17 +632,22 @@ void main() {
             .where((details) => details['sessionId'] == 'e2e-large-session')
             .toList(growable: false);
         final completeTimeoutMs =
-            posts.singleWhere((details) => details['command'] == 'complete')['timeoutMs']
+            posts.singleWhere(
+                  (details) => details['command'] == 'complete',
+                )['timeoutMs']
                 as int;
         expect(
           completeTimeoutMs,
           lessThan(30 * 1000),
-          reason: 'complete budget must scale with staged-DB validation, '
+          reason:
+              'complete budget must scale with staged-DB validation, '
               'not the whole account',
         );
-        final oldBlockTimeoutMs = posts.singleWhere(
-          (details) => details['command'] == 'old-block-proof',
-        )['timeoutMs'] as int;
+        final oldBlockTimeoutMs =
+            posts.singleWhere(
+                  (details) => details['command'] == 'old-block-proof',
+                )['timeoutMs']
+                as int;
         expect(oldBlockTimeoutMs, lessThan(30 * 1000));
         final maxChunkTimeoutMs = posts
             .where((details) => details['command'] == 'chunk')
@@ -797,185 +803,181 @@ void main() {
       },
     );
 
-    test(
-      'an interrupted transfer resumes from the receiver ledger instead of '
-      'restarting',
-      () async {
-        // ~4 MiB of media so the interruption lands mid-stream with plenty of
-        // verified chunks behind it.
-        const largeFileCount = 2;
-        const largeFileBytes = 2 * 1024 * 1024;
-        for (var i = 0; i < largeFileCount; i++) {
-          final bytes = Uint8List.fromList(
-            List<int>.generate(largeFileBytes, (j) => (i * 17 + j) & 0xff),
-          );
-          final file = File(
-            p.join(tempDir.path, 'media/peer-bob/blob-resume-$i.bin'),
-          );
-          await file.parent.create(recursive: true);
-          await file.writeAsBytes(bytes, flush: true);
-          await sourceDb.insert('media_attachments', {
-            'id': 'blob-resume-$i',
-            'message_id': 'message-1',
-            'mime': 'application/octet-stream',
-            'size': bytes.length,
-            'media_type': 'file',
-            'local_path': 'media/peer-bob/blob-resume-$i.bin',
-            'download_status': 'done',
-            'created_at': '2026-06-10T08:00:00.000Z',
-          });
-        }
+    test('an interrupted transfer resumes from the receiver ledger instead of '
+        'restarting', () async {
+      // ~4 MiB of media so the interruption lands mid-stream with plenty of
+      // verified chunks behind it.
+      const largeFileCount = 2;
+      const largeFileBytes = 2 * 1024 * 1024;
+      for (var i = 0; i < largeFileCount; i++) {
+        final bytes = Uint8List.fromList(
+          List<int>.generate(largeFileBytes, (j) => (i * 17 + j) & 0xff),
+        );
+        final file = File(
+          p.join(tempDir.path, 'media/peer-bob/blob-resume-$i.bin'),
+        );
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes, flush: true);
+        await sourceDb.insert('media_attachments', {
+          'id': 'blob-resume-$i',
+          'message_id': 'message-1',
+          'mime': 'application/octet-stream',
+          'size': bytes.length,
+          'media_type': 'file',
+          'local_path': 'media/peer-bob/blob-resume-$i.bin',
+          'download_status': 'done',
+          'created_at': '2026-06-10T08:00:00.000Z',
+        });
+      }
 
-        final output = await _savePendingSession(
-          pairingRepo,
-          sessionId: 'e2e-resume-session',
-        );
-        final destinationDocumentsPath = p.join(
-          tempDir.path,
-          'destination-documents',
-        );
-        final newAuthority = _MemoryAuthorityRepository();
-        final receiver = AccountMigrationProductionBundleReceiver(
-          streamCrypto: _e2eStreamCrypto(),
+      final output = await _savePendingSession(
+        pairingRepo,
+        sessionId: 'e2e-resume-session',
+      );
+      final destinationDocumentsPath = p.join(
+        tempDir.path,
+        'destination-documents',
+      );
+      final newAuthority = _MemoryAuthorityRepository();
+      final receiver = AccountMigrationProductionBundleReceiver(
+        streamCrypto: _e2eStreamCrypto(),
+        secureStorageStaging: MigrationSecureStorageStaging(
+          primaryStore: destinationStore,
+        ),
+        databaseImportStaging: MigrationDatabaseImportStaging(
           secureStorageStaging: MigrationSecureStorageStaging(
             primaryStore: destinationStore,
           ),
-          databaseImportStaging: MigrationDatabaseImportStaging(
-            secureStorageStaging: MigrationSecureStorageStaging(
-              primaryStore: destinationStore,
-            ),
-            opener: _FfiStagedDatabaseOpener(),
-          ),
-          activeDatabaseImporter: MigrationDatabaseActiveImporter(
-            activeDatabase: activeDb,
-          ),
-          cutoverCoordinator: MigrationCutoverCoordinator(
-            authorityRepository: newAuthority,
-            cutoverRepository: _MemoryCutoverRepository(),
-            now: () => DateTime.utc(2026, 6, 10, 12),
-          ),
+          opener: _FfiStagedDatabaseOpener(),
+        ),
+        activeDatabaseImporter: MigrationDatabaseActiveImporter(
+          activeDatabase: activeDb,
+        ),
+        cutoverCoordinator: MigrationCutoverCoordinator(
           authorityRepository: newAuthority,
-          stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
-          documentsRootPath: destinationDocumentsPath,
-        );
-        final newRuntime = AccountMigrationLocalTransferRuntime(
-          discovery: newPhoneDiscovery,
-          wsServer: newPhoneServer,
-          pairingSessionRepository: pairingRepo,
-          bundleReceiver: receiver,
-        );
-        newPhoneServer.configureMigrationTransferHandler(
-          newRuntime.handleMigrationTransferRequest,
-        );
-        expect(
-          (await newRuntime.startNewPhoneReceiver(output)).isStarted,
-          isTrue,
-        );
+          cutoverRepository: _MemoryCutoverRepository(),
+          now: () => DateTime.utc(2026, 6, 10, 12),
+        ),
+        authorityRepository: newAuthority,
+        stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
+        documentsRootPath: destinationDocumentsPath,
+      );
+      final newRuntime = AccountMigrationLocalTransferRuntime(
+        discovery: newPhoneDiscovery,
+        wsServer: newPhoneServer,
+        pairingSessionRepository: pairingRepo,
+        bundleReceiver: receiver,
+      );
+      newPhoneServer.configureMigrationTransferHandler(
+        newRuntime.handleMigrationTransferRequest,
+      );
+      expect(
+        (await newRuntime.startNewPhoneReceiver(output)).isStarted,
+        isTrue,
+      );
 
-        final oldAuthority = _MemoryAuthorityRepository();
-        final source = AccountMigrationProductionBundleSource(
-          sourceDb: sourceDb,
-          primaryStore: sourceStore,
-          documentsRootPath: tempDir.path,
-          exportDirectoryPath: p.join(tempDir.path, 'exports'),
-          snapshotExporter: MigrationDatabaseSnapshotExporter(
-            adapter: _FfiSnapshotExportAdapter(),
+      final oldAuthority = _MemoryAuthorityRepository();
+      final source = AccountMigrationProductionBundleSource(
+        sourceDb: sourceDb,
+        primaryStore: sourceStore,
+        documentsRootPath: tempDir.path,
+        exportDirectoryPath: p.join(tempDir.path, 'exports'),
+        snapshotExporter: MigrationDatabaseSnapshotExporter(
+          adapter: _FfiSnapshotExportAdapter(),
+        ),
+        segmentSize: 256 * 1024,
+      );
+      final oldRuntime = AccountMigrationLocalTransferRuntime(
+        discovery: oldPhoneDiscovery,
+        wsServer: oldPhoneServer,
+        pairingSessionRepository: pairingRepo,
+        bundleSource: source.call,
+        streamCrypto: _e2eStreamCrypto(),
+        oldPhoneCutoverCoordinator: MigrationCutoverCoordinator(
+          authorityRepository: oldAuthority,
+          cutoverRepository: _MemoryCutoverRepository(),
+          now: () => DateTime.utc(2026, 6, 10, 12),
+        ),
+        oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+      );
+      final request = AccountMigrationTransferRequest(
+        transcript: _transcript(output.payload),
+      );
+
+      // ---------- attempt 1: interrupted after a handful of chunks ----------
+      var firstAttemptChunks = 0;
+      final firstResult = await oldRuntime.runOldPhoneTransfer(
+        request: request,
+        onProgress: (_) {},
+        isCancelled: () => firstAttemptChunks >= 5,
+        onSegmentProgress: (update) => firstAttemptChunks = update.sentSegments,
+      );
+      expect(firstResult.isSuccess, isFalse);
+      expect(firstAttemptChunks, greaterThanOrEqualTo(5));
+
+      // ---------- attempt 2: resumes and completes ----------
+      final secondResult = await oldRuntime.runOldPhoneTransfer(
+        request: request,
+        onProgress: (_) {},
+        isCancelled: () => false,
+      );
+      expect(secondResult.isSuccess, isTrue, reason: secondResult.safeMessage);
+
+      // The second attempt started from the persisted (entry, offset)
+      // ledger: it announced resumed chunks and resent fewer chunks than
+      // the whole bundle.
+      final streamStarts =
+          eventsNamed('ACCOUNT_MIGRATION_LOCAL_TRANSFER_STREAM_START')
+              .where(
+                (event) =>
+                    detailsOf(event)['sessionId'] == 'e2e-resume-session',
+              )
+              .toList();
+      expect(streamStarts, hasLength(2));
+      final firstStart = detailsOf(streamStarts.first);
+      final secondStart = detailsOf(streamStarts.last);
+      expect(firstStart['resumedChunks'], 0);
+      final totalChunks = secondStart['chunkCount'] as int;
+      final resumedChunks = secondStart['resumedChunks'] as int;
+      expect(resumedChunks, greaterThan(0));
+      final secondAttemptChunkPosts =
+          eventsNamed('ACCOUNT_MIGRATION_LOCAL_TRANSFER_CHUNK_PROGRESS')
+              .where(
+                (event) =>
+                    detailsOf(event)['sessionId'] == 'e2e-resume-session',
+              )
+              .length;
+      expect(
+        secondAttemptChunkPosts,
+        lessThan(2 * totalChunks),
+        reason: 'resume must not retransmit the whole account twice over',
+      );
+
+      // Each attempt used one fresh encapsulation: the receiver saw two
+      // distinct KEM ciphertexts only if the fake derives per-attempt keys;
+      // what matters cryptographically is one encap per attempt, which the
+      // stream-start/chunk flow above already proves (no per-chunk encap
+      // exists in the v2 wire).
+      for (var i = 0; i < largeFileCount; i++) {
+        final relativePath = 'media/peer-bob/blob-resume-$i.bin';
+        expect(
+          migrationTransferSha256Hex(
+            await File(
+              p.join(destinationDocumentsPath, relativePath),
+            ).readAsBytes(),
           ),
-          segmentSize: 256 * 1024,
-        );
-        final oldRuntime = AccountMigrationLocalTransferRuntime(
-          discovery: oldPhoneDiscovery,
-          wsServer: oldPhoneServer,
-          pairingSessionRepository: pairingRepo,
-          bundleSource: source.call,
-          streamCrypto: _e2eStreamCrypto(),
-          oldPhoneCutoverCoordinator: MigrationCutoverCoordinator(
-            authorityRepository: oldAuthority,
-            cutoverRepository: _MemoryCutoverRepository(),
-            now: () => DateTime.utc(2026, 6, 10, 12),
+          migrationTransferSha256Hex(
+            await File(p.join(tempDir.path, relativePath)).readAsBytes(),
           ),
-          oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+          reason: '$relativePath must arrive byte-identical after resume',
         );
-        final request = AccountMigrationTransferRequest(
-          transcript: _transcript(output.payload),
-        );
-
-        // ---------- attempt 1: interrupted after a handful of chunks ----------
-        var firstAttemptChunks = 0;
-        final firstResult = await oldRuntime.runOldPhoneTransfer(
-          request: request,
-          onProgress: (_) {},
-          isCancelled: () => firstAttemptChunks >= 5,
-          onSegmentProgress: (update) => firstAttemptChunks = update.sentSegments,
-        );
-        expect(firstResult.isSuccess, isFalse);
-        expect(firstAttemptChunks, greaterThanOrEqualTo(5));
-
-        // ---------- attempt 2: resumes and completes ----------
-        final secondResult = await oldRuntime.runOldPhoneTransfer(
-          request: request,
-          onProgress: (_) {},
-          isCancelled: () => false,
-        );
-        expect(secondResult.isSuccess, isTrue, reason: secondResult.safeMessage);
-
-        // The second attempt started from the persisted (entry, offset)
-        // ledger: it announced resumed chunks and resent fewer chunks than
-        // the whole bundle.
-        final streamStarts = eventsNamed(
-          'ACCOUNT_MIGRATION_LOCAL_TRANSFER_STREAM_START',
-        ).where((event) => detailsOf(event)['sessionId'] == 'e2e-resume-session').toList();
-        expect(streamStarts, hasLength(2));
-        final firstStart = detailsOf(streamStarts.first);
-        final secondStart = detailsOf(streamStarts.last);
-        expect(firstStart['resumedChunks'], 0);
-        final totalChunks = secondStart['chunkCount'] as int;
-        final resumedChunks = secondStart['resumedChunks'] as int;
-        expect(resumedChunks, greaterThan(0));
-        final secondAttemptChunkPosts = eventsNamed(
-          'ACCOUNT_MIGRATION_LOCAL_TRANSFER_CHUNK_PROGRESS',
-        )
-            .where(
-              (event) =>
-                  detailsOf(event)['sessionId'] == 'e2e-resume-session',
-            )
-            .length;
-        expect(
-          secondAttemptChunkPosts,
-          lessThan(2 * totalChunks),
-          reason: 'resume must not retransmit the whole account twice over',
-        );
-
-        // Each attempt used one fresh encapsulation: the receiver saw two
-        // distinct KEM ciphertexts only if the fake derives per-attempt keys;
-        // what matters cryptographically is one encap per attempt, which the
-        // stream-start/chunk flow above already proves (no per-chunk encap
-        // exists in the v2 wire).
-        for (var i = 0; i < largeFileCount; i++) {
-          final relativePath = 'media/peer-bob/blob-resume-$i.bin';
-          expect(
-            migrationTransferSha256Hex(
-              await File(
-                p.join(destinationDocumentsPath, relativePath),
-              ).readAsBytes(),
-            ),
-            migrationTransferSha256Hex(
-              await File(p.join(tempDir.path, relativePath)).readAsBytes(),
-            ),
-            reason: '$relativePath must arrive byte-identical after resume',
-          );
-        }
-        expect(
-          newAuthority.saved?.state,
-          AccountMigrationAuthorityState.active,
-        );
-        expect(
-          oldAuthority.saved?.state,
-          AccountMigrationAuthorityState.migratedOut,
-        );
-      },
-      timeout: const Timeout(Duration(minutes: 3)),
-    );
+      }
+      expect(newAuthority.saved?.state, AccountMigrationAuthorityState.active);
+      expect(
+        oldAuthority.saved?.state,
+        AccountMigrationAuthorityState.migratedOut,
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test(
       'a generated 100 MB account moves end-to-end with bounded memory',
@@ -996,7 +998,11 @@ void main() {
           final block = Uint8List.fromList(
             List<int>.generate(64 * 1024, (j) => (i * 31 + j) & 0xff),
           );
-          for (var written = 0; written < mediaFileBytes; written += block.length) {
+          for (
+            var written = 0;
+            written < mediaFileBytes;
+            written += block.length
+          ) {
             sink.add(block);
           }
           await sink.close();

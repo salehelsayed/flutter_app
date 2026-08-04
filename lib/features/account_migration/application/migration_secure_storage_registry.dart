@@ -1,9 +1,12 @@
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
+import 'package:flutter_app/features/push/infrastructure/push_registration_health_store.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
@@ -93,6 +96,41 @@ class MigrationSecureStorageRegistry {
       scope: MigrationSecureStoreScope.primary,
       activeKey: pushFcmPlatformSecureStorageKey,
       category: MigrationSecureStorageKeyCategory.pushFcmPlatform,
+      policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: pushRegistrationHealthSecureStorageKey,
+      category: MigrationSecureStorageKeyCategory.pushRegistrationHealth,
+      policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: PendingConversationNotificationOverlayStore.secureStorageKey,
+      category: MigrationSecureStorageKeyCategory
+          .pendingConversationNotificationOverlay,
+      policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: canonicalRuntimeInstallationIdStorageKey,
+      category:
+          MigrationSecureStorageKeyCategory.canonicalRuntimeInstallationId,
+      policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: canonicalRuntimeAccountBindingStorageKey,
+      category:
+          MigrationSecureStorageKeyCategory.canonicalRuntimeAccountBinding,
       policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
       criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
       includeInExportPayload: false,

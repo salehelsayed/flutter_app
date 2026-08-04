@@ -654,6 +654,27 @@
       "declaredBuildException": false
     },
     {
+      "id": "notifications.android_recovery_completion",
+      "owner": "notifications",
+      "proofBoundary": "android.real-relay.canonical-notification-recovery-completion",
+      "assertions": ["notifications.headless_direct_group_recovery", "notifications.foreground_handoff_new_generation", "notifications.direct_custody_recovery", "notifications.synthetic_outer_id_recovery", "notifications.history_count_projection", "notifications.registration_health_live_recovery", "notifications.recovery_copy_locales", "notifications.zero_taps_zero_child_builds"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["notifications", "1to1", "group"],
+      "required": true,
+      "command": ["dart", "run", "integration_test/scripts/run_android_notification_recovery_completion.dart"],
+      "buildProfile": "android.production_fcm",
+      "dependencies": ["build.android.production_fcm"],
+      "resources": [{"name": "build:android.production_fcm", "access": "read"}, {"name": "device:android-physical", "access": "exclusive"}, {"name": "device:android-emulator", "access": "exclusive"}, {"name": "relay-mutation:staging", "access": "exclusive"}, {"name": "artifact:android-notification-recovery-completion", "access": "write"}],
+      "targetCapabilities": ["android.physical", "android.emulator", "credentials.fcm", "relay.staging"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "integration_test/android_notification_recovery_completion_proof_test.dart",
+      "automationReady": false,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
       "id": "intro.accept_notification_campaign",
       "owner": "introduction",
       "proofBoundary": "android.intro.accept-notification-three-party",

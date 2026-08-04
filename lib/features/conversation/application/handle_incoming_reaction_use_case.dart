@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -43,6 +41,23 @@ enum HandleReactionResult {
   blockedSender,
 }
 
+typedef StageDirectReactionNotificationDisplayCustody =
+    Future<void> Function({
+      required ReactionPayload payload,
+      required ConversationMessage targetMessage,
+    });
+typedef CommitDirectReactionNotificationRemove =
+    Future<void> Function({
+      required String peerId,
+      required String messageId,
+      required String actorPeerId,
+    });
+typedef PromoteDirectReactionNotificationDisplayCustody =
+    Future<void> Function({
+      required ReactionPayload payload,
+      required ConversationMessage targetMessage,
+    });
+
 /// Parses an incoming P2P ChatMessage for message_reaction type,
 /// decrypts (v2 only), validates the sender, and persists.
 ///
@@ -66,7 +81,14 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   MarkRecentRemoteNotificationAnnouncement?
   markRecentRemoteNotificationAnnouncement,
   ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
+  LoadConversationNotificationSnapshot? loadConversationNotificationSnapshot,
   bool suppressReactionNotification = false,
+  StageDirectReactionNotificationDisplayCustody?
+  stageNotificationDisplayCustody,
+  PromoteDirectReactionNotificationDisplayCustody?
+  promoteNotificationDisplayCustody,
+  CommitDirectReactionNotificationRemove? commitNotificationRemove,
+  Future<void> Function()? retryNotificationDisplays,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -228,6 +250,19 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     return (HandleReactionResult.targetUnavailable, null);
   }
 
+  final isLocallyAuthoredNotificationTarget =
+      _targetWasAuthoredByLocalRecipient(
+        targetMessage: targetMessage,
+        incomingEnvelope: message,
+      );
+  if (payload.action == ReactionPayload.addAction &&
+      isLocallyAuthoredNotificationTarget) {
+    await stageNotificationDisplayCustody?.call(
+      payload: payload,
+      targetMessage: targetMessage,
+    );
+  }
+
   // 5. Process action
   if (payload.action == ReactionPayload.removeAction) {
     final atomicRepository =
@@ -238,17 +273,23 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
       final applyResult = await atomicRepository.applyIncomingRemove(
         payload.toMessageReaction(),
       );
-      if (applyResult == ReactionRemoveApplyResult.stale ||
-          applyResult == ReactionRemoveApplyResult.exactReplay) {
-        if (applyResult == ReactionRemoveApplyResult.stale) {
-          _emitStaleReaction(payload);
-        } else {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'REACTION_RECEIVE_EXACT_REPLAY_IGNORED',
-            details: {},
-          );
-        }
+      if (applyResult == ReactionRemoveApplyResult.stale) {
+        _emitStaleReaction(payload);
+        return (HandleReactionResult.success, null);
+      }
+      if (applyResult == ReactionRemoveApplyResult.exactReplay) {
+        // Canonical mutation can survive a process death that happened before
+        // notification-terminal cleanup. Replay must repair that second half.
+        await commitNotificationRemove?.call(
+          peerId: payload.senderPeerId,
+          messageId: payload.messageId,
+          actorPeerId: payload.senderPeerId,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'REACTION_RECEIVE_EXACT_REPLAY_IGNORED',
+          details: {},
+        );
         return (HandleReactionResult.success, null);
       }
     } else {
@@ -272,6 +313,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
         removedAtTimestamp: payload.timestamp,
       );
     }
+    await commitNotificationRemove?.call(
+      peerId: payload.senderPeerId,
+      messageId: payload.messageId,
+      actorPeerId: payload.senderPeerId,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_RECEIVE_REMOVED',
@@ -296,6 +342,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   final applyResult = await reactionRepo.applyIncomingAdd(reaction);
   if (applyResult == ReactionAddApplyResult.exactReplay ||
       applyResult == ReactionAddApplyResult.stale) {
+    await promoteNotificationDisplayCustody?.call(
+      payload: payload,
+      targetMessage: targetMessage,
+    );
+    await retryNotificationDisplays?.call();
     if (applyResult == ReactionAddApplyResult.stale) {
       _emitStaleReaction(payload);
     } else {
@@ -307,6 +358,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     }
     return (HandleReactionResult.success, null);
   }
+
+  await promoteNotificationDisplayCustody?.call(
+    payload: payload,
+    targetMessage: targetMessage,
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -322,17 +378,18 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   // apply: viewing-conversation suppression, recent-remote-push dedup, and the
   // 30s-per-conversation tone debounce (so rapid react/unreact never spams a
   // sound). Reached ONLY on a fresh ADD upsert — the remove and stale-ignored
-  // branches return earlier, so un-reacts/duplicates stay silent. Fire-and-
-  // forget: the OS call must never delay or fail the reaction commit/ack.
-  if (notificationService != null &&
+  // branches return earlier, so un-reacts/duplicates stay silent.
+  // The durable reaction commit already happened, but the presentation must
+  // still be observed here so a throw cannot escape an unawaited future and
+  // silently bypass retry custody owned by the production composition.
+  if (retryNotificationDisplays != null) {
+    await retryNotificationDisplays();
+  } else if (notificationService != null &&
       conversationTracker != null &&
       getAppLifecycleState != null &&
-      _targetWasAuthoredByLocalRecipient(
-        targetMessage: targetMessage,
-        incomingEnvelope: message,
-      )) {
-    unawaited(
-      maybeShowNotification(
+      isLocallyAuthoredNotificationTarget) {
+    try {
+      await maybeShowNotification(
         notificationService: notificationService,
         conversationTracker: conversationTracker,
         getAppLifecycleState: getAppLifecycleState,
@@ -351,8 +408,16 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
             markRecentRemoteNotificationAnnouncement,
         durableNotificationCoordinatorResolver:
             durableNotificationCoordinatorResolver,
-      ),
-    );
+        loadConversationNotificationSnapshot:
+            loadConversationNotificationSnapshot,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REACTION_NOTIFICATION_PROJECTION_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   return (HandleReactionResult.success, ReactionChange.upsert(reaction));

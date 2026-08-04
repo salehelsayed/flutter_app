@@ -39,6 +39,7 @@ class MessageRepositoryImpl
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
   final Future<int> Function(String contactPeerId) dbMarkConversationAsRead;
+  final Future<int> Function(String contactPeerId)? projectConversationRead;
   final Future<int> Function(String contactPeerId) dbCountUnreadForContact;
   final Future<int> Function() dbCountTotalUnread;
   final Future<int> Function() dbCountTotalUnreadExcludingArchived;
@@ -235,6 +236,7 @@ class MessageRepositoryImpl
     required this.dbLoadMessage,
     required this.dbCountMessagesForContact,
     required this.dbMarkConversationAsRead,
+    this.projectConversationRead,
     required this.dbCountUnreadForContact,
     required this.dbCountTotalUnread,
     required this.dbCountTotalUnreadExcludingArchived,
@@ -632,7 +634,10 @@ class MessageRepositoryImpl
             : contactPeerId,
       },
     );
-    final markedCount = await dbMarkConversationAsRead(contactPeerId);
+    final markedCount =
+        await (projectConversationRead ?? dbMarkConversationAsRead)(
+          contactPeerId,
+        );
     // 194: fire the read-event only when something actually changed (INV-5) so a
     // re-mark of an already-read conversation stays silent.
     if (markedCount > 0) {

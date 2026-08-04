@@ -305,6 +305,7 @@ class _RecordingNotificationService implements NotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     final resolvedPayload = payload ?? contactPeerId;
     await _inner.showMessageNotification(
@@ -315,6 +316,7 @@ class _RecordingNotificationService implements NotificationService {
       silent: silent,
       contentKind: contentKind,
       contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
     );
     shown.add(
       _RecordedShow(

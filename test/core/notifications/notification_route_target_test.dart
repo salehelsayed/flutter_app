@@ -33,6 +33,27 @@ void main() {
       },
     );
 
+    test('authenticated reaction routing does not depend on an outer id', () {
+      final direct = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'message_reaction',
+        'sender_id': 'peer-reactor',
+        'target_message_id': 'target-message-1',
+        'action': 'add',
+      });
+      final group = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'group_reaction',
+        'groupId': 'group-123',
+        'reactor_peer_id': 'peer-reactor',
+        'target_message_id': 'target-message-1',
+        'action': 'add',
+      });
+
+      expect(direct?.peerId, 'peer-reactor');
+      expect(direct?.messageId, 'target-message-1');
+      expect(group?.groupId, 'group-123');
+      expect(group?.messageId, 'target-message-1');
+    });
+
     test('message_reaction rejects remove and incomplete wake metadata', () {
       expect(
         NotificationRouteTarget.fromRemoteMessageData({

@@ -36,6 +36,7 @@ StagedPushEnvelope _envelope({
   String senderPeerId = 'peer-alice',
   String? messageId = 'push-message-1',
   int receivedAtMs = 1,
+  bool identityResolutionPending = false,
 }) {
   return StagedPushEnvelope(
     kind: 'chat',
@@ -44,6 +45,7 @@ StagedPushEnvelope _envelope({
     nonce: nonce,
     senderPeerId: senderPeerId,
     messageId: messageId,
+    identityResolutionPending: identityResolutionPending,
     receivedAtMs: receivedAtMs,
   );
 }
@@ -88,6 +90,37 @@ RecoveredInboxReplayOutcome _rejected(String reasonCode) => (
 
 void main() {
   group('IngestStagedPushEnvelopesUseCase', () {
+    test(
+      'identity-pending ciphertext custody is retained without replay',
+      () async {
+        final store = _MemoryPushEnvelopeStore();
+        await store.stage(
+          _envelope(messageId: null, identityResolutionPending: true),
+        );
+        var replayed = false;
+        final useCase = IngestStagedPushEnvelopesUseCase(
+          store: store,
+          localPeerIdProvider: () async => 'local-peer',
+          replayChatMessage:
+              (
+                message, {
+                required suppressNotification,
+                String? stagedEntryId,
+              }) async {
+                replayed = true;
+                return _committed();
+              },
+        );
+
+        final result = await useCase();
+
+        expect(replayed, isFalse);
+        expect(result.retained, 1);
+        expect(result.clearedMalformed, 0);
+        expect(store.entries, hasLength(1));
+      },
+    );
+
     test('staged reaction dispatches to reaction replay', () async {
       final store = _MemoryPushEnvelopeStore();
       await store.stage(_reactionEnvelope());

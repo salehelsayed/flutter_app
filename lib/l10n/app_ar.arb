@@ -1753,5 +1753,12 @@
   "direct_batch_forward_summary": "تم الإرسال {sent}، في الانتظار {queued}، فشل {failed}",
   "direct_batch_forward_phase_uploading": "جارٍ الرفع",
   "direct_batch_forward_phase_sending": "جارٍ الإرسال",
-  "direct_batch_forward_close": "إغلاق"
+  "direct_batch_forward_close": "إغلاق",
+  "push_registration_health_warning_title": "تحتاج الإشعارات إلى انتباهك",
+  "push_registration_health_permission_denied": "إشعارات مكنون متوقفة على هذا الجهاز.",
+  "push_registration_health_no_token": "لم يتلقَّ هذا الجهاز رمز إشعارات بعد.",
+  "push_registration_health_registration_failed": "تعذّر تسجيل هذا الجهاز لاستلام إشعارات مكنون.",
+  "push_registration_health_temporary_problem": "حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.",
+  "push_registration_health_retry": "إعادة المحاولة",
+  "push_registration_health_open_notification_settings": "فتح إعدادات الإشعارات"
 }

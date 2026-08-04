@@ -95,23 +95,29 @@ void main() {
       );
     });
 
-    test(
-      'direct reaction does not publish group shared-card metadata',
-      () async {
-        await maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'peer-direct-reaction',
-          senderUsername: 'Alice',
-          messageText: 'Alice reacted to your message',
-          notificationEventType: 'message_reaction',
-        );
+    test('direct reaction publishes exact managed-card metadata', () async {
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'peer-direct-reaction',
+        senderUsername: 'Alice',
+        messageText: 'Alice reacted to your message',
+        notificationEventType: 'message_reaction',
+        notificationEventIdentity: boundedReactionEventIdentity(
+          'reaction-direct',
+        ),
+      );
 
-        expect(notificationService.shown.single.contentKind, isNull);
-        expect(notificationService.shown.single.contentEventIdentity, isNull);
-      },
-    );
+      expect(
+        notificationService.shown.single.contentKind,
+        ConversationNotificationContentKind.reaction,
+      );
+      expect(
+        notificationService.shown.single.contentEventIdentity,
+        boundedReactionEventIdentity('reaction-direct'),
+      );
+    });
 
     test(
       'typed claim disposition distinguishes pending from committed',
@@ -301,7 +307,7 @@ void main() {
     );
 
     test(
-      'failed reaction display releases exact claim and tone so retry is audible',
+      'reaction native-attempt error preserves fail-closed exact ownership',
       () async {
         final directory = await Directory.systemTemp.createTemp(
           'live-notification-release-',
@@ -332,7 +338,9 @@ void main() {
           );
         }
 
-        Future<void> produce(DurableNotificationToneLease owner) {
+        Future<NotificationPresentationResult> produce(
+          DurableNotificationToneLease owner,
+        ) {
           return maybeShowNotification(
             notificationService: service,
             conversationTracker: tracker,
@@ -355,21 +363,35 @@ void main() {
         await contenderWaitingToRetry.future;
         failFirstShow.complete();
 
-        await expectLater(failedOwner, throwsA(isA<StateError>()));
+        await expectLater(
+          failedOwner,
+          throwsA(isA<DurableNotificationPublicationAttemptedException>()),
+        );
         allowContenderRetry.complete();
-        await contender;
-        expect(service.attempts, 2);
-        expect(service.shown, hasLength(1));
         expect(
-          service.shown.single.silent,
-          isFalse,
-          reason: 'failed display must release its provisional tone owner',
+          await contender,
+          NotificationPresentationResult.contendedRetryable,
+        );
+        expect(service.attempts, 1);
+        expect(service.shown, isEmpty);
+        final claimFile = File(
+          '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'message_reaction', eventIdentity: boundedReactionEventIdentity('reaction-retry-1'))}',
+        );
+        expect(
+          claimFile.readAsStringSync(),
+          contains('"state":"publishing"'),
+          reason: 'a native callback error cannot prove the card was not shown',
+        );
+        expect(
+          _onlyPendingToneFile(directory).readAsStringSync(),
+          contains('"state":"publishing"'),
         );
       },
     );
 
     test(
-      'delayed OS show keeps claim and tone pending then starts tone window at display success',
+      'non-Android delayed show preserves pending claim and tone until display success',
       () async {
         final directory = await Directory.systemTemp.createTemp(
           'live-notification-delayed-show-',
@@ -384,6 +406,7 @@ void main() {
         });
         final coordinator = DurableNotificationToneLease(
           directory: directory,
+          platform: TargetPlatform.macOS,
           now: () => now,
           pendingClaimWait: Duration.zero,
           pendingMessageClaimTtl: const Duration(seconds: 60),
@@ -408,7 +431,11 @@ void main() {
           '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
           '${DurableNotificationToneLease.messageEventClaimFileName(type: 'new_message', eventIdentity: 'message-delayed-1')}',
         );
-        expect(claimFile.readAsStringSync(), contains('"state":"pending"'));
+        expect(
+          claimFile.readAsStringSync(),
+          contains('"state":"pending"'),
+          reason: 'non-Android ownership keeps its prior pending protocol',
+        );
         expect(
           _onlyPendingToneFile(directory).readAsStringSync(),
           contains('"state":"pending"'),
@@ -561,66 +588,61 @@ void main() {
       },
     );
 
-    test(
-      'show failure attempts both releases even when both CAS checks fail',
-      () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'live-notification-release-failure-',
+    test('non-Android show failure attempts both exact-owner releases', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'live-notification-release-failure-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final claimFile = File(
+        '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+        '${DurableNotificationToneLease.messageEventClaimFileName(type: 'new_message', eventIdentity: 'message-release-failure')}',
+      );
+      final service = _HookedNotificationService((_) async {
+        await _replacePendingToken(claimFile, 'replacement-claim-owner');
+        await _replacePendingToken(
+          _onlyPendingToneFile(directory),
+          'replacement-tone-owner',
         );
-        addTearDown(() => directory.delete(recursive: true));
-        final events = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(events.add);
-        addTearDown(() => debugSetFlowEventSink(null));
-        final claimFile = File(
-          '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
-          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'new_message', eventIdentity: 'message-release-failure')}',
-        );
-        final service = _HookedNotificationService((_) async {
-          await _replacePendingToken(claimFile, 'replacement-claim-owner');
-          await _replacePendingToken(
-            _onlyPendingToneFile(directory),
-            'replacement-tone-owner',
-          );
-          throw StateError('synthetic display failure');
-        });
-        final coordinator = DurableNotificationToneLease(
-          directory: directory,
-          pendingClaimWait: Duration.zero,
-          pendingToneReservationWait: Duration.zero,
-        );
+        throw StateError('synthetic display failure');
+      });
+      final coordinator = DurableNotificationToneLease(
+        directory: directory,
+        platform: TargetPlatform.macOS,
+        pendingClaimWait: Duration.zero,
+        pendingToneReservationWait: Duration.zero,
+      );
 
-        await expectLater(
-          maybeShowNotification(
-            notificationService: service,
-            conversationTracker: tracker,
-            getAppLifecycleState: () => AppLifecycleState.paused,
-            contactPeerId: 'peer-release-failure',
-            senderUsername: 'Alice',
-            messageText: 'Will fail',
-            messageId: 'message-release-failure',
-            durableNotificationCoordinatorResolver: () async => coordinator,
-          ),
-          throwsA(isA<StateError>()),
-        );
+      await expectLater(
+        maybeShowNotification(
+          notificationService: service,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-release-failure',
+          senderUsername: 'Alice',
+          messageText: 'Will fail',
+          messageId: 'message-release-failure',
+          durableNotificationCoordinatorResolver: () async => coordinator,
+        ),
+        throwsA(isA<StateError>()),
+      );
 
-        expect(service.shown, isEmpty);
-        expect(
-          claimFile.readAsStringSync(),
-          contains('replacement-claim-owner'),
-        );
-        expect(
-          _onlyPendingToneFile(directory).readAsStringSync(),
-          contains('replacement-tone-owner'),
-        );
-        expect(
-          events.map((event) => event['event']),
-          containsAll(<String>[
-            'NOTIFICATION_TONE_RESERVATION_RELEASE_FAILED',
-            'NOTIFICATION_CLAIM_RELEASE_FAILED',
-          ]),
-        );
-      },
-    );
+      expect(service.shown, isEmpty);
+      expect(claimFile.readAsStringSync(), contains('replacement-claim-owner'));
+      expect(
+        _onlyPendingToneFile(directory).readAsStringSync(),
+        contains('replacement-tone-owner'),
+      );
+      expect(
+        events.map((event) => event['event']),
+        containsAll(<String>[
+          'NOTIFICATION_TONE_RESERVATION_RELEASE_FAILED',
+          'NOTIFICATION_CLAIM_RELEASE_FAILED',
+        ]),
+      );
+    });
 
     test(
       'post-show bookkeeping failure retains committed claim and tone',
@@ -1645,6 +1667,7 @@ class _HookedNotificationService extends FakeNotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     attempts += 1;
     await _beforeShow(attempts);
@@ -1656,6 +1679,7 @@ class _HookedNotificationService extends FakeNotificationService {
       silent: silent,
       contentKind: contentKind,
       contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
     );
   }
 }

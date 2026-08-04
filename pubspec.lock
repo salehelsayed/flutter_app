@@ -1130,10 +1130,9 @@ packages:
   sqflite_sqlcipher:
     dependency: "direct main"
     description:
-      name: sqflite_sqlcipher
-      sha256: ba7733c5514cf0ccb0331997b771a890f73678bcd84cdfb5f7487a88a71f1738
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/sqflite_sqlcipher"
+      relative: true
+    source: path
     version: "3.4.0"
   sqlcipher_flutter_libs:
     dependency: "direct main"

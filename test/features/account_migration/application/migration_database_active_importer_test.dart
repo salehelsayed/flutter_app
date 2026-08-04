@@ -183,7 +183,7 @@ CREATE TABLE identity (
     });
 
     test(
-      'production v106 group triggers preserve exact reconciliation rows',
+      'production v107 group and direct triggers preserve exact reconciliation rows',
       () async {
         final productionActive = await openDatabase(
           p.join(tempDir.path, 'production-active.db'),
@@ -212,11 +212,35 @@ CREATE TABLE identity (
           'created_by': 'peer-creator',
           'my_role': 'admin',
         });
+        await productionStaged.insert('contacts', <String, Object?>{
+          'peer_id': 'direct-trigger-peer',
+          'public_key': 'direct-public',
+          'rendezvous': 'direct-relay',
+          'username': 'Direct peer',
+          'signature': 'direct-signature',
+          'scanned_at': '2026-08-03T07:00:00.000Z',
+        });
+        await productionStaged.insert(
+          'direct_notification_reaction_terminal_events',
+          <String, Object?>{
+            'peer_id': 'direct-trigger-peer',
+            'message_id': 'same-id',
+            'actor_peer_id': 'same-actor',
+            'reaction_id': 'direct-reaction',
+            'terminal_event_id': 'direct-terminal',
+            'notification_acknowledged_at': null,
+            'updated_at': '2026-08-03T07:00:00.000Z',
+          },
+        );
         final manifest = await _manifestFor(productionStaged);
         final stagedReconciliation = await productionStaged.query(
           'group_notification_reconciliation_outbox',
         );
+        final stagedDirectReconciliation = await productionStaged.query(
+          'direct_notification_reconciliation_outbox',
+        );
         expect(stagedReconciliation, hasLength(1));
+        expect(stagedDirectReconciliation, hasLength(1));
 
         await MigrationDatabaseActiveImporter(
           activeDatabase: productionActive,
@@ -235,6 +259,20 @@ CREATE TABLE identity (
           stagedReconciliation,
         );
         expect(
+          await productionActive.query(
+            'direct_notification_reconciliation_outbox',
+          ),
+          stagedDirectReconciliation,
+        );
+        expect(
+          await productionActive.query(
+            'direct_notification_reaction_terminal_events',
+          ),
+          await productionStaged.query(
+            'direct_notification_reaction_terminal_events',
+          ),
+        );
+        expect(
           await MigrationDatabaseImportStaging.computeDatabaseChecksumForTesting(
             productionActive,
           ),
@@ -244,6 +282,13 @@ CREATE TABLE identity (
           await productionActive.rawQuery(
             "SELECT name FROM sqlite_master WHERE type = 'trigger' "
             "AND name = 'trg_group_notification_reconcile_group_insert'",
+          ),
+          hasLength(1),
+        );
+        expect(
+          await productionActive.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'trg_direct_notification_reconcile_contact_insert'",
           ),
           hasLength(1),
         );
@@ -364,7 +409,7 @@ CREATE TABLE identity (
     );
 
     test(
-      'PB266-05 same-v106 move transfers allowlisted diagnostics and v103 mismatch preserves target',
+      'PB266-05 same-v107 move transfers diagnostics and v106 mismatch preserves target',
       () async {
         await runGroupExitDiagnosticsMigration(activeDb);
         await runGroupExitDiagnosticsMigration(stagedDb);
@@ -392,8 +437,8 @@ CREATE TABLE identity (
         await stagedDb.insert('group_exit_diagnostics', transferredDiagnostic);
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 106);
-        expect(manifest.databaseVersion, 106);
+        expect(currentIdentityDatabaseVersion, 107);
+        expect(manifest.databaseVersion, 107);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -427,7 +472,7 @@ CREATE TABLE identity (
           ).importVerifiedStagedDatabase(
             MigrationDatabaseImportStagingResult(
               database: stagedDb,
-              manifest: manifest.copyWith(databaseVersion: 103),
+              manifest: manifest.copyWith(databaseVersion: 106),
               stagedDatabasePath: p.join(tempDir.path, 'staged.db'),
             ),
           ),

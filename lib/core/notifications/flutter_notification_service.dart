@@ -22,6 +22,7 @@ typedef ConversationNotificationContentRegistryResolver =
 class FlutterNotificationService
     implements
         NotificationService,
+        MessageNotificationNativePublicationBoundary,
         ConversationNotificationCancellation,
         ConversationNotificationGenerationCancellation,
         ConversationNotificationGenerationReplacement {
@@ -251,6 +252,54 @@ class FlutterNotificationService
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+  }) => _showMessageNotificationAtNativeBoundary(
+    contactPeerId: contactPeerId,
+    senderUsername: senderUsername,
+    messageText: messageText,
+    payload: payload,
+    silent: silent,
+    contentKind: contentKind,
+    contentEventIdentity: contentEventIdentity,
+    snapshot: snapshot,
+    publishNative: (showNative) => showNative(silent: silent),
+  );
+
+  @override
+  Future<void> showMessageNotificationAtNativeBoundary({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required Future<void> Function(NativeMessageNotificationShow showNative)
+    publishNative,
+  }) => _showMessageNotificationAtNativeBoundary(
+    contactPeerId: contactPeerId,
+    senderUsername: senderUsername,
+    messageText: messageText,
+    payload: payload,
+    silent: silent,
+    contentKind: contentKind,
+    contentEventIdentity: contentEventIdentity,
+    snapshot: snapshot,
+    publishNative: publishNative,
+  );
+
+  Future<void> _showMessageNotificationAtNativeBoundary({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    required String? payload,
+    required bool silent,
+    required ConversationNotificationContentKind? contentKind,
+    required String? contentEventIdentity,
+    required ConversationNotificationSnapshot? snapshot,
+    required Future<void> Function(NativeMessageNotificationShow showNative)
+    publishNative,
   }) async {
     // One notification per conversation — updates on new messages. The id is
     // keyed off the conversation (NOT the per-message payload) so a burst
@@ -274,20 +323,25 @@ class FlutterNotificationService
             conversationKey: contactPeerId,
             metadata: metadata,
           );
-    Future<void> show() => _plugin.show(
-      notificationId,
-      senderUsername,
-      messageText,
-      mknoonConversationNotificationDetails(
-        conversationKey: contactPeerId,
-        silent: silent,
-        autoCancel: metadata == null,
-      ),
-      payload: nativePayload,
-    );
+    var publishedSilently = silent;
+    Future<void> show({required bool silent}) {
+      publishedSilently = silent;
+      return _plugin.show(
+        notificationId,
+        senderUsername,
+        messageText,
+        mknoonConversationNotificationDetails(
+          conversationKey: contactPeerId,
+          silent: silent,
+          autoCancel: metadata == null,
+          snapshot: snapshot,
+        ),
+        payload: nativePayload,
+      );
+    }
 
     if (metadata == null) {
-      await show();
+      await publishNative(show);
     } else {
       final contentRegistry = await _resolveNotificationContentRegistry();
       await contentRegistry.replaceContent(
@@ -295,7 +349,7 @@ class FlutterNotificationService
         notificationId: notificationId,
         metadata: metadata,
         retireCurrent: () => _plugin.cancel(notificationId),
-        replace: show,
+        replace: () => publishNative(show),
       );
     }
 
@@ -308,7 +362,7 @@ class FlutterNotificationService
             : contactPeerId,
         'sender': senderUsername,
         'payload': resolvedPayload,
-        'silent': silent,
+        'silent': publishedSilently,
       },
     );
   }
@@ -473,6 +527,7 @@ class FlutterNotificationService
           conversationKey: conversationKey,
           silent: true,
           autoCancel: false,
+          snapshot: replacement.snapshot,
         ),
         payload: payload,
       ),

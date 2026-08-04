@@ -6049,6 +6049,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close'**
   String get direct_batch_forward_close;
+
+  /// No description provided for @push_registration_health_warning_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications need attention'**
+  String get push_registration_health_warning_title;
+
+  /// No description provided for @push_registration_health_permission_denied.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications are turned off for Mknoon on this device.'**
+  String get push_registration_health_permission_denied;
+
+  /// No description provided for @push_registration_health_no_token.
+  ///
+  /// In en, this message translates to:
+  /// **'This device has not received a notification token yet.'**
+  String get push_registration_health_no_token;
+
+  /// No description provided for @push_registration_health_registration_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Mknoon could not register this device for notifications.'**
+  String get push_registration_health_registration_failed;
+
+  /// No description provided for @push_registration_health_temporary_problem.
+  ///
+  /// In en, this message translates to:
+  /// **'Notification setup hit a temporary problem.'**
+  String get push_registration_health_temporary_problem;
+
+  /// No description provided for @push_registration_health_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get push_registration_health_retry;
+
+  /// No description provided for @push_registration_health_open_notification_settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open notification settings'**
+  String get push_registration_health_open_notification_settings;
 }
 
 class _AppLocalizationsDelegate

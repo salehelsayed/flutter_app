@@ -369,7 +369,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.31.command.2",
+          "keyPath": "capabilities.32.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -397,7 +397,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.30.command.2",
+          "keyPath": "capabilities.31.command.2",
           "value": "integration_test/scripts/run_group_reaction_notification_sims.dart"
         }
       ]
@@ -412,7 +412,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.33.command.1",
+          "keyPath": "capabilities.34.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]
@@ -453,7 +453,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.30.artifactValidator",
+          "keyPath": "capabilities.31.artifactValidator",
           "value": "integration_test/scripts/validate_group_reaction_notification_artifacts.dart"
         }
       ]
@@ -1142,6 +1142,14 @@
       "rootKind": "vm-callback"
     },
     {
+      "id": "callback.android.canonical-runtime-h0-probe",
+      "rootKind": "vm-callback"
+    },
+    {
+      "id": "callback.android.headless-canonical-recovery",
+      "rootKind": "vm-callback"
+    },
+    {
       "id": "callback.flutter-test-config",
       "rootKind": "convention-callback"
     },
@@ -1227,6 +1235,52 @@
           "source": "lib/app/bootstrap/production_application_bootstrap.dart",
           "callee": "FirebaseMessaging.onBackgroundMessage",
           "argument": "firebaseMessagingBackgroundHandler"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.canonical-runtime-h0-probe",
+      "path": "lib/main.dart",
+      "rootKind": "vm-callback",
+      "owner": "Plan 331A / Android runtime proof",
+      "reason": "The debug-only H0 receiver launches this pragma-protected non-UI entrypoint by exact DartEntrypoint name.",
+      "condition": "Remove only with the disposable H0 receiver and equivalent real-engine ownership proof.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/main.dart",
+          "symbol": "androidCanonicalRuntimeH0ProbeMain",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt",
+          "callee": "DartExecutor.DartEntrypoint",
+          "argument": "androidCanonicalRuntimeH0ProbeMain"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.headless-canonical-recovery",
+      "path": "lib/main.dart",
+      "rootKind": "vm-callback",
+      "owner": "Plan 331 / Android notification recovery",
+      "reason": "The WorkManager recovery engine launches this pragma-protected non-UI entrypoint by exact DartEntrypoint name.",
+      "condition": "Remove only with the Android canonical recovery worker and equivalent fail-closed completion protocol.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/main.dart",
+          "symbol": "androidHeadlessCanonicalRecoveryMain",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
+          "callee": "DartExecutor.DartEntrypoint",
+          "argument": "androidHeadlessCanonicalRecoveryMain"
         }
       ]
     },
@@ -1407,7 +1461,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.31.command.2",
+          "keyPath": "capabilities.32.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -1423,7 +1477,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.33.command.1",
+          "keyPath": "capabilities.34.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]

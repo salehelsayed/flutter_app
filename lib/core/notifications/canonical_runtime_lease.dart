@@ -1,0 +1,442 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:uuid/uuid.dart';
+
+const canonicalRuntimeInstallationIdStorageKey =
+    'canonical_runtime_installation_id_v1';
+const canonicalRuntimeAccountBindingStorageKey =
+    'canonical_runtime_account_binding_v1';
+
+enum CanonicalRuntimeLeaseState { active, draining, released }
+
+final class CanonicalRuntimeLeaseSnapshot {
+  const CanonicalRuntimeLeaseSnapshot({
+    required this.state,
+    required this.generation,
+    required this.binding,
+    required this.role,
+    required this.maximumConcurrentWritableOwners,
+  });
+
+  final CanonicalRuntimeLeaseState state;
+  final int? generation;
+  final String? binding;
+  final String? role;
+  final int maximumConcurrentWritableOwners;
+
+  factory CanonicalRuntimeLeaseSnapshot.fromPlatform(Object? value) {
+    if (value is! Map) {
+      throw const FormatException('canonical runtime lease returned no state');
+    }
+    final rawState = value['state'];
+    final state = switch (rawState) {
+      'ACTIVE' => CanonicalRuntimeLeaseState.active,
+      'DRAINING' => CanonicalRuntimeLeaseState.draining,
+      'RELEASED' => CanonicalRuntimeLeaseState.released,
+      _ => throw FormatException('invalid canonical lease state: $rawState'),
+    };
+    final generation = value['generation'];
+    final maximumOwners = value['maximumConcurrentWritableOwners'];
+    return CanonicalRuntimeLeaseSnapshot(
+      state: state,
+      generation: generation is int && generation > 0 ? generation : null,
+      binding: (value['binding'] as String?)?.trim(),
+      role: value['role'] as String?,
+      maximumConcurrentWritableOwners: maximumOwners is int
+          ? maximumOwners
+          : state == CanonicalRuntimeLeaseState.released
+          ? 0
+          : 1,
+    );
+  }
+}
+
+abstract interface class CanonicalRuntimeLeaseGateway {
+  Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding);
+
+  Future<bool> attachRuntime();
+
+  Future<CanonicalRuntimeLeaseSnapshot> rebind(String binding);
+
+  Future<bool> beginDrain();
+
+  Future<bool> quiesceRuntime();
+
+  Future<bool> release({required bool databaseClosed});
+
+  Future<CanonicalRuntimeLeaseSnapshot> status();
+}
+
+/// Engine-bound facade. Native fixes owner identity and role at registration;
+/// Dart can neither impersonate another engine nor acquire the FCM read-only
+/// engine as a writable owner.
+final class MethodChannelCanonicalRuntimeLeaseGateway
+    implements CanonicalRuntimeLeaseGateway {
+  static const channelName = 'mknoon/canonical_runtime_lease';
+
+  MethodChannelCanonicalRuntimeLeaseGateway({
+    MethodChannel channel = const MethodChannel(channelName),
+  }) : _channel = channel;
+
+  final MethodChannel _channel;
+
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding) async {
+    final normalized = _requiredBinding(binding);
+    final value = await _channel.invokeMethod<Object?>('acquire', {
+      'binding': normalized,
+    });
+    return CanonicalRuntimeLeaseSnapshot.fromPlatform(value);
+  }
+
+  @override
+  Future<bool> attachRuntime() async =>
+      await _channel.invokeMethod<bool>('attachRuntime') ?? false;
+
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> rebind(String binding) async {
+    final normalized = _requiredBinding(binding);
+    final value = await _channel.invokeMethod<Object?>('rebind', {
+      'binding': normalized,
+    });
+    return CanonicalRuntimeLeaseSnapshot.fromPlatform(value);
+  }
+
+  @override
+  Future<bool> beginDrain() async =>
+      await _channel.invokeMethod<bool>('beginDrain') ?? false;
+
+  @override
+  Future<bool> quiesceRuntime() async =>
+      await _channel.invokeMethod<bool>('quiesceRuntime') ?? false;
+
+  @override
+  Future<bool> release({required bool databaseClosed}) async =>
+      await _channel.invokeMethod<bool>('release', {
+        'databaseClosed': databaseClosed,
+      }) ??
+      false;
+
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> status() async {
+    final value = await _channel.invokeMethod<Object?>('status');
+    return CanonicalRuntimeLeaseSnapshot.fromPlatform(value);
+  }
+
+  String _requiredBinding(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(value, 'binding', 'must not be blank');
+    }
+    return normalized;
+  }
+}
+
+/// Low-level lease lifecycle shared by foreground bootstrap and the H0 probe.
+/// Recovery inbox orchestration lives in CanonicalRecoveryRuntime; this class
+/// intentionally knows nothing about markers, drains, projection, or ack.
+final class CanonicalWritableRuntimeSession {
+  CanonicalWritableRuntimeSession({
+    required CanonicalRuntimeLeaseGateway gateway,
+  }) : _gateway = gateway;
+
+  final CanonicalRuntimeLeaseGateway _gateway;
+  CanonicalRuntimeLeaseState _state = CanonicalRuntimeLeaseState.released;
+  bool _hasWritableLease = false;
+
+  bool get hasWritableLease => _hasWritableLease;
+  CanonicalRuntimeLeaseState get state => _state;
+
+  Future<T> acquireThenOpen<T>({
+    required String binding,
+    required Future<T> Function() openDatabase,
+    Future<bool> Function()? closeAfterOpenFailure,
+    Future<bool> Function(T database)? closeDatabaseOnRuntimeAttachFailure,
+  }) async {
+    if (_hasWritableLease) {
+      throw StateError('canonical writable runtime is already acquired');
+    }
+    final snapshot = await _gateway.acquire(binding);
+    if (snapshot.state != CanonicalRuntimeLeaseState.active) {
+      throw StateError('canonical writable lease did not become ACTIVE');
+    }
+    _hasWritableLease = true;
+    _state = CanonicalRuntimeLeaseState.active;
+    late final T database;
+    try {
+      database = await openDatabase();
+    } catch (error, stackTrace) {
+      final draining = await _gateway.beginDrain();
+      if (draining) {
+        _state = CanonicalRuntimeLeaseState.draining;
+        var databaseClosed = false;
+        if (closeAfterOpenFailure != null) {
+          try {
+            databaseClosed = await closeAfterOpenFailure();
+          } catch (_) {
+            databaseClosed = false;
+          }
+        }
+        final released = await _gateway.release(databaseClosed: databaseClosed);
+        if (released) {
+          _hasWritableLease = false;
+          _state = CanonicalRuntimeLeaseState.released;
+        }
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    Object? attachFailure;
+    StackTrace? attachFailureStack;
+    try {
+      if (!await _gateway.attachRuntime()) {
+        attachFailure = StateError(
+          'Go runtime could not attach after SQLCipher opened',
+        );
+        attachFailureStack = StackTrace.current;
+      }
+    } catch (error, stackTrace) {
+      attachFailure = error;
+      attachFailureStack = stackTrace;
+    }
+    if (attachFailure != null) {
+      final draining = await _gateway.beginDrain();
+      if (draining) {
+        _state = CanonicalRuntimeLeaseState.draining;
+        var databaseClosed = false;
+        if (closeDatabaseOnRuntimeAttachFailure != null) {
+          try {
+            databaseClosed = await closeDatabaseOnRuntimeAttachFailure(
+              database,
+            );
+          } catch (_) {
+            databaseClosed = false;
+          }
+        }
+        final released = await _gateway.release(databaseClosed: databaseClosed);
+        if (released) {
+          _hasWritableLease = false;
+          _state = CanonicalRuntimeLeaseState.released;
+        }
+      }
+      Error.throwWithStackTrace(attachFailure, attachFailureStack!);
+    }
+    return database;
+  }
+
+  Future<CanonicalRuntimeLeaseSnapshot> rebind(String binding) async {
+    if (!_hasWritableLease || _state != CanonicalRuntimeLeaseState.active) {
+      throw StateError('only the ACTIVE writable owner can rotate binding');
+    }
+    return _gateway.rebind(binding);
+  }
+
+  /// Ordered detach: reject new work, quiesce Go, close SQLCipher, then release.
+  /// Any quiescence/close failure deliberately retains DRAINING ownership.
+  Future<void> drainCloseRelease({
+    required Future<void> Function() stopRuntime,
+    required Future<void> Function() closeDatabase,
+  }) async {
+    if (!_hasWritableLease) return;
+    if (!await _gateway.beginDrain()) {
+      throw StateError('canonical writable owner could not begin draining');
+    }
+    _state = CanonicalRuntimeLeaseState.draining;
+
+    try {
+      await stopRuntime();
+    } catch (error, stackTrace) {
+      await _gateway.release(databaseClosed: false);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    var databaseClosed = false;
+    try {
+      await closeDatabase();
+      databaseClosed = true;
+    } catch (error, stackTrace) {
+      await _gateway.release(databaseClosed: false);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    final released = await _gateway.release(databaseClosed: databaseClosed);
+    if (!released) {
+      throw StateError('canonical writable lease release was rejected');
+    }
+    _hasWritableLease = false;
+    _state = CanonicalRuntimeLeaseState.released;
+  }
+}
+
+/// Documents and exposes the third-engine rule without creating a writable API.
+final class FirebaseReadOnlyRuntimePolicy {
+  const FirebaseReadOnlyRuntimePolicy();
+
+  bool get mayAcquireWritableLease => false;
+}
+
+final class CanonicalRuntimeStartupBinding {
+  const CanonicalRuntimeStartupBinding({
+    required this.leaseBinding,
+    required this.hasAccount,
+  });
+
+  final String leaseBinding;
+  final bool hasAccount;
+}
+
+typedef CanonicalRuntimeOverlayRebind =
+    Future<void> Function(String? opaqueBinding);
+
+/// Owns the device-local installation secret and opaque account digest.
+/// Publishing never activates Plan 331's worker; H0 only establishes fencing.
+final class CanonicalRuntimeBindingCoordinator {
+  CanonicalRuntimeBindingCoordinator({
+    required SecureKeyStore secureKeyStore,
+    required CanonicalRuntimeLeaseGateway leaseGateway,
+    required DroppedPushRecoveryBindingPublisher droppedPushBindingPublisher,
+    CanonicalRuntimeOverlayRebind? rebindPendingNotificationOverlay,
+    String Function()? createInstallationId,
+  }) : _secureKeyStore = secureKeyStore,
+       _leaseGateway = leaseGateway,
+       _droppedPushBindingPublisher = droppedPushBindingPublisher,
+       _rebindPendingNotificationOverlay = rebindPendingNotificationOverlay,
+       _createInstallationId = createInstallationId ?? const Uuid().v4;
+
+  final SecureKeyStore _secureKeyStore;
+  final CanonicalRuntimeLeaseGateway _leaseGateway;
+  final DroppedPushRecoveryBindingPublisher _droppedPushBindingPublisher;
+  final CanonicalRuntimeOverlayRebind? _rebindPendingNotificationOverlay;
+  final String Function() _createInstallationId;
+
+  Future<CanonicalRuntimeStartupBinding> loadStartupBinding() async {
+    final installationId = await _installationId();
+    final persisted = (await _secureKeyStore.read(
+      canonicalRuntimeAccountBindingStorageKey,
+    ))?.trim();
+    if (_isOpaqueBinding(persisted)) {
+      await _rebindDerivedOverlayBestEffort(
+        persisted,
+        operation: 'startup_bind',
+      );
+      return CanonicalRuntimeStartupBinding(
+        leaseBinding: persisted!,
+        hasAccount: true,
+      );
+    }
+    if (persisted != null) {
+      await _secureKeyStore.delete(canonicalRuntimeAccountBindingStorageKey);
+    }
+    await _rebindDerivedOverlayBestEffort(null, operation: 'startup_retire');
+    return CanonicalRuntimeStartupBinding(
+      leaseBinding: _derive(installationId, accountPeerId: null),
+      hasAccount: false,
+    );
+  }
+
+  Future<String> publishAccount(String accountPeerId) async {
+    final normalizedPeerId = accountPeerId.trim();
+    if (normalizedPeerId.isEmpty) {
+      throw ArgumentError.value(
+        accountPeerId,
+        'accountPeerId',
+        'must not be blank',
+      );
+    }
+    final binding = _derive(
+      await _installationId(),
+      accountPeerId: normalizedPeerId,
+    );
+    await _writeAndVerify(canonicalRuntimeAccountBindingStorageKey, binding);
+    if (!await _droppedPushBindingPublisher.setCurrentBinding(
+      binding,
+      activateRecoveryWork: false,
+    )) {
+      throw StateError('native recovery binding publication was rejected');
+    }
+    await _leaseGateway.rebind(binding);
+    // The overlay is derived cache, never account authority. Commit secure,
+    // native, and lease bindings first. A stale overlay is independently
+    // unreadable because every operation compares the canonical secure binding.
+    await _rebindDerivedOverlayBestEffort(
+      binding,
+      operation: 'publish_account',
+    );
+    return binding;
+  }
+
+  Future<String> retireAccount() async {
+    final installationId = await _installationId();
+    await _secureKeyStore.delete(canonicalRuntimeAccountBindingStorageKey);
+    if (await _secureKeyStore.read(canonicalRuntimeAccountBindingStorageKey) !=
+        null) {
+      throw StateError('canonical account binding deletion was not durable');
+    }
+    if (!await _droppedPushBindingPublisher.setCurrentBinding(
+      null,
+      activateRecoveryWork: false,
+    )) {
+      throw StateError('native recovery binding retirement was rejected');
+    }
+    final provisional = _derive(installationId, accountPeerId: null);
+    await _leaseGateway.rebind(provisional);
+    await _rebindDerivedOverlayBestEffort(null, operation: 'retire_account');
+    return provisional;
+  }
+
+  Future<void> _rebindDerivedOverlayBestEffort(
+    String? binding, {
+    required String operation,
+  }) async {
+    final rebind = _rebindPendingNotificationOverlay;
+    if (rebind == null) return;
+    try {
+      await rebind(binding);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_NOTIFICATION_OVERLAY_REBIND_FAILED',
+        details: {
+          'operation': operation,
+          'bindingPresent': binding != null,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+    }
+  }
+
+  Future<String> _installationId() async {
+    final existing = (await _secureKeyStore.read(
+      canonicalRuntimeInstallationIdStorageKey,
+    ))?.trim();
+    if (existing != null && existing.isNotEmpty) return existing;
+    final created = _createInstallationId().trim();
+    if (created.isEmpty) {
+      throw StateError('installation ID generator returned a blank value');
+    }
+    await _writeAndVerify(canonicalRuntimeInstallationIdStorageKey, created);
+    return created;
+  }
+
+  Future<void> _writeAndVerify(String key, String value) async {
+    await _secureKeyStore.write(key, value);
+    if (await _secureKeyStore.read(key) != value) {
+      throw StateError('secure binding write was not durable: $key');
+    }
+  }
+
+  String _derive(String installationId, {required String? accountPeerId}) {
+    final account = accountPeerId ?? '<unbound>';
+    final bytes = utf8.encode(
+      'mknoon/canonical-runtime-binding/v1\u0000$installationId\u0000$account',
+    );
+    return 'v1:${sha256.convert(bytes)}';
+  }
+
+  bool _isOpaqueBinding(String? value) =>
+      value != null && RegExp(r'^v1:[0-9a-f]{64}$').hasMatch(value);
+}

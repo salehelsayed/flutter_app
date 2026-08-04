@@ -35,6 +35,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/cli_peer_fixture.dart';
 import '_support/fake_secure_key_store.dart';
 import '_support/signal_files.dart';
@@ -378,6 +379,12 @@ bool _isAcceptedLiveIncomingTransport(String? transport) {
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'wifi-relay-fallback-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();

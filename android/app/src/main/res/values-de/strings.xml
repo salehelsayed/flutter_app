@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dropped_push_recovery_channel_name">Nachrichtenwiederherstellung</string>
+    <string name="dropped_push_recovery_channel_description">Benachrichtigt, wenn möglicherweise Nachrichten wiederhergestellt werden müssen</string>
+    <string name="dropped_push_recovery_notification_title">MKnoon</string>
+    <string name="dropped_push_recovery_notification_body">Möglicherweise warten Nachrichten</string>
+    <string name="dropped_push_recovery_worker_body">Nachrichten werden wiederhergestellt</string>
+</resources>

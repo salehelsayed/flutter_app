@@ -1,6 +1,9 @@
 package com.mknoon.app
 
 import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
@@ -12,8 +15,14 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     companion object {
         private const val PICTURE_IN_PICTURE_LIFECYCLE_TAG = "MknoonPiP"
+        private const val CANONICAL_RUNTIME_SHUTDOWN_CHANNEL =
+            "mknoon/canonical_runtime_shutdown"
+        private const val CANONICAL_RUNTIME_SHUTDOWN_TIMEOUT_MS = 5_000L
+        private const val CANONICAL_RUNTIME_SHUTDOWN_RETRY_MS = 500L
+        private const val CANONICAL_RUNTIME_SHUTDOWN_MAX_ATTEMPTS = 3
         private val privateMediaProtectionRegistry =
             PrivateMediaProtectionHandlerRegistry()
+        private var retainedCanonicalRuntimeEngine: FlutterEngine? = null
     }
 
     private var goBridge: GoBridge? = null
@@ -22,8 +31,19 @@ class MainActivity : FlutterActivity() {
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
+    private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
+    private var canonicalRuntimeShutdownChannel: MethodChannel? = null
+    private var pushNotificationSettingsChannel: MethodChannel? = null
+    private var retainEngineForCanonicalShutdown = false
+    private var canonicalRuntimeCleanupFinished = false
+    private var canonicalRuntimeShutdownAttempts = 0
     // 180: native jmDNS resolver for the Android-discovers-iOS `.local` wall.
     private var mdnsResolver: MdnsResolver? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -54,11 +74,46 @@ class MainActivity : FlutterActivity() {
             activity = this,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
-        goBridge = GoBridge(flutterEngine, applicationContext)
+        canonicalRuntimeLeaseBridge = CanonicalRuntimeLeaseBridge(
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+            ownerId = "foreground-${System.identityHashCode(flutterEngine)}",
+            role = CanonicalRuntimeLeaseBroker.Role.FOREGROUND,
+            attachRuntimeOwner = {
+                if (goBridge == null) {
+                    goBridge = runCatching {
+                        GoBridge(flutterEngine, applicationContext)
+                    }.getOrNull()
+                }
+                goBridge != null
+            },
+            beginRuntimeDrain = {
+                goBridge?.requestRuntimeDrain() ?: true
+            },
+            isRuntimeReleased = {
+                goBridge?.isRuntimeReleased() ?: true
+            },
+        )
         droppedPushRecoveryBridge = DroppedPushRecoveryBridge(
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        canonicalRuntimeShutdownChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CANONICAL_RUNTIME_SHUTDOWN_CHANNEL,
+        )
+        pushNotificationSettingsChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PushNotificationSettingsLauncher.METHOD_CHANNEL,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    PushNotificationSettingsLauncher.OPEN_METHOD -> result.success(
+                        PushNotificationSettingsLauncher.open(applicationContext),
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+        }
         // Move Account transfer keep-alive: Dart holds/releases a dataSync
         // foreground service so backgrounding mid-transfer cannot freeze the
         // segment upload or the local receiver (audit gap G7).
@@ -170,14 +225,187 @@ class MainActivity : FlutterActivity() {
         pictureInPictureHandler = null
         droppedPushRecoveryBridge?.dispose()
         droppedPushRecoveryBridge = null
+        val destroyEngineWithHost = super.shouldDestroyEngineWithHost()
         privateMediaProtectionRegistry.detach(
             engineIdentity = flutterEngine,
             activity = this,
-            destroyEngine = shouldDestroyEngineWithHost(),
+            destroyEngine = false,
         )
         privateMediaProtectionHandler = null
         privateMediaProtectionEngine = null
+
+        val leaseState = ProcessCanonicalRuntimeLease.broker.snapshot().state
+        if (leaseState == CanonicalRuntimeLeaseBroker.State.RELEASED) {
+            finishCanonicalRuntimeEngineCleanup(
+                flutterEngine = flutterEngine,
+                destroyRetainedEngine = false,
+                reason = "already_released",
+            )
+            super.cleanUpFlutterEngine(flutterEngine)
+            return
+        }
+
+        // FlutterActivity would otherwise destroy the engine immediately after
+        // this synchronous hook returns. Retain it briefly so Dart can quiesce
+        // Go, explicitly close SQLCipher, and acknowledge native lease release.
+        retainEngineForCanonicalShutdown = true
+        requestCanonicalRuntimeShutdown(
+            flutterEngine = flutterEngine,
+            destroyRetainedEngine = destroyEngineWithHost,
+        )
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    override fun shouldDestroyEngineWithHost(): Boolean =
+        if (retainEngineForCanonicalShutdown) {
+            false
+        } else {
+            super.shouldDestroyEngineWithHost()
+        }
+
+    private fun requestCanonicalRuntimeShutdown(
+        flutterEngine: FlutterEngine,
+        destroyRetainedEngine: Boolean,
+    ) {
+        canonicalRuntimeShutdownAttempts += 1
+        val mainHandler = Handler(Looper.getMainLooper())
+        var settled = false
+        fun settle(released: Boolean, reason: String) {
+            if (settled) return
+            settled = true
+            if (released) {
+                finishCanonicalRuntimeEngineCleanup(
+                    flutterEngine = flutterEngine,
+                    destroyRetainedEngine = destroyRetainedEngine,
+                    reason = reason,
+                )
+            } else {
+                retainCanonicalRuntimeEngineAfterFailedShutdown(
+                    flutterEngine = flutterEngine,
+                    destroyRetainedEngine = destroyRetainedEngine,
+                    reason = reason,
+                )
+            }
+        }
+        val timeout = Runnable {
+            settle(released = false, reason = "shutdown_timeout_retained")
+        }
+        mainHandler.postDelayed(timeout, CANONICAL_RUNTIME_SHUTDOWN_TIMEOUT_MS)
+        val channel = canonicalRuntimeShutdownChannel
+        if (channel == null) {
+            mainHandler.removeCallbacks(timeout)
+            settle(
+                released = false,
+                reason = "shutdown_channel_missing_retained",
+            )
+            return
+        }
+        channel.invokeMethod(
+            "shutdown",
+            null,
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    mainHandler.post {
+                        mainHandler.removeCallbacks(timeout)
+                        val reply = result as? Map<*, *>
+                        val released = reply?.get("released") == true &&
+                            reply["databaseClosed"] == true &&
+                            reply["leaseState"] == "released" &&
+                            ProcessCanonicalRuntimeLease.broker.snapshot().state ==
+                            CanonicalRuntimeLeaseBroker.State.RELEASED
+                        settle(
+                            released = released,
+                            reason = if (released) {
+                                "dart_close_acknowledged"
+                            } else {
+                                "dart_close_rejected_retained"
+                            },
+                        )
+                    }
+                }
+
+                override fun error(
+                    errorCode: String,
+                    errorMessage: String?,
+                    errorDetails: Any?,
+                ) {
+                    mainHandler.post {
+                        mainHandler.removeCallbacks(timeout)
+                        settle(
+                            released = false,
+                            reason = "dart_shutdown_error_retained:$errorCode",
+                        )
+                    }
+                }
+
+                override fun notImplemented() {
+                    mainHandler.post {
+                        mainHandler.removeCallbacks(timeout)
+                        settle(
+                            released = false,
+                            reason = "dart_shutdown_missing_retained",
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    private fun retainCanonicalRuntimeEngineAfterFailedShutdown(
+        flutterEngine: FlutterEngine,
+        destroyRetainedEngine: Boolean,
+        reason: String,
+    ) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        retainedCanonicalRuntimeEngine = flutterEngine
+        retainEngineForCanonicalShutdown = true
+        Log.w(
+            "CanonicalRuntime",
+            "foreground_engine_retained reason=$reason " +
+                "attempt=$canonicalRuntimeShutdownAttempts",
+        )
+        if (
+            canonicalRuntimeShutdownAttempts <
+            CANONICAL_RUNTIME_SHUTDOWN_MAX_ATTEMPTS
+        ) {
+            Handler(Looper.getMainLooper()).postDelayed(
+                {
+                    requestCanonicalRuntimeShutdown(
+                        flutterEngine = flutterEngine,
+                        destroyRetainedEngine = destroyRetainedEngine,
+                    )
+                },
+                CANONICAL_RUNTIME_SHUTDOWN_RETRY_MS,
+            )
+        }
+    }
+
+    private fun finishCanonicalRuntimeEngineCleanup(
+        flutterEngine: FlutterEngine,
+        destroyRetainedEngine: Boolean,
+        reason: String,
+    ) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (canonicalRuntimeCleanupFinished) return
+        canonicalRuntimeCleanupFinished = true
+        Log.i("CanonicalRuntime", "foreground_engine_cleanup reason=$reason")
+        retainedCanonicalRuntimeEngine = null
+        canonicalRuntimeShutdownChannel = null
+        pushNotificationSettingsChannel?.setMethodCallHandler(null)
+        pushNotificationSettingsChannel = null
+        goBridge?.dispose()
+        goBridge = null
+        canonicalRuntimeLeaseBridge?.dispose()
+        canonicalRuntimeLeaseBridge = null
+        if (retainEngineForCanonicalShutdown && destroyRetainedEngine) {
+            privateMediaProtectionRegistry.detach(
+                engineIdentity = flutterEngine,
+                activity = this,
+                destroyEngine = true,
+            )
+            flutterEngine.destroy()
+        }
+        retainEngineForCanonicalShutdown = false
     }
 
     override fun onDestroy() {

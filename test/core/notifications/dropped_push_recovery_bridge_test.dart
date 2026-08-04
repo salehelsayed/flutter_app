@@ -37,6 +37,59 @@ void main() {
   );
 
   test(
+    'account-bound authority reads and acknowledges the exact marker',
+    () async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return switch (call.method) {
+              'currentBinding' => ' install-a/account-a ',
+              'pendingRecovery' => <String, Object?>{
+                'generation': 41,
+                'binding': 'install-a/account-a',
+              },
+              'acknowledgeRecovery' => true,
+              _ => null,
+            };
+          });
+
+      expect(await bridge.currentBinding(), 'install-a/account-a');
+      final marker = await bridge.pendingRecovery();
+      expect(marker?.generation, 41);
+      expect(marker?.binding, 'install-a/account-a');
+      expect(await bridge.acknowledgeRecovery(marker!), isTrue);
+      expect(calls.last.method, 'acknowledgeRecovery');
+      expect(calls.last.arguments, <String, Object?>{
+        'generation': 41,
+        'binding': 'install-a/account-a',
+      });
+    },
+  );
+
+  test(
+    'malformed account-bound marker is never accepted or acknowledged',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            channel,
+            (_) async => <String, Object?>{
+              'generation': 0,
+              'binding': 'install-a/account-a',
+            },
+          );
+
+      expect(await bridge.pendingRecovery(), isNull);
+      expect(
+        await bridge.acknowledgeRecovery(
+          const DroppedPushRecoveryMarker(generation: 7, binding: '   '),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'zero, malformed, and missing plugin pending results degrade to null',
     () async {
       var response = 0;

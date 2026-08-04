@@ -203,6 +203,74 @@ void main() {
   );
 
   test(
+    'Android native boundary runs after registry retirement and directly wraps show',
+    () async {
+      final service = buildService();
+      await service.initialize();
+      final effects = <String>[];
+
+      await service.showMessageNotificationAtNativeBoundary(
+        contactPeerId: 'peer-native-boundary',
+        senderUsername: 'Alice',
+        messageText: 'Prepared first',
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'message-native-boundary',
+        publishNative: (showNative) async {
+          effects.add('boundary_entered');
+          expect(log.where((call) => call.method == 'cancel'), hasLength(1));
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          await showNative(silent: true);
+          effects.add('boundary_returned');
+        },
+      );
+
+      expect(effects, <String>['boundary_entered', 'boundary_returned']);
+      final notificationEffects = log
+          .where((call) => call.method == 'cancel' || call.method == 'show')
+          .map((call) => call.method)
+          .toList(growable: false);
+      expect(notificationEffects, <String>['cancel', 'show']);
+      final show = log.singleWhere((call) => call.method == 'show');
+      final specifics = (show.arguments as Map)['platformSpecifics'] as Map;
+      expect(specifics['playSound'], isFalse);
+    },
+  );
+
+  test(
+    'android conversation card carries canonical history and uncapped number',
+    () async {
+      final service = buildService();
+
+      await service.initialize();
+      await service.showMessageNotification(
+        contactPeerId: 'peer-history',
+        senderUsername: 'Alice',
+        messageText: 'newest',
+        snapshot: ConversationNotificationSnapshot(
+          historyLines: <String>[
+            'oldest eligible',
+            'middle eligible',
+            'newest',
+          ],
+          totalUnreadMessageCount: 17,
+        ),
+      );
+
+      final args = log.last.arguments as Map;
+      final platformSpecifics = args['platformSpecifics'] as Map;
+      expect(platformSpecifics['number'], 17);
+      expect(platformSpecifics['style'], AndroidNotificationStyle.inbox.index);
+      final style = platformSpecifics['styleInformation'] as Map;
+      expect(style['lines'], <String>[
+        'oldest eligible',
+        'middle eligible',
+        'newest',
+      ]);
+      expect(style['htmlFormatLines'], isFalse);
+    },
+  );
+
+  test(
     'showMessageNotification forwards explicit group anchor payload overrides',
     () async {
       final service = buildService();

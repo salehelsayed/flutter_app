@@ -21,5 +21,7 @@ class DroppedPushRecoveryManifestSourceTest {
             RegexOption.DOT_MATCHES_ALL,
         )
         assertTrue(customOwner.containsMatchIn(xml))
+        assertTrue(xml.contains("androidx.work.impl.foreground.SystemForegroundService"))
+        assertTrue(xml.contains("android:foregroundServiceType=\"dataSync\""))
     }
 }

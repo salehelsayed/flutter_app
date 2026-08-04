@@ -54,6 +54,18 @@ environment:
 // ignore: UnUsEd_ElEmEnT -- case-insensitive diagnostic
 void _overrideSuppressed() {}
 ''',
+          'third_party/override/example/pubspec.yaml': '''
+name: overridden_example
+environment:
+  sdk: ^3.9.0
+''',
+          'third_party/override/example/analysis_options.yaml': '''
+include: package:deliberately_unresolved/options.yaml
+''',
+          'third_party/override/example/lib/example.dart': '''
+// ignore: unused_element
+void _exampleSuppressionMustNotAppear() {}
+''',
           'deep/arbitrary/package/pubspec.yaml': '''
 name: arbitrary
 environment:
@@ -883,6 +895,7 @@ void _testOnlySuppression() {}
         '',
         'packages/background_push_crypto',
         'third_party/bonsoir_darwin',
+        'third_party/sqflite_sqlcipher',
       ]);
       expect(
         inventory.entries,

@@ -135,7 +135,7 @@ void main() {
       await runProductionOnUpgrade(db, 100, 101);
       await runGroupPrivateMediaLifecycleMigration(db);
 
-      expect(currentIdentityDatabaseVersion, 106);
+      expect(currentIdentityDatabaseVersion, 107);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -152,15 +152,18 @@ void main() {
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
         expect(registry.where((entry) => entry.version == 105), hasLength(1));
         expect(registry.where((entry) => entry.version == 106), hasLength(1));
+        expect(registry.where((entry) => entry.version == 107), hasLength(1));
         expect(index101, index100 + 1);
         expect(index102, index101 + 1);
         expect(index103, index102 + 1);
         expect(index104, index103 + 1);
         final index105 = registry.indexWhere((entry) => entry.version == 105);
         final index106 = registry.indexWhere((entry) => entry.version == 106);
+        final index107 = registry.indexWhere((entry) => entry.version == 107);
         expect(index105, index104 + 1);
         expect(index106, index105 + 1);
-        expect(index106, registry.length - 1);
+        expect(index107, index106 + 1);
+        expect(index107, registry.length - 1);
         expect(
           registry[index100].run,
           same(runDirectPrivateMediaLifecycleMigration),

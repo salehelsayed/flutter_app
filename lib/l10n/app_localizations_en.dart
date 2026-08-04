@@ -3629,4 +3629,31 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get direct_batch_forward_close => 'Close';
+
+  @override
+  String get push_registration_health_warning_title =>
+      'Notifications need attention';
+
+  @override
+  String get push_registration_health_permission_denied =>
+      'Notifications are turned off for Mknoon on this device.';
+
+  @override
+  String get push_registration_health_no_token =>
+      'This device has not received a notification token yet.';
+
+  @override
+  String get push_registration_health_registration_failed =>
+      'Mknoon could not register this device for notifications.';
+
+  @override
+  String get push_registration_health_temporary_problem =>
+      'Notification setup hit a temporary problem.';
+
+  @override
+  String get push_registration_health_retry => 'Retry';
+
+  @override
+  String get push_registration_health_open_notification_settings =>
+      'Open notification settings';
 }

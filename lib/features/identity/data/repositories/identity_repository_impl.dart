@@ -20,6 +20,9 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final SecureKeyStore? _pushSharedKeyStore;
   final DirectReactionNotificationProjection? _directReactionProjection;
   final GroupReactionNotificationProjection? _groupReactionProjection;
+  final Future<void> Function(String accountPeerId)?
+  _publishCanonicalAccountBinding;
+  final Future<void> Function()? _retireCanonicalAccountBinding;
   IdentityModel? _cachedIdentity;
   bool _hasCachedIdentity = false;
 
@@ -31,12 +34,16 @@ class IdentityRepositoryImpl implements IdentityRepository {
     SecureKeyStore? pushSharedKeyStore,
     DirectReactionNotificationProjection? directReactionProjection,
     GroupReactionNotificationProjection? groupReactionProjection,
+    Future<void> Function(String accountPeerId)? publishCanonicalAccountBinding,
+    Future<void> Function()? retireCanonicalAccountBinding,
   }) : _dbLoadIdentityRow = dbLoadIdentityRow,
        _dbUpsertIdentityRow = dbUpsertIdentityRow,
        _secureKeyStore = secureKeyStore,
        _pushSharedKeyStore = pushSharedKeyStore,
        _directReactionProjection = directReactionProjection,
-       _groupReactionProjection = groupReactionProjection;
+       _groupReactionProjection = groupReactionProjection,
+       _publishCanonicalAccountBinding = publishCanonicalAccountBinding,
+       _retireCanonicalAccountBinding = retireCanonicalAccountBinding;
 
   void invalidateCache() {
     _cachedIdentity = null;
@@ -70,6 +77,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     if (row == null) {
       await _groupReactionProjection?.clearForLogout();
       await _directReactionProjection?.clearForLogout();
+      await _retireCanonicalAccountBinding?.call();
       _cachedIdentity = null;
       _hasCachedIdentity = true;
       emitFlowEvent(
@@ -112,6 +120,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     if (privateKey == null || mnemonic12 == null) {
       await _groupReactionProjection?.clearForLogout();
       await _directReactionProjection?.clearForLogout();
+      await _retireCanonicalAccountBinding?.call();
       _cachedIdentity = null;
       _hasCachedIdentity = true;
       emitFlowEvent(
@@ -136,6 +145,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       updatedAt: row['updated_at'] as String,
     );
     await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);
+    await _publishCanonicalAccountBinding?.call(identity.peerId);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
 
@@ -202,6 +212,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     };
 
     await _dbUpsertIdentityRow(row);
+    await _publishCanonicalAccountBinding?.call(identity.peerId);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
 

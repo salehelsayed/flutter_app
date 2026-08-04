@@ -1,6 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
@@ -9,6 +13,20 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+
+typedef ResolveReactionNotificationDependencies =
+    ({
+      NotificationService service,
+      ActiveConversationTracker tracker,
+      AppLifecycleState Function() lifecycle,
+      NotificationToneTracker toneTracker,
+      ResolveDurableNotificationCoordinator durableCoordinatorResolver,
+      ConsumeRecentRemoteNotificationAnnouncement consumeRemoteAnnouncement,
+      MarkRecentRemoteNotificationAnnouncement markRemoteAnnouncement,
+      LoadConversationNotificationSnapshot loadSnapshot,
+    })?
+    Function(String contactPeerId);
 
 /// Listener service that monitors P2P messages for emoji reactions.
 ///
@@ -22,6 +40,14 @@ class ReactionListener {
   final ContactRepository contactRepo;
   final Bridge bridge;
   final Future<String?> Function() getOwnMlKemSecretKey;
+  final ResolveReactionNotificationDependencies?
+  resolveNotificationDependencies;
+  final StageDirectReactionNotificationDisplayCustody?
+  stageNotificationDisplayCustody;
+  final PromoteDirectReactionNotificationDisplayCustody?
+  promoteNotificationDisplayCustody;
+  final CommitDirectReactionNotificationRemove? commitNotificationRemove;
+  final Future<void> Function()? retryNotificationDisplays;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _reactionController = StreamController<MessageReaction>.broadcast();
@@ -35,6 +61,11 @@ class ReactionListener {
     required this.contactRepo,
     required this.bridge,
     required this.getOwnMlKemSecretKey,
+    this.resolveNotificationDependencies,
+    this.stageNotificationDisplayCustody,
+    this.promoteNotificationDisplayCustody,
+    this.commitNotificationRemove,
+    this.retryNotificationDisplays,
   });
 
   /// Stream of incoming reactions for the UI.
@@ -120,6 +151,7 @@ class ReactionListener {
       }
 
       final ownSecretKey = await getOwnMlKemSecretKey();
+      final notify = resolveNotificationDependencies?.call(message.from);
 
       final (result, change) = await handleIncomingReaction(
         message: message,
@@ -128,6 +160,21 @@ class ReactionListener {
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
+        notificationService: notify?.service,
+        conversationTracker: notify?.tracker,
+        getAppLifecycleState: notify?.lifecycle,
+        notificationToneTracker: notify?.toneTracker,
+        durableNotificationCoordinatorResolver:
+            notify?.durableCoordinatorResolver,
+        consumeRecentRemoteNotificationAnnouncement:
+            notify?.consumeRemoteAnnouncement,
+        markRecentRemoteNotificationAnnouncement:
+            notify?.markRemoteAnnouncement,
+        loadConversationNotificationSnapshot: notify?.loadSnapshot,
+        stageNotificationDisplayCustody: stageNotificationDisplayCustody,
+        promoteNotificationDisplayCustody: promoteNotificationDisplayCustody,
+        commitNotificationRemove: commitNotificationRemove,
+        retryNotificationDisplays: retryNotificationDisplays,
       );
 
       if (result == HandleReactionResult.success && change != null) {

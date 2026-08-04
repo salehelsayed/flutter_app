@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dropped_push_recovery_channel_name">Message recovery</string>
+    <string name="dropped_push_recovery_channel_description">Alerts when messages may be waiting to be recovered</string>
+    <string name="dropped_push_recovery_notification_title">MKnoon</string>
+    <string name="dropped_push_recovery_notification_body">Messages may be waiting</string>
+    <string name="dropped_push_recovery_worker_body">Recovering messages</string>
+</resources>

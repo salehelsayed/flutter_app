@@ -1,9 +1,11 @@
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -32,6 +34,10 @@ void main() {
             'video_quality_preference',
             'push_fcm_token',
             'push_fcm_platform',
+            'push_registration_health_v1',
+            PendingConversationNotificationOverlayStore.secureStorageKey,
+            canonicalRuntimeInstallationIdStorageKey,
+            canonicalRuntimeAccountBindingStorageKey,
             SecureKeyStoreAccountMigrationAuthorityRepository.storageKey,
             SecureKeyStoreMigrationPairingSessionRepository.storageKey,
             // 198 TC-198-37 — the sculpt geometry key is Move-registered.
@@ -76,6 +82,45 @@ void main() {
           MigrationSecureStorageKeyPolicy.clearRegenerate,
         );
         expect(byKey['push_fcm_platform']!.includeInExportPayload, isFalse);
+        expect(
+          byKey['push_registration_health_v1']!.category,
+          MigrationSecureStorageKeyCategory.pushRegistrationHealth,
+        );
+        expect(
+          byKey['push_registration_health_v1']!.policy,
+          MigrationSecureStorageKeyPolicy.clearRegenerate,
+        );
+        expect(
+          byKey['push_registration_health_v1']!.includeInExportPayload,
+          isFalse,
+        );
+        final pendingOverlay =
+            byKey[PendingConversationNotificationOverlayStore
+                .secureStorageKey]!;
+        expect(
+          pendingOverlay.category,
+          MigrationSecureStorageKeyCategory
+              .pendingConversationNotificationOverlay,
+        );
+        expect(
+          pendingOverlay.policy,
+          MigrationSecureStorageKeyPolicy.clearRegenerate,
+        );
+        expect(
+          pendingOverlay.criticality,
+          MigrationSecureStorageKeyCriticality.cleanupOnly,
+        );
+        expect(pendingOverlay.includeInExportPayload, isFalse);
+        for (final deviceBindingKey in <String>[
+          canonicalRuntimeInstallationIdStorageKey,
+          canonicalRuntimeAccountBindingStorageKey,
+        ]) {
+          expect(
+            byKey[deviceBindingKey]!.policy,
+            MigrationSecureStorageKeyPolicy.clearRegenerate,
+          );
+          expect(byKey[deviceBindingKey]!.includeInExportPayload, isFalse);
+        }
         expect(
           byKey[SecureKeyStoreAccountMigrationAuthorityRepository.storageKey]!
               .policy,

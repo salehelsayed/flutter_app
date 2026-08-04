@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -27,6 +28,74 @@ class CipherKeyRecord {
   final String hex;
 }
 
+/// Maximum time a background read-only peer may spend opening SQLCipher.
+///
+/// This is deliberately shorter than the canonical writer's five-second busy
+/// timeout. The caller also has an aggregate background-storage deadline; this
+/// bound prevents a single open from consuming it indefinitely.
+@visibleForTesting
+const Duration encryptedReadOnlyOpenDeadline = Duration(seconds: 2);
+
+@visibleForTesting
+const int encryptedReadOnlyBusyTimeoutMilliseconds = 1000;
+
+/// A deadline expiry is not evidence that a cipher key was rejected.
+///
+/// Keeping a distinct [TimeoutException] subtype prevents the tolerant legacy
+/// path from interpreting liveness failure as a wrong-key result.
+class EncryptedDatabaseReadOnlyTimeout extends TimeoutException {
+  EncryptedDatabaseReadOnlyTimeout({
+    required this.attempt,
+    required Duration deadline,
+  }) : super(
+         'Encrypted read-only database $attempt open exceeded its deadline',
+         deadline,
+       );
+
+  final String attempt;
+}
+
+@visibleForTesting
+typedef EncryptedReadOnlyDatabaseOpener =
+    Future<Database> Function({
+      required String path,
+      required String password,
+      required bool readOnly,
+      required bool singleInstance,
+      required OnDatabaseConfigureFn onConfigure,
+    });
+
+@visibleForTesting
+typedef EncryptedReadOnlyDeadlineWaiter =
+    Future<Database> Function(
+      Future<Database> operation,
+      Duration timeout,
+      Database Function() onTimeout,
+    );
+
+/// Deterministic seams for the absolute-deadline and late-handle contract.
+/// Production callers do not need to provide this object.
+@visibleForTesting
+class EncryptedReadOnlyOpenDebugHooks {
+  const EncryptedReadOnlyOpenDebugHooks({
+    required this.openDatabase,
+    required this.elapsed,
+    required this.waitForDeadline,
+    this.deadline = encryptedReadOnlyOpenDeadline,
+    this.enforceAndroidLiveness = true,
+  });
+
+  final EncryptedReadOnlyDatabaseOpener openDatabase;
+  final Duration Function() elapsed;
+  final EncryptedReadOnlyDeadlineWaiter waitForDeadline;
+  final Duration deadline;
+  final bool enforceAndroidLiveness;
+}
+
+class _EncryptedReadOnlyDeadlineExpired implements Exception {
+  const _EncryptedReadOnlyDeadlineExpired();
+}
+
 /// Parse a stored `db_encryption_key` value into (mode, hex).
 CipherKeyRecord parseCipherKeyRecord(String stored) {
   if (stored.startsWith(kRawKeyMarkerPrefix)) {
@@ -48,6 +117,152 @@ String formatCipherKeyRecord(CipherKeyMode mode, String hex) =>
 /// passphrase-fallback (§I2).
 bool isValid256BitHexKey(String hex) =>
     hex.length == 64 && RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hex);
+
+/// Opens an existing encrypted database through a non-singleton read-only
+/// handle. FlutterFire and diagnostic peers may share the Android process with
+/// the canonical writable owner, but this path never creates or migrates a DB.
+Future<Database> openEncryptedDatabaseReadOnlyTolerant({
+  required String path,
+  required String storedKey,
+  EncryptedReadOnlyOpenDebugHooks? debugHooks,
+}) async {
+  final record = parseCipherKeyRecord(storedKey);
+  if (!isValid256BitHexKey(record.hex)) {
+    throw StateError('read-only db_encryption_key is not a 64-hex key');
+  }
+
+  final enforceAndroidLiveness =
+      debugHooks?.enforceAndroidLiveness ??
+      defaultTargetPlatform == TargetPlatform.android;
+  if (!enforceAndroidLiveness) {
+    Future<Database> openUnbounded(String password) {
+      final injected = debugHooks?.openDatabase;
+      if (injected != null) {
+        return injected(
+          path: path,
+          password: password,
+          readOnly: true,
+          singleInstance: false,
+          onConfigure: (_) async {},
+        );
+      }
+      return openDatabase(
+        path,
+        password: password,
+        readOnly: true,
+        singleInstance: false,
+      );
+    }
+
+    try {
+      return await openUnbounded("x'${record.hex}'");
+    } catch (_) {
+      if (record.mode == CipherKeyMode.raw) rethrow;
+      return openUnbounded(record.hex);
+    }
+  }
+
+  final productionStopwatch = Stopwatch()..start();
+  final elapsed = debugHooks?.elapsed ?? () => productionStopwatch.elapsed;
+  final deadline = debugHooks?.deadline ?? encryptedReadOnlyOpenDeadline;
+  final startedAt = elapsed();
+  final opener =
+      debugHooks?.openDatabase ??
+      ({
+        required String path,
+        required String password,
+        required bool readOnly,
+        required bool singleInstance,
+        required OnDatabaseConfigureFn onConfigure,
+      }) {
+        return openDatabase(
+          path,
+          password: password,
+          readOnly: readOnly,
+          singleInstance: singleInstance,
+          onConfigure: onConfigure,
+        );
+      };
+  final waitForDeadline =
+      debugHooks?.waitForDeadline ??
+      (
+        Future<Database> operation,
+        Duration timeout,
+        Database Function() onTimeout,
+      ) => operation.timeout(timeout, onTimeout: onTimeout);
+
+  Duration remaining() {
+    final value = deadline - (elapsed() - startedAt);
+    return value.isNegative ? Duration.zero : value;
+  }
+
+  Future<Database> openAttempt({
+    required String password,
+    required String attempt,
+  }) async {
+    final attemptBudget = remaining();
+    if (attemptBudget <= Duration.zero) {
+      throw EncryptedDatabaseReadOnlyTimeout(
+        attempt: attempt,
+        deadline: deadline,
+      );
+    }
+
+    // Future.sync captures a synchronous platform/open failure and keeps the
+    // raw-key fallback behavior identical to an asynchronous failure.
+    final operation = Future<Database>.sync(
+      () => opener(
+        path: path,
+        password: password,
+        readOnly: true,
+        singleInstance: false,
+        onConfigure: (db) => db.rawQuery(
+          'PRAGMA busy_timeout = $encryptedReadOnlyBusyTimeoutMilliseconds',
+        ),
+      ),
+    );
+    try {
+      return await waitForDeadline(
+        operation,
+        attemptBudget,
+        () => throw const _EncryptedReadOnlyDeadlineExpired(),
+      );
+    } on _EncryptedReadOnlyDeadlineExpired {
+      // Future.timeout cannot cancel the native open. If it eventually returns
+      // a handle, close that handle once and suppress cleanup errors. The
+      // continuation has no notification or fallback side effects.
+      var closeStarted = false;
+      unawaited(
+        operation
+            .then<void>((database) async {
+              if (closeStarted) return;
+              closeStarted = true;
+              try {
+                await database.close();
+              } catch (_) {
+                // Best-effort cleanup of an already-timed-out native result.
+              }
+            })
+            .catchError((_) {
+              // A late open error owns no handle.
+            }),
+      );
+      throw EncryptedDatabaseReadOnlyTimeout(
+        attempt: attempt,
+        deadline: deadline,
+      );
+    }
+  }
+
+  try {
+    return await openAttempt(password: "x'${record.hex}'", attempt: 'raw');
+  } on TimeoutException {
+    rethrow;
+  } catch (_) {
+    if (record.mode == CipherKeyMode.raw) rethrow;
+    return openAttempt(password: record.hex, attempt: 'legacy');
+  }
+}
 
 @visibleForTesting
 enum CipherOpenAction { openRaw, createRaw, rekeyToRaw }

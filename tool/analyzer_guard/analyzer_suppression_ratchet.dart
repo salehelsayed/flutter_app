@@ -598,6 +598,18 @@ class AnalyzerSuppressionRatchet {
         }
         packageRoots.add(normalizedRoot);
       }
+      // A published package can carry a self-contained `example/` package.
+      // Its lib is demonstration/test input, not shipping production source of
+      // either the parent package or this application. Keep scanning the
+      // vendored parent's lib, but do not promote that immediate nested example
+      // to an independent production package root.
+      final discoveredRoots = packageRoots.toSet();
+      packageRoots.removeWhere((root) {
+        if (p.posix.basename(root) != 'example') return false;
+        final rawParent = p.posix.dirname(root);
+        final parent = rawParent == '.' ? '' : rawParent;
+        return discoveredRoots.contains(parent);
+      });
       packageRoots.sort();
       if (!packageRoots.contains('')) {
         throw const FormatException('The root package has no sibling lib/.');

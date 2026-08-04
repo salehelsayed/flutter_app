@@ -64,6 +64,11 @@ enum HandleChatMessageResult {
   ignoredEdit,
 }
 
+typedef StageDirectMessageNotificationDisplayCustody =
+    Future<void> Function(ConversationMessage message);
+typedef PromoteDirectMessageNotificationDisplayCustody =
+    Future<void> Function(ConversationMessage message);
+
 /// Parses an incoming P2P ChatMessage for chat_message type,
 /// validates the sender, checks for duplicates, and persists.
 ///
@@ -107,6 +112,9 @@ handleIncomingChatMessage({
   // for direct/LAN/non-inbox durable arrivals too. Test seam — production passes
   // the const default.
   bool confirmatoryDirectLanEnabled = kConfirmatoryDirectLanReceiptEnabled,
+  StageDirectMessageNotificationDisplayCustody? stageNotificationDisplayCustody,
+  PromoteDirectMessageNotificationDisplayCustody?
+  promoteNotificationDisplayCustody,
 }) async {
   Future<void> maybeSendDeliveryReceipt(String messageId) async {
     if (sendDeliveryReceipt == null) return;
@@ -371,6 +379,18 @@ handleIncomingChatMessage({
     // Duplicate receive of an already-durable message: re-mint the receipt
     // (the sender may have missed the first one — D-5 repair loop).
     await maybeSendDeliveryReceipt(payload.id);
+    final markerAuthorityMatchesCanonical =
+        existingMessage.id == payload.id &&
+        existingMessage.contactPeerId == payload.senderPeerId &&
+        existingMessage.senderPeerId == payload.senderPeerId &&
+        existingMessage.timestamp == payload.timestamp &&
+        existingMessage.isIncoming;
+    if (markerAuthorityMatchesCanonical) {
+      // Duplicate replay is the recovery leg for a crash after save (or media
+      // repair) but before ready promotion. Divergent authority never promotes
+      // an event-id collision.
+      await promoteNotificationDisplayCustody?.call(existingMessage);
+    }
     return (HandleChatMessageResult.duplicate, null, null);
   }
   if (existingMessage == null && payload.isEdit) {
@@ -548,6 +568,12 @@ handleIncomingChatMessage({
     candidateMessage,
     existingMessage: existingMessage,
   );
+  if (resultAfterSave == HandleChatMessageResult.chatMessage) {
+    // Marker first: a process death after the next line but before the
+    // canonical save leaves a not-ready row; canonical mutation cannot commit
+    // without prior recoverable display custody.
+    await stageNotificationDisplayCustody?.call(conversationMessage);
+  }
   await messageRepo.saveMessage(conversationMessage);
   // 115 P2: the message is durably persisted — confirm custody to the
   // sender (relay-drain arrivals only, per the origin contract).
@@ -588,6 +614,13 @@ handleIncomingChatMessage({
       );
       if (saved) parsedAttachments.add(attachment);
     }
+  }
+  if (resultAfterSave == HandleChatMessageResult.chatMessage) {
+    // Attachment metadata is part of the canonical notification snapshot.
+    // Ready must not become visible until every attachment save/repair above
+    // has committed, otherwise a crash can terminalize a generic card and lose
+    // the later media projection.
+    await promoteNotificationDisplayCustody?.call(conversationMessage);
   }
 
   // 7. Hydrate media on the returned message so downstream consumers

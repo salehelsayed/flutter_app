@@ -28,6 +28,7 @@ class DroppedPushRecoveryStoreTest {
             DroppedPushRecoveryStore.PREFERENCES_NAME,
             Context.MODE_PRIVATE,
         ).edit().clear().commit()
+        DroppedPushRecoveryStore(context).setCurrentBinding("installation-a/account-a")
     }
 
     @Test
@@ -130,5 +131,77 @@ class DroppedPushRecoveryStoreTest {
 
         assertEquals((1L..workers.toLong()).toList(), results.sorted())
         assertEquals(workers.toLong(), DroppedPushRecoveryStore(context).pendingGeneration())
+    }
+
+    @Test
+    fun `binding rotation retires stale generation and prevents cross account acknowledgement`() {
+        val store = DroppedPushRecoveryStore(context)
+        assertEquals(1L, store.recordDeletion())
+        val accountA = requireNotNull(store.pendingRecovery())
+
+        val rotation = store.setCurrentBinding("installation-a/account-b")
+
+        assertEquals(accountA, rotation.retiredRecovery)
+        assertNull(store.pendingRecovery())
+        assertFalse(store.acknowledgeRecovery(accountA.generation, accountA.binding))
+        assertEquals(2L, store.recordDeletion())
+        val accountB = requireNotNull(store.pendingRecovery())
+        assertEquals("installation-a/account-b", accountB.binding)
+        assertFalse(store.acknowledgeRecovery(accountB.generation, accountA.binding))
+        assertTrue(store.acknowledgeRecovery(accountB.generation, accountB.binding))
+    }
+
+    @Test
+    fun `binding publication keeps recovery work disabled until Plan 331 activates it`() {
+        val store = DroppedPushRecoveryStore(context)
+
+        assertFalse(store.recoveryWorkEnabled())
+        val enabled = store.setCurrentBinding(
+            "installation-a/account-a",
+            recoveryWorkEnabled = true,
+        )
+        assertTrue(enabled.changed)
+        assertTrue(enabled.recoveryWorkEnabled)
+        assertTrue(store.recoveryWorkEnabled())
+
+        val disabled = store.setCurrentBinding(
+            "installation-a/account-a",
+            recoveryWorkEnabled = false,
+        )
+        assertTrue(disabled.changed)
+        assertFalse(disabled.recoveryWorkEnabled)
+        assertFalse(store.recoveryWorkEnabled())
+    }
+
+    @Test
+    fun `deletion without a current binding cannot create an unowned marker`() {
+        val store = DroppedPushRecoveryStore(context)
+        store.setCurrentBinding(null)
+
+        assertNull(store.recordDeletion())
+        assertNull(store.pendingRecovery())
+    }
+
+    @Test
+    fun `binding rotation durably retires malformed orphan marker keys`() {
+        context.getSharedPreferences(
+            DroppedPushRecoveryStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        ).edit()
+            .putLong("pending_generation", 17L)
+            .remove("pending_binding")
+            .commit()
+
+        val rotation = DroppedPushRecoveryStore(context)
+            .setCurrentBinding("installation-a/account-b")
+
+        assertTrue(rotation.committed)
+        assertTrue(rotation.changed)
+        val preferences = context.getSharedPreferences(
+            DroppedPushRecoveryStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        )
+        assertFalse(preferences.contains("pending_generation"))
+        assertFalse(preferences.contains("pending_binding"))
     }
 }

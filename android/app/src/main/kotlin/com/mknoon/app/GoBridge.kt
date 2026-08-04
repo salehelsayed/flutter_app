@@ -5,7 +5,9 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import bridge.Bridge as GoMknoon
-import bridge.EventCallback as GoEventCallback
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bridges Flutter MethodChannel/EventChannel to the Go native library.
@@ -13,8 +15,11 @@ import bridge.EventCallback as GoEventCallback
  * MethodChannel `com.mknoon/go_bridge` handles request/response calls.
  * EventChannel `com.mknoon/go_bridge_events` streams push events from Go.
  */
-class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) : MethodChannel.MethodCallHandler,
-    EventChannel.StreamHandler, GoEventCallback {
+class GoBridge internal constructor(
+    flutterEngine: FlutterEngine,
+    context: android.content.Context,
+    private val runtimeHost: GoRuntimeHost = ProcessGoRuntimeHost.instance,
+) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     // FDC-S5 (M1): only emit bridge dispatch queue-wait timing on debuggable
     // builds, so the deferred two-device M1 run can read it while release builds
@@ -35,15 +40,16 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
     private val pendingEvents = ArrayDeque<String>()
     private val pendingEventsLock = Any()
     private val maxPendingEvents = 256
-    private val executor = java.util.concurrent.Executors.newCachedThreadPool()
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val disposed = AtomicBoolean(false)
+    private val ownerToken = runtimeHost.registerOwner(
+        ownerId = "flutter-engine-${System.identityHashCode(flutterEngine)}",
+        eventReceiver = ::acceptEvent,
+    )
 
     init {
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
-
-        // Initialize the Go singleton with our event callback
-        GoMknoon.initialize(this)
     }
 
     private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result, method: String = "") {
@@ -52,16 +58,27 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
         // serialization signal under concurrent warm/probe work. A cached pool
         // spawns a fresh thread per task, so this should read ~0 unless saturated.
         val receivedAt = if (isDebuggable && method.isNotEmpty()) System.nanoTime() else 0L
-        executor.execute {
-            if (receivedAt != 0L) {
-                emitDispatchTiming(method, (System.nanoTime() - receivedAt) / 1_000_000.0)
-            }
-            try {
-                val value = work()
-                mainHandler.post { result.success(value) }
-            } catch (e: Exception) {
-                mainHandler.post { result.error("GO_ERROR", e.message, null) }
-            }
+        val admitted = runtimeHost.execute(
+            ownerToken,
+            work = {
+                if (receivedAt != 0L) {
+                    emitDispatchTiming(method, (System.nanoTime() - receivedAt) / 1_000_000.0)
+                }
+                work()
+            },
+            onSuccess = { value ->
+                if (!disposed.get()) result.success(value)
+            },
+            onError = { error ->
+                if (!disposed.get()) result.error("GO_ERROR", error.message, null)
+            },
+        )
+        if (!admitted && !disposed.get()) {
+            result.error(
+                "GO_RUNTIME_NOT_ACTIVE",
+                "This Flutter engine does not own the active Go runtime",
+                null,
+            )
         }
     }
 
@@ -78,10 +95,14 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
                     .put("queueWaitMs", queueWaitMs),
             )
             .toString()
-        onEvent(json)
+        runtimeHost.emitOwnerEvent(ownerToken, json)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (disposed.get()) {
+            result.error("GO_BRIDGE_DISPOSED", "Go bridge is detached", null)
+            return
+        }
         val args = call.arguments as? String
 
         when (call.method) {
@@ -193,23 +214,15 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
         eventSink = null
     }
 
-    // GoEventCallback — Go → Kotlin push events
-    override fun onEvent(jsonString: String?) {
-        jsonString?.let { json ->
-            val hasSink = eventSink != null
-            if (!hasSink) {
-                bufferEvent(json, "no sink")
-                return
-            }
-            mainHandler.post {
-                val sink = eventSink
-                if (sink == null) {
-                    bufferEvent(json, "sink gone")
-                    return@post
-                }
-                sink.success(json)
-            }
+    // Stable process callback is owned by GoRuntimeHost; deliveries arrive on main.
+    private fun acceptEvent(json: String) {
+        if (disposed.get()) return
+        val sink = eventSink
+        if (sink == null) {
+            bufferEvent(json, "no sink")
+            return
         }
+        sink.success(json)
     }
 
     private fun bufferEvent(json: String, reason: String) {
@@ -241,5 +254,53 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
             android.util.Log.i("GoBridge", "flushPendingEvents: replaying ${snapshot.size} buffered event(s)")
             snapshot.forEach { sink.success(it) }
         }
+    }
+
+    /** Starts the host-owned drain; new JNI calls/events are rejected at once. */
+    internal fun requestRuntimeDrain(): Boolean = runtimeHost.requestDrain(ownerToken)
+
+    internal fun isRuntimeReleased(): Boolean =
+        runtimeHost.snapshot().state == GoRuntimeHost.State.RELEASED
+
+    internal fun runtimeSnapshot(): GoRuntimeHost.Snapshot = runtimeHost.snapshot()
+
+    /**
+     * Debug-probe-only boundary seam. The admitted host task invokes the real
+     * Go AAR before remaining in flight until the competing engine has tried
+     * to acquire the canonical lease. It therefore exercises the production
+     * owner/result accounting without adding a Dart-callable production API.
+     */
+    internal fun admitH0ProbeJniHold(
+        release: CountDownLatch,
+        onHeld: () -> Unit,
+        onSettled: (Boolean) -> Unit,
+    ): Boolean {
+        if (!isDebuggable || disposed.get()) return false
+        return runtimeHost.execute(
+            ownerToken,
+            work = {
+                val status = GoMknoon.nodeStatus()
+                onHeld()
+                check(release.await(10, TimeUnit.SECONDS)) {
+                    "H0 contender did not release admitted Go/JNI work"
+                }
+                status
+            },
+            onSuccess = { onSettled(true) },
+            onError = { onSettled(false) },
+        )
+    }
+
+    /** Detaches channels/sink and fences every queued result or callback. */
+    fun dispose(): Boolean {
+        if (!disposed.compareAndSet(false, true)) return false
+        methodChannel.setMethodCallHandler(null)
+        eventChannel.setStreamHandler(null)
+        eventSink = null
+        synchronized(pendingEventsLock) {
+            pendingEvents.clear()
+        }
+        runtimeHost.unregister(ownerToken)
+        return true
     }
 }

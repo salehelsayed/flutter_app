@@ -28,6 +28,7 @@ import 'package:flutter_app/features/account_migration/domain/repositories/accou
 import 'package:flutter_app/features/account_migration/domain/repositories/migration_cutover_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -1565,6 +1566,10 @@ void main() {
             OrbitGeometryPrefs.storageKey,
             '0.8|1.2|1.3|5|1.5',
           );
+          await sourceStore.write(
+            PendingConversationNotificationOverlayStore.secureStorageKey,
+            'source-device-private-overlay',
+          );
           final groupKeys = await _seedCommittedGroupKeyBundleFixture(
             db: sourceDb,
             primaryStore: sourceStore,
@@ -1599,6 +1604,10 @@ void main() {
           await destinationStore.write(
             MigrationSecureStorageRegistry.dbEncryptionKey,
             'new-active-db-key',
+          );
+          await destinationStore.write(
+            PendingConversationNotificationOverlayStore.secureStorageKey,
+            'destination-stale-overlay',
           );
           final staging = _RecordingMigrationSecureStorageStaging(
             primaryStore: destinationStore,
@@ -1735,6 +1744,14 @@ void main() {
           expect(
             await destinationStore.read(OrbitGeometryPrefs.storageKey),
             '0.8|1.2|1.3|5|1.5',
+          );
+          expect(
+            await destinationStore.read(
+              PendingConversationNotificationOverlayStore.secureStorageKey,
+            ),
+            isNull,
+            reason:
+                'device-local notification history must not survive cutover',
           );
         },
       );
@@ -1978,6 +1995,7 @@ void main() {
         expect(stages.map((details) => details['stage']).toList(), [
           'activeDbImport',
           'securePromotion',
+          'canonicalAccountBinding',
           'recordOldBlockProof',
           'commitNewActive',
           'cleanup',

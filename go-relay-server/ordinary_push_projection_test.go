@@ -355,3 +355,129 @@ func TestRelayNotificationClosure_OrdinaryPushIosReactionRoutingInCustomData(t *
 		assertAPNSCustomString(t, sent, key, want)
 	}
 }
+
+// TC-331-14 — every current ciphertext-bearing relay producer retains its
+// canonical outer identity through the platform projection boundary. Missing
+// outer-ID recovery is therefore a test-only transport-mutation robustness
+// case, not an ordinary relay payload shape.
+func TestRelayNotificationClosure_DecryptablePayloadRetainsCanonicalOuterIdentity(t *testing.T) {
+	const (
+		groupID            = "33133133-1331-4331-8331-331331331331"
+		reactorAccount     = "reactor-account"
+		reactorTransport   = "reactor-transport"
+		recipientTransport = "recipient-transport"
+	)
+
+	groupReactionFixture := newSignedGroupReactionFixture(
+		t,
+		groupID,
+		reactorAccount,
+		reactorTransport,
+	)
+	groupReactionEnvelope := groupReactionFixture.envelope(
+		t,
+		"group-event-1",
+		"add",
+		"group-base-1",
+		"group-target-1",
+		[]string{reactorTransport, recipientTransport},
+		[]string{recipientTransport},
+	)
+	groupReactionMetadata, recognized, valid := extractGroupReactionPushMetadata(
+		groupReactionEnvelope,
+		groupID,
+		reactorTransport,
+		[]string{reactorTransport, recipientTransport},
+	)
+	if !recognized || !valid {
+		t.Fatal("production-format group reaction fixture must validate")
+	}
+
+	cases := []struct {
+		name               string
+		canonicalKey       string
+		canonicalID        string
+		requiredCipherKeys []string
+		build              func() *messaging.Message
+	}{
+		{
+			name:               "direct message",
+			canonicalKey:       "message_id",
+			canonicalID:        "chat-mid-1",
+			requiredCipherKeys: []string{"kem", "ciphertext", "nonce"},
+			build: func() *messaging.Message {
+				return buildPushMessage(
+					"provider-token",
+					"sender-peer",
+					ordinaryChatCiphertextEnvelope(8, 16),
+				)
+			},
+		},
+		{
+			name:               "group message",
+			canonicalKey:       "message_id",
+			canonicalID:        "group-mid-1",
+			requiredCipherKeys: []string{"ciphertext", "nonce", "keyEpoch"},
+			build: func() *messaging.Message {
+				return buildGroupPushMessage(
+					"provider-token",
+					groupID,
+					"sender-transport",
+					"group-mid-1",
+					ordinaryGroupCiphertextEnvelope(16),
+				)
+			},
+		},
+		{
+			name:               "direct reaction",
+			canonicalKey:       "event_id",
+			canonicalID:        "evt-1",
+			requiredCipherKeys: []string{"kem", "ciphertext", "nonce"},
+			build: func() *messaging.Message {
+				return buildReactionPushMessage(
+					"provider-token",
+					"reactor-peer",
+					ordinaryDirectReactionEnvelope(8, 16),
+				)
+			},
+		},
+		{
+			name:               "group reaction",
+			canonicalKey:       "event_id",
+			canonicalID:        "group-event-1",
+			requiredCipherKeys: []string{"ciphertext", "nonce", "keyEpoch"},
+			build: func() *messaging.Message {
+				return buildGroupReactionPushMessage(
+					"provider-token",
+					groupID,
+					groupReactionEnvelope,
+					groupReactionMetadata,
+				)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, platform := range []string{"android", "ios"} {
+				t.Run(platform, func(t *testing.T) {
+					projected := projectPushMessageForPlatform(tc.build(), platform)
+					if projected == nil {
+						t.Fatal("ciphertext-bearing producer returned nil")
+					}
+					if got := sentRoutingString(projected, tc.canonicalKey); got != tc.canonicalID {
+						t.Fatalf("%s = %q, want %q", tc.canonicalKey, got, tc.canonicalID)
+					}
+					for _, key := range tc.requiredCipherKeys {
+						if got := sentRoutingString(projected, key); got == "" {
+							t.Fatalf("decryptable routing key %q was removed", key)
+						}
+					}
+					if sentRoutingHas(projected, "preview_unavailable") {
+						t.Fatal("decryptable fixture unexpectedly became a generic fallback")
+					}
+				})
+			}
+		})
+	}
+}

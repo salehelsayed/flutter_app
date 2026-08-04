@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -16,6 +17,174 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('resolveBackgroundPushNotification', () {
+    test(
+      'authenticated inner id anchors test-mutated missing outer id',
+      () async {
+        final directMessage = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-alice',
+              'kem': 'kem',
+              'ciphertext': 'ciphertext',
+              'nonce': 'direct-message-nonce',
+            },
+          ),
+          directMessageContext: const DirectMessageNotificationContext(
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            expectedMessageId: null,
+          ),
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async =>
+                  const MessagePayload(
+                    id: 'direct-inner-message',
+                    text: 'hello',
+                    senderPeerId: 'peer-alice',
+                    senderUsername: 'Alice',
+                    timestamp: '2026-08-03T10:00:00.000Z',
+                  ).toInnerJson(),
+        );
+        expect(
+          directMessage.resolvedEventIdentity,
+          const ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.message,
+            canonicalEventId: 'direct-inner-message',
+          ),
+        );
+
+        final groupMessage = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-team',
+              'sender_id': 'peer-alice',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'group-message-nonce',
+            },
+          ),
+          groupMessageContext: const GroupMessageNotificationContext(
+            groupId: 'group-team',
+            groupName: 'Team',
+            localPeerId: 'peer-local',
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            expectedMessageId: null,
+          ),
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => jsonEncode(<String, Object?>{
+                'groupId': 'group-team',
+                'messageId': 'group-inner-message',
+                'senderId': 'peer-alice',
+                'text': 'hello group',
+              }),
+        );
+        expect(
+          groupMessage.resolvedEventIdentity,
+          const ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.message,
+            canonicalEventId: 'group-inner-message',
+          ),
+        );
+        expect(
+          (groupMessage.groupComparand
+                  as BackgroundGroupMessageNotificationComparand)
+              .messageId,
+          'group-inner-message',
+        );
+
+        final directReaction = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'message_reaction',
+              'sender_id': 'peer-alice',
+              'target_message_id': 'direct-target',
+              'action': 'add',
+              'kem': 'kem',
+              'ciphertext': 'ciphertext',
+              'nonce': 'direct-reaction-nonce',
+            },
+          ),
+          directReactionContext: const DirectReactionNotificationContext(
+            actorPeerId: 'peer-alice',
+            actorUsername: 'Alice',
+            targetMessageId: 'direct-target',
+          ),
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async =>
+                  jsonEncode(<String, Object?>{
+                    'id': 'direct-inner-reaction',
+                    'messageId': 'direct-target',
+                    'emoji': '👍',
+                    'action': 'add',
+                    'senderPeerId': 'peer-alice',
+                    'timestamp': '2026-08-03T10:01:00.000Z',
+                  }),
+        );
+        expect(
+          directReaction.resolvedEventIdentity,
+          const ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.reaction,
+            canonicalEventId: 'direct-inner-reaction',
+            targetMessageId: 'direct-target',
+            action: 'add',
+          ),
+        );
+
+        final groupReaction = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-team',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'group-target',
+              'action': 'add',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'group-reaction-nonce',
+            },
+          ),
+          groupReactionContext: const GroupReactionNotificationContext(
+            groupId: 'group-team',
+            groupName: 'Team',
+            actorPeerId: 'peer-alice',
+            actorUsername: 'Alice',
+            targetMessageId: 'group-target',
+          ),
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => jsonEncode(<String, Object?>{
+                'id': 'group-reaction-state',
+                'messageId': 'group-target',
+                'emoji': '👍',
+                'action': 'add',
+                'senderPeerId': 'peer-alice',
+                'timestamp': '2026-08-03T10:02:00.000Z',
+                'eventId': 'group-inner-transition',
+              }),
+        );
+        expect(
+          groupReaction.resolvedEventIdentity,
+          const ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.reaction,
+            canonicalEventId: 'group-inner-transition',
+            targetMessageId: 'group-target',
+            action: 'add',
+          ),
+        );
+      },
+    );
+
     test('reaction preview uses validated actor and semantic body', () async {
       const message = RemoteMessage(
         data: {
@@ -53,6 +222,47 @@ void main() {
       expect(resolved.title, 'Alice');
       expect(resolved.body, 'Reacted 👍 to your message');
       expect(resolved.payload, 'peer-alice');
+    });
+
+    test('direct reaction authenticated inner mismatch fails closed', () async {
+      await expectLater(
+        resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'message_reaction',
+              'sender_id': 'peer-alice',
+              'event_id': 'reaction-outer',
+              'target_message_id': 'message-owned-by-bob',
+              'action': 'add',
+              'kem': 'kem',
+              'ciphertext': 'ciphertext',
+              'nonce': 'nonce',
+            },
+          ),
+          directReactionContext: const DirectReactionNotificationContext(
+            actorPeerId: 'peer-alice',
+            actorUsername: 'Alice',
+            targetMessageId: 'message-owned-by-bob',
+          ),
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async =>
+                  jsonEncode(<String, Object?>{
+                    'id': 'reaction-authenticated-inner',
+                    'messageId': 'message-owned-by-bob',
+                    'emoji': '👍',
+                    'action': 'add',
+                    'senderPeerId': 'peer-alice',
+                    'timestamp': '2026-08-03T10:00:00.000Z',
+                  }),
+        ),
+        throwsA(
+          isA<DirectReactionNotificationIntegrityException>().having(
+            (error) => error.reason,
+            'reason',
+            'direct_reaction_parity_mismatch',
+          ),
+        ),
+      );
     });
 
     test(
@@ -492,7 +702,25 @@ void main() {
 
         expect(verified?.reactorTransportPeerId, 'transport-reactor');
         expect(verified?.senderPublicKey, 'reactor-device-key');
+        expect(verified?.transitionId, 'transition-signed-1');
         expect(verificationCalls, hasLength(1));
+        final missingOuterTransition = <String, dynamic>{...data}
+          ..remove('event_id');
+        expect(
+          (await verifyGroupReactionNotificationNomination(
+            data: missingOuterTransition,
+            localTransportPeerId: 'transport-author-two',
+            verifySignature:
+                ({
+                  required publicKey,
+                  required signedPayload,
+                  required signature,
+                }) async => true,
+          ))?.transitionId,
+          'transition-signed-1',
+          reason:
+              'the signed nomination retains identity when its duplicate outer field is absent',
+        );
         expect(
           await verifyGroupReactionNotificationNomination(
             data: data,

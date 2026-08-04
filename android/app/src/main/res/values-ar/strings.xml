@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dropped_push_recovery_channel_name">استرداد الرسائل</string>
+    <string name="dropped_push_recovery_channel_description">تنبيهات عند احتمال وجود رسائل بانتظار الاسترداد</string>
+    <string name="dropped_push_recovery_notification_title">مكنون</string>
+    <string name="dropped_push_recovery_notification_body">قد تكون هناك رسائل بانتظار الاسترداد</string>
+    <string name="dropped_push_recovery_worker_body">جارٍ استرداد الرسائل</string>
+</resources>

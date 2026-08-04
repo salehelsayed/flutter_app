@@ -718,6 +718,8 @@ class _StartupRouterState extends State<StartupRouter> {
             reactionListener: widget.reactionListener,
             groupRepository: widget.groupRepository,
             groupMessageRepository: widget.groupMessageRepository,
+            groupReactionReplayOutboxRepository:
+                widget.groupReactionReplayOutboxRepository,
             groupMessageListener: widget.groupMessageListener,
             groupMediaDownloadCoordinator: widget.groupMediaDownloadCoordinator,
             groupInviteListener: widget.groupInviteListener,
@@ -1294,6 +1296,7 @@ class _StartupRouterState extends State<StartupRouter> {
     ReactionListener? reactionListener,
     GroupRepository? groupRepository,
     GroupMessageRepository? groupMessageRepository,
+    GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository,
     GroupMessageListener? groupMessageListener,
     GroupMediaDownloadCoordinator? groupMediaDownloadCoordinator,
     GroupInviteListener? groupInviteListener,
@@ -1327,6 +1330,8 @@ class _StartupRouterState extends State<StartupRouter> {
         groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
         groupInviteDeliveryAttemptRepository:
             widget.groupInviteDeliveryAttemptRepository,
+        groupReactionReplayOutboxRepository:
+            groupReactionReplayOutboxRepository,
         groupMessageListener: groupMessageListener,
         groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
         groupInviteListener: groupInviteListener,

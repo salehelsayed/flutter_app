@@ -423,6 +423,10 @@ classify_path() {
       record "support" "$path" "support" "330 capture-owned Android projection artifact binding; manifest owns execution"
       return
       ;;
+    integration_test/android_notification_recovery_completion_proof_test.dart)
+      record "support" "$path" "support" "331 capture-owned paired Android recovery artifact binding; manifest owns execution"
+      return
+      ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
     integration_test/scripts/run_media_delivery_ui_smoke.dart)
       record "1to1" "$path" "runner" "1:1 media simulator smoke"
@@ -501,6 +505,14 @@ classify_path() {
       record "support" "$path" "support" "typed Sims adapter for Android group notification projection durability; manifest owns execution"
       return
       ;;
+    integration_test/scripts/run_android_notification_recovery_completion.dart)
+      record "support" "$path" "support" "manifest-owned paired Android recovery runner; product debug seam remains activation-gated"
+      return
+      ;;
+    integration_test/scripts/android_notification_recovery_completion_criteria.dart)
+      record "support" "$path" "support" "331 strict content-addressed Android recovery evidence criteria"
+      return
+      ;;
     integration_test/scripts/run_group_media_send_reliability.dart)
       record "group" "$path" "runner" "269 prepared-artifact two-role group-media reliability runner (--list-scenarios)"
       return
@@ -523,6 +535,10 @@ classify_path() {
       ;;
     integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart)
       record "1to1" "$path" "test" "234 TC-234-03 direct private-media v100 SQLCipher lifecycle migration device proof"
+      return
+      ;;
+    integration_test/direct_notification_durability_sqlcipher_proof_test.dart)
+      record "1to1" "$path" "test" "331 TC-331-22 Android v106-to-v107 direct notification SQLCipher durability device proof"
       return
       ;;
     integration_test/direct_private_media_platform_protection_proof_test.dart)

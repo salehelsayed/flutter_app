@@ -276,6 +276,7 @@ final class _FaultingNotificationService extends FakeNotificationService
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     showAttempts++;
     if (failuresRemaining > 0) {
@@ -290,6 +291,7 @@ final class _FaultingNotificationService extends FakeNotificationService
       silent: silent,
       contentKind: contentKind,
       contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
     );
   }
 

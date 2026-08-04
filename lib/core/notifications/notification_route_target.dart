@@ -169,19 +169,13 @@ class NotificationRouteTarget {
             : NotificationRouteTarget.conversation(peerId);
       case 'message_reaction':
         final action = _trimToNull(data['action']?.toString());
-        final eventId =
-            _trimToNull(data['event_id']?.toString()) ??
-            _trimToNull(data['reaction_id']?.toString());
         final targetMessageId =
             _trimToNull(data['target_message_id']?.toString()) ??
             _trimToNull(data['targetMessageId']?.toString());
         final peerId =
             _trimToNull(data['sender_id']?.toString()) ??
             _trimToNull(data['from']?.toString());
-        if (action != 'add' ||
-            eventId == null ||
-            targetMessageId == null ||
-            peerId == null) {
+        if (action != 'add' || targetMessageId == null || peerId == null) {
           return null;
         }
         return NotificationRouteTarget.conversation(
@@ -190,9 +184,6 @@ class NotificationRouteTarget {
         );
       case 'group_reaction':
         final action = _trimToNull(data['action']?.toString());
-        final eventId =
-            _trimToNull(data['event_id']?.toString()) ??
-            _trimToNull(data['reaction_id']?.toString());
         final targetMessageId =
             _trimToNull(data['target_message_id']?.toString()) ??
             _trimToNull(data['targetMessageId']?.toString());
@@ -202,7 +193,6 @@ class NotificationRouteTarget {
             _trimToNull(data['sender_id']?.toString()) ??
             _trimToNull(data['from']?.toString());
         if (action != 'add' ||
-            eventId == null ||
             targetMessageId == null ||
             groupId == null ||
             reactorPeerId == null) {

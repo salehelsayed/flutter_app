@@ -5,9 +5,9 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -517,6 +517,7 @@ class _DismissibleNotificationService extends FakeNotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     await super.showMessageNotification(
       contactPeerId: contactPeerId,
@@ -526,6 +527,7 @@ class _DismissibleNotificationService extends FakeNotificationService {
       silent: silent,
       contentKind: contentKind,
       contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
     );
     if (!_firstShown.isCompleted) _firstShown.complete();
   }

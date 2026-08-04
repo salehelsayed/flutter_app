@@ -117,6 +117,12 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- WorkManager's expedited pre-Android-12 fallback must declare the
+             same data-sync foreground-service contract as its ForegroundInfo. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
         <provider
             android:name=".ReceivedMediaEgressProvider"
             android:authorities="${applicationId}.received-media"

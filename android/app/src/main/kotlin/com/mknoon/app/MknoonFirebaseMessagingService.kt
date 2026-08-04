@@ -11,7 +11,7 @@ import android.os.Build
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService
 
 /** App-owned FlutterFire service that durably records deleted FCM batches. */
-class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
+open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     companion object {
         internal const val RECOVERY_CHANNEL_ID = "mknoon_dropped_push_recovery"
         internal const val RECOVERY_NOTIFICATION_TAG = "mknoon_dropped_push_recovery"
@@ -28,6 +28,23 @@ class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
                 RECOVERY_NOTIFICATION_ID,
             )
         }
+
+        internal fun ensureRecoveryNotificationChannel(context: android.content.Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            context.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(
+                    NotificationChannel(
+                        RECOVERY_CHANNEL_ID,
+                        context.getString(R.string.dropped_push_recovery_channel_name),
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    ).apply {
+                        description = context.getString(
+                            R.string.dropped_push_recovery_channel_description,
+                        )
+                        lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                    },
+                )
+        }
     }
 
     override fun onDeletedMessages() {
@@ -35,27 +52,28 @@ class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
 
         // commit() is intentional: the recovery marker must reach durable
         // storage before any notification API (including permission checks).
-        DroppedPushRecoveryStore(this).recordDeletion { generation ->
+        val store = DroppedPushRecoveryStore(this)
+        store.recordDeletion { generation ->
+            val snapshot = store.pendingRecovery()
+            if (snapshot == null || snapshot.generation != generation) {
+                return@recordDeletion
+            }
             // The marker is already committed. Notification failure or denied
-            // permission can therefore never erase the recovery request.
+            // permission can therefore never erase or suppress the work request.
+            if (store.recoveryWorkEnabled()) {
+                runCatching { scheduleRecovery(snapshot) }
+            }
             runCatching { postRecoveryNotification(generation) }
         }
     }
 
+    internal open fun scheduleRecovery(snapshot: DroppedPushRecoveryStore.PendingRecovery) {
+        DroppedPushRecoveryWorkScheduler(this).enqueueDeletedBatch(snapshot)
+    }
+
     private fun postRecoveryNotification(generation: Long) {
         val manager = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    RECOVERY_CHANNEL_ID,
-                    "Message recovery",
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ).apply {
-                    description = "Alerts when messages may be waiting to be recovered"
-                    lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-                },
-            )
-        }
+        ensureRecoveryNotificationChannel(this)
 
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -84,8 +102,8 @@ class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         }
         val notification = notificationBuilder
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("MKnoon")
-            .setContentText("Messages may be waiting")
+            .setContentTitle(getString(R.string.dropped_push_recovery_notification_title))
+            .setContentText(getString(R.string.dropped_push_recovery_notification_body))
             .setContentIntent(contentIntent)
             .setAutoCancel(false)
             // Replacing the one reserved recovery card must not re-alert for

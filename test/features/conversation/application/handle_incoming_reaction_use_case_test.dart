@@ -44,6 +44,20 @@ class _BarrierReactionRepository extends FakeReactionRepository {
   }
 }
 
+class _OrderedReactionRepository extends FakeReactionRepository {
+  _OrderedReactionRepository(this.order);
+
+  final List<String> order;
+
+  @override
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async {
+    order.add('canonical');
+    return super.applyIncomingAdd(reaction);
+  }
+}
+
 ChatMessage _makeReactionMessage(String content) {
   return ChatMessage(
     from: _senderPeerId,
@@ -134,6 +148,49 @@ void main() {
   });
 
   group('handleIncomingReaction', () {
+    test(
+      'TC-331-09 fresh ADD stages before canonical mutation and promotes before retry',
+      () async {
+        final order = <String>[];
+        reactionRepo = _OrderedReactionRepository(order);
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(
+            ReactionPayload.buildEncryptedEnvelope(
+              senderPeerId: _senderPeerId,
+              eventId: 'r1',
+              action: ReactionPayload.addAction,
+              targetMessageId: 'msg-1',
+              kem: 'k',
+              ciphertext: 'c',
+              nonce: 'n',
+            ),
+          ),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+          stageNotificationDisplayCustody:
+              ({required payload, required targetMessage}) async {
+                expect(payload.id, 'r1');
+                expect(targetMessage.id, 'msg-1');
+                order.add('stage');
+              },
+          promoteNotificationDisplayCustody:
+              ({required payload, required targetMessage}) async {
+                expect(payload.timestamp, '2026-02-27T10:00:00.000Z');
+                expect(targetMessage.contactPeerId, _senderPeerId);
+                order.add('ready');
+              },
+          retryNotificationDisplays: () async => order.add('retry'),
+        );
+
+        expect(result, HandleReactionResult.success);
+        expect(change?.type, ReactionChangeType.upserted);
+        expect(order, const ['stage', 'canonical', 'ready', 'retry']);
+      },
+    );
+
     test('rejects non-reaction envelope', () async {
       final (result, _) = await handleIncomingReaction(
         message: _makeReactionMessage(
@@ -817,6 +874,15 @@ void main() {
         nonce: 'n',
       );
 
+      final notificationRemovals = <String>[];
+      Future<void> commitNotificationRemove({
+        required String peerId,
+        required String messageId,
+        required String actorPeerId,
+      }) async {
+        notificationRemovals.add('$peerId|$messageId|$actorPeerId');
+      }
+
       final first = await handleIncomingReaction(
         message: _makeReactionMessage(v2),
         messageRepo: messageRepo,
@@ -824,6 +890,7 @@ void main() {
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: _ownMlKemSecretKey,
+        commitNotificationRemove: commitNotificationRemove,
       );
       final second = await handleIncomingReaction(
         message: _makeReactionMessage(v2),
@@ -832,11 +899,16 @@ void main() {
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: _ownMlKemSecretKey,
+        commitNotificationRemove: commitNotificationRemove,
       );
 
       expect(first.$1, HandleReactionResult.success);
       expect(second.$1, HandleReactionResult.success);
       expect(reactionRepo.removeReactionCallCount, 2);
+      expect(notificationRemovals, <String>[
+        '$_senderPeerId|msg-1|$_senderPeerId',
+        '$_senderPeerId|msg-1|$_senderPeerId',
+      ]);
       expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
     });
 

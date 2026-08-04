@@ -1,17 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
-import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
+import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 
@@ -684,6 +683,13 @@ final class DurableConversationNotificationIdRegistry
     String key,
     Future<T> Function() action,
   ) async {
+    // BSD flock already coordinates distinct descriptors in one Android
+    // process. Bypass the legacy Dart tail there so contenders observe the
+    // same finite acquisition bound instead of waiting behind an unbounded
+    // in-isolate action. Preserve the tail on iOS/macOS.
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return action();
+    }
     final previous = _isolateTails[key] ?? Future<void>.value();
     final release = Completer<void>();
     _isolateTails[key] = release.future;
@@ -728,64 +734,18 @@ final class _RegistrySnapshot {
   final List<int> ownerIds;
 }
 
-typedef _OpenNative = Int32 Function(Pointer<Utf8>, Int32);
-typedef _OpenDart = int Function(Pointer<Utf8>, int);
-typedef _FlockNative = Int32 Function(Int32, Int32);
-typedef _FlockDart = int Function(int, int);
-typedef _CloseNative = Int32 Function(Int32);
-typedef _CloseDart = int Function(int);
-
 final class _NotificationIdFlock {
-  static const int _openReadWrite = 2;
-  static const int _lockExclusive = 2;
-  static const int _lockUnlock = 8;
-  static final _NotificationIdFlockApi _api = _NotificationIdFlockApi.load();
-
   static Future<T> withExclusive<T>(
     File file,
     Future<T> Function() action,
   ) async {
-    await file.create(recursive: true);
-    final nativePath = file.path.toNativeUtf8();
-    late final int descriptor;
     try {
-      descriptor = _api.open(nativePath, _openReadWrite);
-    } finally {
-      malloc.free(nativePath);
+      return await BoundedPosixFlock.withExclusive(file, action);
+    } on BoundedPosixFlockUnavailableException catch (error) {
+      throw NotificationIdAllocationException(
+        operation: 'registry_lock_unavailable',
+        errorType: error.runtimeType.toString(),
+      );
     }
-    if (descriptor < 0) {
-      throw FileSystemException('Unable to open notification-id lock');
-    }
-    if (_api.flock(descriptor, _lockExclusive) != 0) {
-      _api.close(descriptor);
-      throw FileSystemException('Unable to acquire notification-id lock');
-    }
-    try {
-      return await action();
-    } finally {
-      _api.flock(descriptor, _lockUnlock);
-      _api.close(descriptor);
-    }
-  }
-}
-
-final class _NotificationIdFlockApi {
-  _NotificationIdFlockApi({
-    required this.open,
-    required this.flock,
-    required this.close,
-  });
-
-  final _OpenDart open;
-  final _FlockDart flock;
-  final _CloseDart close;
-
-  static _NotificationIdFlockApi load() {
-    final process = DynamicLibrary.process();
-    return _NotificationIdFlockApi(
-      open: process.lookupFunction<_OpenNative, _OpenDart>('open'),
-      flock: process.lookupFunction<_FlockNative, _FlockDart>('flock'),
-      close: process.lookupFunction<_CloseNative, _CloseDart>('close'),
-    );
   }
 }

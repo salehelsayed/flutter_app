@@ -781,6 +781,7 @@ final class _GenerationNotificationService
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {}
 
   @override

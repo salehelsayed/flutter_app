@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -53,10 +54,123 @@ const _pluginChannel = MethodChannel(
 const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
 FlutterNotificationService _buildNotificationService() {
+  final registry = _InMemoryConversationNotificationContentRegistry();
   return FlutterNotificationService(
     notificationIdResolver: (conversationKey) async =>
         deterministicConversationNotificationId(conversationKey),
+    notificationContentRegistryResolver: () async => registry,
   );
+}
+
+final class _InMemoryConversationNotificationContentRegistry
+    implements ConversationNotificationContentRegistry {
+  final Map<String, ConversationNotificationContentMetadata> _content = {};
+
+  String _key(String conversationKey, int notificationId) =>
+      '$conversationKey\u0000$notificationId';
+
+  @override
+  Future<ConversationNotificationContentReplacementResult> replaceContent({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() replace,
+  }) async {
+    await retireCurrent();
+    _content[_key(conversationKey, notificationId)] = metadata;
+    await replace();
+    return ConversationNotificationContentReplacementResult.shownAndRecorded;
+  }
+
+  @override
+  Future<bool> replaceContentIfGeneration({
+    required String conversationKey,
+    required int notificationId,
+    required String expectedGeneration,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() replace,
+  }) async {
+    final key = _key(conversationKey, notificationId);
+    if (_content[key]?.generation != expectedGeneration) return false;
+    await retireCurrent();
+    _content[key] = metadata;
+    await replace();
+    return true;
+  }
+
+  @override
+  Future<bool> cancelContentIfKind({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentKind kind,
+    ConversationNotificationContentCancellationPredicate? shouldCancel,
+    required Future<void> Function() cancel,
+  }) async {
+    final key = _key(conversationKey, notificationId);
+    final metadata = _content[key];
+    if (metadata?.kind != kind ||
+        (shouldCancel != null && !await shouldCancel(metadata!))) {
+      return false;
+    }
+    await cancel();
+    _content.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> cancelContentIfGeneration({
+    required String conversationKey,
+    required int notificationId,
+    required String generation,
+    required Future<void> Function() cancel,
+  }) async {
+    final key = _key(conversationKey, notificationId);
+    if (_content[key]?.generation != generation) return false;
+    await cancel();
+    _content.remove(key);
+    return true;
+  }
+
+  @override
+  Future<void> recordContentMetadata({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+  }) async {
+    _content[_key(conversationKey, notificationId)] = metadata;
+  }
+
+  @override
+  Future<ConversationNotificationContentMetadata?> lookupContentMetadata({
+    required String conversationKey,
+    required int notificationId,
+  }) async => _content[_key(conversationKey, notificationId)];
+
+  @override
+  Future<void> recordContentKind({
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentKind kind,
+  }) async {
+    _content[_key(conversationKey, notificationId)] =
+        ConversationNotificationContentMetadata(kind: kind);
+  }
+
+  @override
+  Future<ConversationNotificationContentKind?> lookupContentKind({
+    required String conversationKey,
+    required int notificationId,
+  }) async => _content[_key(conversationKey, notificationId)]?.kind;
+
+  @override
+  Future<void> clearContentKind({
+    required String conversationKey,
+    required int notificationId,
+  }) async {
+    _content.remove(_key(conversationKey, notificationId));
+  }
 }
 
 void main() {
@@ -108,7 +222,20 @@ void main() {
       final args = show.arguments as Map;
       expect(args['title'], 'Sender');
       expect(args['body'], 'Reacted 👍 to your message');
-      expect(args['payload'], _actorPeerId);
+      final envelope = decodeConversationNotificationPayload(
+        args['payload'] as String,
+      );
+      expect(envelope?.routePayload, _actorPeerId);
+      expect(envelope?.conversationKey, _actorPeerId);
+      expect(
+        envelope?.metadata.kind,
+        ConversationNotificationContentKind.reaction,
+      );
+      expect(
+        envelope?.metadata.eventIdentity,
+        boundedReactionEventIdentity('reaction-event-1'),
+      );
+      expect(envelope?.metadata.generation, isNotEmpty);
       expect(args['id'], deterministicConversationNotificationId(_actorPeerId));
       expect(fixture.reactions.reactions, hasLength(1));
     },
@@ -179,7 +306,10 @@ void main() {
       );
 
       final show = pluginCalls.singleWhere((call) => call.method == 'show');
-      final payload = (show.arguments as Map)['payload'] as String;
+      final nativePayload = (show.arguments as Map)['payload'] as String;
+      final payload =
+          decodeConversationNotificationPayload(nativePayload)?.routePayload ??
+          nativePayload;
       await twoUnread.notifications.clearDeliveredNotifications();
       await _pumpBoundedFrames(tester, count: 2);
       expect(

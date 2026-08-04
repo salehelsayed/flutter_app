@@ -107,6 +107,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
@@ -120,11 +121,15 @@ import 'package:flutter_app/features/push/application/group_missing_notification
 import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
 import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/push_listener_armer.dart';
+import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/push_notification_settings_gateway.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/push_registration_health_notifier.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/set_presence_use_case.dart';
+import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_surface.dart';
 import 'package:flutter_app/core/services/active_peer_keepalive_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -252,6 +257,7 @@ class MyApp extends StatefulWidget {
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
+  final Future<void> Function()? retryDirectNotificationProjection;
   final GroupNotificationPresentationCoordinator?
   groupNotificationPresentationCoordinator;
   final ForegroundGroupNotificationPendingReadAcknowledgementResolver?
@@ -289,6 +295,8 @@ class MyApp extends StatefulWidget {
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
+  final PushRegistrationHealthNotifier? pushRegistrationHealthNotifier;
+  final PushNotificationSettingsGateway pushNotificationSettingsGateway;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
@@ -370,6 +378,7 @@ class MyApp extends StatefulWidget {
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
+    this.retryDirectNotificationProjection,
     this.groupNotificationPresentationCoordinator,
     this.groupNotificationPendingReadAcknowledgementResolver,
     this.droppedPushRecoveryCoordinator,
@@ -403,6 +412,9 @@ class MyApp extends StatefulWidget {
     required this.introductionListener,
     required this.shareIntentService,
     this.pushRegistrationCoordinator,
+    this.pushRegistrationHealthNotifier,
+    this.pushNotificationSettingsGateway =
+        const PlatformPushNotificationSettingsGateway(),
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.accountMigrationStartReceiver,
@@ -478,6 +490,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // onMessage/onMessageOpenedApp subscription + the PUSH_LISTENERS_ARMED
   // telemetry; _setupPushListeners delegates to it.
   late final PushListenerArmer _pushListenerArmer;
+  Future<PendingConversationNotificationOverlayStore>?
+  _pendingConversationNotificationOverlay;
 
   @override
   void initState() {
@@ -643,6 +657,29 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _ensureRuntimeServicesReady() {
     return runtimeStartupLatch.ensureStarted();
+  }
+
+  void _retryPushRegistration() {
+    final coordinator = widget.pushRegistrationCoordinator;
+    if (coordinator != null) {
+      unawaited(coordinator.retryNow());
+    }
+  }
+
+  void _openPushNotificationSettings() {
+    unawaited(_openPushNotificationSettingsSafely());
+  }
+
+  Future<void> _openPushNotificationSettingsSafely() async {
+    try {
+      await widget.pushNotificationSettingsGateway.openNotificationSettings();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_NOTIFICATION_SETTINGS_OPEN_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   Future<bool> _hasPendingDroppedPushRecovery() async {
@@ -1649,6 +1686,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // 183: cancel the ~8s keepalive Timer (no leak).
     _keepAliveUseCase.dispose();
     widget.pushRegistrationCoordinator?.dispose();
+    widget.pushRegistrationHealthNotifier?.dispose();
     widget.droppedPushRecoveryCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
@@ -1963,6 +2001,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepo: widget.repository,
         ),
       );
+      // Canonical direct/group drains above settle before durable direct cards
+      // are projected. Ready rows and reconciliation jobs therefore retry from
+      // current state, never from a pre-drain snapshot.
+      await widget.retryDirectNotificationProjection?.call();
       // PB264-18: only start the global role/exit pass after the awaited resume
       // pipeline has rejoined each eligible topic and run its exact per-group
       // drain/exit continuation. Starting this before handleAppResumed lets a
@@ -2097,6 +2139,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.groupNotificationPresentationCoordinator,
         groupNotificationReadAcknowledgementResolver:
             _isForegroundGroupNotificationReadAcknowledged,
+        groupConversationNotificationProjectionResolver:
+            _loadForegroundGroupConversationNotificationProjection,
       );
     } catch (e) {
       emitFlowEvent(
@@ -2105,6 +2149,38 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<ConversationNotificationSnapshot?>
+  _loadForegroundGroupConversationNotificationProjection({
+    required String groupId,
+    String? currentMessageId,
+    String? currentPrivacyNormalizedLine,
+  }) async {
+    final canonical = await loadGroupConversationNotificationSnapshot(
+      messageRepository: widget.groupMessageRepository,
+      groupId: groupId,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+    );
+    final overlay = await (_pendingConversationNotificationOverlay ??=
+        PendingConversationNotificationOverlayStore.openDefault());
+    final eventId = currentMessageId?.trim();
+    final line = currentPrivacyNormalizedLine?.trim();
+    return overlay.project(
+      conversationKey: 'group:$groupId',
+      canonicalSnapshot: canonical,
+      currentMessage:
+          eventId != null &&
+              eventId.isNotEmpty &&
+              line != null &&
+              line.isNotEmpty
+          ? PendingConversationNotificationMessage(
+              eventId: eventId,
+              line: line,
+              occurredAtMicros: DateTime.now().toUtc().microsecondsSinceEpoch,
+            )
+          : null,
+    );
   }
 
   Future<bool> _isForegroundGroupNotificationReadAcknowledged({
@@ -2368,30 +2444,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleAccountMigrationReceiverActivated() async {
-    await activateAccountMigrationReceiverNotificationState(
-      beginCanonicalNotificationRecovery:
-          widget.groupMessageListener.beginCanonicalNotificationRecovery,
-      invalidateIdentityCache: widget.repository.invalidateCache,
-      rebuildRecipientProjection: () async {
-        // The imported identity owns a different projection generation.
-        // Establish it first (clearing prior-account rows), then rebuild every
-        // recipient-owned group/reaction comparand before display resumes.
-        await widget.repository.loadIdentity();
-        await Future.wait([
-          widget.contactRepository.mirrorAllDirectReactionContacts(),
-          widget.messageRepository.mirrorAllDirectReactionAuthoredTargets(),
-        ]);
-        await widget.groupRepository.mirrorAllGroupReactionNotificationContexts(
-          rethrowOnError: true,
-        );
-        await widget.groupMessageRepository
-            .mirrorAllGroupReactionAuthoredTargets(rethrowOnError: true);
-        await widget.reactionRepository
-            .mirrorAllGroupReactionNotificationComparands(rethrowOnError: true);
-      },
-      endCanonicalNotificationRecovery:
-          widget.groupMessageListener.endCanonicalNotificationRecovery,
-    );
+    final pushRegistration = widget.pushRegistrationCoordinator;
+    pushRegistration?.beginAccountBindingCutover();
+    var bindingCutoverCompleted = false;
+    try {
+      await activateAccountMigrationReceiverNotificationState(
+        beginCanonicalNotificationRecovery:
+            widget.groupMessageListener.beginCanonicalNotificationRecovery,
+        invalidateIdentityCache: widget.repository.invalidateCache,
+        rebuildRecipientProjection: () async {
+          // The imported identity owns a different projection generation.
+          // Establish it first (clearing prior-account rows), then rebuild every
+          // recipient-owned group/reaction comparand before display resumes.
+          await widget.repository.loadIdentity();
+          await Future.wait([
+            widget.contactRepository.mirrorAllDirectReactionContacts(),
+            widget.messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+          ]);
+          await widget.groupRepository
+              .mirrorAllGroupReactionNotificationContexts(rethrowOnError: true);
+          await widget.groupMessageRepository
+              .mirrorAllGroupReactionAuthoredTargets(rethrowOnError: true);
+          await widget.reactionRepository
+              .mirrorAllGroupReactionNotificationComparands(
+                rethrowOnError: true,
+              );
+        },
+        endCanonicalNotificationRecovery:
+            widget.groupMessageListener.endCanonicalNotificationRecovery,
+      );
+      bindingCutoverCompleted = true;
+    } finally {
+      if (bindingCutoverCompleted) {
+        await pushRegistration?.completeAccountBindingCutover();
+      }
+    }
   }
 
   @override
@@ -2414,8 +2501,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             observer: directPrivateMediaRouteObserver,
             child: child ?? const SizedBox.shrink(),
           );
-          return widget.debugE2EOverlayBuilder?.call(routedChild) ??
-              routedChild;
+          final healthNotifier = widget.pushRegistrationHealthNotifier;
+          final appChild = healthNotifier == null
+              ? routedChild
+              : PushRegistrationHealthSurface(
+                  healthListenable: healthNotifier,
+                  onRetry: _retryPushRegistration,
+                  onOpenNotificationSettings: _openPushNotificationSettings,
+                  child: routedChild,
+                );
+          return widget.debugE2EOverlayBuilder?.call(appChild) ?? appChild;
         },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,

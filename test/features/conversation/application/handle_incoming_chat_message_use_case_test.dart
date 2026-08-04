@@ -259,6 +259,7 @@ class FakeMediaAttachmentRepository
 
   final List<MediaAttachment> saved = [];
   VoidCallback? onSave;
+  Object? saveError;
   final Future<ConversationMessage?> Function(String messageId)?
   loadPrivateParent;
 
@@ -271,6 +272,8 @@ class FakeMediaAttachmentRepository
     required MediaOwnerLane owner,
   }) async {
     onSave?.call();
+    final error = saveError;
+    if (error != null) throw error;
     savedOwnerLanes.add(owner);
     final index = saved.indexWhere((saved) => saved.id == attachment.id);
     if (index == -1) {
@@ -532,6 +535,142 @@ void main() {
   setUp(() {
     contactRepo = FakeContactRepository(existingPeerIds: {senderPeerId});
     messageRepo = FakeMessageRepository();
+  });
+
+  group('TC-331-08 direct notification marker ordering', () {
+    const messageId = 'direct-marker-media-1';
+    const timestamp = '2026-08-03T10:00:00.000Z';
+    final plaintext = jsonEncode({
+      'id': messageId,
+      'text': '',
+      'senderPeerId': senderPeerId,
+      'senderUsername': 'Alice',
+      'timestamp': timestamp,
+      'media': [
+        {
+          'id': 'direct-marker-blob-1',
+          'mime': 'image/jpeg',
+          'size': 42,
+          'mediaType': 'image',
+        },
+      ],
+    });
+
+    test(
+      'stage precedes message save and ready follows attachment commit',
+      () async {
+        final order = <String>[];
+        final mediaRepo = FakeMediaAttachmentRepository();
+        messageRepo.onSave = () => order.add('message');
+        mediaRepo.onSave = () => order.add('attachment');
+
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: plaintext,
+          mediaAttachmentRepo: mediaRepo,
+          stageNotificationDisplayCustody: (message) async {
+            expect(message.id, messageId);
+            order.add('stage');
+          },
+          promoteNotificationDisplayCustody: (message) async {
+            expect(message.id, messageId);
+            order.add('ready');
+          },
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(order, const ['stage', 'message', 'attachment', 'ready']);
+      },
+    );
+
+    test(
+      'media crash leaves not-ready custody and exact duplicate repairs then promotes',
+      () async {
+        final order = <String>[];
+        final mediaRepo = FakeMediaAttachmentRepository()
+          ..saveError = StateError('attachment crash');
+        messageRepo.onSave = () => order.add('message');
+        mediaRepo.onSave = () => order.add('attachment');
+
+        Future<void> receive() => handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: plaintext,
+          mediaAttachmentRepo: mediaRepo,
+          stageNotificationDisplayCustody: (message) async {
+            order.add('stage');
+          },
+          promoteNotificationDisplayCustody: (message) async {
+            expect(message.contactPeerId, senderPeerId);
+            expect(message.senderPeerId, senderPeerId);
+            expect(message.timestamp, timestamp);
+            order.add('ready');
+          },
+        ).then((_) {});
+
+        await expectLater(receive(), throwsStateError);
+        expect(order, const ['stage', 'message', 'attachment']);
+
+        mediaRepo.saveError = null;
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: plaintext,
+          mediaAttachmentRepo: mediaRepo,
+          stageNotificationDisplayCustody: (_) async {
+            fail('duplicate recovery must reuse existing marker custody');
+          },
+          promoteNotificationDisplayCustody: (message) async {
+            expect(message.id, messageId);
+            expect(message.contactPeerId, senderPeerId);
+            expect(message.senderPeerId, senderPeerId);
+            expect(message.timestamp, timestamp);
+            order.add('ready');
+          },
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(order, const [
+          'stage',
+          'message',
+          'attachment',
+          'attachment',
+          'ready',
+        ]);
+      },
+    );
+
+    test('same id with mismatched authority never promotes custody', () async {
+      final mismatched = ConversationMessage(
+        id: messageId,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: '2026-08-03T09:59:59.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+      messageRepo = FakeMessageRepository(
+        existingMessages: {messageId: mismatched},
+      );
+      var promoted = false;
+
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: plaintext,
+        promoteNotificationDisplayCustody: (_) async => promoted = true,
+      );
+
+      expect(result, HandleChatMessageResult.duplicate);
+      expect(promoted, isFalse);
+    });
   });
 
   group('handleIncomingChatMessage', () {

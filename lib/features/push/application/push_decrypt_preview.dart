@@ -4,6 +4,7 @@ import 'dart:ui' show Locale;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -42,17 +43,19 @@ typedef VerifyGroupReactionPushSignature =
 /// group-reaction notification extension.
 ///
 /// The relay is allowed to use this extension to select a wake target, but the
-/// recipient still verifies the signature, exact outer parity, and that this
-/// installation's transport is in the signed nomination before consulting
-/// local group state.
+/// recipient still verifies the signature, parity for every provided outer
+/// field, and that this installation's transport is in the signed nomination
+/// before consulting local group state.
 class VerifiedGroupReactionNotificationNomination {
   const VerifiedGroupReactionNotificationNomination({
     required this.reactorTransportPeerId,
     required this.senderPublicKey,
+    required this.transitionId,
   });
 
   final String reactorTransportPeerId;
   final String senderPublicKey;
+  final String transitionId;
 }
 
 /// Integrity failures are different from crypto unavailability. A recognized
@@ -65,6 +68,17 @@ class GroupReactionNotificationIntegrityException implements Exception {
 
   @override
   String toString() => 'GroupReactionNotificationIntegrityException($reason)';
+}
+
+/// A successfully authenticated direct-reaction plaintext disagreed with the
+/// recipient-authorized outer scope. This must not degrade to generic copy.
+class DirectReactionNotificationIntegrityException implements Exception {
+  const DirectReactionNotificationIntegrityException(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => 'DirectReactionNotificationIntegrityException($reason)';
 }
 
 /// A successfully decrypted ordinary message whose recipient-owned routing
@@ -150,6 +164,7 @@ class GroupReactionNotificationContext {
     this.currentReactionTimestamp,
     this.currentReactionRemovedAt,
     this.currentReactionAcknowledged = false,
+    this.expectedTransitionId,
   });
 
   final String groupId;
@@ -169,6 +184,10 @@ class GroupReactionNotificationContext {
   final String? currentReactionTimestamp;
   final String? currentReactionRemovedAt;
   final bool currentReactionAcknowledged;
+
+  /// Signed nomination identity used when the transport omits its duplicate
+  /// outer transition id. Authenticated plaintext must still match this id.
+  final String? expectedTransitionId;
 
   bool get hasCurrentReaction => currentReactionTimestamp != null;
 }
@@ -289,7 +308,7 @@ verifyGroupReactionNotificationNomination({
   );
   if (data['type']?.toString() != 'group_reaction' ||
       outerGroupId == null ||
-      transitionId != outerTransitionId ||
+      (outerTransitionId != null && transitionId != outerTransitionId) ||
       action != data['action']?.toString() ||
       targetMessageId != outerTargetMessageId ||
       reactorPeerId != outerReactorPeerId ||
@@ -327,6 +346,7 @@ verifyGroupReactionNotificationNomination({
   return VerifiedGroupReactionNotificationNomination(
     reactorTransportPeerId: reactorTransportPeerId,
     senderPublicKey: senderPublicKey,
+    transitionId: transitionId,
   );
 }
 
@@ -420,13 +440,13 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
   final keyEpoch = int.tryParse(data['keyEpoch']?.toString() ?? '');
   final ciphertext = _trimToNull(data['ciphertext']?.toString());
   final nonce = _trimToNull(data['nonce']?.toString());
-  final provisionalComparand =
+  final authorizedOuterScope =
       context != null &&
-          outerGroupId == context.groupId &&
-          outerSender == context.actorPeerId &&
-          outerTargetId == context.targetMessageId &&
-          outerAction == GroupReactionPayload.actionAdd &&
-          outerEventId != null
+      outerGroupId == context.groupId &&
+      outerSender == context.actorPeerId &&
+      outerTargetId == context.targetMessageId &&
+      outerAction == GroupReactionPayload.actionAdd;
+  final provisionalComparand = authorizedOuterScope && outerEventId != null
       ? BackgroundProvisionalGroupReactionNotificationComparand(
           groupId: context.groupId,
           messageId: context.targetMessageId,
@@ -447,7 +467,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
     groupComparand: provisionalComparand,
   );
 
-  if (provisionalComparand == null) {
+  if (!authorizedOuterScope) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
@@ -460,7 +480,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
       'group_reaction_context_or_input',
     );
   }
-  final authorizedContext = context!;
+  final authorizedContext = context;
   if (keyEpoch == null ||
       decryptGroup == null ||
       ciphertext == null ||
@@ -473,9 +493,9 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
         'reason': 'group_reaction_crypto_input_unavailable',
       },
     );
-    if (authorizedContext.hasCurrentReaction) {
+    if (outerEventId == null || authorizedContext.hasCurrentReaction) {
       throw const GroupReactionNotificationIntegrityException(
-        'group_reaction_state_unverifiable_without_plaintext',
+        'group_reaction_identity_or_state_unverifiable_without_plaintext',
       );
     }
     return trustedFallback;
@@ -489,10 +509,18 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
       nonce: nonce,
     );
     final payload = GroupReactionPayload.fromDecryptedJson(plaintext);
+    final authenticatedTransitionId = payload?.eventId?.trim();
     final parityMatches =
         payload != null &&
         payload.action == GroupReactionPayload.actionAdd &&
-        payload.eventId == outerEventId &&
+        ((outerEventId == null &&
+                authenticatedTransitionId != null &&
+                authenticatedTransitionId.isNotEmpty &&
+                (authorizedContext.expectedTransitionId == null ||
+                    authenticatedTransitionId ==
+                        authorizedContext.expectedTransitionId)) ||
+            (outerEventId != null &&
+                payload.notificationTransitionId == outerEventId)) &&
         payload.messageId == outerTargetId &&
         payload.senderPeerId == outerSender &&
         (outerTimestamp == null || payload.timestamp == outerTimestamp);
@@ -546,6 +574,13 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
           payload.notificationTransitionId,
         ),
       ),
+      resolvedEventIdentity: _resolvedAuthenticatedPushEventIdentity(
+        kind: ConversationNotificationContentKind.reaction,
+        canonicalEventId: payload.notificationTransitionId,
+        outerEventId: outerEventId,
+        targetMessageId: payload.messageId,
+        action: payload.action,
+      ),
     );
   } on GroupReactionNotificationIntegrityException {
     rethrow;
@@ -558,9 +593,9 @@ Future<BackgroundPushNotificationFallback> _resolveGroupReactionPreview(
         'reason': 'group_reaction_decrypt_error',
       },
     );
-    if (authorizedContext.hasCurrentReaction) {
+    if (outerEventId == null || authorizedContext.hasCurrentReaction) {
       throw const GroupReactionNotificationIntegrityException(
-        'group_reaction_state_unverifiable_without_plaintext',
+        'group_reaction_identity_or_state_unverifiable_without_plaintext',
       );
     }
     return trustedFallback;
@@ -618,7 +653,6 @@ Future<BackgroundPushNotificationFallback> _resolveDirectReactionPreview(
       outerSender != context.actorPeerId ||
       outerTargetId != context.targetMessageId ||
       outerAction != 'add' ||
-      outerEventId == null ||
       decryptOneToOne == null ||
       kem == null ||
       ciphertext == null ||
@@ -641,7 +675,7 @@ Future<BackgroundPushNotificationFallback> _resolveDirectReactionPreview(
     final parityMatches =
         payload != null &&
         payload.action == 'add' &&
-        payload.id == outerEventId &&
+        (outerEventId == null || payload.id == outerEventId) &&
         payload.messageId == outerTargetId &&
         payload.senderPeerId == outerSender;
     if (!parityMatches) {
@@ -650,7 +684,9 @@ Future<BackgroundPushNotificationFallback> _resolveDirectReactionPreview(
         event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
         details: {'kind': 'reaction', 'reason': 'reaction_parity_mismatch'},
       );
-      return trustedFallback;
+      throw const DirectReactionNotificationIntegrityException(
+        'direct_reaction_parity_mismatch',
+      );
     }
 
     emitFlowEvent(
@@ -662,7 +698,16 @@ Future<BackgroundPushNotificationFallback> _resolveDirectReactionPreview(
       title: context.actorUsername,
       body: 'Reacted ${payload.emoji} to your message',
       payload: fallback.payload,
+      resolvedEventIdentity: _resolvedAuthenticatedPushEventIdentity(
+        kind: ConversationNotificationContentKind.reaction,
+        canonicalEventId: payload.id,
+        outerEventId: outerEventId,
+        targetMessageId: payload.messageId,
+        action: payload.action,
+      ),
     );
+  } on DirectReactionNotificationIntegrityException {
+    rethrow;
   } catch (_) {
     emitFlowEvent(
       layer: 'FL',
@@ -750,10 +795,11 @@ Future<BackgroundPushNotificationFallback> _resolveOneToOnePreview(
     }
     return fallback;
   }
-  if (context != null &&
-      (payload.senderPeerId != context.senderPeerId ||
-          (context.expectedMessageId != null &&
-              payload.id != context.expectedMessageId))) {
+  if ((outerMessageId != null && payload.id != outerMessageId) ||
+      (context != null &&
+          (payload.senderPeerId != context.senderPeerId ||
+              (context.expectedMessageId != null &&
+                  payload.id != context.expectedMessageId)))) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
@@ -770,7 +816,16 @@ Future<BackgroundPushNotificationFallback> _resolveOneToOnePreview(
       event: 'PUSH_ANDROID_DATA_DECRYPT_OK',
       details: {'kind': 'chat', 'copy': 'trusted_generic'},
     );
-    return trustedFallback;
+    return BackgroundPushNotificationFallback(
+      title: trustedFallback.title,
+      body: trustedFallback.body,
+      payload: trustedFallback.payload,
+      resolvedEventIdentity: _resolvedAuthenticatedPushEventIdentity(
+        kind: ConversationNotificationContentKind.message,
+        canonicalEventId: payload.id,
+        outerEventId: outerMessageId,
+      ),
+    );
   }
 
   emitFlowEvent(
@@ -790,6 +845,11 @@ Future<BackgroundPushNotificationFallback> _resolveOneToOnePreview(
       locale: locale,
     ),
     payload: fallback.payload,
+    resolvedEventIdentity: _resolvedAuthenticatedPushEventIdentity(
+      kind: ConversationNotificationContentKind.message,
+      canonicalEventId: payload.id,
+      outerEventId: outerMessageId,
+    ),
   );
 }
 
@@ -939,13 +999,17 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       _trimToNull(extra['senderPeerId']?.toString()) ??
       _trimToNull(extra['senderId']?.toString()) ??
       _trimToNull(extra['sender_id']?.toString());
-  if (context != null &&
-      ((decodedGroupId != null && decodedGroupId != context.groupId) ||
-          (context.expectedMessageId != null &&
-              decodedMessageId != context.expectedMessageId) ||
-          decodedSender == context.localPeerId ||
-          (context.senderPeerId != null &&
-              decodedSender != context.senderPeerId))) {
+  if ((decodedMessageId == null && context != null) ||
+      (decodedMessageId != null &&
+          outerMessageId != null &&
+          decodedMessageId != outerMessageId) ||
+      (context != null &&
+          ((decodedGroupId != null && decodedGroupId != context.groupId) ||
+              (context.expectedMessageId != null &&
+                  decodedMessageId != context.expectedMessageId) ||
+              decodedSender == context.localPeerId ||
+              (context.senderPeerId != null &&
+                  decodedSender != context.senderPeerId)))) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
@@ -956,13 +1020,36 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     );
   }
 
+  final resolvedEventIdentity = decodedMessageId == null
+      ? null
+      : _resolvedAuthenticatedPushEventIdentity(
+          kind: ConversationNotificationContentKind.message,
+          canonicalEventId: decodedMessageId,
+          outerEventId: outerMessageId,
+        );
+  final resolvedGroupComparand =
+      context != null && decodedMessageId != null && decodedSender != null
+      ? BackgroundGroupMessageNotificationComparand(
+          groupId: context.groupId,
+          messageId: decodedMessageId,
+          senderPeerId: decodedSender,
+          senderTransportPeerId: context.senderTransportPeerId,
+        )
+      : groupComparand;
+
   if (context != null && _trimToNull(context.groupName) == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_OK',
       details: {'kind': 'group', 'copy': 'trusted_generic'},
     );
-    return trustedFallback;
+    return BackgroundPushNotificationFallback(
+      title: trustedFallback.title,
+      body: trustedFallback.body,
+      payload: trustedFallback.payload,
+      groupComparand: resolvedGroupComparand,
+      resolvedEventIdentity: resolvedEventIdentity,
+    );
   }
 
   final explicitPrivatePolicy = _decodeExplicitGroupPrivateMediaPolicy(
@@ -979,7 +1066,8 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       title: 'Mknoon',
       body: localizedGroupPrivateMediaNotificationBody(locale: locale),
       payload: fallback.payload,
-      groupComparand: groupComparand,
+      groupComparand: resolvedGroupComparand,
+      resolvedEventIdentity: resolvedEventIdentity,
     );
   }
   final groupName =
@@ -1026,7 +1114,31 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     title: groupName ?? fallback.title,
     body: body,
     payload: fallback.payload,
-    groupComparand: groupComparand,
+    groupComparand: resolvedGroupComparand,
+    resolvedEventIdentity: resolvedEventIdentity,
+  );
+}
+
+ResolvedPushEventIdentity _resolvedAuthenticatedPushEventIdentity({
+  required ConversationNotificationContentKind kind,
+  required String canonicalEventId,
+  required String? outerEventId,
+  String? targetMessageId,
+  String? action,
+}) {
+  if (outerEventId == null) {
+    return ResolvedPushEventIdentity.authenticatedInner(
+      kind: kind,
+      canonicalEventId: canonicalEventId,
+      targetMessageId: targetMessageId,
+      action: action,
+    );
+  }
+  return ResolvedPushEventIdentity.outerAndAuthenticated(
+    kind: kind,
+    canonicalEventId: canonicalEventId,
+    targetMessageId: targetMessageId,
+    action: action,
   );
 }
 

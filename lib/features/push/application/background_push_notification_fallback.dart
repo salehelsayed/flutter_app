@@ -46,19 +46,83 @@ typedef ForegroundGroupNotificationPendingReadAcknowledgementResolver =
       required ConversationNotificationContentKind contentKind,
       required String eventIdentity,
     });
+typedef ForegroundGroupConversationNotificationProjectionResolver =
+    Future<ConversationNotificationSnapshot?> Function({
+      required String groupId,
+      String? currentMessageId,
+      String? currentPrivacyNormalizedLine,
+    });
 
 class BackgroundPushNotificationFallback {
   final String title;
   final String body;
   final String? payload;
   final BackgroundManagedGroupNotificationComparand? groupComparand;
+  final ResolvedPushEventIdentity? resolvedEventIdentity;
+  final ConversationNotificationSnapshot? snapshot;
 
   const BackgroundPushNotificationFallback({
     required this.title,
     required this.body,
     this.payload,
     this.groupComparand,
+    this.resolvedEventIdentity,
+    this.snapshot,
   });
+
+  BackgroundPushNotificationFallback withSnapshot(
+    ConversationNotificationSnapshot? value,
+  ) => BackgroundPushNotificationFallback(
+    title: title,
+    body: body,
+    payload: payload,
+    groupComparand: groupComparand,
+    resolvedEventIdentity: resolvedEventIdentity,
+    snapshot: value,
+  );
+}
+
+enum ResolvedPushEventIdentityOrigin {
+  outerAndAuthenticated,
+  authenticatedInner,
+}
+
+/// Canonical event authority obtained only after decrypting the private push
+/// payload. The outer wake hint may be absent in legacy/test-mutated traffic,
+/// but when it is present it must match this authenticated identity exactly.
+final class ResolvedPushEventIdentity {
+  const ResolvedPushEventIdentity.outerAndAuthenticated({
+    required this.kind,
+    required this.canonicalEventId,
+    this.targetMessageId,
+    this.action,
+  }) : origin = ResolvedPushEventIdentityOrigin.outerAndAuthenticated;
+
+  const ResolvedPushEventIdentity.authenticatedInner({
+    required this.kind,
+    required this.canonicalEventId,
+    this.targetMessageId,
+    this.action,
+  }) : origin = ResolvedPushEventIdentityOrigin.authenticatedInner;
+
+  final ConversationNotificationContentKind kind;
+  final String canonicalEventId;
+  final String? targetMessageId;
+  final String? action;
+  final ResolvedPushEventIdentityOrigin origin;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ResolvedPushEventIdentity &&
+      other.kind == kind &&
+      other.canonicalEventId == canonicalEventId &&
+      other.targetMessageId == targetMessageId &&
+      other.action == action &&
+      other.origin == origin;
+
+  @override
+  int get hashCode =>
+      Object.hash(kind, canonicalEventId, targetMessageId, action, origin);
 }
 
 class PushFallbackNotificationDisplayEligibility {
@@ -266,6 +330,8 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   groupNotificationPresentationCoordinator,
   ForegroundGroupNotificationReadAcknowledgementResolver?
   groupNotificationReadAcknowledgementResolver,
+  ForegroundGroupConversationNotificationProjectionResolver?
+  groupConversationNotificationProjectionResolver,
 }) async {
   if (result != ForegroundRemoteMessageResult.notificationNeeded) {
     return false;
@@ -292,6 +358,11 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
       );
     }
     final eventIdentity = boundedReactionEventIdentity(eventId);
+    Future<ConversationNotificationSnapshot?> loadProjection() =>
+        _loadForegroundGroupConversationNotificationProjection(
+          resolver: groupConversationNotificationProjectionResolver,
+          groupId: groupId,
+        );
     Future<bool> present() async {
       final resolved = await resolver(message);
       if (resolved == null || resolved.payload == null) {
@@ -325,6 +396,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         notificationEventIdentity: eventIdentity,
         notificationEventType: 'message_reaction',
         durableNotificationCoordinatorResolver: coordinatorResolver,
+        loadConversationNotificationSnapshot: loadProjection,
         backgroundDuplicateGuardDelay: Duration.zero,
       );
       return true;
@@ -406,6 +478,11 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
           payload: barePayload,
           silent: true,
           contentKind: ConversationNotificationContentKind.message,
+          snapshot:
+              await _loadForegroundGroupConversationNotificationProjection(
+                resolver: groupConversationNotificationProjectionResolver,
+                groupId: groupId,
+              ),
         );
         return true;
       }
@@ -440,6 +517,13 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         messageText: genericBody,
         messageId: canonicalMessageId,
         durableNotificationCoordinatorResolver: coordinatorResolver,
+        loadConversationNotificationSnapshot: () =>
+            _loadForegroundGroupConversationNotificationProjection(
+              resolver: groupConversationNotificationProjectionResolver,
+              groupId: groupId,
+              currentMessageId: canonicalMessageId,
+              currentPrivacyNormalizedLine: genericBody,
+            ),
         notificationEventType: 'group_message',
         backgroundDuplicateGuardDelay: Duration.zero,
       );
@@ -483,6 +567,30 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
     payload: fallback.payload,
   );
   return true;
+}
+
+Future<ConversationNotificationSnapshot?>
+_loadForegroundGroupConversationNotificationProjection({
+  required ForegroundGroupConversationNotificationProjectionResolver? resolver,
+  required String groupId,
+  String? currentMessageId,
+  String? currentPrivacyNormalizedLine,
+}) async {
+  if (resolver == null) return null;
+  try {
+    return await resolver(
+      groupId: groupId,
+      currentMessageId: currentMessageId,
+      currentPrivacyNormalizedLine: currentPrivacyNormalizedLine,
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_FOREGROUND_NOTIFICATION_OVERLAY_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return null;
+  }
 }
 
 String? backgroundPushFallbackDedupeKey(RemoteMessage message) {

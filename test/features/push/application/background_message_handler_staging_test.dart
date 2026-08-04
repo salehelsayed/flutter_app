@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
@@ -165,6 +166,69 @@ void main() {
     expect(staged.single.ciphertext, 'reaction-ciphertext');
     expect(staged.single.nonce, 'reaction-nonce');
   });
+
+  test(
+    'authenticated inner identity promotes a test-mutated missing outer id before claim and show',
+    () async {
+      debugSetBackgroundPushNotificationResolver((message) async {
+        final isReaction = message.data['type'] == 'message_reaction';
+        return BackgroundPushNotificationFallback(
+          title: 'Alice',
+          body: 'authenticated body',
+          payload: 'peer-alice',
+          resolvedEventIdentity: isReaction
+              ? const ResolvedPushEventIdentity.authenticatedInner(
+                  kind: ConversationNotificationContentKind.reaction,
+                  canonicalEventId: 'inner-reaction-1',
+                  targetMessageId: 'target-message-1',
+                  action: 'add',
+                )
+              : const ResolvedPushEventIdentity.authenticatedInner(
+                  kind: ConversationNotificationContentKind.message,
+                  canonicalEventId: 'inner-message-1',
+                ),
+        );
+      });
+
+      await firebaseMessagingBackgroundHandler(
+        const RemoteMessage(
+          messageId: 'transport-chat-1',
+          data: <String, dynamic>{
+            'type': 'new_message',
+            'sender_id': 'peer-alice',
+            'kem': 'kem',
+            'ciphertext': 'ciphertext',
+            'nonce': 'missing-chat-id-nonce',
+          },
+        ),
+      );
+      await firebaseMessagingBackgroundHandler(
+        const RemoteMessage(
+          messageId: 'transport-reaction-1',
+          data: <String, dynamic>{
+            'type': 'message_reaction',
+            'sender_id': 'peer-alice',
+            'target_message_id': 'target-message-1',
+            'action': 'add',
+            'kem': 'kem',
+            'ciphertext': 'ciphertext',
+            'nonce': 'missing-reaction-id-nonce',
+          },
+        ),
+      );
+
+      expect(staged, hasLength(4));
+      expect(staged[0].identityResolutionPending, isTrue);
+      expect(staged[0].messageId, isNull);
+      expect(staged[1].identityResolutionPending, isFalse);
+      expect(staged[1].messageId, 'inner-message-1');
+      expect(staged[2].identityResolutionPending, isTrue);
+      expect(staged[2].eventId, isNull);
+      expect(staged[3].identityResolutionPending, isFalse);
+      expect(staged[3].eventId, 'inner-reaction-1');
+      expect(log.where((call) => call.method == 'show'), hasLength(2));
+    },
+  );
 
   test(
     'no-ciphertext push stages nothing; group-kind push stages nothing; staging throw never suppresses notification',

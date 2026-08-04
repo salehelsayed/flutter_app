@@ -31,6 +31,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
@@ -38,6 +39,7 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
@@ -53,6 +55,9 @@ void main() {
   late FakeP2PService p2pService;
   late FakeMediaFileManager mediaFileManager;
   late FakeSecureKeyStore secureKeyStore;
+  late FakeReactionRepository reactionRepository;
+  late FakeGroupReactionReplayOutboxRepository
+  groupReactionReplayOutboxRepository;
   late ImageProcessor imageProcessor;
   late AppShellController appShellController;
   late PendingPostTargetStore pendingPostTargetStore;
@@ -93,6 +98,9 @@ void main() {
     p2pService = FakeP2PService();
     mediaFileManager = FakeMediaFileManager();
     secureKeyStore = FakeSecureKeyStore();
+    reactionRepository = FakeReactionRepository();
+    groupReactionReplayOutboxRepository =
+        FakeGroupReactionReplayOutboxRepository();
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -197,6 +205,9 @@ void main() {
           mediaFileManager: mediaFileManager,
           secureKeyStore: secureKeyStore,
           imageProcessor: imageProcessor,
+          reactionRepository: reactionRepository,
+          groupReactionReplayOutboxRepository:
+              groupReactionReplayOutboxRepository,
           appShellController: appShellController,
           pendingPostTargetStore: pendingPostTargetStore,
           postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -207,6 +218,16 @@ void main() {
 
     // Leg 1: a 0-contact identity lands on the intro QR/scan screen.
     expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+    final firstTimeExperience = tester.widget<FirstTimeExperienceWired>(
+      find.byType(FirstTimeExperienceWired),
+    );
+    expect(firstTimeExperience.reactionRepository, same(reactionRepository));
+    expect(
+      firstTimeExperience.groupReactionReplayOutboxRepository,
+      same(groupReactionReplayOutboxRepository),
+      reason:
+          'the no-contacts startup branch must preserve group reaction mutation dependencies',
+    );
 
     // Leg 2: the first friend request arrives.
     final request = ContactRequestModel(
@@ -242,6 +263,14 @@ void main() {
     // Feed shell preserved underneath (offstage under the opaque chat route)
     // — proves two-push, not a shell-replacing chat.
     expect(find.byType(FeedWired, skipOffstage: false), findsOneWidget);
+    final feed = tester.widget<FeedWired>(
+      find.byType(FeedWired, skipOffstage: false),
+    );
+    expect(feed.reactionRepository, same(reactionRepository));
+    expect(
+      feed.groupReactionReplayOutboxRepository,
+      same(groupReactionReplayOutboxRepository),
+    );
     expect(appShellController.activeTab, AppShellTab.orbit);
 
     // 214: back-nav returns to the shell root showing the Orbit surface.
@@ -254,6 +283,12 @@ void main() {
     );
     expect(appShellController.activeTab, AppShellTab.orbit);
     expect(find.byType(OrbitWired), findsOneWidget);
+    final orbit = tester.widget<OrbitWired>(find.byType(OrbitWired));
+    expect(orbit.reactionRepository, same(reactionRepository));
+    expect(
+      orbit.groupReactionReplayOutboxRepository,
+      same(groupReactionReplayOutboxRepository),
+    );
 
     // Golden-path parity: the accepted contact is durably present.
     final acceptedContact = await contactRepository.getContact(request.peerId);

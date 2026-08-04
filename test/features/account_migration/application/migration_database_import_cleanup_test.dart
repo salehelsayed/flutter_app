@@ -39,6 +39,7 @@ void main() {
           dbPath,
           '$dbPath-wal',
           '$dbPath-shm',
+          '$dbPath-journal',
           manifestPath,
           tempExportPath,
           activeDbPath,
@@ -77,6 +78,7 @@ void main() {
           dbPath,
           '$dbPath-wal',
           '$dbPath-shm',
+          '$dbPath-journal',
           manifestPath,
           tempExportPath,
         ]) {
@@ -100,7 +102,9 @@ void main() {
         final dbPath = p.join(tempDir.path, 'verified.db');
         final manifestPath = p.join(tempDir.path, 'verified-manifest.json');
         await File(dbPath).writeAsString('db', flush: true);
+        await File('$dbPath-wal').writeAsString('wal', flush: true);
         await File('$dbPath-shm').writeAsString('shm', flush: true);
+        await File('$dbPath-journal').writeAsString('journal', flush: true);
         await File(manifestPath).writeAsString('manifest', flush: true);
         final cleanup = MigrationDatabaseImportCleanup(
           failedSecureStorageCleanup:
@@ -117,8 +121,65 @@ void main() {
         );
 
         expect(File(dbPath).existsSync(), isFalse);
+        expect(File('$dbPath-wal').existsSync(), isFalse);
         expect(File('$dbPath-shm').existsSync(), isFalse);
+        expect(File('$dbPath-journal').existsSync(), isFalse);
         expect(File(manifestPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'cancelled v107 import removes every SQLite sidecar and session staging',
+      () async {
+        final dbPath = p.join(tempDir.path, 'cancelled-v107.db');
+        final manifestPath = p.join(tempDir.path, 'cancelled-v107.json');
+        for (final path in <String>[
+          dbPath,
+          '$dbPath-wal',
+          '$dbPath-shm',
+          '$dbPath-journal',
+          manifestPath,
+        ]) {
+          await File(path).writeAsString('data', flush: true);
+        }
+        final dbKey = _dbKey();
+        await secureStaging.stageValue(
+          sessionId: 'cancelled-session',
+          key: dbKey,
+          value: 'staged-db',
+        );
+        final cleanup = MigrationDatabaseImportCleanup(
+          failedSecureStorageCleanup:
+              ({required sessionId, required registryKeys}) =>
+                  secureCleanup.failedImportCleanup(
+                    sessionId: sessionId,
+                    registryKeys: registryKeys,
+                  ),
+        );
+
+        await cleanup.cancelledImportCleanup(
+          sessionId: 'cancelled-session',
+          stagedDatabasePath: dbPath,
+          manifestPath: manifestPath,
+          registryKeys: <MigrationSecureStorageKey>[dbKey],
+        );
+
+        for (final path in <String>[
+          dbPath,
+          '$dbPath-wal',
+          '$dbPath-shm',
+          '$dbPath-journal',
+          manifestPath,
+        ]) {
+          expect(File(path).existsSync(), isFalse, reason: path);
+        }
+        expect(
+          await secureStaging.readStagedValue(
+            sessionId: 'cancelled-session',
+            key: dbKey,
+          ),
+          isNull,
+        );
       },
     );
   });

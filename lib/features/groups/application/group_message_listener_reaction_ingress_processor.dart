@@ -18,6 +18,8 @@ final class _GroupReactionIngressProcessor {
     required Future<String?> Function() resolveSelfPeerId,
     required Future<DurableNotificationToneLease?> Function()
     resolveDurableNotificationCoordinator,
+    required Future<ConversationNotificationSnapshot?> Function(String groupId)
+    loadGroupConversationNotificationSnapshot,
     required void Function(ReactionChange) emitReactionChange,
     required Future<void> Function(
       GroupReactionPayload payload,
@@ -43,6 +45,8 @@ final class _GroupReactionIngressProcessor {
        _resolveSelfPeerId = resolveSelfPeerId,
        _resolveDurableNotificationCoordinator =
            resolveDurableNotificationCoordinator,
+       _loadGroupConversationNotificationSnapshot =
+           loadGroupConversationNotificationSnapshot,
        _emitReactionChange = emitReactionChange,
        _stageNotificationDisplayCustody = stageNotificationDisplayCustody,
        _reconcileNotificationDisplayCustody =
@@ -65,6 +69,8 @@ final class _GroupReactionIngressProcessor {
   final Future<String?> Function() _resolveSelfPeerId;
   final Future<DurableNotificationToneLease?> Function()
   _resolveDurableNotificationCoordinator;
+  final Future<ConversationNotificationSnapshot?> Function(String groupId)
+  _loadGroupConversationNotificationSnapshot;
   final void Function(ReactionChange) _emitReactionChange;
   final Future<void> Function(GroupReactionPayload payload, String groupId)?
   _stageNotificationDisplayCustody;
@@ -502,6 +508,8 @@ final class _GroupReactionIngressProcessor {
       toneTracker: _notificationToneTracker,
       durableNotificationCoordinatorResolver:
           _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(groupId),
       consumeRecentRemoteNotificationAnnouncement:
           ({required payload, String? messageId}) =>
               _remoteNotificationGate.consumeIfRecentAnnouncement(

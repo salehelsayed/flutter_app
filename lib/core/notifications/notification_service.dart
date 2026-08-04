@@ -13,6 +13,105 @@ enum NotificationPresentationResult {
   contendedRetryable,
 }
 
+/// Privacy-normalized canonical unread state for one stable conversation card.
+///
+/// Callers derive this from the database immediately before projection. It is
+/// never persisted in display custody: history is bounded to five lines while
+/// [totalUnreadMessageCount] remains the uncapped canonical message count.
+final class ConversationNotificationHistoryEntry {
+  const ConversationNotificationHistoryEntry({
+    required this.eventId,
+    required this.line,
+    required this.occurredAtMicros,
+  });
+
+  /// Canonical ordinary-message identity. Reactions never appear in history.
+  final String eventId;
+  final String line;
+  final int occurredAtMicros;
+}
+
+final class ConversationNotificationSnapshot {
+  ConversationNotificationSnapshot({
+    required Iterable<String> historyLines,
+    required this.totalUnreadMessageCount,
+    Iterable<String> canonicalEventIds = const <String>[],
+    Iterable<ConversationNotificationHistoryEntry> orderedHistory =
+        const <ConversationNotificationHistoryEntry>[],
+  }) : historyLines = List<String>.unmodifiable(historyLines),
+       canonicalEventIds = Set<String>.unmodifiable(canonicalEventIds),
+       orderedHistory = List<ConversationNotificationHistoryEntry>.unmodifiable(
+         orderedHistory,
+       ) {
+    if (this.historyLines.length > 5) {
+      throw ArgumentError.value(historyLines, 'historyLines', 'maximum is 5');
+    }
+    if (this.historyLines.any((line) => line.trim().isEmpty)) {
+      throw ArgumentError.value(
+        historyLines,
+        'historyLines',
+        'lines must be non-empty',
+      );
+    }
+    if (totalUnreadMessageCount < this.historyLines.length) {
+      throw ArgumentError.value(
+        totalUnreadMessageCount,
+        'totalUnreadMessageCount',
+        'must cover every history line',
+      );
+    }
+    if (this.canonicalEventIds.any((id) => id.trim().isEmpty)) {
+      throw ArgumentError.value(
+        canonicalEventIds,
+        'canonicalEventIds',
+        'ids must be non-empty',
+      );
+    }
+    if (this.canonicalEventIds.length > totalUnreadMessageCount) {
+      throw ArgumentError.value(
+        canonicalEventIds,
+        'canonicalEventIds',
+        'cannot exceed total unread message count',
+      );
+    }
+    if (this.orderedHistory.isNotEmpty &&
+        (this.orderedHistory.length != this.historyLines.length ||
+            !this.orderedHistory
+                .map((entry) => entry.line)
+                .toList(growable: false)
+                .indexed
+                .every((pair) => pair.$2 == this.historyLines[pair.$1]))) {
+      throw ArgumentError.value(
+        orderedHistory,
+        'orderedHistory',
+        'must align exactly with historyLines',
+      );
+    }
+    if (this.orderedHistory.any(
+      (entry) => entry.eventId.trim().isEmpty || entry.line.trim().isEmpty,
+    )) {
+      throw ArgumentError.value(
+        orderedHistory,
+        'orderedHistory',
+        'entries must be non-empty canonical events',
+      );
+    }
+  }
+
+  final List<String> historyLines;
+  final int totalUnreadMessageCount;
+
+  /// Every eligible canonical unread ordinary-message id, not merely the five
+  /// rendered history rows. Pending push projections use this set to retire an
+  /// event as soon as the encrypted database materializes it.
+  final Set<String> canonicalEventIds;
+
+  /// Timestamped metadata for the bounded rendered history. Older callers may
+  /// omit it; projection code then conservatively places pending arrivals after
+  /// the already-rendered canonical lines.
+  final List<ConversationNotificationHistoryEntry> orderedHistory;
+}
+
 /// Narrow optional capability for retiring one conversation card.
 ///
 /// Keeping this separate from [NotificationService] means lightweight fakes
@@ -54,6 +153,7 @@ final class CanonicalConversationNotificationReplacement {
     required this.routePayload,
     required this.contentKind,
     required this.eventIdentity,
+    this.snapshot,
   });
 
   final String senderUsername;
@@ -61,6 +161,7 @@ final class CanonicalConversationNotificationReplacement {
   final String routePayload;
   final ConversationNotificationContentKind contentKind;
   final String eventIdentity;
+  final ConversationNotificationSnapshot? snapshot;
 }
 
 /// Optional exact-generation capability for atomically rebuilding a shared
@@ -75,6 +176,30 @@ abstract interface class ConversationNotificationGenerationReplacement {
     String expectedGeneration,
     CanonicalConversationNotificationReplacement replacement,
   );
+}
+
+/// The exact native show operation after notification-id/content-registry
+/// preparation has completed.
+typedef NativeMessageNotificationShow =
+    Future<void> Function({required bool silent});
+
+/// Owns the narrow boundary where a prepared notification is handed to the
+/// platform. Android durable event/tone owners use this seam so ordinary
+/// registry failures remain known pre-publication failures, while a platform
+/// error after entering [publishNative] is treated as an ambiguous attempt.
+abstract interface class MessageNotificationNativePublicationBoundary {
+  Future<void> showMessageNotificationAtNativeBoundary({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required Future<void> Function(NativeMessageNotificationShow showNative)
+    publishNative,
+  });
 }
 
 /// Abstract interface for showing local notifications.
@@ -95,6 +220,7 @@ abstract class NotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   });
 
   /// Show a generic notification with a title, body, and optional payload.

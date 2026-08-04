@@ -262,12 +262,15 @@ dependencies {
     // firebase_messaging keeps this dependency non-transitive at the app
     // compile boundary, so declare the already-resolved SDK version directly.
     implementation("com.google.firebase:firebase-messaging:24.1.2")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("com.google.guava:guava:33.3.1-android")
     // 180: pure-Java mDNS resolver. NsdManager intermittently never completes an
     // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
     // interface + does its own SRV/TXT/A resolution. See MdnsResolver.kt.
     implementation("org.jmdns:jmdns:3.5.9")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.work:work-testing:2.11.2")
     if (enableGroupExitReleaseDiagnosticsProof) {
         // `integration_test` is a dev plugin and Flutter intentionally omits
         // dev plugins from releaseApi. The proof property opts this one plugin

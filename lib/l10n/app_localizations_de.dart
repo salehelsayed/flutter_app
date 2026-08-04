@@ -3716,4 +3716,31 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get direct_batch_forward_close => 'Schließen';
+
+  @override
+  String get push_registration_health_warning_title =>
+      'Benachrichtigungen prüfen';
+
+  @override
+  String get push_registration_health_permission_denied =>
+      'Benachrichtigungen für Mknoon sind auf diesem Gerät deaktiviert.';
+
+  @override
+  String get push_registration_health_no_token =>
+      'Dieses Gerät hat noch kein Benachrichtigungs-Token erhalten.';
+
+  @override
+  String get push_registration_health_registration_failed =>
+      'Mknoon konnte dieses Gerät nicht für Benachrichtigungen registrieren.';
+
+  @override
+  String get push_registration_health_temporary_problem =>
+      'Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.';
+
+  @override
+  String get push_registration_health_retry => 'Erneut versuchen';
+
+  @override
+  String get push_registration_health_open_notification_settings =>
+      'Benachrichtigungseinstellungen öffnen';
 }

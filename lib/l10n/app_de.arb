@@ -1753,5 +1753,12 @@
   "direct_batch_forward_summary": "Gesendet {sent}, Warteschlange {queued}, fehlgeschlagen {failed}",
   "direct_batch_forward_phase_uploading": "Wird hochgeladen",
   "direct_batch_forward_phase_sending": "Wird gesendet",
-  "direct_batch_forward_close": "Schließen"
+  "direct_batch_forward_close": "Schließen",
+  "push_registration_health_warning_title": "Benachrichtigungen prüfen",
+  "push_registration_health_permission_denied": "Benachrichtigungen für Mknoon sind auf diesem Gerät deaktiviert.",
+  "push_registration_health_no_token": "Dieses Gerät hat noch kein Benachrichtigungs-Token erhalten.",
+  "push_registration_health_registration_failed": "Mknoon konnte dieses Gerät nicht für Benachrichtigungen registrieren.",
+  "push_registration_health_temporary_problem": "Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.",
+  "push_registration_health_retry": "Erneut versuchen",
+  "push_registration_health_open_notification_settings": "Benachrichtigungseinstellungen öffnen"
 }

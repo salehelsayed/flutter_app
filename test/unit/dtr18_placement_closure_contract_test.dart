@@ -33,7 +33,7 @@ const _relocations = <String, List<String>>{
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/message_repository_impl.dart',
-    '768329771535ccde97a31a1ad6bc63e4f7b627d8b867f6d5a8e48b51d02cae5c',
+    'c2dd1326de933cff4bb8f3cfe9c44ac09eb9dd66bf433fdbe5fd0f07ef136313',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -119,7 +119,7 @@ const _relocations = <String, List<String>>{
   'lib/features/identity/domain/repositories/'
       'identity_repository_impl.dart': <String>[
     'lib/features/identity/data/repositories/identity_repository_impl.dart',
-    '715770a7bb46e7c50ce2c5fb7bd7385ae5e7bb162fe03c1740524cf8e8768e91',
+    'b8133f8db2ce827328b96e50dbc5da5e4cd10656b1eb19e30e9fa6356e65fa0c',
   ],
   'lib/features/introduction/domain/repositories/'
       'intro_review_seen_repository_impl.dart': <String>[

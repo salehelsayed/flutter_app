@@ -1008,6 +1008,8 @@ class AccountMigrationProductionBundleReceiver
   final MigrationDatabaseActiveImporter? activeDatabaseImporter;
   final MigrationCutoverCoordinator? cutoverCoordinator;
   final AccountMigrationAuthorityRepository? authorityRepository;
+  final Future<void> Function(String accountPeerId)?
+  publishCanonicalAccountBinding;
   final String stagingDirectoryPath;
   final String documentsRootPath;
   final MigrationLedgerStoreFactory ledgerStoreFactory;
@@ -1021,6 +1023,7 @@ class AccountMigrationProductionBundleReceiver
     this.activeDatabaseImporter,
     this.cutoverCoordinator,
     this.authorityRepository,
+    this.publishCanonicalAccountBinding,
     required this.stagingDirectoryPath,
     required this.documentsRootPath,
     this.ledgerStoreFactory = _defaultLedgerStoreFactory,
@@ -1691,6 +1694,9 @@ class AccountMigrationProductionBundleReceiver
         sessionId: manifest.sessionId,
         registryKeys: verifiedImport.promotionKeys,
       );
+      stageTracker.done();
+      stageTracker.begin('canonicalAccountBinding');
+      await publishCanonicalAccountBinding?.call(transcript.oldPhonePeerId);
       stageTracker.done();
       stageTracker.begin('recordOldBlockProof');
       await coordinator.recordOldBlockProofReceived(

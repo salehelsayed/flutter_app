@@ -23,6 +23,7 @@ class FakeNotificationService implements NotificationService {
     bool silent = false,
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
   }) async {
     shown.add(
       FakeNotification(
@@ -33,6 +34,7 @@ class FakeNotificationService implements NotificationService {
         silent: silent,
         contentKind: contentKind,
         contentEventIdentity: contentEventIdentity,
+        snapshot: snapshot,
       ),
     );
   }
@@ -76,6 +78,7 @@ class FakeNotification {
   final bool silent;
   final ConversationNotificationContentKind? contentKind;
   final String? contentEventIdentity;
+  final ConversationNotificationSnapshot? snapshot;
 
   const FakeNotification({
     required this.contactPeerId,
@@ -85,6 +88,7 @@ class FakeNotification {
     this.silent = false,
     this.contentKind,
     this.contentEventIdentity,
+    this.snapshot,
   });
 }
 
