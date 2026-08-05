@@ -46,15 +46,15 @@ func TestForegroundRelayProbeIsNotRequiredForActiveSendPath(t *testing.T) {
 	}
 }
 
-func TestDirectConfirmTimeout_StaysWithinInteractiveSendBudget(t *testing.T) {
+func TestDirectConfirmTimeout_StaysWithinCommittedAckReserve(t *testing.T) {
 	if DirectConfirmTimeout <= 0 {
 		t.Fatal("DirectConfirmTimeout must be positive")
 	}
-	if DirectConfirmTimeout >= InteractiveSendTimeout {
+	if DirectConfirmTimeout >= CommittedAckReserve {
 		t.Fatalf(
-			"DirectConfirmTimeout (%v) must stay below InteractiveSendTimeout (%v)",
+			"DirectConfirmTimeout (%v) must stay below CommittedAckReserve (%v)",
 			DirectConfirmTimeout,
-			InteractiveSendTimeout,
+			CommittedAckReserve,
 		)
 	}
 }

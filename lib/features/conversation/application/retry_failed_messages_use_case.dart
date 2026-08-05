@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_tom
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -260,7 +262,7 @@ Future<int> _retryFailedMessagesInternal({
   ReleaseMediaUploadLease? releaseUploadLease,
   required bool manualRetry,
 }) async {
-  final retryStopwatch = Stopwatch()..start();
+  final retryStopwatch = clock.stopwatch()..start();
   final effectiveUploadFn = uploadMediaFn ?? uploadMedia;
   void emitRetryTiming({
     required String outcome,
@@ -939,10 +941,20 @@ Future<bool> _storeOrReplayDeleteEnvelope({
 
   SendMessageResult sendResult;
   try {
+    // Inbox custody owns the first attempt. Only after it fails do we create a
+    // live-delivery T0, so relay latency cannot consume a leg that did not yet
+    // exist while the eventual direct replay remains absolutely bounded.
+    final liveStopwatch = clock.stopwatch()..start();
+    final liveDeadline = OutgoingLiveDeadline(() => liveStopwatch.elapsed);
+    final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+    if (timeoutMs == null) {
+      _emitDeleteTombstoneStillFailed(msg, reason: 'send_deadline_exhausted');
+      return false;
+    }
     sendResult = await p2pService.sendMessageWithReply(
       msg.contactPeerId,
       wireEnvelope,
-      timeoutMs: interactiveDirectBudget.inMilliseconds,
+      timeoutMs: timeoutMs,
     );
   } catch (e) {
     _emitDeleteTombstoneStillFailed(msg, reason: 'send_error', error: e);

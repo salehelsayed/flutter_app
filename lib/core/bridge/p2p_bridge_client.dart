@@ -4,6 +4,11 @@ import 'bridge.dart';
 import '../local_discovery/lan_address_classifier.dart';
 import '../utils/flow_event_emitter.dart';
 
+/// Extra time given to the Dart bridge boundary beyond a native operation's
+/// own deadline. This margin detects a stalled MethodChannel/gomobile await
+/// without racing the native timeout itself.
+const Duration p2pBridgeWatchdogMargin = Duration(milliseconds: 500);
+
 /// Default rendezvous server address (WSS).
 /// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
 const String defaultRendezvousAddress =
@@ -250,8 +255,8 @@ Future<Map<String, dynamic>> callP2PRelayPresence(
   // {status:"ERROR", error:"Unknown action: presence_get"} — degrade to
   // 'unknown' (NET-REL-07), never 'unreachable', and flag it so field
   // monitoring can see un-upgraded relays.
-  final errorText =
-      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final errorText = (response['error'] ?? response['errorMessage'] ?? '')
+      .toString();
   final isUnknownAction =
       response['status'] == 'ERROR' &&
       errorText.toLowerCase().contains('unknown action');
@@ -318,8 +323,8 @@ Future<Map<String, dynamic>> callP2PRelayPresenceSet(
   // An old relay returns {status:"ERROR", error:"Unknown action: presence_set"}
   // (or the bridge surfaces it as {ok:false, error:"Unknown action: ..."}).
   // Degrade to "unsupported -> skip" (NET-REL-07), never retry/spam.
-  final errorText =
-      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final errorText = (response['error'] ?? response['errorMessage'] ?? '')
+      .toString();
   final isUnknownAction = errorText.toLowerCase().contains('unknown action');
   if (isUnknownAction) {
     emitFlowEvent(
@@ -408,8 +413,8 @@ Future<Map<String, dynamic>> callP2PRegisterWakeTokens(
       .timeout(const Duration(seconds: 5));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
-  final errorText =
-      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final errorText = (response['error'] ?? response['errorMessage'] ?? '')
+      .toString();
   final isUnknownAction = errorText.toLowerCase().contains('unknown action');
   final ok = response['ok'] == true && !isUnknownAction;
 
@@ -483,10 +488,7 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
 
   final request = {
     'cmd': 'rendezvous:register',
-    'payload': {
-      'namespace': ?namespace,
-      'serverAddresses': ?serverAddresses,
-    },
+    'payload': {'namespace': ?namespace, 'serverAddresses': ?serverAddresses},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -522,10 +524,7 @@ Future<Map<String, dynamic>> callP2PRendezvousUnregister(
 
   final request = {
     'cmd': 'rendezvous:unregister',
-    'payload': {
-      'namespace': ?namespace,
-      'serverAddresses': ?serverAddresses,
-    },
+    'payload': {'namespace': ?namespace, 'serverAddresses': ?serverAddresses},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -573,8 +572,31 @@ Future<Map<String, dynamic>> callP2PRendezvousDiscover(
     },
   };
 
-  final responseJson = await bridge.send(jsonEncode(request));
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  final watchdog = timeoutMs == null
+      ? null
+      : Duration(milliseconds: timeoutMs) + p2pBridgeWatchdogMargin;
+
+  final Map<String, dynamic> response;
+  try {
+    final responseJson = watchdog == null
+        ? await bridge.send(jsonEncode(request))
+        : await bridge.send(jsonEncode(request)).timeout(watchdog);
+    response = jsonDecode(responseJson) as Map<String, dynamic>;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_RENDEZVOUS_DISCOVER_RESPONSE',
+      details: {'ok': false, 'peerCount': 0, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    return {
+      'ok': false,
+      'peers': <dynamic>[],
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage':
+          'Bridge rendezvous:discover timed out after '
+          '${watchdog!.inMilliseconds}ms',
+    };
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -627,8 +649,30 @@ Future<Map<String, dynamic>> callP2PPeerDial(
     },
   };
 
-  final responseJson = await bridge.send(jsonEncode(request));
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  final watchdog = timeoutMs == null
+      ? null
+      : Duration(milliseconds: timeoutMs) + p2pBridgeWatchdogMargin;
+
+  final Map<String, dynamic> response;
+  try {
+    final responseJson = watchdog == null
+        ? await bridge.send(jsonEncode(request))
+        : await bridge.send(jsonEncode(request)).timeout(watchdog);
+    response = jsonDecode(responseJson) as Map<String, dynamic>;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_PEER_DIAL_RESPONSE',
+      details: {'ok': false, 'connected': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    return {
+      'ok': false,
+      'connected': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage':
+          'Bridge peer:dial timed out after ${watchdog!.inMilliseconds}ms',
+    };
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -675,10 +719,7 @@ Future<Map<String, dynamic>> callP2PLanPeerFound(
 
   final request = {
     'cmd': 'lan:peer_found',
-    'payload': {
-      'peerId': peerId,
-      'addresses': addresses,
-    },
+    'payload': {'peerId': peerId, 'addresses': addresses},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -842,9 +883,7 @@ Future<Map<String, dynamic>> callP2PInboxUnregisterToken(
 
   final request = {
     'cmd': 'inbox:unregister_token',
-    'payload': {
-      'serverAddresses': ?serverAddresses,
-    },
+    'payload': {'serverAddresses': ?serverAddresses},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -945,18 +984,12 @@ Future<Map<String, dynamic>> callP2PInboxAck(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_INBOX_ACK_REQUEST',
-    details: {
-      'entryCount': entryIds.length,
-      'timeoutMs': ?timeoutMs,
-    },
+    details: {'entryCount': entryIds.length, 'timeoutMs': ?timeoutMs},
   );
 
   final request = {
     'cmd': 'inbox:ack',
-    'payload': <String, dynamic>{
-      'entryIds': entryIds,
-      'timeoutMs': ?timeoutMs,
-    },
+    'payload': <String, dynamic>{'entryIds': entryIds, 'timeoutMs': ?timeoutMs},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -1419,11 +1452,7 @@ Future<Map<String, dynamic>> callP2PMessageSend(
 
   final request = {
     'cmd': 'message:send',
-    'payload': {
-      'peerId': peerId,
-      'message': message,
-      'timeoutMs': ?timeoutMs,
-    },
+    'payload': {'peerId': peerId, 'message': message, 'timeoutMs': ?timeoutMs},
   };
 
   // F5: Go self-bounds the send via SetDeadline, but a MethodChannel/gomobile
@@ -1434,9 +1463,9 @@ Future<Map<String, dynamic>> callP2PMessageSend(
   // false) that degrades to the durable inbox fallback — NOT failed-and-lost.
   // The wrap is null-safe: callers passing no timeoutMs (sendMessage) stay
   // unbounded, exactly as before.
-  final timeout = timeoutMs != null
-      ? Duration(milliseconds: timeoutMs + 500)
-      : null;
+  final timeout = timeoutMs == null
+      ? null
+      : Duration(milliseconds: timeoutMs) + p2pBridgeWatchdogMargin;
 
   final Map<String, dynamic> response;
   try {

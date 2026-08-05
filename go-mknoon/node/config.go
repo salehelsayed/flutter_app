@@ -82,6 +82,11 @@ const (
 	InteractiveSendTimeout     = 3 * time.Second
 	InteractiveDiscoverTimeout = 2 * time.Second
 	InteractiveInboxTimeout    = 3 * time.Second
+	// CommittedAckReserve is reserved after a deferred-commit envelope is fully
+	// written so the receiver's durable-confirmation window fits inside the one
+	// caller-supplied message command deadline. It is intentionally independent
+	// of InteractiveSendTimeout, whose cold-start value is frozen separately.
+	CommittedAckReserve = 3 * time.Second
 
 	// Background discover can afford more patience (e.g. periodic
 	// group peer re-discovery that runs on a 30 s ticker).
@@ -92,7 +97,7 @@ const (
 	StreamWriteDeadline  = 10 * time.Second
 	StreamReadDeadline   = 10 * time.Second
 	InboundReadDeadline  = 15 * time.Second // inbound reads may come from slow peers
-	DirectConfirmTimeout = 2 * time.Second  // must stay within interactive direct-send budget
+	DirectConfirmTimeout = 2 * time.Second  // must stay below CommittedAckReserve
 
 	// FDC-11 — bonsoir-fed libp2p LAN-direct dial.
 	// LANDirectIdentifyBudget is the per-leg dial+identify budget for a same-WiFi

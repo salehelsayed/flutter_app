@@ -71,6 +71,9 @@ class FakeP2PService
   int sendCallCount = 0;
   int probeRelayCallCount = 0;
   int storeInInboxCallCount = 0;
+  final List<int?> discoverTimeouts = [];
+  final List<int?> dialTimeouts = [];
+  final List<int?> sendTimeouts = [];
 
   /// FDC-02 (C2): leg-attributable count of how many times the STAGGERED
   /// relay-LIVE leg actually started its send. Incremented only by
@@ -164,6 +167,7 @@ class FakeP2PService
     String message, {
     int? timeoutMs,
   }) async {
+    sendTimeouts.add(timeoutMs);
     // FDC-02 (C2): capture the relay-live marker SYNCHRONOUSLY before any await,
     // so the relay-live leg's send is labeled distinctly from the direct/reuse
     // sends that share this method. noteRelayLiveSendStart() is fired by
@@ -175,33 +179,50 @@ class FakeP2PService
         ? null
         : queuedSendMessageResults.removeAt(0);
     if (shouldThrow) throw Exception('Send failed');
-    if (sendDelay > Duration.zero) {
-      await Future<void>.delayed(sendDelay);
-    }
     lastSentPeerId = peerId;
     lastSentMessage = message;
     lastSentPayload = message;
     sendCallCount++;
     onSendMessage?.call();
-    if (queuedResult != null) return queuedResult;
-    return SendMessageResult(
-      sent: sendMessageResult,
-      acked: sendMessageAcked,
-      reply: sendMessageReply,
-      transport: isRelayLive
-          ? (relayLiveSendTransport ?? 'relay')
-          : sendMessageTransport,
+    Future<SendMessageResult> complete() async {
+      if (sendDelay > Duration.zero) {
+        await Future<void>.delayed(sendDelay);
+      }
+      if (queuedResult != null) return queuedResult;
+      return SendMessageResult(
+        sent: sendMessageResult,
+        acked: sendMessageAcked,
+        reply: sendMessageReply,
+        transport: isRelayLive
+            ? (relayLiveSendTransport ?? 'relay')
+            : sendMessageTransport,
+      );
+    }
+
+    final completion = complete();
+    if (timeoutMs == null) return completion;
+    return completion.timeout(
+      Duration(milliseconds: timeoutMs),
+      onTimeout: () => const SendMessageResult(sent: false),
     );
   }
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    discoverTimeouts.add(timeoutMs);
     discoverCallCount++;
     onDiscover?.call();
     if (shouldThrow && discoverCallCount == 1) {
       throw Exception('Discover failed');
     }
     if (discoverDelay > Duration.zero) {
+      final nativeBudget = timeoutMs == null
+          ? null
+          : Duration(milliseconds: timeoutMs);
+      if (nativeBudget != null && discoverDelay > nativeBudget) {
+        await Future<void>.delayed(nativeBudget);
+        return null;
+      }
       await Future<void>.delayed(discoverDelay);
     }
     return discoverPeerResult;
@@ -217,6 +238,7 @@ class FakeP2PService
     int? timeoutMs,
     bool preferQuic = false,
   }) async {
+    dialTimeouts.add(timeoutMs);
     dialCallCount++;
     return dialPeerResult;
   }
@@ -485,6 +507,111 @@ class DurableLanFakeP2PService extends FakeP2PService
         timeoutMs: timeoutMs,
       ) ==
       LanSendAck.committed;
+}
+
+/// Timeout-aware orchestration fake for the R3 absolute-deadline contract.
+class _R3DeadlineP2PService extends FakeP2PService {
+  _R3DeadlineP2PService({
+    super.currentState,
+    super.sendMessageTransport,
+    super.storeInInboxResult,
+  });
+
+  final List<Duration> scriptedSendDelays = [];
+  Duration scriptedDiscoverDelay = Duration.zero;
+  Duration scriptedDialDelay = Duration.zero;
+  int _sendDelayIndex = 0;
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    discoverTimeouts.add(timeoutMs);
+    discoverCallCount++;
+    onDiscover?.call();
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && scriptedDiscoverDelay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      return null;
+    }
+    if (scriptedDiscoverDelay > Duration.zero) {
+      await Future<void>.delayed(scriptedDiscoverDelay);
+    }
+    return discoverPeerResult;
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+    bool preferQuic = false,
+  }) async {
+    dialTimeouts.add(timeoutMs);
+    dialCallCount++;
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && scriptedDialDelay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      return false;
+    }
+    if (scriptedDialDelay > Duration.zero) {
+      await Future<void>.delayed(scriptedDialDelay);
+    }
+    return dialPeerResult;
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    sendTimeouts.add(timeoutMs);
+    final delay = _sendDelayIndex < scriptedSendDelays.length
+        ? scriptedSendDelays[_sendDelayIndex++]
+        : Duration.zero;
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && delay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      sendCallCount++;
+      lastSentPeerId = peerId;
+      lastSentMessage = message;
+      lastSentPayload = message;
+      onSendMessage?.call();
+      return const SendMessageResult(sent: false);
+    }
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+    final result = await super.sendMessageWithReply(
+      peerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
+    // This fake records at invocation; the base records once more when the
+    // scripted delay hands off. Keep one observation per native call.
+    sendTimeouts.removeLast();
+    return result;
+  }
+}
+
+class _R3DelayedCryptoBridge extends PassthroughCryptoBridge {
+  _R3DelayedCryptoBridge(this.encryptDelay);
+
+  final Duration encryptDelay;
+
+  @override
+  Future<String> send(String message) async {
+    final command = (jsonDecode(message) as Map<String, dynamic>)['cmd'];
+    if (command == 'message.encrypt' && encryptDelay > Duration.zero) {
+      await Future<void>.delayed(encryptDelay);
+    }
+    return super.send(message);
+  }
 }
 
 // -- Fake Message Repository --
@@ -6136,33 +6263,38 @@ void main() {
       expect(p2pService.storeInInboxCallCount, 1);
     });
 
-    test('FDC-01 send-step direct_timeout → durable inbox custody '
-        '(FDC-03: no probe)', () async {
-      // discover + dial fast; send overruns the 2s per-step budget → eligible
-      // direct_timeout. FDC-03: the probe tail is gone, so the timed-out send
-      // takes durable custody via the CONCURRENT inbox (no probe runs). FDC-01's
-      // send-step budget enforcement is still exercised (the send times out).
-      p2pService = FakeP2PService(
-        storeInInboxResult: true,
-        probeRelayResult: RelayProbeResult.noReservation,
-        dialPeerResult: true,
-      )..sendDelay = const Duration(milliseconds: 2100);
+    test(
+      'FDC-01 committed send keeps the remaining live deadline for ACK',
+      () async {
+        // R3 replaces the obsolete 1.5s send cap with the exact remaining T0
+        // allocation. A 2.1s deferred commitment remains a valid live delivery
+        // instead of being misclassified as a send-step timeout.
+        p2pService = FakeP2PService(
+          storeInInboxResult: true,
+          probeRelayResult: RelayProbeResult.noReservation,
+          dialPeerResult: true,
+          sendMessageAcked: true,
+          sendMessageTransport: 'direct',
+        )..sendDelay = const Duration(milliseconds: 2100);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Send times out',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Send times out',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(p2pService.probeRelayCallCount, 0);
-      expect(message!.status, 'inboxed');
-      expect(p2pService.storeInInboxCallCount, 1);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        expect(p2pService.sendTimeouts.single, greaterThan(3000));
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
 
     test('FDC-01 aggregate direct budget exceeds the per-step budget', () {
       // Compile-level RED on HEAD (constant absent). Encodes the decouple
@@ -6905,6 +7037,265 @@ void main() {
       );
 
       expect(p2pService.storeInInboxCallCount, 1);
+    });
+  });
+
+  group('R3 cross-layer outgoing deadline', () {
+    test(
+      'R3 committed ACK window is shared by reuse sticky cold direct and live relay',
+      () {
+        const preparationDelay = Duration(milliseconds: 200);
+        const committedAckDelay = Duration(milliseconds: 2200);
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        const relayConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/10.0.0.8/tcp/4001/p2p/relay/p2p-circuit'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final rows =
+            <
+              ({
+                String name,
+                NodeState state,
+                String? learned,
+                String? transport,
+                bool liveRelay,
+                String expectedTransport,
+              })
+            >[
+              (
+                name: 'reuse',
+                state: const NodeState(
+                  isStarted: true,
+                  connections: [directConnection],
+                ),
+                learned: null,
+                transport: 'direct',
+                liveRelay: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name: 'sticky-direct',
+                state: const NodeState(isStarted: true),
+                learned: 'direct',
+                transport: 'direct',
+                liveRelay: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name: 'sticky-relay',
+                state: const NodeState(isStarted: true),
+                learned: 'relay',
+                transport: 'relay',
+                liveRelay: false,
+                expectedTransport: 'relay',
+              ),
+              (
+                name: 'cold-direct',
+                state: const NodeState(isStarted: true),
+                learned: null,
+                transport: 'direct',
+                liveRelay: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name: 'live-relay',
+                state: const NodeState(
+                  isStarted: true,
+                  connections: [relayConnection],
+                ),
+                learned: null,
+                transport: 'direct',
+                liveRelay: true,
+                expectedTransport: 'relay',
+              ),
+            ];
+
+        for (final row in rows) {
+          fakeAsync((async) {
+            final service = _R3DeadlineP2PService(
+              currentState: row.state,
+              sendMessageTransport: row.transport,
+            )..lastKnownGoodTransportResult = row.learned;
+            service.scriptedSendDelays.addAll(
+              row.liveRelay
+                  ? const [Duration(seconds: 10), committedAckDelay]
+                  : const [committedAckDelay],
+            );
+            (SendChatMessageResult, ConversationMessage?)? outcome;
+
+            sendChatMessage(
+              p2pService: service,
+              messageRepo: FakeMessageRepository(),
+              targetPeerId: 'target-peer',
+              text: 'R3 ${row.name}',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+              bridge: _R3DelayedCryptoBridge(preparationDelay),
+            ).then((value) => outcome = value);
+            async.flushMicrotasks();
+
+            async.elapse(preparationDelay);
+            async.flushMicrotasks();
+            if (row.liveRelay) {
+              async.elapse(kRelayLegStagger);
+              async.flushMicrotasks();
+            }
+            async.elapse(committedAckDelay);
+            async.flushMicrotasks();
+
+            expect(outcome, isNotNull, reason: row.name);
+            expect(outcome!.$1, SendChatMessageResult.success);
+            expect(outcome!.$2!.status, 'delivered', reason: row.name);
+            expect(
+              outcome!.$2!.transport,
+              row.expectedTransport,
+              reason: row.name,
+            );
+            expect(
+              service.sendTimeouts,
+              row.liveRelay ? <int?>[5300, 4800] : <int?>[5300],
+              reason: '${row.name} must allocate from the original T0',
+            );
+          });
+        }
+      },
+    );
+
+    test('R3 T0 includes envelope preparation before live send admission', () {
+      fakeAsync((async) {
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final service = _R3DeadlineP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [directConnection],
+          ),
+          storeInInboxResult: true,
+        );
+        (SendChatMessageResult, ConversationMessage?)? outcome;
+
+        sendChatMessage(
+          p2pService: service,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'preparation consumes ACK reserve',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: _R3DelayedCryptoBridge(const Duration(milliseconds: 2500)),
+        ).then((value) => outcome = value);
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 2500));
+        async.flushMicrotasks();
+
+        expect(outcome, isNotNull);
+        expect(outcome!.$2!.status, 'inboxed');
+        expect(service.sendTimeouts, isEmpty);
+        expect(service.sendCallCount, 0);
+      });
+    });
+
+    test('R3 failed reuse discovery and dial consume one T0 deadline', () {
+      fakeAsync((async) {
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final service =
+            _R3DeadlineP2PService(
+                currentState: const NodeState(
+                  isStarted: true,
+                  connections: [directConnection],
+                ),
+                sendMessageTransport: 'direct',
+              )
+              ..scriptedDiscoverDelay = const Duration(milliseconds: 500)
+              ..scriptedDialDelay = const Duration(milliseconds: 500)
+              ..scriptedSendDelays.addAll(const [
+                Duration(milliseconds: 250),
+                Duration(milliseconds: 250),
+              ])
+              ..queuedSendMessageResults.addAll([
+                Future<SendMessageResult>.value(
+                  const SendMessageResult(sent: false),
+                ),
+                Future<SendMessageResult>.value(
+                  const SendMessageResult(
+                    sent: true,
+                    acked: true,
+                    transport: 'direct',
+                  ),
+                ),
+              ]);
+        (SendChatMessageResult, ConversationMessage?)? outcome;
+
+        sendChatMessage(
+          p2pService: service,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'one T0 through every phase',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        ).then((value) => outcome = value);
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 1500));
+        async.flushMicrotasks();
+
+        expect(outcome, isNotNull);
+        expect(outcome!.$2!.status, 'delivered');
+        expect(service.sendTimeouts, <int?>[5500, 4250]);
+        expect(service.discoverTimeouts, <int?>[2000]);
+        expect(service.dialTimeouts, <int?>[1500]);
+      });
+
+      fakeAsync((async) {
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final service = _R3DeadlineP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [directConnection],
+          ),
+          storeInInboxResult: true,
+        );
+        (SendChatMessageResult, ConversationMessage?)? outcome;
+        const preparation = Duration(microseconds: 5499001);
+
+        sendChatMessage(
+          p2pService: service,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'floored zero phase is suppressed',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: _R3DelayedCryptoBridge(preparation),
+        ).then((value) => outcome = value);
+        async.flushMicrotasks();
+        async.elapse(preparation);
+        async.flushMicrotasks();
+
+        expect(outcome, isNotNull);
+        expect(outcome!.$2!.status, 'inboxed');
+        expect(service.sendTimeouts, isEmpty);
+        expect(service.discoverTimeouts, isEmpty);
+        expect(service.dialTimeouts, isEmpty);
+      });
     });
   });
 }

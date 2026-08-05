@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -180,7 +182,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   String? recipientMlKemPublicKey,
   bool emitTimingEvent = true,
 }) async {
-  final deleteStopwatch = Stopwatch()..start();
+  final deleteStopwatch = clock.stopwatch()..start();
+  final liveDeadline = OutgoingLiveDeadline(() => deleteStopwatch.elapsed);
   final hasMedia = originalMessage.media.isNotEmpty;
   void emitDeleteTiming({
     required String outcome,
@@ -455,29 +458,32 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
 
   if (isAlreadyConnected) {
     try {
-      final sendResult = await p2pService.sendMessageWithReply(
-        targetPeerId,
-        jsonString,
-        timeoutMs: interactiveDirectBudget.inMilliseconds,
-      );
-      if (sendResult.sent) {
-        return _completeSuccessfulDeleteSend(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          tombstone: pendingTombstone,
-          targetPeerId: targetPeerId,
-          jsonString: jsonString,
-          provesDeviceDelivery: sendResult.acked == true,
-          via: _resolveDeleteTransport(
-            p2pService,
-            targetPeerId,
-            sendResult,
-            preserveLocalPeerLabel: true,
-          ),
-          isOutgoingPrivate: requiresPrivateTerminalCleanup,
-          emitTimingEvent: emitTimingEvent,
-          deleteStopwatch: deleteStopwatch,
+      final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+      if (timeoutMs != null) {
+        final sendResult = await p2pService.sendMessageWithReply(
+          targetPeerId,
+          jsonString,
+          timeoutMs: timeoutMs,
         );
+        if (sendResult.sent) {
+          return _completeSuccessfulDeleteSend(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            tombstone: pendingTombstone,
+            targetPeerId: targetPeerId,
+            jsonString: jsonString,
+            provesDeviceDelivery: sendResult.acked == true,
+            via: _resolveDeleteTransport(
+              p2pService,
+              targetPeerId,
+              sendResult,
+              preserveLocalPeerLabel: true,
+            ),
+            isOutgoingPrivate: requiresPrivateTerminalCleanup,
+            emitTimingEvent: emitTimingEvent,
+            deleteStopwatch: deleteStopwatch,
+          );
+        }
       }
     } catch (_) {
       // Fall through to the normal race.
@@ -498,8 +504,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     );
   }
   raceFutures.add(
-    _tryDirectDeleteSend(p2pService, targetPeerId, jsonString).timeout(
-      interactiveDirectBudget,
+    _tryDirectDeleteSend(
+      p2pService,
+      targetPeerId,
+      jsonString,
+      liveDeadline: liveDeadline,
+    ).timeout(
+      liveDeadline.remaining,
       onTimeout: () => _DeleteRaceResult.failed('direct_timeout'),
     ),
   );
@@ -594,6 +605,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       targetPeerId,
       jsonString,
       failureReason: failureReason,
+      liveDeadline: liveDeadline,
     );
     if (relayProbeResult.provesDeviceDeliveryForCurrentProtocol) {
       return _completeSuccessfulDeleteSend(
@@ -1053,27 +1065,46 @@ Future<_DeleteRaceResult> _tryLocalDeleteSend(
 Future<_DeleteRaceResult> _tryDirectDeleteSend(
   P2PService p2pService,
   String targetPeerId,
-  String jsonString,
-) async {
-  final budgetMs = interactiveDirectBudget.inMilliseconds;
-  final peer = await p2pService.discoverPeer(targetPeerId, timeoutMs: budgetMs);
+  String jsonString, {
+  required OutgoingLiveDeadline liveDeadline,
+}) async {
+  final discoverTimeoutMs = liveDeadline.allocatePhaseTimeoutMs(
+    outgoingDiscoverPhaseCap,
+  );
+  if (discoverTimeoutMs == null) {
+    return _DeleteRaceResult.failed('peer_not_found', relayProbeEligible: true);
+  }
+  final peer = await p2pService.discoverPeer(
+    targetPeerId,
+    timeoutMs: discoverTimeoutMs,
+  );
   if (peer == null) {
     return _DeleteRaceResult.failed('peer_not_found', relayProbeEligible: true);
   }
 
+  final dialTimeoutMs = liveDeadline.allocatePhaseTimeoutMs(
+    outgoingDialPhaseCap,
+  );
+  if (dialTimeoutMs == null) {
+    return _DeleteRaceResult.failed('dial_failed', relayProbeEligible: true);
+  }
   final dialed = await p2pService.dialPeer(
     targetPeerId,
     addresses: peer.addresses,
-    timeoutMs: budgetMs,
+    timeoutMs: dialTimeoutMs,
   );
   if (!dialed) {
     return _DeleteRaceResult.failed('dial_failed', relayProbeEligible: true);
   }
 
+  final sendTimeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+  if (sendTimeoutMs == null) {
+    return _DeleteRaceResult.failed('direct_timeout');
+  }
   final sendResult = await p2pService.sendMessageWithReply(
     targetPeerId,
     jsonString,
-    timeoutMs: budgetMs,
+    timeoutMs: sendTimeoutMs,
   );
   if (!sendResult.sent) {
     return _DeleteRaceResult.failed('send_failed');
@@ -1091,10 +1122,15 @@ Future<_DeleteRaceResult> _tryRelayProbeDeleteSend(
   String targetPeerId,
   String jsonString, {
   required String failureReason,
+  required OutgoingLiveDeadline liveDeadline,
 }) async {
   RelayProbeResult probeResult;
   try {
-    probeResult = await p2pService.probeRelay(targetPeerId);
+    final remaining = liveDeadline.remaining;
+    if (remaining <= Duration.zero) {
+      return _DeleteRaceResult.failed(failureReason);
+    }
+    probeResult = await p2pService.probeRelay(targetPeerId).timeout(remaining);
   } catch (_) {
     return _DeleteRaceResult.failed(failureReason);
   }
@@ -1102,17 +1138,23 @@ Future<_DeleteRaceResult> _tryRelayProbeDeleteSend(
   switch (probeResult) {
     case RelayProbeResult.connected:
       try {
-        await p2pService.dialPeer(
-          targetPeerId,
-          timeoutMs: interactiveDirectBudget.inMilliseconds,
+        final dialTimeoutMs = liveDeadline.allocatePhaseTimeoutMs(
+          outgoingDialPhaseCap,
         );
+        if (dialTimeoutMs != null) {
+          await p2pService.dialPeer(targetPeerId, timeoutMs: dialTimeoutMs);
+        }
       } catch (_) {}
       for (var attempt = 1; attempt <= relayProbeSendAttempts; attempt++) {
         try {
+          final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+          if (timeoutMs == null) {
+            return _DeleteRaceResult.failed('send_deadline_exhausted');
+          }
           final sendResult = await p2pService.sendMessageWithReply(
             targetPeerId,
             jsonString,
-            timeoutMs: interactiveDirectBudget.inMilliseconds,
+            timeoutMs: timeoutMs,
           );
           if (sendResult.sent) {
             return _DeleteRaceResult.succeeded(

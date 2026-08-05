@@ -11,10 +11,10 @@
 /// Built on `fake_p2p_service_integration.dart` because the in-file
 /// `FakeP2PService` of `send_chat_message_use_case_test.dart` has no delay knob.
 ///
-/// Budgets under test (from send_chat_message_use_case.dart):
-///   interactiveLocalBudget  = 1500ms
-///   interactiveDirectBudget = 2000ms
-///   interactiveInboxBudget  = 3000ms
+/// Budgets under test:
+///   interactiveLocalBudget    = 1500ms
+///   outgoingDiscoverPhaseCap  = 2000ms
+///   interactiveInboxBudget    = 3000ms
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -98,42 +98,44 @@ void main() {
       },
     );
 
-    test(
-      'slow DIRECT discover (delay ABOVE 2000ms direct budget) to an OFFLINE '
-      'peer is abandoned at the budget; the send falls to durable inbox without '
-      'waiting out the full discover delay',
-      () async {
-        // Peer offline: no live path can win. Discover is far slower than the
-        // direct budget. With the budget enforced the direct leg is cut at ~2s
-        // while the concurrent inbox custody leg lands; without enforcement
-        // we would block ~8s on discover.
-        bob.setOnline(false);
-        aliceP2P.discoverDelay = const Duration(seconds: 8);
+    test('slow DIRECT discover (delay ABOVE 2000ms phase cap) to an OFFLINE '
+        'peer is abandoned at the budget; the send falls to durable inbox without '
+        'waiting out the full discover delay', () async {
+      // Peer offline: no live path can win. Discover is far slower than the
+      // discover phase cap. With the cap enforced the direct leg is cut at ~2s
+      // while the concurrent inbox custody leg lands; without enforcement
+      // we would block ~8s on discover.
+      bob.setOnline(false);
+      aliceP2P.discoverDelay = const Duration(seconds: 8);
 
-        final stopwatch = Stopwatch()..start();
-        final (result, msg) = await alice.sendMessage(
-          bob.peerId,
-          'offline-budgeted',
-        );
-        stopwatch.stop();
+      final stopwatch = Stopwatch()..start();
+      final (result, msg) = await alice.sendMessage(
+        bob.peerId,
+        'offline-budgeted',
+      );
+      stopwatch.stop();
 
-        expect(result, SendChatMessageResult.success);
-        expect(msg!.status, 'inboxed');
-        expect(msg.transport, 'inbox');
-        // PROOF the direct cutoff fired: the durable fallback lands far sooner
-        // than the 8s discover delay would allow.
-        expect(
-          stopwatch.elapsed,
-          lessThan(const Duration(seconds: 6)),
-          reason:
-              'the 8s discover must be abandoned at the 2000ms direct '
-              'budget, then the inbox tail (<=3s) takes custody — never an 8s '
-              'block',
-        );
-        // Durable custody actually fired (single write for this one message).
-        expect(network.storeInInboxCallCount, 1);
-      },
-    );
+      expect(result, SendChatMessageResult.success);
+      expect(msg!.status, 'inboxed');
+      expect(msg.transport, 'inbox');
+      // PROOF the direct cutoff fired: the durable fallback lands far sooner
+      // than the 8s discover delay would allow.
+      expect(
+        stopwatch.elapsed,
+        lessThan(const Duration(seconds: 6)),
+        reason:
+            'the 8s discover must be abandoned at the 2000ms direct '
+            'budget, then the inbox tail (<=3s) takes custody — never an 8s '
+            'block',
+      );
+      expect(
+        aliceP2P.lastDiscoverTimeoutMs,
+        kDirectDiscoverBudget.inMilliseconds,
+        reason: 'the native discover request retains the 2000ms phase cap',
+      );
+      // Durable custody actually fired (single write for this one message).
+      expect(network.storeInInboxCallCount, 1);
+    });
 
     test(
       'NEGATIVE CONTROL (no false gate): a healthy direct path that resolves '

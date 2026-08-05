@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -253,6 +254,56 @@ class _PerMessageThrowingP2PService extends FakeP2PService {
       throw Exception('sendMessageWithReply error at index $idx');
     }
     return sendMessageWithReplyResult;
+  }
+}
+
+class _R3RetryDeadlineP2PService extends FakeP2PService {
+  _R3RetryDeadlineP2PService({
+    required super.initialState,
+    required super.sendMessageWithReplyResult,
+    this.inboxDelay = Duration.zero,
+    this.committedAckDelay = Duration.zero,
+  }) : super(storeInInboxResult: false);
+
+  final Duration inboxDelay;
+  final Duration committedAckDelay;
+  final List<String> callOrder = [];
+  final List<int?> sendTimeouts = [];
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    callOrder.add('inbox_start');
+    if (inboxDelay > Duration.zero) await Future<void>.delayed(inboxDelay);
+    callOrder.add('inbox_done');
+    return super.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  }
+
+  @override
+  Future<p2p.SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    callOrder.add('send_start');
+    sendTimeouts.add(timeoutMs);
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && committedAckDelay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      callOrder.add('send_timeout');
+      sendMessageWithReplyCallCount++;
+      return const p2p.SendMessageResult(sent: false);
+    }
+    if (committedAckDelay > Duration.zero) {
+      await Future<void>.delayed(committedAckDelay);
+    }
+    callOrder.add('send_done');
+    return super.sendMessageWithReply(peerId, message, timeoutMs: timeoutMs);
   }
 }
 
@@ -689,6 +740,119 @@ void main() {
       expect(ackedPrivate.isHidden, isTrue);
       expect(ackedPrivate.hiddenAt, ackedPrivate.deletedAt);
     });
+
+    test(
+      'R3 failed delete replay reserves committed ACK after inbox failure',
+      () {
+        fakeAsync((async) {
+          const messageId = 'r3-delete-retry-acked';
+          final repository = FakeMessageRepository()
+            ..seed([makeFailedDeletedMessage(id: messageId)]);
+          final identities = FakeIdentityRepository()..seed(makeIdentity());
+          final contacts = FakeContactRepository()
+            ..seed([makeContact(peerId: 'peer-target')]);
+          final service = _R3RetryDeadlineP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id',
+            ),
+            sendMessageWithReplyResult: const p2p.SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'direct',
+            ),
+            inboxDelay: const Duration(milliseconds: 1200),
+            committedAckDelay: const Duration(milliseconds: 2200),
+          );
+          int? retryCount;
+          ConversationMessage? stored;
+
+          retryFailedMessages(
+            messageRepo: repository,
+            identityRepo: identities,
+            contactRepo: contacts,
+            p2pService: service,
+            bridge: PassthroughCryptoBridge(),
+          ).then((value) {
+            retryCount = value;
+            repository.getMessage(messageId).then((value) => stored = value);
+          });
+          async.flushMicrotasks();
+          expect(service.callOrder, <String>['inbox_start']);
+
+          async.elapse(const Duration(milliseconds: 1200));
+          async.flushMicrotasks();
+          expect(service.callOrder, <String>[
+            'inbox_start',
+            'inbox_done',
+            'send_start',
+          ]);
+          expect(
+            service.sendTimeouts,
+            <int?>[5500],
+            reason: 'the live T0 begins only after inbox custody fails',
+          );
+
+          async.elapse(const Duration(milliseconds: 2200));
+          async.flushMicrotasks();
+          expect(retryCount, 1);
+          expect(service.callOrder, <String>[
+            'inbox_start',
+            'inbox_done',
+            'send_start',
+            'send_done',
+          ]);
+          expect(stored, isNotNull);
+          expect(stored!.status, 'delivered');
+          expect(stored!.wireEnvelope, isNull);
+        });
+
+        fakeAsync((async) {
+          const messageId = 'r3-delete-retry-uncommitted';
+          final repository = FakeMessageRepository()
+            ..seed([makeFailedDeletedMessage(id: messageId)]);
+          final identities = FakeIdentityRepository()..seed(makeIdentity());
+          final contacts = FakeContactRepository()
+            ..seed([makeContact(peerId: 'peer-target')]);
+          final service = _R3RetryDeadlineP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id',
+            ),
+            sendMessageWithReplyResult: const p2p.SendMessageResult(
+              sent: true,
+              acked: false,
+              transport: 'direct',
+            ),
+          );
+          ConversationMessage? stored;
+
+          retryFailedMessages(
+            messageRepo: repository,
+            identityRepo: identities,
+            contactRepo: contacts,
+            p2pService: service,
+            bridge: PassthroughCryptoBridge(),
+          ).then(
+            (_) => repository
+                .getMessage(messageId)
+                .then((value) => stored = value),
+          );
+          async.flushMicrotasks();
+
+          expect(service.callOrder, <String>[
+            'inbox_start',
+            'inbox_done',
+            'send_start',
+            'send_done',
+          ]);
+          expect(service.sendTimeouts.single, greaterThan(3000));
+          expect(stored, isNotNull);
+          expect(stored!.status, 'sent');
+          expect(stored!.wireEnvelope, isNotNull);
+        });
+      },
+    );
 
     test(
       'v2 tombstone inbox custody success is inboxed and keeps the tombstone visible',

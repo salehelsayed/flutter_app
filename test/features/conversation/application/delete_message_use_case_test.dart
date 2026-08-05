@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart'
@@ -14,6 +15,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p_state;
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -113,6 +115,121 @@ class _ControlledDeleteP2PService extends FakeP2PService {
     sendWithReplyCallCount++;
     if (!sendEntered.isCompleted) sendEntered.complete();
     return sendGate?.future ?? sendResult;
+  }
+}
+
+class _R3DeleteDeadlineP2PService extends FakeP2PService {
+  _R3DeleteDeadlineP2PService({
+    required super.peerId,
+    required super.network,
+    this.defaultSendResult = const SendMessageResult(
+      sent: true,
+      acked: true,
+      transport: 'direct',
+    ),
+  });
+
+  final SendMessageResult defaultSendResult;
+  final List<SendMessageResult> scriptedSendResults = [];
+  final List<bool> scriptedDialResults = [];
+  final List<Duration> scriptedSendDelays = [];
+  final List<Duration> scriptedDialDelays = [];
+  Duration scriptedDiscoverDelay = Duration.zero;
+  final List<int?> discoverTimeouts = [];
+  final List<int?> dialTimeouts = [];
+  final List<int?> sendTimeouts = [];
+  int sendWithReplyCallCount = 0;
+  int _sendIndex = 0;
+  int _dialIndex = 0;
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(
+    String targetPeerId, {
+    int? timeoutMs,
+  }) async {
+    discoverTimeouts.add(timeoutMs);
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && scriptedDiscoverDelay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      return null;
+    }
+    if (scriptedDiscoverDelay > Duration.zero) {
+      await Future<void>.delayed(scriptedDiscoverDelay);
+    }
+    return super.discoverPeer(targetPeerId, timeoutMs: timeoutMs);
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String targetPeerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+    bool preferQuic = false,
+  }) async {
+    dialTimeouts.add(timeoutMs);
+    final index = _dialIndex++;
+    final delay = index < scriptedDialDelays.length
+        ? scriptedDialDelays[index]
+        : Duration.zero;
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && delay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      return false;
+    }
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    if (index < scriptedDialResults.length) {
+      return scriptedDialResults[index];
+    }
+    return super.dialPeer(
+      targetPeerId,
+      addresses: addresses,
+      timeoutMs: timeoutMs,
+      preferQuic: preferQuic,
+    );
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    sendTimeouts.add(timeoutMs);
+    sendWithReplyCallCount++;
+    final index = _sendIndex++;
+    final delay = index < scriptedSendDelays.length
+        ? scriptedSendDelays[index]
+        : Duration.zero;
+    final nativeBudget = timeoutMs == null
+        ? null
+        : Duration(milliseconds: timeoutMs);
+    if (nativeBudget != null && delay > nativeBudget) {
+      await Future<void>.delayed(nativeBudget);
+      return const SendMessageResult(sent: false);
+    }
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    return index < scriptedSendResults.length
+        ? scriptedSendResults[index]
+        : defaultSendResult;
+  }
+}
+
+class _R3DelayedDeleteEncryptBridge extends PassthroughCryptoBridge {
+  _R3DelayedDeleteEncryptBridge(this.delay);
+
+  final Duration delay;
+
+  @override
+  Future<String> send(String message) async {
+    final command = (jsonDecode(message) as Map<String, dynamic>)['cmd'];
+    if (command == 'message.encrypt' && delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+    return super.send(message);
   }
 }
 
@@ -1335,6 +1452,149 @@ void main() {
           '2026-06-13T10:00:00.000Z',
           reason: "only 'delivered' hides the tombstone",
         );
+      },
+    );
+
+    test(
+      'R3 delete reuse direct and relay share one committed ACK deadline',
+      () {
+        const preparationDelay = Duration(milliseconds: 200);
+        const committedAckDelay = Duration(milliseconds: 2200);
+
+        for (final adapter in const ['reuse', 'direct', 'relay']) {
+          fakeAsync((async) {
+            final repository = FakeMessageRepository();
+            final original = makeMessage(id: 'r3-delete-$adapter');
+            repository.seed([original]);
+            final network = FakeP2PNetwork()..inboxDisabled = true;
+            final sender = _R3DeleteDeadlineP2PService(
+              peerId: 'peer-alice',
+              network: network,
+              defaultSendResult: SendMessageResult(
+                sent: true,
+                acked: true,
+                transport: adapter == 'relay' ? 'relay' : 'direct',
+              ),
+            )..scriptedSendDelays.add(committedAckDelay);
+            final recipient = FakeP2PService(
+              peerId: 'peer-bob',
+              network: network,
+            );
+            if (adapter == 'reuse') {
+              sender.testConnections.add(
+                const p2p_state.ConnectionState(
+                  peerId: 'peer-bob',
+                  multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+                  direction: 'outbound',
+                  status: 'connected',
+                ),
+              );
+            } else if (adapter == 'relay') {
+              sender
+                ..discoverAlwaysFails = true
+                ..probeRelayResult = RelayProbeResult.connected;
+            }
+            (SendChatMessageResult, ConversationMessage?)? outcome;
+
+            deleteMessageForEveryone(
+              p2pService: sender,
+              messageRepo: repository,
+              originalMessage: original,
+              bridge: _R3DelayedDeleteEncryptBridge(preparationDelay),
+              recipientMlKemPublicKey: recipientMlKemPublicKey,
+            ).then((value) => outcome = value);
+            async.flushMicrotasks();
+            async.elapse(preparationDelay);
+            async.flushMicrotasks();
+            async.elapse(committedAckDelay);
+            async.flushMicrotasks();
+
+            expect(outcome, isNotNull, reason: adapter);
+            expect(outcome!.$1, SendChatMessageResult.success);
+            expect(outcome!.$2!.status, 'delivered', reason: adapter);
+            expect(sender.sendTimeouts, <int?>[5300], reason: adapter);
+            if (adapter == 'reuse') {
+              expect(sender.discoverTimeouts, isEmpty);
+              expect(sender.dialTimeouts, isEmpty);
+            } else if (adapter == 'direct') {
+              expect(sender.discoverTimeouts, <int?>[2000]);
+              expect(sender.dialTimeouts, <int?>[1500]);
+            } else {
+              expect(sender.discoverTimeouts, <int?>[2000]);
+              expect(sender.dialTimeouts, <int?>[1500]);
+            }
+            sender.dispose();
+            recipient.dispose();
+          });
+        }
+
+        fakeAsync((async) {
+          final repository = FakeMessageRepository();
+          final original = makeMessage(id: 'r3-delete-progressive-sequence');
+          repository.seed([original]);
+          final network = FakeP2PNetwork()..inboxDisabled = true;
+          final sender =
+              _R3DeleteDeadlineP2PService(
+                  peerId: 'peer-alice',
+                  network: network,
+                )
+                ..testConnections.add(
+                  const p2p_state.ConnectionState(
+                    peerId: 'peer-bob',
+                    multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+                    direction: 'outbound',
+                    status: 'connected',
+                  ),
+                )
+                ..probeRelayResult = RelayProbeResult.connected
+                ..scriptedDiscoverDelay = const Duration(milliseconds: 500)
+                ..scriptedDialDelays.addAll(const [
+                  Duration(milliseconds: 500),
+                  Duration(milliseconds: 250),
+                ])
+                ..scriptedDialResults.addAll(const [false, true])
+                ..scriptedSendDelays.addAll(const [
+                  Duration(milliseconds: 250),
+                  committedAckDelay,
+                ])
+                ..scriptedSendResults.addAll(const [
+                  SendMessageResult(sent: false),
+                  SendMessageResult(
+                    sent: true,
+                    acked: true,
+                    transport: 'relay',
+                  ),
+                ]);
+          final recipient = FakeP2PService(
+            peerId: 'peer-bob',
+            network: network,
+          );
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          deleteMessageForEveryone(
+            p2pService: sender,
+            messageRepo: repository,
+            originalMessage: original,
+            bridge: PassthroughCryptoBridge(),
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 3700));
+          async.flushMicrotasks();
+
+          expect(outcome, isNotNull);
+          expect(outcome!.$2!.status, 'delivered');
+          expect(outcome!.$2!.transport, 'relay');
+          expect(sender.sendTimeouts, <int?>[5500, 4000]);
+          expect(sender.discoverTimeouts, <int?>[2000]);
+          expect(sender.dialTimeouts, <int?>[1500, 1500]);
+          expect(
+            sender.sendTimeouts.last!,
+            lessThan(sender.sendTimeouts.first!),
+          );
+          sender.dispose();
+          recipient.dispose();
+        });
       },
     );
   });

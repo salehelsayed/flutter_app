@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -23,6 +24,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
+import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -33,15 +35,8 @@ const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
 /// Interactive send budget for the overall direct send path.
 const Duration interactiveDirectBudget = Duration(seconds: 2);
 
-/// FDC-01: aggregate (serial) ceiling for the direct discover→dial→send leg.
-/// Distinct from — and 3× larger than — the per-step [interactiveDirectBudget]
-/// so a slow step (e.g. a ~1.9s discover) cannot starve dial+send and trip the
-/// outer cap mid-send. Each step is still independently bounded at
-/// [interactiveDirectBudget]; this only accrues when EVERY step makes real
-/// progress (found→dialed→sending) — i.e. an online peer worth waiting for.
-/// A null/failed step returns immediately at its per-step cutoff, never 6s.
-/// (Proposal §4.1 / §8 P1-3: decouple, do NOT shrink the cold-relay budget.)
-const Duration interactiveDirectAggregateBudget = Duration(seconds: 6);
+/// Backwards-compatible name for the ordinary outgoing live-leg deadline.
+const Duration interactiveDirectAggregateBudget = outgoingLiveBudget;
 
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
@@ -87,16 +82,13 @@ const Duration kPrivateAddrTail = Duration(milliseconds: 30);
 /// Headroom under the 128KB cap. (Invariant 3 / TC-02-03/04/12.)
 const int kLiveRelayMaxPayloadBytes = 96 * 1024;
 
-/// FDC-02 (latency half of P0-3): independent per-step budgets for the direct
-/// discover→dial→send leg, replacing the single collective [interactiveDirectBudget]
-/// cap inside `_tryDirectSendInner` so a slow step can no longer starve the
-/// others. Each step stays bounded by the FDC-01 aggregate ceiling
-/// [interactiveDirectAggregateBudget] (their worst-case SUM, 5000ms, is well
-/// under the 6s ceiling). Discover is held at 2000ms to preserve FDC-01's landed
-/// locks (a 1900ms discover succeeds; a 2100ms discover times out eligibly);
-/// dial/send are tightened to 1500ms (no FDC-01 test pins them higher).
-const Duration kDirectDiscoverBudget = Duration(milliseconds: 2000);
-const Duration kDirectDialBudget = Duration(milliseconds: 1500);
+/// Backwards-compatible names for the two capped pre-send phases.
+const Duration kDirectDiscoverBudget = outgoingDiscoverPhaseCap;
+const Duration kDirectDialBudget = outgoingDialPhaseCap;
+
+/// Legacy constant retained for callers/tests that describe the old ladder.
+/// R3 committed sends no longer use this cap; they receive the exact remaining
+/// native allocation while preserving the committed-ACK reserve.
 const Duration kDirectSendBudget = Duration(milliseconds: 1500);
 
 /// FDC-02 observability seam (C2). Production [P2PService] impls do NOT implement
@@ -288,7 +280,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
 }) async {
-  final sendStopwatch = Stopwatch()..start();
+  final sendStopwatch = clock.stopwatch()..start();
+  final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
@@ -763,61 +756,64 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     var reuseWritten = false;
     try {
-      final reuseSendStopwatch = Stopwatch()..start();
-      final sendResult = await p2pService.sendMessageWithReply(
-        targetPeerId,
-        jsonString,
-        timeoutMs: interactiveDirectBudget.inMilliseconds,
-      );
-      reuseSendStopwatch.stop();
-      stepTimings = {
-        'sendMs': reuseSendStopwatch.elapsedMilliseconds,
-        if (sendResult.streamOpenMs != null)
-          'streamOpenMs': sendResult.streamOpenMs!,
-        if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
-        if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
-      };
-      reuseWritten = sendResult.sent;
-      if (sendResult.sent) {
-        final reuseVia = _resolveGoSendTransport(
-          p2pService,
+      final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+      if (timeoutMs != null) {
+        final reuseSendStopwatch = Stopwatch()..start();
+        final sendResult = await p2pService.sendMessageWithReply(
           targetPeerId,
-          sendResult,
+          jsonString,
+          timeoutMs: timeoutMs,
         );
-        final reuseEvidence = _RaceResult.succeeded(
-          via: reuseVia,
-          explicitAck: sendResult.acked == true,
-          authenticated: true,
-          stepTimings: stepTimings,
-        );
-        if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
-          transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
-          recordMetrics(transport: reuseVia, rung: 'reuse');
-          return _completeSuccessfulSend(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            payload: payload,
-            targetPeerId: targetPeerId,
-            jsonString: jsonString,
-            acknowledged: true,
-            via: reuseVia,
-            resolvedMessageId: resolvedMessageId,
-            text: sanitizedText,
-            createdAt: createdAt,
-            editedAt: resolvedEditedAt,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            attachments: normalizedAttachments,
-            isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
-            sendStopwatch: sendStopwatch,
-            emitTimingEvent: emitTimingEvent,
-            extraTimingDetails: {
-              'connectionReused': true,
-              'sendPath': 'reuse',
-              ...stepTimings,
-            },
+        reuseSendStopwatch.stop();
+        stepTimings = {
+          'sendMs': reuseSendStopwatch.elapsedMilliseconds,
+          if (sendResult.streamOpenMs != null)
+            'streamOpenMs': sendResult.streamOpenMs!,
+          if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
+          if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
+        };
+        reuseWritten = sendResult.sent;
+        if (sendResult.sent) {
+          final reuseVia = _resolveGoSendTransport(
+            p2pService,
+            targetPeerId,
+            sendResult,
           );
+          final reuseEvidence = _RaceResult.succeeded(
+            via: reuseVia,
+            explicitAck: sendResult.acked == true,
+            authenticated: true,
+            stepTimings: stepTimings,
+          );
+          if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
+            transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
+            recordMetrics(transport: reuseVia, rung: 'reuse');
+            return _completeSuccessfulSend(
+              p2pService: p2pService,
+              messageRepo: messageRepo,
+              payload: payload,
+              targetPeerId: targetPeerId,
+              jsonString: jsonString,
+              acknowledged: true,
+              via: reuseVia,
+              resolvedMessageId: resolvedMessageId,
+              text: sanitizedText,
+              createdAt: createdAt,
+              editedAt: resolvedEditedAt,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              attachments: normalizedAttachments,
+              isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+              sendStopwatch: sendStopwatch,
+              emitTimingEvent: emitTimingEvent,
+              extraTimingDetails: {
+                'connectionReused': true,
+                'sendPath': 'reuse',
+                ...stepTimings,
+              },
+            );
+          }
+          priorWritten ??= reuseEvidence;
         }
-        priorWritten ??= reuseEvidence;
       }
     } catch (_) {
       // Connection reuse failed — fall through to race
@@ -870,6 +866,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       targetPeerId,
       jsonString,
       learned: learned!,
+      liveDeadline: liveDeadline,
       transportMetrics: transportMetrics,
     );
     if (shortCircuit != null &&
@@ -1121,6 +1118,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       p2pService,
       targetPeerId,
       jsonString,
+      liveDeadline: liveDeadline,
       transportMetrics: transportMetrics,
       // 187: when set, the direct leg short-circuits BEFORE discover/dial (the
       // leg stays present so the race's pending-count/failure classification is
@@ -1133,7 +1131,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       // peer, so the aggregate direct_timeout retains relay eligibility as
       // failure-classification plumbing. It does not launch another serial
       // recovery step; FDC-02's relay-live leg already participates in-race.
-      interactiveDirectAggregateBudget,
+      liveDeadline.remaining,
       onTimeout: () =>
           _RaceResult.failed('direct_timeout', relayProbeEligible: true),
     ),
@@ -1167,6 +1165,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           p2pService,
           targetPeerId,
           jsonString,
+          liveDeadline: liveDeadline,
           transportMetrics: transportMetrics,
         );
       }),
@@ -1690,19 +1689,22 @@ Future<_RaceResult> _tryRelayLiveSend(
   P2PService p2pService,
   String targetPeerId,
   String jsonString, {
+  required OutgoingLiveDeadline liveDeadline,
   TransportMetrics? transportMetrics,
 }) async {
+  final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+  if (timeoutMs == null) {
+    return _RaceResult.failed('relay_live_deadline_exhausted');
+  }
   if (p2pService case final RelayLiveSendObserver observer) {
     observer.noteRelayLiveSendStart();
   }
   try {
-    final sendResult = await p2pService
-        .sendMessageWithReply(
-          targetPeerId,
-          jsonString,
-          timeoutMs: kDirectSendBudget.inMilliseconds,
-        )
-        .timeout(kDirectSendBudget);
+    final sendResult = await p2pService.sendMessageWithReply(
+      targetPeerId,
+      jsonString,
+      timeoutMs: timeoutMs,
+    );
     if (!sendResult.sent) {
       return _RaceResult.failed('relay_live_send_failed');
     }
@@ -1834,21 +1836,21 @@ Future<_RaceResult?> _tryLearnedShortCircuit(
   String targetPeerId,
   String jsonString, {
   required String learned,
+  required OutgoingLiveDeadline liveDeadline,
   TransportMetrics? transportMetrics,
 }) async {
   if (learned == 'direct' || learned == 'relay') {
     try {
+      final timeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+      if (timeoutMs == null) {
+        return _RaceResult.failed('sticky_deadline_exhausted');
+      }
       final sw = Stopwatch()..start();
-      final sendResult = await p2pService
-          .sendMessageWithReply(
-            targetPeerId,
-            jsonString,
-            timeoutMs: interactiveDirectBudget.inMilliseconds,
-          )
-          .timeout(
-            interactiveDirectBudget,
-            onTimeout: () => const SendMessageResult(sent: false),
-          );
+      final sendResult = await p2pService.sendMessageWithReply(
+        targetPeerId,
+        jsonString,
+        timeoutMs: timeoutMs,
+      );
       sw.stop();
       final timings = {
         'stickySendMs': sw.elapsedMilliseconds,
@@ -1885,6 +1887,7 @@ Future<_RaceResult> _tryDirectSend(
   P2PService p2pService,
   String targetPeerId,
   String jsonString, {
+  required OutgoingLiveDeadline liveDeadline,
   TransportMetrics? transportMetrics,
   bool skipForKeepaliveDrop = false,
 }) async {
@@ -1917,6 +1920,7 @@ Future<_RaceResult> _tryDirectSend(
     p2pService,
     targetPeerId,
     jsonString,
+    liveDeadline: liveDeadline,
   );
   transportMetrics?.recordAttempt(leg: 'direct', succeeded: result.success);
   return result;
@@ -1925,33 +1929,29 @@ Future<_RaceResult> _tryDirectSend(
 Future<_RaceResult> _tryDirectSendInner(
   P2PService p2pService,
   String targetPeerId,
-  String jsonString,
-) async {
+  String jsonString, {
+  required OutgoingLiveDeadline liveDeadline,
+}) async {
   final timings = <String, int>{};
 
-  // FDC-02 (latency half of P0-3): each step is bounded by its OWN budget
-  // ([kDirectDiscoverBudget]/[kDirectDialBudget]/[kDirectSendBudget]) instead of
-  // the single collective [interactiveDirectBudget], so a slow step can no longer
-  // starve the others. The worst-case serial sum stays under the FDC-01 aggregate
-  // ceiling ([interactiveDirectAggregateBudget]) applied at the leg's outer
-  // `.timeout` in the race assembly.
-  //
-  // Discover — per-step bounded so a slow-but-online discover yields an
-  // *eligible* peer_not_found instead of being swallowed by the aggregate
-  // ceiling. Eligibility remains failure classification; FDC-02's in-race
-  // relay-live leg is the live recovery path. discoverPeer returns a NULLABLE
-  // DiscoveredPeer?, so onTimeout: () => null type-checks and a timed-out
-  // discover collapses into the existing null-discover branch below (already
-  // eligible). Against the real impl discoverPeer honors its own timeoutMs and
-  // returns null on timeout, so this .timeout is a hang-guard layered atop it;
-  // against the test fake (which ignores timeoutMs) it is the deterministic cut.
+  // Every native phase is allocated from the original send-entry T0. Discovery
+  // and dial retain their caps; the committed send receives all usable
+  // remaining time so the receiver's deferred ACK still has its reserve.
+  final discoverTimeoutMs = liveDeadline.allocatePhaseTimeoutMs(
+    outgoingDiscoverPhaseCap,
+  );
+  if (discoverTimeoutMs == null) {
+    return _RaceResult.failed(
+      'peer_not_found',
+      relayProbeEligible: true,
+      stepTimings: timings,
+    );
+  }
   final discoverStopwatch = Stopwatch()..start();
-  final peer = await p2pService
-      .discoverPeer(
-        targetPeerId,
-        timeoutMs: kDirectDiscoverBudget.inMilliseconds,
-      )
-      .timeout(kDirectDiscoverBudget, onTimeout: () => null);
+  final peer = await p2pService.discoverPeer(
+    targetPeerId,
+    timeoutMs: discoverTimeoutMs,
+  );
   discoverStopwatch.stop();
   timings['discoverMs'] = discoverStopwatch.elapsedMilliseconds;
   if (peer == null) {
@@ -1962,19 +1962,22 @@ Future<_RaceResult> _tryDirectSendInner(
     );
   }
 
-  // Dial — FDC-02 owns adding this per-step wrapper (FDC-01 left it implicit on
-  // the bridge's timeoutMs). dialPeer returns Future<bool>, so onTimeout: () =>
-  // false type-checks and a timed-out dial collapses into the dial_failed branch
-  // below (already relay-probe-eligible). Hang-guard vs the real impl;
-  // deterministic cut vs the fake (which ignores timeoutMs).
+  final dialTimeoutMs = liveDeadline.allocatePhaseTimeoutMs(
+    outgoingDialPhaseCap,
+  );
+  if (dialTimeoutMs == null) {
+    return _RaceResult.failed(
+      'dial_failed',
+      relayProbeEligible: true,
+      stepTimings: timings,
+    );
+  }
   final dialStopwatch = Stopwatch()..start();
-  final dialed = await p2pService
-      .dialPeer(
-        targetPeerId,
-        addresses: peer.addresses,
-        timeoutMs: kDirectDialBudget.inMilliseconds,
-      )
-      .timeout(kDirectDialBudget, onTimeout: () => false);
+  final dialed = await p2pService.dialPeer(
+    targetPeerId,
+    addresses: peer.addresses,
+    timeoutMs: dialTimeoutMs,
+  );
   dialStopwatch.stop();
   timings['dialMs'] = dialStopwatch.elapsedMilliseconds;
   if (!dialed) {
@@ -1985,23 +1988,23 @@ Future<_RaceResult> _tryDirectSendInner(
     );
   }
 
-  // Send — per-step bounded. A send that overruns its budget becomes an
-  // *eligible* direct_timeout for failure classification, distinct from a
-  // definitive sent:false which stays a NON-eligible send_failed → inbox.
-  // FDC-02's relay-live leg already races independently. The sendTimedOut flag
-  // keeps the two failure classes separate. (Hang-guard vs the real impl;
-  // deterministic cut vs the test fake — same as discover above.)
+  final sendTimeoutMs = liveDeadline.allocateCommittedSendTimeoutMs();
+  if (sendTimeoutMs == null) {
+    return _RaceResult.failed(
+      'direct_timeout',
+      relayProbeEligible: true,
+      stepTimings: timings,
+    );
+  }
   final sendStepStopwatch = Stopwatch()..start();
   SendMessageResult? sendResult;
   var sendTimedOut = false;
   try {
-    sendResult = await p2pService
-        .sendMessageWithReply(
-          targetPeerId,
-          jsonString,
-          timeoutMs: kDirectSendBudget.inMilliseconds,
-        )
-        .timeout(kDirectSendBudget);
+    sendResult = await p2pService.sendMessageWithReply(
+      targetPeerId,
+      jsonString,
+      timeoutMs: sendTimeoutMs,
+    );
   } on TimeoutException {
     sendTimedOut = true;
   }

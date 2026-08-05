@@ -59,7 +59,7 @@ func TestSendMessage_RetriesChatStreamOpenAfterSelfHeal(t *testing.T) {
 		}
 		return h.NewStream(ctx, pid, ChatProtocol)
 	}
-	nodeA.recoverPeerForSendHook = func(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
+	nodeA.recoverPeerForSendHook = func(ctx context.Context, h host.Host, pid peer.ID, peerIdStr string) error {
 		recoverCalls++
 		if pid != targetID {
 			t.Fatalf("unexpected recover peer id: got %s want %s", pid, targetID)
@@ -138,7 +138,7 @@ func TestSendMessage_RetriesNoAddressesOpenErrorAfterSelfHeal(t *testing.T) {
 		}
 		return h.NewStream(ctx, pid, ChatProtocol)
 	}
-	nodeA.recoverPeerForSendHook = func(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
+	nodeA.recoverPeerForSendHook = func(ctx context.Context, h host.Host, pid peer.ID, peerIdStr string) error {
 		recoverCalls++
 		if pid != targetID {
 			t.Fatalf("unexpected recover peer id: got %s want %s", pid, targetID)
@@ -203,7 +203,8 @@ func TestSendMessage_ReturnsUnackedWhenReceiverDoesNotConfirmDirectChat(t *testi
 
 	envelope := `{"type":"chat_message","version":"1","payload":{"id":"msg-no-confirm","text":"phase5 no confirm","senderPeerId":"sender-peer","senderUsername":"Alice","timestamp":"2026-04-03T00:00:00Z"}}`
 
-	reply, acked, err := nodeA.SendMessage(stateB.PeerId, envelope, 500)
+	timeout := CommittedAckReserve + 500*time.Millisecond
+	reply, acked, err := nodeA.SendMessage(stateB.PeerId, envelope, int(timeout/time.Millisecond))
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -257,7 +258,7 @@ func TestSendMessage_DoesNotSelfHealNonRetryableOpenErrors(t *testing.T) {
 	nodeA.openChatStreamHook = func(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
 		return nil, fmt.Errorf("boom")
 	}
-	nodeA.recoverPeerForSendHook = func(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
+	nodeA.recoverPeerForSendHook = func(ctx context.Context, h host.Host, pid peer.ID, peerIdStr string) error {
 		recoverCalls++
 		return nil
 	}

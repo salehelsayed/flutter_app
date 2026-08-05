@@ -1,9 +1,9 @@
 # 338 - Cross-Layer Direct-Send Deadline Contract
 
-Status: execution-ready
+Status: implemented — owned causal and curated gates green; repository host closure remains red only on checkpoint-reproduced Plan 337 expectations
 Type: Bug
 Spec: UI-14-Conn-Type/go-libp2p-transport-assessment-review.md, R3
-Classification: implementation-ready
+Classification: implementation-complete / documented host-closure exception
 Closure tier: host
 
 ## Planning Progress
@@ -371,26 +371,27 @@ git diff --check
 - Pre-existing dirty tree / known failure: planning began with Plan 336 staged, Plan 337 and the assessment untracked, the index carrying both staged and unstaged unrelated edits, and a large unrelated notification/iOS working tree. Execution must patch only R3-owned hunks and must not stage/revert unrelated work. Native focused baseline reported green for current recovery, ACK parser, rendezvous failover, and timeout cleanup sentinels.
 - Environment blocker: none for host closure. Device availability is N/A because R3 makes no OS/mobile/real-relay claim.
 - Scope drift: any need for a new wire protocol/capability, generic timeout framework, cross-FFI cancellation, presence/inbox change, schema work, route/ranking change, or unrelated feature-orchestration rewrite blocks execution and returns that work to its named owner.
+- Evidence-strength note: TC-338-09 preserves introduction/contact/reaction type scope through the pure `deadlinesForMessage` helper rather than an end-to-end `SendMessageWithTransport` call. The production path invokes that same helper; this is a proof-depth limitation, not an observed behavior gap.
 
-- [ ] Every owned R3 behavior has a named causal test or justified current-source preservation proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] The native observation-seam checkpoint is behavior-preserving and its exact recovery/failover/ACK sentinels are green before causal contract changes.
-- [ ] Dart uses one six-second T0 leg, exact three-second reserve, and 500 ms bridge margin across every ordinary authenticated live-send adapter.
-- [ ] Dart admission uses serialized milliseconds: discover/dial never forward `0`, and deferred sends require `timeoutMs > 3000` after flooring.
-- [ ] Envelope preparation and failed earlier live phases consume remaining time; no adapter restarts the leg.
-- [ ] Initial delete and failed-delete replay obey the documented deadline/inbox-order contract.
-- [ ] Discover/dial/send bridge watchdogs are looser than native and fit within the Dart leg; null-timeout callers are preserved.
-- [ ] Rendezvous discovery contexts and stream I/O, plus message open/recovery/candidates/retry/write/ACK, each use one absolute native command deadline; explicit dial remains one-context.
-- [ ] Reserve-bearing sends finish open/recovery and start no write after the pre-write cutoff, reject an expired post-open stream, and clamp any successfully completed write race so ACK/half-close never exceed the command deadline.
-- [ ] The post-write deadline is installed before `CloseWrite`; normal `Close`/fallback `Reset` match the outcome table while written-but-unacked outward semantics remain unchanged.
-- [ ] Immediate-ACK introductions and unrelated default-budget callers are not rejected by the reserve.
-- [ ] R1/R2 settlement, local cutoff, relay scheduling, deletion cleanup, and self-heal/limited-connection behavior pass unchanged.
-- [ ] New Dart/native tests and the retimed deferred-chat sentinel enter the existing real gates; the eight-Go-tail shape is preserved.
-- [ ] Focused tests, curated `1to1`, affected feature/core family gates, analyzer, formatting, shell syntax, and diff hygiene pass.
-- [ ] The incremental architecture graph refresh passes and its resulting fingerprint is recorded.
-- [ ] The one post-plan R1-R3 `host-all` correctness-wave closure passes and is not repeated as an ordinary per-plan causal gate.
-- [ ] No DB migration, device/relay requirement, performance threshold, protocol, coordinator, or cancellation framework was introduced.
-- [ ] Scope Contract And Guard is respected.
+- [x] Every owned R3 behavior has a named causal test or justified current-source preservation proof.
+- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded. Focused GREEN and the exact serialized-millisecond boundary mutation (`>` to `>=`) are captured; a distinct pre-production causal RED was not preserved.
+- [x] The native observation-seam checkpoint is behavior-preserving and its exact recovery/failover/ACK sentinels are green before causal contract changes.
+- [x] Dart uses one six-second T0 leg, exact three-second reserve, and 500 ms bridge margin across every ordinary authenticated live-send adapter.
+- [x] Dart admission uses serialized milliseconds: discover/dial never forward `0`, and deferred sends require `timeoutMs > 3000` after flooring.
+- [x] Envelope preparation and failed earlier live phases consume remaining time; no adapter restarts the leg.
+- [x] Initial delete and failed-delete replay obey the documented deadline/inbox-order contract.
+- [x] Discover/dial/send bridge watchdogs are looser than native and fit within the Dart leg; null-timeout callers are preserved.
+- [x] Rendezvous discovery contexts and stream I/O, plus message open/recovery/candidates/retry/write/ACK, each use one absolute native command deadline; explicit dial remains one-context.
+- [x] Reserve-bearing sends finish open/recovery and start no write after the pre-write cutoff, reject an expired post-open stream, and clamp any successfully completed write race so ACK/half-close never exceed the command deadline.
+- [x] The post-write deadline is installed before `CloseWrite`; normal `Close`/fallback `Reset` match the outcome table while written-but-unacked outward semantics remain unchanged.
+- [x] Immediate-ACK introductions and unrelated default-budget callers are not rejected by the reserve.
+- [x] R1/R2 settlement, local cutoff, relay scheduling, deletion cleanup, and self-heal/limited-connection behavior pass unchanged in the owned preservation selectors.
+- [x] New Dart/native tests and the retimed deferred-chat sentinel enter the existing real gates; the eight-Go-tail shape is preserved.
+- [ ] Focused tests, curated `1to1`, affected feature/core family gates, analyzer, formatting, shell syntax, and diff hygiene pass. Focused, `1to1`, analyzer, formatting, syntax, and hygiene are green; the family commands remain red on the documented checkpoint-reproduced Plan 337 expectations, plus one group test that passed twice alone and in `host-all`.
+- [x] The incremental architecture graph refresh passes and its resulting fingerprint is recorded.
+- [ ] The one post-plan R1-R3 `host-all` correctness-wave closure passes and is not repeated as an ordinary per-plan causal gate. It ran once and all eight Go legs passed, but Flutter retained the same four checkpoint-reproduced Plan 337 expectation failures.
+- [x] No DB migration, device/relay requirement, performance threshold, protocol, coordinator, or cancellation framework was introduced.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -405,4 +406,9 @@ git diff --check
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | snapshot baseline, then add the behavior-preserving native observation seams |
+| 2026-08-05 19:30 CEST | checkpoint | whole pre-existing tree | `git commit` -> `10c4bdb35` | Exact pre-R3 worktree preserved in `chore: checkpoint work before plan 338` | R3 can be isolated from all prior edits | Implement only R3-owned surfaces |
+| 2026-08-05 execution | causal native/Dart implementation | deadline allocator; chat/delete/retry adapters; bridge watchdogs; Go config/send/recovery/rendezvous; focused tests | Integrated R3 Dart set -> 274 pass; final Go selector -> pass; Go bridge timeout tests -> pass | Six-second entry T0, floored admission, type-scoped reserve, shared absolute native deadlines, half-close/cleanup outcomes, and preservation sentinels are executable | None in R3 scope | Run preservation and real-gate registration checks |
+| 2026-08-05 execution | mutation proof, GREEN, and hygiene | allocator test plus all changed Dart/Go/gate files | Mutating committed-send admission from `>` to `>=` made the exact 3000 ms boundary test fail; restore made it pass; `flutter analyze` -> no issues; format/syntax/diff checks -> pass | Representative mutation re-red is causal, but no distinct pre-production RED was retained; Dart compiles cleanly; Go compile-only and gate batch contract pass | Evidence limitation documented | Run curated and affected host lanes |
+| 2026-08-05 execution | curated and affected lanes | registered `1to1`, feature, and core host selections | `1to1` -> 2818 pass; feature -> 8828 pass / 1 fail; core -> 3140 pass / 4 fail | The feature failure passed twice in isolation and later in `host-all`. All four core failures are stale LAN-authority expectations in `transport_switch_learned_invalidation_test.dart` and `f1_wifi_relay_fallback_test.dart`; the identical four failures reproduce from checkpoint `10c4bdb35` | Repository-wide family gate is not green, but no R3 regression is present | Record exception and run the one wave-level closure |
+| 2026-08-05 execution | graph closure | app-owned architecture graph and manifest | `./graphify-arch/refresh_arch_graph.sh --incremental` -> pass | 11 changed code files, 3063 unchanged, 0 deleted; refreshed fingerprint `5381ccd663846180` | None | Run the one post-plan `host-all` command |
+| 2026-08-05 20:49 CEST | R1-R3 wave closure | all discovered Flutter host tests plus eight named Go legs | `host-all --batch-flutter --concurrency 4 --reporter failures-only --continue-on-failure` -> Flutter `+13571 ~1 -4`; all eight Go legs pass | The only failures are the same four Plan 337 LAN-authority expectations reproduced at the checkpoint; the isolated feature flake did not recur | Host closure accurately remains red for inherited expectations; rerunning `host-all` is prohibited by cadence | Commit the implemented R3 change with this exception documented |

@@ -46,6 +46,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/services/pending_message_retrier_upload_ordering_test.dart"
   "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
   "test/features/conversation/application/chat_message_listener_test.dart"
+  "test/features/conversation/application/outgoing_live_deadline_test.dart"
   "test/features/conversation/application/send_chat_message_use_case_test.dart"
   "test/features/conversation/application/retry_unacked_messages_use_case_test.dart"
   "test/features/conversation/application/recovered_inbox_chat_disposition_test.dart"

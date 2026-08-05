@@ -96,10 +96,13 @@ type Node struct {
 	rendezvousRegisterHook             func(string, []string) error
 	rendezvousDiscoverHook             func(string, []string) ([]peer.AddrInfo, error)
 	rendezvousUnregisterHook           func(string, []string) error
+	rendezvousStreamOpenHook           func(context.Context, host.Host, peer.ID) (network.Stream, error)
 	dialPeerViaRelayHook               func(string) error
 	refreshRelaySessionHook            func() *RecoveryResult
 	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
-	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
+	recoverPeerForSendHook             func(context.Context, host.Host, peer.ID, string) error
+	connectPeerForSendHook             func(context.Context, host.Host, peer.AddrInfo) error
+	sendNowHook                        func() time.Time
 	joinGroupTopicSubscribeHook        func(*pubsub.Topic) (*pubsub.Subscription, error)
 	groupInboxRecoverHook              func(error) error
 	newHost                            func(NodeConfig, []libp2p.Option) (host.Host, error)
@@ -1474,6 +1477,53 @@ func (n *Node) dialPeerViaRelayWithTimeout(peerIdStr string, timeout time.Durati
 	})
 }
 
+// dialPeerViaRelayForSend uses the caller's context for every relay/address
+// candidate. The duration-based relay-probe wrapper above intentionally keeps
+// its independent per-candidate behavior for non-message callers.
+func (n *Node) dialPeerViaRelayForSend(
+	ctx context.Context,
+	h host.Host,
+	pid peer.ID,
+	peerIdStr string,
+) error {
+	rs := n.buildRelaySelector(nil)
+
+	return rs.ForEach(func(relay RelayInfo) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(relay.Addrs) == 0 {
+			return fmt.Errorf("relay %s has no addresses", relay.ID)
+		}
+
+		circuitSuffix, err := ma.NewMultiaddr(
+			fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relay.ID.String(), peerIdStr),
+		)
+		if err != nil {
+			return fmt.Errorf("build circuit suffix: %w", err)
+		}
+
+		circuitAddrs := make([]ma.Multiaddr, 0, len(relay.Addrs))
+		for _, transportAddr := range relay.Addrs {
+			circuitAddrs = append(circuitAddrs, transportAddr.Encapsulate(circuitSuffix))
+		}
+		ai := peer.AddrInfo{ID: pid, Addrs: circuitAddrs}
+
+		attemptCtx := network.WithAllowLimitedConn(ctx, "relay-probe")
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return context.DeadlineExceeded
+			}
+			attemptCtx = network.WithDialPeerTimeout(attemptCtx, remaining)
+		}
+		if n.connectPeerForSendHook != nil {
+			return n.connectPeerForSendHook(attemptCtx, h, ai)
+		}
+		return h.Connect(attemptCtx, ai)
+	})
+}
+
 // DisconnectPeer closes connections to a peer.
 func (n *Node) DisconnectPeer(peerIdStr string) error {
 	n.mu.RLock()
@@ -1518,7 +1568,9 @@ func isRetryableChatStreamOpenError(err error) bool {
 
 func (n *Node) recoverPeerForSend(h host.Host, pid peer.ID, peerIdStr string, timeout time.Duration) error {
 	if n.recoverPeerForSendHook != nil {
-		return n.recoverPeerForSendHook(h, pid, peerIdStr, timeout)
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+		return n.recoverPeerForSendHook(ctx, h, pid, peerIdStr)
 	}
 
 	if err := h.Network().ClosePeer(pid); err != nil {
@@ -1526,6 +1578,26 @@ func (n *Node) recoverPeerForSend(h host.Host, pid peer.ID, peerIdStr string, ti
 	}
 
 	return n.dialPeerViaRelayWithTimeout(peerIdStr, timeout)
+}
+
+func (n *Node) recoverPeerForSendWithContext(
+	ctx context.Context,
+	h host.Host,
+	pid peer.ID,
+	peerIdStr string,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if n.recoverPeerForSendHook != nil {
+		return n.recoverPeerForSendHook(ctx, h, pid, peerIdStr)
+	}
+
+	if err := h.Network().ClosePeer(pid); err != nil {
+		log.Printf("[NODE] SendMessage: ClosePeer(%s) returned: %v", peerIdStr, err)
+	}
+
+	return n.dialPeerViaRelayForSend(ctx, h, pid, peerIdStr)
 }
 
 func (n *Node) openChatStreamForSend(
@@ -1550,6 +1622,46 @@ func (n *Node) openChatStreamForSend(
 	log.Printf("[NODE] SendMessage: open stream to %s failed, attempting peer self-heal: %v", peerIdStr, err)
 
 	if healErr := n.recoverPeerForSend(h, pid, peerIdStr, timeout); healErr != nil {
+		log.Printf("[NODE] SendMessage: peer self-heal failed for %s: %v", peerIdStr, healErr)
+		return nil, err
+	}
+
+	s, retryErr := openAttempt()
+	if retryErr != nil {
+		log.Printf("[NODE] SendMessage: open stream still failing after self-heal for %s: %v", peerIdStr, retryErr)
+		return nil, retryErr
+	}
+
+	return s, nil
+}
+
+func (n *Node) openChatStreamForSendWithContext(
+	ctx context.Context,
+	h host.Host,
+	pid peer.ID,
+	peerIdStr string,
+	dialTimeout time.Duration,
+) (network.Stream, error) {
+	openAttempt := func() (network.Stream, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		attemptCtx := network.WithDialPeerTimeout(ctx, dialTimeout)
+		attemptCtx = network.WithAllowLimitedConn(attemptCtx, "chat-send")
+		return n.openChatStream(attemptCtx, h, pid)
+	}
+
+	s, err := openAttempt()
+	if err == nil || !isRetryableChatStreamOpenError(err) {
+		return s, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
+	log.Printf("[NODE] SendMessage: open stream to %s failed, attempting peer self-heal: %v", peerIdStr, err)
+
+	if healErr := n.recoverPeerForSendWithContext(ctx, h, pid, peerIdStr); healErr != nil {
 		log.Printf("[NODE] SendMessage: peer self-heal failed for %s: %v", peerIdStr, healErr)
 		return nil, err
 	}
@@ -1603,6 +1715,47 @@ func isAffirmativeAckFrame(reply []byte) bool {
 	return ack
 }
 
+type messageCommandDeadlines struct {
+	command  time.Time
+	prewrite time.Time
+	reserved bool
+}
+
+func deadlinesForMessage(start time.Time, timeout time.Duration, message []byte) (messageCommandDeadlines, bool) {
+	if timeout <= 0 {
+		return messageCommandDeadlines{}, false
+	}
+
+	deadlines := messageCommandDeadlines{
+		command:  start.Add(timeout),
+		prewrite: start.Add(timeout),
+	}
+	if !requiresCommittedAckReserve(message) {
+		return deadlines, true
+	}
+	if timeout <= CommittedAckReserve {
+		return messageCommandDeadlines{}, false
+	}
+	deadlines.prewrite = deadlines.command.Add(-CommittedAckReserve)
+	deadlines.reserved = true
+	return deadlines, true
+}
+
+func ackDeadlineAfterWrite(commandDeadline, writeCompletedAt time.Time) time.Time {
+	reserveDeadline := writeCompletedAt.Add(CommittedAckReserve)
+	if commandDeadline.Before(reserveDeadline) {
+		return commandDeadline
+	}
+	return reserveDeadline
+}
+
+func (n *Node) sendNow() time.Time {
+	if n.sendNowHook != nil {
+		return n.sendNowHook()
+	}
+	return time.Now()
+}
+
 func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeoutMs int) (SendMessageResult, error) {
 	n.mu.RLock()
 	h := n.host
@@ -1621,26 +1774,75 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 	if timeoutMs > 0 {
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
+	messageBytes := []byte(message)
+	deadlines, admitted := deadlinesForMessage(n.sendNow(), timeout, messageBytes)
+	if !admitted {
+		return SendMessageResult{}, fmt.Errorf(
+			"message timeout %v leaves no pre-write interval before committed ACK reserve %v",
+			timeout,
+			CommittedAckReserve,
+		)
+	}
+
+	commandCtx, cancelCommand := context.WithDeadline(n.ctx, deadlines.command)
+	defer cancelCommand()
+	prewriteCtx, cancelPrewrite := context.WithDeadline(commandCtx, deadlines.prewrite)
+	defer cancelPrewrite()
+
+	dialTimeout := timeout
+	if deadlines.reserved {
+		dialTimeout -= CommittedAckReserve
+	}
 
 	streamOpenStart := time.Now()
-	s, err := n.openChatStreamForSend(h, pid, peerIdStr, timeout)
+	s, err := n.openChatStreamForSendWithContext(prewriteCtx, h, pid, peerIdStr, dialTimeout)
 	streamOpenMs := time.Since(streamOpenStart).Milliseconds()
 	if err != nil {
 		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("open stream: %w", err)
 	}
-	defer s.Close()
+	if err := prewriteCtx.Err(); err != nil || !n.sendNow().Before(deadlines.prewrite) {
+		_ = s.Reset()
+		if err == nil {
+			err = context.DeadlineExceeded
+		}
+		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("open stream: %w", err)
+	}
 
 	transport := classifyStreamTransport(s)
 
-	// Apply deadline to stream read/write so stale connections fail fast.
-	s.SetDeadline(time.Now().Add(timeout))
+	// Opening, recovery, and the complete frame write share the pre-write
+	// deadline. Installing it is itself part of the bounded operation.
+	if err := s.SetDeadline(deadlines.prewrite); err != nil {
+		_ = s.Reset()
+		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("set pre-write deadline: %w", err)
+	}
 
 	// Write message using 4-byte BE framing (same as inbox protocol)
 	writeStart := time.Now()
-	if err := writeFrame(s, []byte(message)); err != nil {
+	if err := writeFrame(s, messageBytes); err != nil {
+		_ = s.Reset()
 		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("write message: %w", err)
 	}
+	writeCompletedAt := n.sendNow()
 	writeMs := time.Since(writeStart).Milliseconds()
+
+	ackDeadline := deadlines.command
+	if deadlines.reserved {
+		ackDeadline = ackDeadlineAfterWrite(deadlines.command, writeCompletedAt)
+	}
+	writtenResult := SendMessageResult{
+		Transport:    transport,
+		StreamOpenMs: streamOpenMs,
+		WriteMs:      writeMs,
+	}
+	if err := s.SetDeadline(ackDeadline); err != nil {
+		_ = s.Reset()
+		return writtenResult, nil
+	}
+	if err := s.CloseWrite(); err != nil {
+		_ = s.Reset()
+		return writtenResult, nil
+	}
 
 	// Read reply
 	ackStart := time.Now()
@@ -1648,17 +1850,23 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 	ackWaitMs := time.Since(ackStart).Milliseconds()
 	if err != nil {
 		// Message was written but ACK read failed
-		return SendMessageResult{Transport: transport, StreamOpenMs: streamOpenMs, WriteMs: writeMs, AckWaitMs: ackWaitMs}, nil
+		_ = s.Reset()
+		writtenResult.AckWaitMs = ackWaitMs
+		return writtenResult, nil
 	}
 
-	return SendMessageResult{
+	result := SendMessageResult{
 		Reply:        string(replyBytes),
 		Acked:        isAffirmativeAckFrame(replyBytes),
 		Transport:    transport,
 		StreamOpenMs: streamOpenMs,
 		WriteMs:      writeMs,
 		AckWaitMs:    ackWaitMs,
-	}, nil
+	}
+	if err := s.Close(); err != nil {
+		_ = s.Reset()
+	}
+	return result, nil
 }
 
 // SendMessageWithTimeout sends a message with explicit timeout enforcement
@@ -1732,6 +1940,15 @@ func messageEnvelopeType(msgBytes []byte) string {
 	return envelope.Type
 }
 
+func requiresCommittedAckReserve(msgBytes []byte) bool {
+	switch messageEnvelopeType(msgBytes) {
+	case "chat_message", "message_reaction", "message_deletion", "contact_request":
+		return true
+	default:
+		return false
+	}
+}
+
 func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
 	// F7 + 171: defer the wire ack until Dart durably commits, for every
 	// envelope type whose receiver-side handling is durable (chat_message +
@@ -1744,9 +1961,7 @@ func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
 	// sender falls back to the inbox -> the request is durably delivered + auto-
 	// added on replay. Other types (introductions, …) are legitimately
 	// fire-and-forget and ack immediately.
-	switch messageEnvelopeType(msgBytes) {
-	case "chat_message", "message_reaction", "message_deletion", "contact_request":
-	default:
+	if !requiresCommittedAckReserve(msgBytes) {
 		return false
 	}
 	if !n.currentFeatureFlags().EnableDeferredDirectAck {

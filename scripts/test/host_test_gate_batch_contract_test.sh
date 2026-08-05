@@ -229,6 +229,8 @@ for sentinel in \
   WakeToken \
   TestGoLibp2pProductionShapeBudget \
   TestSendMessageWithTransport_AckFrameValidation \
+  TestR3Deadline_ \
+  TestSendMessage_ReturnsUnackedWhenReceiverDoesNotConfirmDirectChat \
   TestHandleIncomingMessage_BindsAuthenticatedRemotePeerAndClassifiedTransport \
   TestHandleIncomingMessage_DeferredDirectAck_FalseConfirmDoesNotAck \
   TestBridgeExportedHandlersUseSharedEntrypoint; do

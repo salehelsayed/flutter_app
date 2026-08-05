@@ -42,6 +42,8 @@ class _MockBridge extends Bridge {
 
 /// Bridge that never completes — simulates a MethodChannel stall or Go deadlock.
 class _HangingBridge extends Bridge {
+  Map<String, dynamic>? lastParsedRequest;
+
   @override
   bool get isInitialized => true;
 
@@ -58,7 +60,10 @@ class _HangingBridge extends Bridge {
   void dispose() {}
 
   @override
-  Future<String> send(String message) => Completer<String>().future; // never completes
+  Future<String> send(String message) {
+    lastParsedRequest = jsonDecode(message) as Map<String, dynamic>;
+    return Completer<String>().future; // never completes
+  }
 }
 
 /// Bridge that completes after a fixed delay — simulates a slow transfer.
@@ -527,6 +532,95 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['addresses'], equals(['/ip4/1.2.3.4/tcp/4001']));
       expect(payload['timeoutMs'], equals(10000));
+    });
+  });
+
+  test(
+    'R3 explicit discover dial and send watchdogs are native budget plus margin',
+    () {
+      fakeAsync((async) {
+        const nativeBudgetMs = 2000;
+        final discoverBridge = _HangingBridge();
+        final dialBridge = _HangingBridge();
+        final sendBridge = _HangingBridge();
+        final results = <String, Map<String, dynamic>>{};
+
+        callP2PRendezvousDiscover(
+          discoverBridge,
+          peerId: 'peer1',
+          timeoutMs: nativeBudgetMs,
+        ).then((value) => results['discover'] = value);
+        callP2PPeerDial(
+          dialBridge,
+          peerId: 'peer1',
+          timeoutMs: nativeBudgetMs,
+        ).then((value) => results['dial'] = value);
+        callP2PMessageSend(
+          sendBridge,
+          peerId: 'peer1',
+          message: 'message',
+          timeoutMs: nativeBudgetMs,
+        ).then((value) => results['send'] = value);
+        async.flushMicrotasks();
+
+        for (final hanging in [discoverBridge, dialBridge, sendBridge]) {
+          expect(
+            hanging.lastParsedRequest!['payload']['timeoutMs'],
+            nativeBudgetMs,
+          );
+        }
+        expect(p2pBridgeWatchdogMargin, const Duration(milliseconds: 500));
+
+        async.elapse(const Duration(milliseconds: nativeBudgetMs));
+        async.flushMicrotasks();
+        expect(results, isEmpty);
+
+        async.elapse(p2pBridgeWatchdogMargin - const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+        expect(results, isEmpty);
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+        expect(results.keys, containsAll(<String>['discover', 'dial', 'send']));
+        expect(
+          results['discover'],
+          containsPair('errorCode', 'BRIDGE_TIMEOUT'),
+        );
+        expect(results['discover']!['peers'], isEmpty);
+        expect(results['dial'], containsPair('errorCode', 'BRIDGE_TIMEOUT'));
+        expect(results['dial']!['connected'], isFalse);
+        expect(results['send'], containsPair('errorCode', 'BRIDGE_TIMEOUT'));
+        expect(results['send']!['sent'], isFalse);
+      });
+    },
+  );
+
+  test('R3 null timeout leaves discover and dial bridge waits uncapped', () {
+    fakeAsync((async) {
+      final results = <String, Map<String, dynamic>>{};
+      callP2PRendezvousDiscover(
+        _SlowBridge(
+          delay: const Duration(seconds: 3),
+          response: {'ok': true, 'peers': <dynamic>[]},
+        ),
+        peerId: 'peer1',
+      ).then((value) => results['discover'] = value);
+      callP2PPeerDial(
+        _SlowBridge(
+          delay: const Duration(seconds: 3),
+          response: {'ok': true, 'connected': true},
+        ),
+        peerId: 'peer1',
+      ).then((value) => results['dial'] = value);
+
+      async.elapse(const Duration(milliseconds: 2500));
+      async.flushMicrotasks();
+      expect(results, isEmpty);
+
+      async.elapse(const Duration(milliseconds: 500));
+      async.flushMicrotasks();
+      expect(results['discover']!['ok'], isTrue);
+      expect(results['dial']!['connected'], isTrue);
     });
   });
 

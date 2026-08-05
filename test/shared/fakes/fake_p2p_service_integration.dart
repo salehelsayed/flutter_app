@@ -13,6 +13,22 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 
 import 'fake_p2p_network.dart';
 
+Future<bool> _delayExceedsExplicitTimeout(
+  Duration? delay,
+  int? timeoutMs,
+) async {
+  if (delay == null) return false;
+  if (timeoutMs != null && timeoutMs > 0) {
+    final timeout = Duration(milliseconds: timeoutMs);
+    if (delay > timeout) {
+      await Future<void>.delayed(timeout);
+      return true;
+    }
+  }
+  await Future<void>.delayed(delay);
+  return false;
+}
+
 /// Per-user P2P service backed by [FakeP2PNetwork].
 ///
 /// Supports online/offline toggling and offline inbox drain.
@@ -65,6 +81,11 @@ class FakeP2PService implements P2PService, DurableLanSender {
 
   /// Artificial delay before [sendMessageWithReply] returns.
   Duration? sendDelay;
+
+  /// Last explicit native budgets observed by the delayed bridge fakes.
+  int? lastDiscoverTimeoutMs;
+  int? lastDialTimeoutMs;
+  int? lastSendTimeoutMs;
 
   /// Current transport mode for test assertions.
   /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
@@ -195,7 +216,11 @@ class FakeP2PService implements P2PService, DurableLanSender {
     String message, {
     int? timeoutMs,
   }) async {
-    if (sendDelay != null) await Future.delayed(sendDelay!);
+    lastSendTimeoutMs = timeoutMs;
+    if (await _delayExceedsExplicitTimeout(sendDelay, timeoutMs)) {
+      _sendAttempts++;
+      return const SendMessageResult(sent: false);
+    }
     _sendAttempts++;
     if (_sendAttempts <= sendFailCount) {
       return const SendMessageResult(sent: false);
@@ -219,7 +244,10 @@ class FakeP2PService implements P2PService, DurableLanSender {
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
-    if (discoverDelay != null) await Future.delayed(discoverDelay!);
+    lastDiscoverTimeoutMs = timeoutMs;
+    if (await _delayExceedsExplicitTimeout(discoverDelay, timeoutMs)) {
+      return null;
+    }
     if (discoverAlwaysFails) return null;
     if (network.hasPeer(peerId)) {
       return DiscoveredPeer(
@@ -240,7 +268,10 @@ class FakeP2PService implements P2PService, DurableLanSender {
     int? timeoutMs,
     bool preferQuic = false,
   }) async {
-    if (dialDelay != null) await Future.delayed(dialDelay!);
+    lastDialTimeoutMs = timeoutMs;
+    if (await _delayExceedsExplicitTimeout(dialDelay, timeoutMs)) {
+      return false;
+    }
     if (dialAlwaysFails) return false;
     return network.hasPeer(peerId);
   }

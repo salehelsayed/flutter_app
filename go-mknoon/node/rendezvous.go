@@ -6,6 +6,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/record"
@@ -111,6 +113,17 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 // caller-supplied timeout override. If timeoutMs <= 0, the default
 // DiscoverTimeout is used.
 // Tries each configured relay in order until one succeeds.
+func (n *Node) openRendezvousStreamForDiscover(
+	ctx context.Context,
+	h host.Host,
+	pid peer.ID,
+) (network.Stream, error) {
+	if n.rendezvousStreamOpenHook != nil {
+		return n.rendezvousStreamOpenHook(ctx, h, pid)
+	}
+	return h.NewStream(ctx, pid, RendezvousProtocol)
+}
+
 func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses []string, timeoutMs int) ([]peer.AddrInfo, error) {
 	if n.rendezvousDiscoverHook != nil {
 		return n.rendezvousDiscoverHook(namespace, serverAddresses)
@@ -130,19 +143,28 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 	}
 
 	rs := n.buildRelaySelector(serverAddresses)
+	commandCtx, cancelCommand := context.WithTimeout(n.ctx, timeout)
+	defer cancelCommand()
+	commandDeadline, _ := commandCtx.Deadline()
 
 	discoverStart := time.Now()
 	result, err := ForEachWithResult(rs, func(relay RelayInfo) ([]peer.AddrInfo, error) {
-		ctx, cancel := context.WithTimeout(n.ctx, timeout)
-		defer cancel()
+		if err := commandCtx.Err(); err != nil {
+			return nil, err
+		}
 
-		s, err := h.NewStream(ctx, relay.ID, RendezvousProtocol)
+		s, err := n.openRendezvousStreamForDiscover(commandCtx, h, relay.ID)
 		if err != nil {
 			return nil, fmt.Errorf("open rendezvous stream: %w", err)
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
-		setStreamDeadline(s, timeout)
+		if err := commandCtx.Err(); err != nil {
+			return nil, err
+		}
+		if err := s.SetDeadline(commandDeadline); err != nil {
+			return nil, fmt.Errorf("set rendezvous stream deadline: %w", err)
+		}
 
 		// Build Discover message
 		discBytes := marshalDiscover(namespace, 64)
