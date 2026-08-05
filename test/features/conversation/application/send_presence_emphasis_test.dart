@@ -1,8 +1,17 @@
+import 'dart:async';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
     show SendChatMessageResult;
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 // Reuse the canonical send-use-case test harness (fake p2pService + message
 // repo + the sendChatMessage wrapper + flow-event capture) so these presence
@@ -11,12 +20,13 @@ import 'send_chat_message_use_case_test.dart'
     show
         FakeP2PService,
         FakeMessageRepository,
+        DurableLanFakeP2PService,
         sendChatMessage,
         captureFlowEvents;
 
-// FDC-08 C5/C6/C7 — the §6.3 presence emphasis at the send `unknownPresence`
-// seam. Presence is a HINT, NEVER a delivery gate: the durable inbox ALWAYS
-// fires (C5/C7); `unreachable` only commits the durable copy first (C6).
+// FDC-08/R4 — relay presence remains best-effort advice at the structurally
+// unknown send seam. It never gates eligible authenticated work or changes
+// custody scheduling/cancellation authority.
 
 /// A send-path fake that adds a configurable [RelayPresence] (the optional
 /// [RelayPresenceLookup] capability) and records inbox-vs-live ordering.
@@ -25,6 +35,9 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
     required this.presence,
     this.inboxDelay = Duration.zero,
     this.connected = false,
+    this.presenceLookup,
+    this.storeInInboxDetailedCallback,
+    super.currentState,
     super.sendMessageResult,
     super.storeInInboxResult,
     super.useNullDiscover,
@@ -32,11 +45,14 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
 
   final RelayPresence presence;
   final Duration inboxDelay;
+  final Future<RelayPresence> Function(String peerId)? presenceLookup;
+  final StoreInInboxDetailedFn? storeInInboxDetailedCallback;
 
   /// When true, the sender is already connected to the target → `unknownPresence`
   /// is false → the presence block is skipped entirely (TC-181-50 boundary).
   final bool connected;
   int presenceLookupCount = 0;
+  int storeInInboxDetailedCallCount = 0;
 
   /// Ordered completion/entry markers: 'inbox-call', 'inbox-done', 'live'.
   final List<String> order = [];
@@ -44,6 +60,8 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
   @override
   Future<RelayPresence> lookupRelayPresence(String peerId) async {
     presenceLookupCount++;
+    final lookup = presenceLookup;
+    if (lookup != null) return lookup(peerId);
     return presence;
   }
 
@@ -65,6 +83,25 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
     return r;
   }
 
+  Future<InboxStoreOutcome> storeInInboxDetailed(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    final callback = storeInInboxDetailedCallback;
+    if (callback == null) {
+      throw StateError('No detailed inbox-store callback was configured');
+    }
+    storeInInboxDetailedCallCount++;
+    order.add('inbox-call');
+    final result = await callback(toPeerId, message, timeoutMs: timeoutMs);
+    if (inboxDelay > Duration.zero) {
+      await Future<void>.delayed(inboxDelay);
+    }
+    order.add('inbox-done');
+    return result;
+  }
+
   void _markLive() {
     if (!order.contains('live')) order.add('live');
   }
@@ -82,6 +119,44 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
   }
 }
 
+typedef _DetailedInboxStep = Future<InboxStoreOutcome> Function();
+
+class _ScriptedDetailedInboxStore {
+  _ScriptedDetailedInboxStore(List<_DetailedInboxStep> steps, {this.order})
+    : _steps = List<_DetailedInboxStep>.from(steps);
+
+  final List<_DetailedInboxStep> _steps;
+  final List<String>? order;
+  int callCount = 0;
+  String? lastEnvelope;
+  final List<bool> callOutcomes = [];
+
+  Future<InboxStoreOutcome> call(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    if (_steps.isEmpty) {
+      throw StateError('Detailed inbox-store script exhausted');
+    }
+    callCount++;
+    lastEnvelope = message;
+    order?.add('inbox-call');
+    try {
+      final outcome = await _steps.removeAt(0)();
+      callOutcomes.add(outcome.accepted);
+      order?.add('inbox-done');
+      return outcome;
+    } catch (_) {
+      callOutcomes.add(false);
+      order?.add('inbox-error');
+      rethrow;
+    }
+  }
+}
+
+const _connectedPeerInboxHedgeBudget = Duration(milliseconds: 2500);
+
 Map<String, dynamic>? _emphasis(List<Map<String, dynamic>> events) {
   for (final e in events) {
     if (e['event'] == 'CHAT_MSG_PRESENCE_EMPHASIS') return e;
@@ -93,9 +168,10 @@ bool _has(List<Map<String, dynamic>> events, String name) =>
     events.any((e) => e['event'] == name);
 
 void main() {
-  // C5 — reachable presence keeps the durable inbox deposit (lazy, NOT skipped).
+  // C5 / R4 — reachable advice cannot suppress the immediate hedge selected by
+  // the peer's structurally unknown routing state.
   test(
-    'reachable presence keeps the durable inbox deposit (lazy, not suppressed)',
+    'reachable advice does not suppress the structurally unknown inbox hedge',
     () async {
       final p2p = _PresenceFake(
         presence: RelayPresence.reachable,
@@ -112,9 +188,10 @@ void main() {
           senderPeerId: 'me',
           senderUsername: 'Me',
         );
+        await Future<void>.delayed(Duration.zero);
       });
 
-      // The durable copy still fired even though the hint was reachable.
+      // The durable copy fired independently of the later reachable hint.
       expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
       expect(p2p.presenceLookupCount, 1);
       final emphasis = _emphasis(events);
@@ -123,50 +200,574 @@ void main() {
     },
   );
 
-  // C6 — unreachable presence commits the durable copy FIRST, then the live legs
-  // (still run, best-effort).
   test(
-    'unreachable presence commits inbox first then live (best-effort)',
-    () async {
-      final p2p = _PresenceFake(
-        presence: RelayPresence.unreachable,
-        inboxDelay: const Duration(milliseconds: 60),
-        sendMessageResult: false, // live legs fail (peer is offline)
-        storeInInboxResult: true,
-      );
-      final repo = FakeMessageRepository();
+    'R4 slow unreachable or throwing presence cannot delay authenticated live launch or settlement',
+    () {
+      for (final row in const [
+        (name: 'controlled-unreachable', throws: false),
+        (name: 'throwing', throws: true),
+      ]) {
+        fakeAsync((async) {
+          final controlledPresence = row.throws
+              ? null
+              : Completer<RelayPresence>();
+          final releaseCapture = Completer<void>();
+          final p2p = _PresenceFake(
+            presence: RelayPresence.unknown,
+            presenceLookup: (_) => row.throws
+                ? Future<RelayPresence>.error(
+                    StateError('scripted presence failure'),
+                  )
+                : controlledPresence!.future,
+            sendMessageResult: true,
+            storeInInboxResult: false,
+          )..sendMessageTransport = 'direct';
+          final repo = FakeMessageRepository();
+          SendChatMessageResult? result;
+          Object? sendError;
+          Object? captureError;
+          var sendSettled = false;
+          var captureSettled = false;
+          var events = <Map<String, dynamic>>[];
 
-      final events = await captureFlowEvents(() async {
-        await sendChatMessage(
+          final capture = captureFlowEvents(() async {
+            try {
+              final (sendResult, _) = await sendChatMessage(
+                p2pService: p2p,
+                messageRepo: repo,
+                targetPeerId: 'target-peer',
+                text: 'presence is only advice',
+                senderPeerId: 'me',
+                senderUsername: 'Me',
+              );
+              result = sendResult;
+            } catch (error) {
+              sendError = error;
+            } finally {
+              sendSettled = true;
+            }
+            await releaseCapture.future;
+          });
+          capture.then(
+            (captured) {
+              events = captured;
+              captureSettled = true;
+            },
+            onError: (Object error) {
+              captureError = error;
+              captureSettled = true;
+            },
+          );
+
+          async.flushMicrotasks();
+          final liveStartedBeforeAdvice =
+              p2p.discoverCallCount > 0 || p2p.sendCallCount > 0;
+          final settledBeforeAdvice = sendSettled;
+
+          // Production may deliberately event-defer the best-effort refresh so
+          // eligible live futures are constructed first. Run that zero-delay
+          // event while controlled advice is still unresolved; the throwing
+          // row must genuinely invoke (and contain) its failed lookup.
+          async.elapse(Duration.zero);
+          async.flushMicrotasks();
+          final presenceWasConsulted = p2p.presenceLookupCount;
+
+          controlledPresence?.complete(RelayPresence.unreachable);
+          async.flushMicrotasks();
+          if (!releaseCapture.isCompleted) releaseCapture.complete();
+          async.flushMicrotasks();
+
+          expect(
+            liveStartedBeforeAdvice,
+            isTrue,
+            reason: '${row.name}: presence advice must not gate live launch',
+          );
+          expect(
+            settledBeforeAdvice,
+            isTrue,
+            reason: '${row.name}: an authenticated ACK settles independently',
+          );
+          expect(sendError, isNull, reason: row.name);
+          expect(captureError, isNull, reason: row.name);
+          expect(captureSettled, isTrue, reason: row.name);
+          expect(presenceWasConsulted, 1, reason: row.name);
+          expect(result, SendChatMessageResult.success, reason: row.name);
+          expect(repo.saved.single.status, 'delivered', reason: row.name);
+          expect(repo.saved.single.transport, 'direct', reason: row.name);
+          expect(
+            _has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'),
+            isFalse,
+            reason: '${row.name}: obsolete inbox-first advice is retired',
+          );
+        });
+      }
+    },
+  );
+
+  test(
+    'R4 structurally unknown peer starts one inbox hedge between staging and committed sticky return',
+    () async {
+      final inboxResult = Completer<InboxStoreOutcome>();
+      final p2p =
+          _PresenceFake(
+              presence: RelayPresence.unknown,
+              sendMessageResult: true,
+              storeInInboxResult: false,
+              storeInInboxDetailedCallback:
+                  (toPeerId, message, {int? timeoutMs}) => inboxResult.future,
+            )
+            ..lastKnownGoodTransportResult = 'direct'
+            ..sendMessageTransport = 'direct';
+      final repo = FakeMessageRepository()
+        ..onOrdinaryStage = () => p2p.order.add('stage');
+      p2p.onSendMessage = () => p2p.order.add('sticky-send');
+
+      final (result, _) = await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'stage before the unknown-peer hedge',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+        storeInInboxDetailed: p2p.storeInInboxDetailed,
+      );
+      final orderAtStickyReturn = List<String>.from(p2p.order);
+
+      inboxResult.complete(
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          expiresAtMs: 34002,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(orderAtStickyReturn.take(3), <String>[
+        'stage',
+        'inbox-call',
+        'sticky-send',
+      ]);
+      expect(p2p.storeInInboxDetailedCallCount, 1);
+      expect(p2p.storeInInboxCallCount, 0);
+      expect(p2p.discoverCallCount, 0);
+      expect(p2p.discoverLocalPeerCallCount, 0);
+      expect(p2p.dialCallCount, 0);
+      expect(p2p.sendCallCount, 1);
+      expect(p2p.presenceLookupCount, 0);
+      expect(result, SendChatMessageResult.success);
+      expect(repo.saved.single.status, 'delivered');
+      expect(repo.saved.single.transport, 'direct');
+      expect(repo.saved.single.relayExpiresAt, isNull);
+    },
+  );
+
+  test(
+    'R4 connected reuse hedge starts at T0 bound and late proof upgrades custody',
+    () {
+      fakeAsync((async) {
+        const expiresAtMs = 34003001;
+        final reuseAck = Completer<SendMessageResult>();
+        final metrics = TransportMetrics();
+        final p2p = _PresenceFake(
+          presence: RelayPresence.unreachable,
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [
+              ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/192.0.2.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+          storeInInboxResult: false,
+          storeInInboxDetailedCallback:
+              (toPeerId, message, {int? timeoutMs}) async =>
+                  const InboxStoreOutcome(
+                    status: InboxStoreStatus.stored,
+                    expiresAtMs: expiresAtMs,
+                  ),
+        )..queuedSendMessageResults.add(reuseAck.future);
+        final repo = FakeMessageRepository();
+        SendChatMessageResult? result;
+        Object? sendError;
+        var sendSettled = false;
+
+        sendChatMessage(
           p2pService: p2p,
           messageRepo: repo,
           targetPeerId: 'target-peer',
-          text: 'hi',
+          text: 'connected reuse remains hedged',
           senderPeerId: 'me',
           senderUsername: 'Me',
+          transportMetrics: metrics,
+          storeInInboxDetailed: p2p.storeInInboxDetailed,
+        ).then(
+          (completion) {
+            result = completion.$1;
+            sendSettled = true;
+          },
+          onError: (Object error) {
+            sendError = error;
+            sendSettled = true;
+          },
         );
+        async.flushMicrotasks();
+
+        async.elapse(
+          _connectedPeerInboxHedgeBudget - const Duration(milliseconds: 1),
+        );
+        async.flushMicrotasks();
+        final detailedBeforeBound = p2p.storeInInboxDetailedCallCount;
+        final booleanBeforeBound = p2p.storeInInboxCallCount;
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+        final detailedAtBound = p2p.storeInInboxDetailedCallCount;
+        final booleanAtBound = p2p.storeInInboxCallCount;
+        final inboxAttemptsAtBound = metrics.attemptCounts()['inbox'];
+        final inboxFailuresAtBound = metrics.attemptFailureCounts()['inbox'];
+        final rowAtBound = repo.existingMessages.values.single;
+
+        reuseAck.complete(
+          const SendMessageResult(sent: true, acked: true, transport: 'direct'),
+        );
+        async.flushMicrotasks();
+        final finalRow = repo.existingMessages.values.single;
+
+        expect(detailedBeforeBound, 0);
+        expect(booleanBeforeBound, 0);
+        expect(detailedAtBound, 1);
+        expect(booleanAtBound, 0);
+        expect(inboxAttemptsAtBound, 1);
+        expect(inboxFailuresAtBound, 0);
+        expect(rowAtBound.status, 'inboxed');
+        expect(rowAtBound.transport, 'inbox');
+        expect(rowAtBound.relayExpiresAt, expiresAtMs);
+        expect(sendError, isNull);
+        expect(sendSettled, isTrue);
+        expect(result, SendChatMessageResult.success);
+        expect(p2p.storeInInboxDetailedCallCount, 1);
+        expect(metrics.attemptCounts()['inbox'], 1);
+        expect(finalRow.status, 'delivered');
+        expect(finalRow.transport, 'direct');
+        expect(finalRow.relayExpiresAt, isNull);
+        expect(p2p.presenceLookupCount, 0);
       });
-
-      final emphasis = _emphasis(events);
-      expect((emphasis!['details'] as Map)['presence'], 'unreachable');
-      expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isTrue);
-
-      // Ordering: the inbox deposit COMPLETED before any live leg started.
-      final inboxDone = p2p.order.indexOf('inbox-done');
-      final firstLive = p2p.order.indexOf('live');
-      expect(inboxDone, greaterThanOrEqualTo(0));
-      expect(
-        firstLive,
-        greaterThanOrEqualTo(0),
-        reason: 'live legs must still run (best-effort), not be dropped',
-      );
-      expect(
-        inboxDone,
-        lessThan(firstLive),
-        reason: 'unreachable => durable copy committed before the live race',
-      );
     },
   );
+
+  test('R4 LAN WebSocket evidence cannot cancel the T0 inbox hedge', () {
+    fakeAsync((async) {
+      const expiresAtMs = 34004001;
+      final authenticatedDirectResult = Completer<SendMessageResult>();
+      final detailedOrder = <String>[];
+      final detailedStore = _ScriptedDetailedInboxStore([
+        () async => const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          expiresAtMs: expiresAtMs,
+        ),
+      ], order: detailedOrder);
+      final p2p =
+          DurableLanFakeP2PService(
+              localSendAck: LanSendAck.committed,
+              storeInInboxResult: true,
+            )
+            ..localPeers.add('target-peer')
+            ..queuedSendMessageResults.add(authenticatedDirectResult.future);
+      final repo = FakeMessageRepository();
+      SendChatMessageResult? result;
+      Object? sendError;
+      var sendSettled = false;
+
+      sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'LAN writes do not own delivery authority',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+        storeInInboxDetailed: detailedStore.call,
+      ).then(
+        (completion) {
+          result = completion.$1;
+          sendSettled = true;
+        },
+        onError: (Object error) {
+          sendError = error;
+          sendSettled = true;
+        },
+      );
+      async.flushMicrotasks();
+      final localWritesBeforeBound = p2p.localSendCallCount;
+
+      async.elapse(
+        _connectedPeerInboxHedgeBudget - const Duration(milliseconds: 1),
+      );
+      async.flushMicrotasks();
+      final detailedBeforeBound = detailedStore.callCount;
+      final booleanBeforeBound = p2p.storeInInboxCallCount;
+
+      async.elapse(const Duration(milliseconds: 1));
+      async.flushMicrotasks();
+      final detailedAtBound = detailedStore.callCount;
+      final booleanAtBound = p2p.storeInInboxCallCount;
+      final rowAtBound = repo.existingMessages.values.single;
+
+      authenticatedDirectResult.complete(
+        const SendMessageResult(sent: false, acked: false, transport: 'direct'),
+      );
+      async.flushMicrotasks();
+      async.elapse(_connectedPeerInboxHedgeBudget);
+      async.flushMicrotasks();
+      final finalDetailedCalls = detailedStore.callCount;
+      final finalBooleanCalls = p2p.storeInInboxCallCount;
+      final finalRow = repo.existingMessages.values.single;
+
+      expect(localWritesBeforeBound, 1);
+      expect(detailedBeforeBound, 0);
+      expect(booleanBeforeBound, 0);
+      expect(detailedAtBound, 1);
+      expect(booleanAtBound, 0);
+      expect(rowAtBound.status, 'inboxed');
+      expect(rowAtBound.transport, 'inbox');
+      expect(rowAtBound.relayExpiresAt, expiresAtMs);
+      expect(sendError, isNull);
+      expect(sendSettled, isTrue);
+      expect(result, SendChatMessageResult.success);
+      expect(finalDetailedCalls, 1);
+      expect(finalBooleanCalls, 0);
+      expect(detailedOrder, <String>['inbox-call', 'inbox-done']);
+      expect(detailedStore.callOutcomes, <bool>[true]);
+      expect(finalRow.status, 'inboxed');
+      expect(finalRow.transport, 'inbox');
+      expect(finalRow.relayExpiresAt, expiresAtMs);
+    });
+  });
+
+  test('R4 typed hedge preserves outcomes retries and per-call metrics', () {
+    const storedExpiry = 34008001;
+    const duplicateExpiry = 34008002;
+    const retryStoredExpiry = 34008003;
+    const retryDuplicateExpiry = 34008004;
+    final rows =
+        <
+          ({
+            String name,
+            List<_DetailedInboxStep> steps,
+            List<bool> expectedCallOutcomes,
+            int expectedCalls,
+            int expectedFailedCalls,
+            bool custodyAtBound,
+            String expectedStatus,
+            int? expectedExpiry,
+          })
+        >[
+          (
+            name: 'stored',
+            steps: [
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                expiresAtMs: storedExpiry,
+              ),
+            ],
+            expectedCallOutcomes: const [true],
+            expectedCalls: 1,
+            expectedFailedCalls: 0,
+            custodyAtBound: true,
+            expectedStatus: 'inboxed',
+            expectedExpiry: storedExpiry,
+          ),
+          (
+            name: 'duplicate',
+            steps: [
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.duplicate,
+                expiresAtMs: duplicateExpiry,
+              ),
+            ],
+            expectedCallOutcomes: const [true],
+            expectedCalls: 1,
+            expectedFailedCalls: 0,
+            custodyAtBound: true,
+            expectedStatus: 'inboxed',
+            expectedExpiry: duplicateExpiry,
+          ),
+          (
+            name: 'rejected-full',
+            steps: [
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.rejectedFull,
+                errorCode: 'INBOX_FULL',
+              ),
+            ],
+            expectedCallOutcomes: const [false],
+            expectedCalls: 1,
+            expectedFailedCalls: 1,
+            custodyAtBound: false,
+            expectedStatus: 'sent',
+            expectedExpiry: null,
+          ),
+          (
+            name: 'failed-then-stored',
+            steps: [
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.failed,
+                errorCode: 'STORE_FAILED',
+              ),
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                expiresAtMs: retryStoredExpiry,
+              ),
+            ],
+            expectedCallOutcomes: const [false, true],
+            expectedCalls: 2,
+            expectedFailedCalls: 1,
+            custodyAtBound: false,
+            expectedStatus: 'inboxed',
+            expectedExpiry: retryStoredExpiry,
+          ),
+          (
+            name: 'throw-then-duplicate',
+            steps: [
+              () => Future<InboxStoreOutcome>.error(
+                StateError('scripted detailed inbox failure'),
+              ),
+              () async => const InboxStoreOutcome(
+                status: InboxStoreStatus.duplicate,
+                expiresAtMs: retryDuplicateExpiry,
+              ),
+            ],
+            expectedCallOutcomes: const [false, true],
+            expectedCalls: 2,
+            expectedFailedCalls: 1,
+            custodyAtBound: false,
+            expectedStatus: 'inboxed',
+            expectedExpiry: retryDuplicateExpiry,
+          ),
+        ];
+
+    for (final row in rows) {
+      fakeAsync((async) {
+        final authenticatedDirectResult = Completer<SendMessageResult>();
+        final detailedStore = _ScriptedDetailedInboxStore(row.steps);
+        final metrics = TransportMetrics();
+        final p2p =
+            DurableLanFakeP2PService(
+                localSendAck: LanSendAck.committed,
+                storeInInboxResult: false,
+              )
+              ..localPeers.add('target-peer')
+              ..queuedSendMessageResults.add(authenticatedDirectResult.future);
+        final repo = FakeMessageRepository();
+        SendChatMessageResult? result;
+        Object? sendError;
+        var sendSettled = false;
+
+        sendChatMessage(
+          p2pService: p2p,
+          messageRepo: repo,
+          targetPeerId: 'target-peer',
+          text: 'typed hedge row ${row.name}',
+          senderPeerId: 'me',
+          senderUsername: 'Me',
+          transportMetrics: metrics,
+          storeInInboxDetailed: detailedStore.call,
+        ).then(
+          (completion) {
+            result = completion.$1;
+            sendSettled = true;
+          },
+          onError: (Object error) {
+            sendError = error;
+            sendSettled = true;
+          },
+        );
+        async.flushMicrotasks();
+
+        async.elapse(
+          _connectedPeerInboxHedgeBudget - const Duration(milliseconds: 1),
+        );
+        async.flushMicrotasks();
+        final callsBeforeBound = detailedStore.callCount;
+        final booleanCallsBeforeBound = p2p.storeInInboxCallCount;
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+        final callsAtBound = detailedStore.callCount;
+        final booleanCallsAtBound = p2p.storeInInboxCallCount;
+        final attemptsAtBound = metrics.attemptCounts()['inbox'];
+        final failuresAtBound = metrics.attemptFailureCounts()['inbox'];
+        final rowAtBound = repo.existingMessages.values.single;
+
+        authenticatedDirectResult.complete(
+          const SendMessageResult(
+            sent: false,
+            acked: false,
+            transport: 'direct',
+          ),
+        );
+        async.flushMicrotasks();
+        async.elapse(_connectedPeerInboxHedgeBudget);
+        async.flushMicrotasks();
+        final finalRow = repo.existingMessages.values.single;
+
+        expect(callsBeforeBound, 0, reason: row.name);
+        expect(booleanCallsBeforeBound, 0, reason: row.name);
+        expect(callsAtBound, 1, reason: row.name);
+        expect(booleanCallsAtBound, 0, reason: row.name);
+        expect(attemptsAtBound, 1, reason: row.name);
+        expect(failuresAtBound, row.custodyAtBound ? 0 : 1, reason: row.name);
+        expect(
+          rowAtBound.status,
+          row.custodyAtBound ? 'inboxed' : 'sending',
+          reason: row.name,
+        );
+        if (row.custodyAtBound) {
+          expect(rowAtBound.transport, 'inbox', reason: row.name);
+          expect(
+            rowAtBound.relayExpiresAt,
+            row.expectedExpiry,
+            reason: row.name,
+          );
+        }
+        expect(sendError, isNull, reason: row.name);
+        expect(sendSettled, isTrue, reason: row.name);
+        expect(result, SendChatMessageResult.success, reason: row.name);
+        expect(detailedStore.callCount, row.expectedCalls, reason: row.name);
+        expect(p2p.storeInInboxCallCount, 0, reason: row.name);
+        expect(
+          detailedStore.callOutcomes,
+          row.expectedCallOutcomes,
+          reason: row.name,
+        );
+        expect(
+          metrics.attemptCounts()['inbox'],
+          row.expectedCalls,
+          reason: row.name,
+        );
+        expect(
+          metrics.attemptFailureCounts()['inbox'],
+          row.expectedFailedCalls,
+          reason: row.name,
+        );
+        expect(finalRow.status, row.expectedStatus, reason: row.name);
+        expect(finalRow.transport, 'inbox', reason: row.name);
+        expect(finalRow.relayExpiresAt, row.expectedExpiry, reason: row.name);
+        expect(finalRow.wireEnvelope, isNotEmpty, reason: row.name);
+        expect(
+          detailedStore.lastEnvelope,
+          finalRow.wireEnvelope,
+          reason: row.name,
+        );
+        expect(
+          repo.ordinarySettlementCalls.any((call) => call.status == 'inboxed'),
+          row.expectedStatus == 'inboxed',
+          reason: '${row.name}: custody candidates match accepted outcomes',
+        );
+      });
+    }
+  });
 
   // C7 ⭐ — a WRONG `reachable` hint for an actually-offline peer STILL deposits
   // the durable copy (+ relay push-to-wake). The single load-bearing gate:
@@ -194,16 +795,13 @@ void main() {
           senderUsername: 'Me',
         );
         result = r;
+        await Future<void>.delayed(Duration.zero);
       });
 
       // The hint was (wrongly) reachable...
       expect((_emphasis(events)!['details'] as Map)['presence'], 'reachable');
-      // ...yet the PRESENCE-PATH durable copy STILL fired (lazy = fired, NOT
-      // skipped). Asserting the concurrent BEGIN event — not just the deposit
-      // count — keeps this load-bearing: it re-reds if the reachable branch ever
-      // skips/defers the concurrent deposit, even though the :1172 backstop would
-      // independently rescue the message. The store triggers the relay's
-      // push-to-wake for the backgrounded peer.
+      // ...yet the structurally unknown hedge still started. The correlated
+      // BEGIN event proves a real store call, independently of terminal rescue.
       expect(_has(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'), isTrue);
       expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
       // And the message is delivered (durable inbox custody), never lost.
@@ -211,12 +809,8 @@ void main() {
     },
   );
 
-  // TC-181-32u — `unknown` presence emits EMPHASIS but NOT INBOX_FIRST: only
-  // `unreachable` short-circuits; `unknown` keeps today's fully-concurrent
-  // behavior. Discriminator: EMPHASIS present AND INBOX_FIRST absent (distinguishes
-  // the two same-custody paths by event, not deposit count). Mutation: broaden the
-  // consumer guard to include `unknown` (send_chat_message_use_case.dart:776) →
-  // INBOX_FIRST appears → red.
+  // TC-181-32u / R4 preservation — `unknown` advice may still emit emphasis,
+  // but no presence value can restore the retired inbox-first ordering branch.
   test('unknown presence emits EMPHASIS but not INBOX_FIRST', () async {
     final p2p = _PresenceFake(
       presence: RelayPresence.unknown,
@@ -233,6 +827,7 @@ void main() {
         senderPeerId: 'me',
         senderUsername: 'Me',
       );
+      await Future<void>.delayed(Duration.zero);
     });
 
     expect((_emphasis(events)!['details'] as Map)['presence'], 'unknown');
@@ -241,13 +836,9 @@ void main() {
     expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
   });
 
-  // TC-181-50 — a peer the sender is already connected to (`unknownPresence==false`)
-  // NEVER enters the presence block: no EMPHASIS, presence never consulted — even
-  // when the relay WOULD say `unreachable`. This is the out-of-scope stale-circuit
-  // boundary (181 Known Limitation): presence wiring does not change connected-peer
-  // sends. Mutation: drop the `!isConnectedToPeer` term from the unknownPresence
-  // definition (send_chat_message_use_case.dart:704-707) → the connected peer
-  // enters the block and emits EMPHASIS → red.
+  // TC-181-50 / R4 preservation — presence remains unconsulted for peers already
+  // known live. R4 separately arms a delayed custody hedge for this structural
+  // class; a fast authenticated proof cancels that unstarted hedge.
   test(
     'connected peer (unknownPresence=false) skips the presence block entirely',
     () async {
@@ -268,12 +859,14 @@ void main() {
           senderPeerId: 'me',
           senderUsername: 'Me',
         );
+        await Future<void>.delayed(Duration.zero);
       });
 
       // Block skipped: presence never consulted, no emphasis, no short-circuit.
       expect(_emphasis(events), isNull);
       expect(p2p.presenceLookupCount, 0);
       expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isFalse);
+      expect(p2p.storeInInboxCallCount, 0);
     },
   );
 
@@ -282,8 +875,8 @@ void main() {
   // surfaces a custody milestone MID-send (status:'inboxed' +
   // CHAT_MSG_SEND_CUSTODY_CONFIRMED) so the 1:1 bubble advances to two ticks at
   // ~110 ms instead of resting on the optimistic single tick until the race
-  // resolves. INV-3 guards a live 'delivered' from being regressed to 'inboxed';
-  // INV-4 keeps the single tick when custody is not secured.
+  // resolves. The atomic settlement writer prevents a weaker custody candidate
+  // from regressing delivery; INV-4 keeps one tick when custody is not secured.
   // -------------------------------------------------------------------------
 
   // TC-184-10 — the concurrent-inbox ACK persists a non-terminal 'inboxed'
@@ -338,51 +931,77 @@ void main() {
     );
   });
 
-  // TC-184-12 — a live 'delivered' that wins the race BEFORE the inbox ACK
-  // resolves must NEVER be regressed to 'inboxed' by the late custody bump
-  // (INV-3). Guard lock: passes on HEAD (no mid-send save exists),
-  // mutation-verified by dropping the `!liveDelivered` guard.
+  // TC-184-12 / R4 — once storage starts it is not canceled. Its late weaker
+  // candidate still reaches the atomic writer; the authoritative row remains
+  // delivered and therefore emits no false custody milestone.
   test(
-    'live ack before inbox ack does not regress delivered to inboxed',
-    () async {
-      final p2p =
-          _PresenceFake(
-              presence: RelayPresence.unknown,
-              inboxDelay: const Duration(
-                milliseconds: 60,
-              ), // ACK lands after race
-              sendMessageResult: true,
-              storeInInboxResult: true,
-            )
-            // The live leg is ACKed → terminal 'delivered' commits first.
-            ..sendMessageAcked = true
-            ..sendMessageTransport = 'direct';
-      final repo = FakeMessageRepository();
+    'live ack before inbox ack invokes atomic candidate without regressing delivery',
+    () {
+      fakeAsync((async) {
+        final p2p =
+            _PresenceFake(
+                presence: RelayPresence.unknown,
+                inboxDelay: const Duration(milliseconds: 60),
+                sendMessageResult: true,
+                storeInInboxResult: true,
+                storeInInboxDetailedCallback:
+                    (toPeerId, message, {int? timeoutMs}) async =>
+                        const InboxStoreOutcome(
+                          status: InboxStoreStatus.stored,
+                        ),
+              )
+              ..sendMessageAcked = true
+              ..sendMessageTransport = 'direct';
+        final repo = FakeMessageRepository();
+        Object? captureError;
+        var captureSettled = false;
+        var events = <Map<String, dynamic>>[];
 
-      final events = await captureFlowEvents(() async {
-        await sendChatMessage(
-          p2pService: p2p,
-          messageRepo: repo,
-          targetPeerId: 'target-peer',
-          text: 'hi',
-          senderPeerId: 'me',
-          senderUsername: 'Me',
+        captureFlowEvents(() async {
+          await sendChatMessage(
+            p2pService: p2p,
+            messageRepo: repo,
+            targetPeerId: 'target-peer',
+            text: 'late custody candidate',
+            senderPeerId: 'me',
+            senderUsername: 'Me',
+            storeInInboxDetailed: p2p.storeInInboxDetailed,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }).then(
+          (captured) {
+            events = captured;
+            captureSettled = true;
+          },
+          onError: (Object error) {
+            captureError = error;
+            captureSettled = true;
+          },
         );
-        // Let the delayed inbox `.then` fire — it must find liveDelivered=true
-        // and skip the custody bump.
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      });
 
-      // The live delivery is the final persisted state...
-      expect(repo.saved, isNotEmpty);
-      expect(repo.saved.last.status, 'delivered');
-      // ...and the late inbox ACK never advanced the status to 'inboxed' nor fired
-      // the custody milestone (the guard suppressed it).
-      expect(
-        repo.ordinarySettlementCalls.any((call) => call.status == 'inboxed'),
-        isFalse,
-      );
-      expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isFalse);
+        async.flushMicrotasks();
+        final rowAfterLiveAck = repo.existingMessages.values.single;
+        async.elapse(const Duration(milliseconds: 60));
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 40));
+        async.flushMicrotasks();
+        final finalRow = repo.existingMessages.values.single;
+
+        expect(captureError, isNull);
+        expect(captureSettled, isTrue);
+        expect(rowAfterLiveAck.status, 'delivered');
+        expect(rowAfterLiveAck.transport, 'direct');
+        expect(
+          repo.ordinarySettlementCalls.where(
+            (call) => call.status == 'inboxed',
+          ),
+          hasLength(1),
+        );
+        expect(finalRow.status, 'delivered');
+        expect(finalRow.transport, 'direct');
+        expect(finalRow.relayExpiresAt, isNull);
+        expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isFalse);
+      });
     },
   );
 

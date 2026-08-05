@@ -51,6 +51,9 @@ class _ReuseP2PService extends Fake implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
+  bool isConnectedToPeer(String peerId) => peerId == _targetPeerId;
+
+  @override
   void recordSuccessfulTransport(String peerId, String transport) {}
 
   @override

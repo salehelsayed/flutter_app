@@ -41,6 +41,13 @@ const Duration interactiveDirectAggregateBudget = outgoingLiveBudget;
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
 
+/// Presence-independent durability hedge for peers that appear live or local.
+///
+/// Measured from the existing send-entry T0. Unknown peers start durable inbox
+/// custody immediately after attempt staging; structurally reachable peers wait
+/// only for the remainder of this budget while authenticated live work races.
+const Duration kConnectedPeerInboxHedgeBudget = Duration(milliseconds: 2500);
+
 /// FDC-08: tight bound on the presence-hint lookup so it stays OFF the
 /// send-critical path. In steady state it is a 10–15s-cached read (≈0ms); a cold
 /// lookup that exceeds this degrades to `RelayPresence.unknown` (today's full
@@ -90,6 +97,104 @@ const Duration kDirectDialBudget = outgoingDialPhaseCap;
 /// R3 committed sends no longer use this cap; they receive the exact remaining
 /// native allocation while preserving the committed-ACK reserve.
 const Duration kDirectSendBudget = Duration(milliseconds: 1500);
+
+/// One send-scoped, typed durability operation shared by the delayed hedge and
+/// both terminal non-proof funnels.
+///
+/// Starting and cancellation claim state synchronously. Cancellation only
+/// disarms work that has not begun; an operation already in flight always
+/// completes. A fresh retry is available exactly once, and only after the
+/// completed initial operation produced [InboxStoreStatus.failed].
+final class _SendScopedInboxHedge {
+  _SendScopedInboxHedge(this._operation);
+
+  static const _canceledOutcome = InboxStoreOutcome(
+    status: InboxStoreStatus.failed,
+    errorCode: 'HEDGE_CANCELED',
+  );
+
+  final Future<InboxStoreOutcome> Function() _operation;
+
+  Timer? _timer;
+  Future<InboxStoreOutcome>? _initialFuture;
+  Future<InboxStoreOutcome>? _retryFuture;
+  InboxStoreOutcome? _initialOutcome;
+  bool _started = false;
+  bool _canceled = false;
+
+  bool get hasStarted => _started;
+
+  void schedule(Duration delay) {
+    if (_started || _canceled || _timer != null) return;
+    if (delay <= Duration.zero) {
+      unawaited(startOrJoin());
+      return;
+    }
+    _timer = Timer(delay, () {
+      _timer = null;
+      unawaited(startOrJoin());
+    });
+  }
+
+  Future<InboxStoreOutcome> startOrJoin() {
+    final existing = _initialFuture;
+    if (existing != null) return existing;
+
+    if (_canceled) {
+      _initialOutcome = _canceledOutcome;
+      return _initialFuture = Future<InboxStoreOutcome>.value(_canceledOutcome);
+    }
+
+    _started = true;
+    _timer?.cancel();
+    _timer = null;
+    final completer = Completer<InboxStoreOutcome>();
+    _initialFuture = completer.future;
+    unawaited(
+      _runOperation().then((outcome) {
+        _initialOutcome = outcome;
+        completer.complete(outcome);
+      }),
+    );
+    return completer.future;
+  }
+
+  Future<InboxStoreOutcome> retryAfterFailure() {
+    final initial = _initialOutcome;
+    if (!_started || initial?.status != InboxStoreStatus.failed) {
+      return Future<InboxStoreOutcome>.value(initial ?? _canceledOutcome);
+    }
+
+    final existing = _retryFuture;
+    if (existing != null) return existing;
+    final completer = Completer<InboxStoreOutcome>();
+    _retryFuture = completer.future;
+    unawaited(_runOperation().then(completer.complete));
+    return completer.future;
+  }
+
+  bool cancelIfNotStarted() {
+    if (_started || _canceled) return false;
+    _canceled = true;
+    _timer?.cancel();
+    _timer = null;
+    _initialOutcome = _canceledOutcome;
+    _initialFuture = Future<InboxStoreOutcome>.value(_canceledOutcome);
+    return true;
+  }
+
+  Future<InboxStoreOutcome> _runOperation() async {
+    try {
+      return await _operation();
+    } catch (error) {
+      return InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'HEDGE_OPERATION_ERROR',
+        errorMessage: error.toString(),
+      );
+    }
+  }
+}
 
 /// FDC-02 observability seam (C2). Production [P2PService] impls do NOT implement
 /// this: the staggered relay-live leg's delivery is an ordinary
@@ -744,6 +849,130 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     p2pService,
     targetPeerId,
   );
+  final isLiveConnected = p2pService.isConnectedToPeer(targetPeerId);
+  final unknownPresence =
+      !isAlreadyConnected && !isLocalPeer && !isLiveConnected;
+
+  Future<void> settleAcceptedInboxCustody(InboxStoreOutcome outcome) async {
+    ConversationMessage? observedMessage;
+    try {
+      if (isOutgoingPrivateOneMoreLook) {
+        observedMessage = await _settleOutgoingDirectPrivateTransportState(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          attachments: normalizedAttachments,
+          messageId: resolvedMessageId,
+          expectedEnvelope: jsonString,
+          status: 'inboxed',
+          transport: 'inbox',
+          relayExpiresAt: outcome.expiresAtMs,
+        );
+      } else {
+        final settled = await ordinaryMutationRepo!
+            .settleOutgoingOrdinaryTransport(
+              messageId: resolvedMessageId,
+              expectedContactPeerId: targetPeerId,
+              expectedEnvelope: jsonString,
+              status: 'inboxed',
+              transport: 'inbox',
+              relayExpiresAt: outcome.expiresAtMs,
+              mode: OutgoingOrdinarySettlementMode.live,
+            );
+        observedMessage = settled.message;
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_CUSTODY_SETTLEMENT_ERROR',
+        details: {
+          'id': resolvedMessageId.substring(0, 8),
+          'error': error.toString(),
+        },
+      );
+      return;
+    }
+
+    // The guarded writer returns the authoritative row. A stronger live result
+    // may already have won, in which case the weaker custody candidate was still
+    // attempted but must not emit a false milestone.
+    if (observedMessage?.status == 'inboxed' &&
+        observedMessage?.transport == 'inbox') {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
+        details: {
+          'id': resolvedMessageId.substring(0, 8),
+          'targetPeerId': targetPrefix,
+        },
+      );
+    }
+  }
+
+  Future<InboxStoreOutcome> performInboxStoreCall() async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'targetPeerId': targetPrefix,
+      },
+    );
+
+    final inboxStopwatch = Stopwatch()..start();
+    late InboxStoreOutcome outcome;
+    try {
+      final detailedStore = effectiveStoreInInboxDetailed;
+      if (detailedStore != null) {
+        outcome = await detailedStore(
+          targetPeerId,
+          jsonString,
+          timeoutMs: interactiveInboxBudget.inMilliseconds,
+        );
+      } else {
+        final stored = await p2pService.storeInInbox(
+          targetPeerId,
+          jsonString,
+          timeoutMs: interactiveInboxBudget.inMilliseconds,
+        );
+        outcome = InboxStoreOutcome(
+          status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+          errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+        );
+      }
+    } catch (error) {
+      outcome = InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'STORE_ERROR',
+        errorMessage: error.toString(),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_INBOX_FALLBACK_ERROR',
+        details: {'error': error.toString()},
+      );
+    } finally {
+      inboxStopwatch.stop();
+      stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
+    }
+
+    transportMetrics?.recordAttempt(leg: 'inbox', succeeded: outcome.accepted);
+    if (outcome.accepted) {
+      await settleAcceptedInboxCustody(outcome);
+    }
+    return outcome;
+  }
+
+  final inboxHedge = _SendScopedInboxHedge(performInboxStoreCall);
+  if (unknownPresence) {
+    unawaited(inboxHedge.startOrJoin());
+  } else {
+    final remainingHedgeBudget =
+        kConnectedPeerInboxHedgeBudget - sendStopwatch.elapsed;
+    inboxHedge.schedule(
+      remainingHedgeBudget.isNegative ? Duration.zero : remainingHedgeBudget,
+    );
+  }
+
   _RaceResult? priorWritten;
 
   if (isAlreadyConnected && !isCircuitOnlyConnected) {
@@ -786,6 +1015,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             stepTimings: stepTimings,
           );
           if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
+            inboxHedge.cancelIfNotStarted();
             transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
             recordMetrics(transport: reuseVia, rung: 'reuse');
             return _completeSuccessfulSend(
@@ -805,6 +1035,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
               sendStopwatch: sendStopwatch,
               emitTimingEvent: emitTimingEvent,
+              inboxHedge: inboxHedge,
               extraTimingDetails: {
                 'connectionReused': true,
                 'sendPath': 'reuse',
@@ -871,6 +1102,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     if (shortCircuit != null &&
         shortCircuit.provesDeviceDeliveryForCurrentProtocol) {
+      inboxHedge.cancelIfNotStarted();
       sendPath = 'sticky';
       stepTimings = shortCircuit.stepTimings;
       // The sticky short-circuit reuses the learned known-good path WITHOUT
@@ -895,6 +1127,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
+        inboxHedge: inboxHedge,
         extraTimingDetails: {
           'connectionReused': false,
           'sendPath': 'sticky',
@@ -917,28 +1150,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
   }
 
-  // FDC-03 (R6 / P0-2): fire the durable inbox copy CONCURRENTLY with the live
-  // race for ALL "unknown presence" sends — the peer is not already-connected
-  // (no reuse path), not on the LAN, AND has no live peer connection. The 30s
-  // prior-attempt recency gate (the old NET-REL-05 P1/P4 "low confidence" lookup)
-  // is REMOVED: a first-ever / cold notif-tap send is exactly the case that needs
-  // fast durable custody, yet it is never "low confidence" (no prior failed
-  // attempt exists) and so used to pay the slow serial probe→inbox tail. The
-  // three STRUCTURAL guards are KEPT for scheduling/cost: connected and LAN-
-  // visible sends use the live race first, and any written-but-uncommitted
-  // result still reaches the sequential inbox backstop. Presence-aware
-  // reachable→lazy / unreachable→inbox-first emphasis (§6.3) is FDC-08; until
-  // then everything non-connected/non-local is treated as UNKNOWN → concurrent
-  // inbox. Dropping the recency lookup also removes one DB await from the hot
-  // send path.
-  final unknownPresence =
-      !isAlreadyConnected &&
-      !isLocalPeer &&
-      !p2pService.isConnectedToPeer(targetPeerId);
-
   // 187: when the 183 keepalive has latched this ACTIVE peer as dropped, the
   // direct discover/dial WAN leg to it is doomed — it burns ~1.5 s dialing a
-  // peer that cannot answer while the concurrent durable inbox (fired below) has
+  // peer that cannot answer while the concurrent durable inbox (started above) has
   // already secured custody. Skip ONLY that WAN leg (Option A: the leg stays in
   // raceFutures[1], short-circuited at its top — LAN leg + inbox untouched).
   // Gated on [unknownPresence] so a connected/local/reachable peer (which took
@@ -950,128 +1164,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       unknownPresence &&
       p2pService is PeerDropSignal &&
       (p2pService as PeerDropSignal).isPeerSuspectedDropped(targetPeerId);
-
-  // Fire the durable inbox copy CONCURRENTLY (fire-and-forget) for unknown-
-  // presence sends. This is a parallel durability side-effect, NOT a race
-  // participant: it never feeds the transport-label completer and never calls a
-  // terminal `recordMetrics(rung:...)` — only `recordAttempt(leg:'inbox')`. The
-  // SAME [jsonString] envelope (identical payload.id) is used, so a duplicate
-  // arrival is discarded by the receiver's messageId dedup. `concurrentInbox`
-  // is awaited later (race-failure tail / unacked handoff) to short-circuit the
-  // redundant sequential store and avoid a double relay write.
-  // 184 (INV-3): tracks whether the live race has already committed a terminal
-  // 'delivered' (acked). The concurrent-inbox custody bump below must NEVER
-  // regress a live 'delivered' to 'inboxed' — this flag is captured by the
-  // `.then` closure and set at the race-success-acked commit point.
-  var liveDelivered = false;
-  Future<bool>? concurrentInbox;
-  if (unknownPresence) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
-      details: {
-        'id': resolvedMessageId.substring(0, 8),
-        'targetPeerId': targetPrefix,
-      },
-    );
-    concurrentInbox = p2pService
-        .storeInInbox(
-          targetPeerId,
-          jsonString,
-          timeoutMs: interactiveInboxBudget.inMilliseconds,
-        )
-        .then((ok) async {
-          transportMetrics?.recordAttempt(leg: 'inbox', succeeded: ok);
-          // 184: surface the custody milestone MID-send. On a successful
-          // concurrent-inbox ACK (~110 ms) advance the optimistic row's status to
-          // a non-terminal 'inboxed' so the 1:1 bubble shows two ticks instead of
-          // resting on the single optimistic tick until the live race resolves
-          // (~1.8 s offline). The guarded transport settlement owns only the
-          // attempt's transport columns and re-renders via the SAME messageChanges
-          // stream the screen already admits for 'inboxed'. Guarded by
-          // [liveDelivered] (INV-3) so a live 'delivered' that already won the
-          // race is never regressed to 'inboxed'; fires only on ok==true (INV-4:
-          // no false two-tick when custody is not secured). Status-surfacing
-          // only — it never feeds the race or a terminal recordMetrics.
-          if (ok && !liveDelivered) {
-            if (isOutgoingPrivateOneMoreLook) {
-              await _settleOutgoingDirectPrivateTransportState(
-                messageRepo: messageRepo,
-                mediaAttachmentRepo: mediaAttachmentRepo,
-                attachments: normalizedAttachments,
-                messageId: resolvedMessageId,
-                expectedEnvelope: jsonString,
-                status: 'inboxed',
-                transport: 'inbox',
-                relayExpiresAt: null,
-              );
-            } else {
-              await ordinaryMutationRepo!.settleOutgoingOrdinaryTransport(
-                messageId: resolvedMessageId,
-                expectedContactPeerId: targetPeerId,
-                expectedEnvelope: jsonString,
-                status: 'inboxed',
-                transport: 'inbox',
-                relayExpiresAt: null,
-                mode: OutgoingOrdinarySettlementMode.live,
-              );
-            }
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
-              details: {
-                'id': resolvedMessageId.substring(0, 8),
-                'targetPeerId': targetPrefix,
-              },
-            );
-          }
-          return ok;
-        })
-        .catchError((_) => false);
-
-    // FDC-08 (§6.3) presence emphasis — consulted ONLY here on the
-    // not-live-reachable path (a connected/local peer is delivered live, fast
-    // path untouched). It is a HINT, NEVER a delivery gate: the durable inbox
-    // copy above ALWAYS fires regardless of the hint (PRESENCE_NEVER_REPLACES_
-    // INBOX / the C7 load-bearing gate). It only biases whether the live race or
-    // the durable copy commits first; the FDC-02/03 race ladder below is
-    // unchanged. Bounded + cache-served so it stays off the send-critical path,
-    // degrading to `unknown` (today's fully-concurrent behavior) on miss/timeout.
-    final presenceLookup = p2pService is RelayPresenceLookup
-        ? p2pService as RelayPresenceLookup
-        : null;
-    var presenceEmphasis = RelayPresence.unknown;
-    if (presenceLookup != null) {
-      presenceEmphasis = await presenceLookup
-          .lookupRelayPresence(targetPeerId)
-          .timeout(_presenceHintBudget, onTimeout: () => RelayPresence.unknown);
-    }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_PRESENCE_EMPHASIS',
-      details: {
-        'id': resolvedMessageId.substring(0, 8),
-        'targetPeerId': targetPrefix,
-        'presence': presenceEmphasis.name,
-      },
-    );
-
-    // `unreachable` → commit the durable copy FIRST (custody + the relay's
-    // store-triggered push-to-wake) before the live race builds; the live legs
-    // still run afterwards (best-effort, NEVER dropped). `reachable`/`unknown`
-    // keep today's fully-concurrent behavior (lazy inbox racing the live legs).
-    // This is the same single storeInInbox future (non-null here — it was just
-    // created above) — awaiting it here and again in the race-failure tail never
-    // produces a second relay write.
-    if (presenceEmphasis == RelayPresence.unreachable) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_PRESENCE_INBOX_FIRST',
-        details: {'id': resolvedMessageId.substring(0, 8)},
-      );
-      await concurrentInbox;
-    }
-  }
 
   // FDC-02 §6.2a/b: the staggered relay-LIVE leg joins the race only when a live
   // `/p2p-circuit` exists for the peer AND the payload may ride a limited live
@@ -1200,7 +1292,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     void onResolved(_RaceResult result) {
       pendingCount--;
       if (result.provesDeviceDeliveryForCurrentProtocol) {
-        if (!completer.isCompleted) completer.complete(result);
+        if (!completer.isCompleted) {
+          inboxHedge.cancelIfNotStarted();
+          completer.complete(result);
+        }
         return;
       }
       if (result.written) {
@@ -1222,14 +1317,45 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         .catchError((Object e) => onResolved(_RaceResult.failed(e.toString())));
   }
 
+  // Presence is best-effort cache/telemetry advice. Defer it to the event queue
+  // only after every eligible live future has been constructed and wired, so
+  // synchronous lookup work cannot delay live launch or settlement. Timeout and
+  // lookup errors both degrade to unknown and never escape the detached task.
+  if (unknownPresence) {
+    final presenceLookup = p2pService is RelayPresenceLookup
+        ? p2pService as RelayPresenceLookup
+        : null;
+    unawaited(
+      Future<void>(() async {
+        var presenceEmphasis = RelayPresence.unknown;
+        try {
+          if (presenceLookup != null) {
+            presenceEmphasis = await presenceLookup
+                .lookupRelayPresence(targetPeerId)
+                .timeout(
+                  _presenceHintBudget,
+                  onTimeout: () => RelayPresence.unknown,
+                );
+          }
+        } catch (_) {
+          presenceEmphasis = RelayPresence.unknown;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_PRESENCE_EMPHASIS',
+          details: {
+            'id': resolvedMessageId.substring(0, 8),
+            'targetPeerId': targetPrefix,
+            'presence': presenceEmphasis.name,
+          },
+        );
+      }),
+    );
+  }
+
   final raceResult = await completer.future;
 
   if (raceResult.success) {
-    // 184 (INV-3): a live ACK commits a terminal 'delivered' below — mark it so
-    // a late concurrent-inbox custody bump cannot regress it to 'inboxed'.
-    if (raceResult.provesDeviceDeliveryForCurrentProtocol) {
-      liveDelivered = true;
-    }
     sendPath = raceResult.via == 'local' ? 'local' : 'direct';
     stepTimings = raceResult.stepTimings;
     recordMetrics(transport: raceResult.via, rung: sendPath);
@@ -1250,12 +1376,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
-      // A live leg won the transport label. If a concurrent inbox copy was
-      // fired for this unknown-presence send, hand its future to the unacked
-      // branch so the sequential unacked->inbox handoff is skipped when the
-      // durable copy already succeeded (avoids a second relay write for one
-      // message). When acked, the future is ignored (no handoff runs).
-      concurrentInbox: concurrentInbox,
+      inboxHedge: inboxHedge,
       extraTimingDetails: {
         'connectionReused': false,
         'sendPath': sendPath,
@@ -1274,13 +1395,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // RETAINED so the custody sweep can re-store and a delivery receipt can
   // flip it to 'delivered'.
   Future<(SendChatMessageResult, ConversationMessage?)> persistInboxAccepted({
-    required bool recordInboxAttempt,
     int? expiresAtMs,
   }) async {
     sendPath = 'inbox';
-    if (recordInboxAttempt) {
-      transportMetrics?.recordAttempt(leg: 'inbox', succeeded: true);
-    }
     recordMetrics(transport: 'inbox', rung: 'inbox');
     final inboxedMessage = payload
         .toConversationMessage(
@@ -1336,7 +1453,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   Future<(SendChatMessageResult, ConversationMessage?)>
   persistInboxRejectedFull() async {
     sendPath = 'inbox';
-    transportMetrics?.recordAttempt(leg: 'inbox', succeeded: false);
     recordMetrics(transport: null, rung: 'failed');
     final sentMessage = payload.toConversationMessage(
       contactPeerId: targetPeerId,
@@ -1379,83 +1495,36 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
   }
 
-  // NET-REL-05 P1/P4: the live race failed. If a concurrent durable copy was
-  // fired for this unknown-presence send, wait for it before the single
-  // sequential inbox fallback. If it already took custody, commit
-  // 'inboxed'/'inbox' and skip the redundant `storeInInbox`; durable custody
-  // lands at about the inbox budget. The inbox `recordAttempt` already fired
-  // inside the concurrent future, so do not record it again here.
-  if (concurrentInbox != null) {
-    final concurrentOk = await concurrentInbox;
-    if (concurrentOk) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
-        details: {
-          'id': resolvedMessageId.substring(0, 8),
-          'reason': failureReason,
-        },
-      );
-      return persistInboxAccepted(recordInboxAttempt: false);
-    }
-  }
-
   // FDC-03 (invariant 4 — "no serial relay-probe carrier"): the SERIAL
   // relay-probe→inbox tail is REMOVED. Live relay recovery is now FDC-02's
-  // IN-RACE staggered relay-live leg (it joins the race when a live
-  // `/p2p-circuit` already exists for the peer). An all-fail race for an
-  // unknown-presence peer takes durable custody via the concurrent inbox copy
-  // fired above (already awaited at the `concurrentInbox != null` short-circuit);
-  // if that copy was null (the connected/local fall-through) or returned false,
-  // the SINGLE sequential `storeInInbox` fallback below is the lone carrier —
-  // preserving "exactly one relay write per message". `relayProbeEligible`
-  // remains failure-classification plumbing and does not add another carrier.
+  // IN-RACE staggered relay-live leg. Every all-failed path force-starts or joins
+  // the same send-scoped hedge, disarming any delayed timer before the store.
 
-  // All active paths failed — try offline inbox fallback once.
+  // All active paths failed — force durable custody now rather than waiting for
+  // the delayed bound.
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_RACE_ALL_FAILED',
     details: {'reason': failureReason},
   );
 
-  try {
-    final inboxStopwatch = Stopwatch()..start();
-    final detailedStore = effectiveStoreInInboxDetailed;
-    final InboxStoreOutcome? outcome;
-    final bool storedInInbox;
-    if (detailedStore != null) {
-      final detailedOutcome = await detailedStore(
-        targetPeerId,
-        jsonString,
-        timeoutMs: interactiveInboxBudget.inMilliseconds,
-      );
-      outcome = detailedOutcome;
-      storedInInbox = detailedOutcome.accepted;
-    } else {
-      outcome = null;
-      storedInInbox = await p2pService.storeInInbox(
-        targetPeerId,
-        jsonString,
-        timeoutMs: interactiveInboxBudget.inMilliseconds,
-      );
-    }
-    inboxStopwatch.stop();
-    stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
-    if (storedInInbox) {
-      return persistInboxAccepted(
-        recordInboxAttempt: true,
-        expiresAtMs: outcome?.expiresAtMs,
-      );
-    }
-    if (outcome?.status == InboxStoreStatus.rejectedFull) {
-      return persistInboxRejectedFull();
-    }
-  } catch (e) {
+  var inboxOutcome = await inboxHedge.startOrJoin();
+  if (inboxOutcome.status == InboxStoreStatus.failed) {
+    inboxOutcome = await inboxHedge.retryAfterFailure();
+  }
+  if (inboxOutcome.accepted) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'CHAT_MSG_SEND_INBOX_FALLBACK_ERROR',
-      details: {'error': e.toString()},
+      event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'reason': failureReason,
+      },
     );
+    return persistInboxAccepted(expiresAtMs: inboxOutcome.expiresAtMs);
+  }
+  if (inboxOutcome.status == InboxStoreStatus.rejectedFull) {
+    return persistInboxRejectedFull();
   }
 
   // Inbox fallback failed — persist with failed status.
@@ -1477,9 +1546,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     expectedContactPeerId: targetPeerId,
   );
 
-  // Reached only after an inbox store attempt that did not succeed (returned
-  // false or threw): count the failed inbox attempt before the terminal rung.
-  transportMetrics?.recordAttempt(leg: 'inbox', succeeded: false);
+  // Each failed real store call was counted by the send-scoped operation.
   recordMetrics(transport: null, rung: 'failed');
 
   emitFlowEvent(
@@ -2213,11 +2280,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   required bool isOutgoingPrivateOneMoreLook,
   required Stopwatch sendStopwatch,
   required bool emitTimingEvent,
-  Future<bool>? concurrentInbox,
+  required _SendScopedInboxHedge inboxHedge,
   Map<String, dynamic> extraTimingDetails = const {},
 }) async {
   final message = await _persistOutgoingSendResult(
-    p2pService: p2pService,
     payload: payload,
     targetPeerId: targetPeerId,
     jsonString: jsonString,
@@ -2225,7 +2291,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
     createdAt: createdAt,
     editedAt: editedAt,
     via: via,
-    concurrentInbox: concurrentInbox,
+    inboxHedge: inboxHedge,
   );
   final persistedMessage = await _persistOutgoingTransportState(
     messageRepo: messageRepo,
@@ -2299,7 +2365,6 @@ SendChatMessageResult _resultForFailureReason(String? reason) {
 }
 
 Future<ConversationMessage> _persistOutgoingSendResult({
-  required P2PService p2pService,
   required MessagePayload payload,
   required String targetPeerId,
   required String jsonString,
@@ -2307,7 +2372,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required String? createdAt,
   required String? editedAt,
   required String via,
-  Future<bool>? concurrentInbox,
+  required _SendScopedInboxHedge inboxHedge,
 }) async {
   if (acknowledged) {
     return payload.toConversationMessage(
@@ -2320,72 +2385,72 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     );
   }
 
-  // NET-REL-05 P1/P4: the live write was unacked. If a concurrent durable copy
-  // was fired for this unknown-presence send and already took custody, settle as
-  // 'inboxed'/'inbox' WITHOUT a second sequential `storeInInbox` — one message
-  // must never produce two relay writes (R1 guard). `concurrentInbox` resolves
-  // to false on failure/timeout, in which case we fall through to the normal
-  // sequential handoff below. Inbox acceptance is custody, not delivery
-  // (doc 115): keep the envelope for the custody sweep / receipt flip.
-  if (concurrentInbox != null) {
-    final concurrentOk = await concurrentInbox;
-    if (concurrentOk) {
+  // A written-only result force-starts or joins the same typed hedge. An
+  // accepted or capacity-rejected initial outcome is authoritative. Only an
+  // actual failed/throwing call receives the existing one fresh terminal retry.
+  final wasAlreadyStarted = inboxHedge.hasStarted;
+  if (!wasAlreadyStarted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_BEGIN',
+      details: {'via': via},
+    );
+  }
+  var outcome = await inboxHedge.startOrJoin();
+  if (outcome.status == InboxStoreStatus.failed) {
+    if (wasAlreadyStarted) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_SEND_UNACKED_CONCURRENT_INBOX_CUSTODY',
+        event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_BEGIN',
         details: {'via': via},
       );
-      return payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'inboxed',
-        createdAt: createdAt,
-        editedAt: editedAt,
-        transport: 'inbox',
-        wireEnvelope: jsonString,
-      );
     }
+    outcome = await inboxHedge.retryAfterFailure();
+  }
+
+  if (outcome.accepted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: wasAlreadyStarted
+          ? 'CHAT_MSG_SEND_UNACKED_CONCURRENT_INBOX_CUSTODY'
+          : 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_SUCCESS',
+      details: {'via': via},
+    );
+    return payload
+        .toConversationMessage(
+          contactPeerId: targetPeerId,
+          isIncoming: false,
+          status: 'inboxed',
+          createdAt: createdAt,
+          editedAt: editedAt,
+          transport: 'inbox',
+          wireEnvelope: jsonString,
+        )
+        .copyWith(relayExpiresAt: outcome.expiresAtMs);
+  }
+
+  if (outcome.status == InboxStoreStatus.rejectedFull) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INBOX_FULL_RETRYABLE',
+      details: {'via': via},
+    );
+    return payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'sent',
+      createdAt: createdAt,
+      editedAt: editedAt,
+      transport: 'inbox',
+      wireEnvelope: jsonString,
+    );
   }
 
   emitFlowEvent(
     layer: 'FL',
-    event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_BEGIN',
-    details: {'via': via},
+    event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_FAILED',
+    details: {'via': via, 'reason': outcome.errorCode ?? 'store_failed'},
   );
-  try {
-    final storedInInbox = await p2pService.storeInInbox(
-      targetPeerId,
-      jsonString,
-      timeoutMs: interactiveInboxBudget.inMilliseconds,
-    );
-    if (storedInInbox) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_SUCCESS',
-        details: {'via': via},
-      );
-      return payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'inboxed',
-        createdAt: createdAt,
-        editedAt: editedAt,
-        transport: 'inbox',
-        wireEnvelope: jsonString,
-      );
-    }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_FAILED',
-      details: {'via': via, 'reason': 'store_returned_false'},
-    );
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_ERROR',
-      details: {'via': via, 'error': e.toString()},
-    );
-  }
 
   emitFlowEvent(
     layer: 'FL',

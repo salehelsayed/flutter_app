@@ -61,6 +61,7 @@ class FakeP2PService
   final List<Future<SendMessageResult>> queuedSendMessageResults = [];
   bool shouldThrow;
   bool storeInInboxResult;
+  Future<bool>? controlledStoreInInboxResult;
   RelayProbeResult probeRelayResult;
 
   DiscoveredPeer? discoverPeerResult;
@@ -252,7 +253,7 @@ class FakeP2PService
     storeInInboxCallCount++;
     lastInboxPeerId = toPeerId;
     lastInboxMessage = message;
-    return storeInInboxResult;
+    return controlledStoreInInboxResult ?? storeInInboxResult;
   }
 
   @override
@@ -984,6 +985,60 @@ class FakeMessageRepository
   );
 }
 
+class _BlockedOrdinarySettlementMessageRepository
+    extends FakeMessageRepository {
+  final Completer<void> deliverySettlementStarted = Completer<void>();
+  final Completer<void> releaseDeliverySettlement = Completer<void>();
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) async {
+    if (status == 'delivered') {
+      if (!deliverySettlementStarted.isCompleted) {
+        deliverySettlementStarted.complete();
+      }
+      await releaseDeliverySettlement.future;
+    }
+    return super.settleOutgoingOrdinaryTransport(
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    );
+  }
+}
+
+class _DetailedInboxStoreFixture {
+  _DetailedInboxStoreFixture({this.controlledResult, this.order});
+
+  final Future<InboxStoreOutcome>? controlledResult;
+  final List<String>? order;
+  int callCount = 0;
+  String? lastEnvelope;
+
+  Future<InboxStoreOutcome> call(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    callCount++;
+    lastEnvelope = message;
+    order?.add('inbox-call');
+    return controlledResult ??
+        const InboxStoreOutcome(status: InboxStoreStatus.stored);
+  }
+}
+
 class _MessageRepositoryWithoutOrdinaryCapability implements MessageRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1020,6 +1075,17 @@ class _PrivateCustodyMessageRepository extends FakeMessageRepository
   ConversationMessage current;
   int settlementCalls = 0;
   OutgoingDirectPrivateTransportSettlementOutcome? lastSettlementOutcome;
+  final List<
+    ({
+      String messageId,
+      String? attachmentId,
+      String expectedEnvelope,
+      String status,
+      String? transport,
+      int? relayExpiresAt,
+    })
+  >
+  settlementArguments = [];
 
   void hideAndConsume() {
     current = current.copyWith(
@@ -1077,6 +1143,14 @@ class _PrivateCustodyMessageRepository extends FakeMessageRepository
     required int? relayExpiresAt,
   }) async {
     settlementCalls++;
+    settlementArguments.add((
+      messageId: messageId,
+      attachmentId: attachmentId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+    ));
     if (current.hiddenAt != null || current.deletedAt != null) {
       lastSettlementOutcome =
           OutgoingDirectPrivateTransportSettlementOutcome.preservedUserIntent;
@@ -1255,6 +1329,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
+  StoreInInboxDetailedFn? storeInInboxDetailed,
   bool? preassignedMessageIdIsFresh,
 }) {
   return chat_use_case.sendChatMessage(
@@ -1284,6 +1359,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             : null),
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
+    storeInInboxDetailed: storeInInboxDetailed,
   );
 }
 
@@ -3485,7 +3561,10 @@ void main() {
         expect(message!.status, 'sent');
         expect(message.transport, 'local');
         expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.storeInInboxCallCount, 1);
+        // R4 force-starts the initial hedge when authenticated work ends
+        // uncommitted. An actual failed store retains the one fresh terminal
+        // retry; neither call may manufacture custody.
+        expect(p2pService.storeInInboxCallCount, 2);
         expect(p2pService.recordSuccessfulTransportCallCount, 0);
         expect(p2pService.lastRecordedTransport, isNull);
       },
@@ -3543,7 +3622,8 @@ void main() {
         expect(message!.status, 'sent');
         expect(message.transport, 'local');
         expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.storeInInboxCallCount, 1);
+        // Failed initial hedge + the preserved single terminal retry.
+        expect(p2pService.storeInInboxCallCount, 2);
         expect(p2pService.recordSuccessfulTransportCallCount, 0);
       },
     );
@@ -5740,67 +5820,150 @@ void main() {
         );
       });
 
-      // ── Preserved single-path locks (green on HEAD) — "not a blanket dual- ──
-      // write." FDC-03-P3 = the existing 116 EF-2 gate (a downgrade-blocked send
-      // already asserts storeInInboxCallCount==0); FDC-03-P4 = the existing U3
-      // low-confidence test (low-confidence ⊂ unknown-presence, still fires).
-      test('FDC-03-P1 reuse send does NOT fire the concurrent inbox', () async {
-        // A peer with a live (non-circuit) connection reuses the wire ack and
-        // returns BEFORE the unknownPresence gate is evaluated. The load-bearing
-        // lock is discoverCallCount == 0 (the reuse early-return is taken); the
-        // gate's !isAlreadyConnected term then keeps storeInInboxCallCount at 0.
-        // Mutation: remove the reuse early-return → discoverCallCount == 1 → RED.
-        p2pService = FakeP2PService(
-          currentState: NodeState(
-            isStarted: true,
-            connections: [
-              const p2p.ConnectionState(
-                peerId: 'target-peer',
-                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
-                direction: 'outbound',
-                status: 'connected',
-              ),
-            ],
-          ),
-        );
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'reuse stays single-path',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message!.transport, 'direct'); // reuse labels 'direct'
-        expect(p2pService.discoverCallCount, 0); // proof of the reuse path
-        expect(p2pService.storeInInboxCallCount, 0);
-      });
-
+      // R4 replaces the obsolete FDC-03-P1/P2 "never schedules custody" claim.
+      // Connected and LAN-visible sends now arm a delayed hedge; authenticated
+      // libp2p commitment must synchronously cancel it before persistence.
       test(
-        'FDC-03-P2 LAN-local send does NOT fire the concurrent inbox',
-        () async {
-          // LAN visibility still keeps the eager concurrent inbox off; the
-          // authenticated direct race leg proves delivery and LAN remains
-          // written-only. The sequential inbox backstop remains available if no
-          // proof arrives.
-          p2pService = DurableLanFakeP2PService()
-            ..localPeers.add('target-peer');
-
-          final (result, message) = await sendChatMessage(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            targetPeerId: 'target-peer',
-            text: 'LAN-local stays single-path',
-            senderPeerId: 'my-peer',
-            senderUsername: 'Me',
+        'R4 authenticated libp2p commitment cancels every scheduled unstarted hedge',
+        () {
+          const directConnection = p2p.ConnectionState(
+            peerId: 'target-peer',
+            multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
           );
+          const relayConnection = p2p.ConnectionState(
+            peerId: 'target-peer',
+            multiaddrs: ['/ip4/10.0.0.8/tcp/4001/p2p/relay/p2p-circuit'],
+            direction: 'outbound',
+            status: 'connected',
+          );
+          final rows =
+              <
+                ({
+                  String name,
+                  NodeState state,
+                  String? learned,
+                  bool lanVisible,
+                  bool liveConnected,
+                  bool dialSucceeds,
+                  bool relayProof,
+                  String expectedTransport,
+                })
+              >[
+                (
+                  name: 'connected reuse (former FDC-03-P1)',
+                  state: const NodeState(
+                    isStarted: true,
+                    connections: [directConnection],
+                  ),
+                  learned: null,
+                  lanVisible: false,
+                  liveConnected: false,
+                  dialSucceeds: true,
+                  relayProof: false,
+                  expectedTransport: 'direct',
+                ),
+                (
+                  name:
+                      'LAN-visible learned-direct sticky reuse '
+                      '(former FDC-03-P2)',
+                  state: const NodeState(isStarted: true),
+                  learned: 'direct',
+                  lanVisible: true,
+                  liveConnected: false,
+                  dialSucceeds: true,
+                  relayProof: false,
+                  expectedTransport: 'direct',
+                ),
+                (
+                  name: 'direct proof-race',
+                  state: const NodeState(isStarted: true),
+                  learned: null,
+                  lanVisible: false,
+                  liveConnected: true,
+                  dialSucceeds: true,
+                  relayProof: false,
+                  expectedTransport: 'direct',
+                ),
+                (
+                  name: 'circuit-only relay proof-race',
+                  state: const NodeState(
+                    isStarted: true,
+                    connections: [relayConnection],
+                  ),
+                  learned: null,
+                  lanVisible: false,
+                  liveConnected: false,
+                  dialSucceeds: false,
+                  relayProof: true,
+                  expectedTransport: 'relay',
+                ),
+              ];
 
-          expect(result, SendChatMessageResult.success);
-          expect(message!.transport, 'direct');
-          expect(p2pService.storeInInboxCallCount, 0);
+          for (final row in rows) {
+            fakeAsync((async) {
+              final repository = _BlockedOrdinarySettlementMessageRepository();
+              final detailedStore = _DetailedInboxStoreFixture();
+              final service =
+                  FakeP2PService(
+                      currentState: row.state,
+                      dialPeerResult: row.dialSucceeds,
+                      sendMessageTransport: 'direct',
+                    )
+                    ..lastKnownGoodTransportResult = row.learned
+                    ..isConnectedToPeerResult = row.liveConnected;
+              if (row.lanVisible) service.localPeers.add('target-peer');
+              (SendChatMessageResult, ConversationMessage?)? outcome;
+
+              sendChatMessage(
+                p2pService: service,
+                messageRepo: repository,
+                targetPeerId: 'target-peer',
+                text: 'cancel hedge at ${row.name}',
+                senderPeerId: 'my-peer',
+                senderUsername: 'Me',
+                storeInInboxDetailed: detailedStore.call,
+              ).then((value) => outcome = value);
+              async.flushMicrotasks();
+              if (row.relayProof) {
+                async.elapse(kRelayLegStagger);
+                async.flushMicrotasks();
+              }
+
+              final proofReachedPersistence =
+                  repository.deliverySettlementStarted.isCompleted;
+              async.elapse(const Duration(seconds: 3));
+              async.flushMicrotasks();
+              final detailedCallsWhilePersistenceBlocked =
+                  detailedStore.callCount;
+              final booleanCallsWhilePersistenceBlocked =
+                  service.storeInInboxCallCount;
+
+              repository.releaseDeliverySettlement.complete();
+              async.flushMicrotasks();
+              async.elapse(const Duration(seconds: 3));
+              async.flushMicrotasks();
+
+              expect(proofReachedPersistence, isTrue, reason: row.name);
+              expect(detailedCallsWhilePersistenceBlocked, 0, reason: row.name);
+              expect(booleanCallsWhilePersistenceBlocked, 0, reason: row.name);
+              expect(detailedStore.callCount, 0, reason: row.name);
+              expect(service.storeInInboxCallCount, 0, reason: row.name);
+              expect(outcome, isNotNull, reason: row.name);
+              expect(
+                outcome!.$1,
+                SendChatMessageResult.success,
+                reason: row.name,
+              );
+              expect(outcome!.$2!.status, 'delivered', reason: row.name);
+              expect(
+                outcome!.$2!.transport,
+                row.expectedTransport,
+                reason: row.name,
+              );
+            });
+          }
         },
       );
     });
@@ -6674,50 +6837,73 @@ void main() {
     // one existing durable inbox operation owns the fallback custody result.
     test(
       'R5 eligible attachment relay-live failure falls to one durable inbox deposit',
-      () async {
-        const encryptedAttachment = MediaAttachment(
-          id: 'att-r5-relay-failure',
-          messageId: '',
-          mime: 'application/pdf',
-          size: 4096,
-          mediaType: 'file',
-          localPath: '/private/r5-relay-failure-uploaded.enc',
-          downloadStatus: 'done',
-          createdAt: '2026-08-05T11:05:00.000Z',
-          contentHash:
-              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-          encryptionKeyBase64: 'r5-relay-failure-key',
-          encryptionNonce: 'r5-relay-failure-nonce',
-          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        );
-        p2pService = FakeP2PService(
-          currentState: circuitOnlyState(),
-          dialPeerResult: false,
-          probeRelayResult: RelayProbeResult.error,
-          storeInInboxResult: true,
-          sendMessageResult: false,
-          sendMessageAcked: false,
-        );
+      () {
+        fakeAsync((async) {
+          const encryptedAttachment = MediaAttachment(
+            id: 'att-r5-relay-failure',
+            messageId: '',
+            mime: 'application/pdf',
+            size: 4096,
+            mediaType: 'file',
+            localPath: '/private/r5-relay-failure-uploaded.enc',
+            downloadStatus: 'done',
+            createdAt: '2026-08-05T11:05:00.000Z',
+            contentHash:
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+            encryptionKeyBase64: 'r5-relay-failure-key',
+            encryptionNonce: 'r5-relay-failure-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          final service = FakeP2PService(
+            currentState: circuitOnlyState(),
+            dialPeerResult: false,
+            probeRelayResult: RelayProbeResult.error,
+            storeInInboxResult: true,
+            sendMessageResult: false,
+            sendMessageAcked: false,
+          );
+          (SendChatMessageResult, ConversationMessage?)? outcome;
 
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'uploaded attachment relay failure',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          mediaAttachments: const [encryptedAttachment],
-          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
-        );
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            text: 'uploaded attachment relay failure',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            mediaAttachments: const [encryptedAttachment],
+            mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
 
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(p2pService.relayLiveSendCount, 1);
-        expect(p2pService.sendCallCount, 1);
-        expect(p2pService.storeInInboxCallCount, 1);
-        expect(message!.status, 'inboxed');
-        expect(message.transport, 'inbox');
-        expect(message.status, isNot('delivered'));
+          async.elapse(kRelayLegStagger - const Duration(microseconds: 1));
+          async.flushMicrotasks();
+          final storesBeforeRelayFailure = service.storeInInboxCallCount;
+          final relayStartedBeforeStagger = service.relayLiveSendCount;
+          final settledBeforeRelayFailure = outcome != null;
+
+          async.elapse(const Duration(microseconds: 1));
+          async.flushMicrotasks();
+          final storesAtKnownFailure = service.storeInInboxCallCount;
+          final outcomeAtKnownFailure = outcome;
+
+          async.elapse(const Duration(seconds: 3) - kRelayLegStagger);
+          async.flushMicrotasks();
+
+          expect(storesBeforeRelayFailure, 0);
+          expect(relayStartedBeforeStagger, 0);
+          expect(settledBeforeRelayFailure, isFalse);
+          expect(storesAtKnownFailure, 1);
+          expect(outcomeAtKnownFailure, isNotNull);
+          expect(service.relayLiveSendCount, 1);
+          expect(service.sendCallCount, 1);
+          expect(service.storeInInboxCallCount, 1);
+          expect(outcome!.$1, SendChatMessageResult.success);
+          expect(outcome!.$2, isNotNull);
+          expect(outcome!.$2!.status, 'inboxed');
+          expect(outcome!.$2!.transport, 'inbox');
+          expect(outcome!.$2!.status, isNot('delivered'));
+        });
       },
     );
 
@@ -7291,6 +7477,372 @@ void main() {
 
       expect(p2pService.storeInInboxCallCount, 1);
     });
+  });
+
+  group('R4 presence-independent durability hedge', () {
+    test(
+      'R4 envelope preparation consumes the connected peer inbox hedge budget',
+      () {
+        fakeAsync((async) {
+          // R3 requires a full three-second committed-ACK reserve, so a delay
+          // beyond 2.5 seconds cannot also enter a held authenticated send.
+          // Consume 2.4 seconds here and pin the hedge to the remaining 100 ms
+          // of the original T0 budget; restarting after staging still re-reds.
+          const preparationDelay = Duration(milliseconds: 2400);
+          const directConnection = p2p.ConnectionState(
+            peerId: 'target-peer',
+            multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+          );
+          final order = <String>[];
+          final repository = FakeMessageRepository()
+            ..onOrdinaryStage = () => order.add('stage');
+          final sendAck = Completer<SendMessageResult>();
+          final service = FakeP2PService(
+            currentState: const NodeState(
+              isStarted: true,
+              connections: [directConnection],
+            ),
+            sendMessageTransport: 'direct',
+          );
+          service.onSendMessage = () => order.add('live-send');
+          service.queuedSendMessageResults.add(sendAck.future);
+          final detailedStore = _DetailedInboxStoreFixture(order: order);
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: repository,
+            targetPeerId: 'target-peer',
+            text: 'preparation exhausts the hedge budget',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: _R3DelayedCryptoBridge(preparationDelay),
+            storeInInboxDetailed: detailedStore.call,
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+
+          async.elapse(preparationDelay - const Duration(microseconds: 1));
+          async.flushMicrotasks();
+          final callsBeforeStaging = detailedStore.callCount;
+          final stagedBeforePreparationCompletes =
+              repository.ordinaryStageCalls.isNotEmpty;
+
+          async.elapse(const Duration(microseconds: 1));
+          async.flushMicrotasks();
+          final callsImmediatelyAfterStaging = detailedStore.callCount;
+          final orderAfterStaging = List<String>.of(order);
+
+          async.elapse(
+            const Duration(milliseconds: 100) - const Duration(microseconds: 1),
+          );
+          async.flushMicrotasks();
+          final callsBeforeOriginalBound = detailedStore.callCount;
+          async.elapse(const Duration(microseconds: 1));
+          async.flushMicrotasks();
+          final callsAtOriginalBound = detailedStore.callCount;
+          final orderAtOriginalBound = List<String>.of(order);
+
+          sendAck.complete(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              reply: 'received: ok',
+              transport: 'direct',
+            ),
+          );
+          async.flushMicrotasks();
+
+          expect(callsBeforeStaging, 0);
+          expect(stagedBeforePreparationCompletes, isFalse);
+          expect(callsImmediatelyAfterStaging, 0);
+          expect(orderAfterStaging, <String>['stage', 'live-send']);
+          expect(callsBeforeOriginalBound, 0);
+          expect(callsAtOriginalBound, 1);
+          expect(orderAtOriginalBound, <String>[
+            'stage',
+            'live-send',
+            'inbox-call',
+          ]);
+          expect(service.storeInInboxCallCount, 0);
+          expect(outcome, isNotNull);
+          expect(outcome!.$1, SendChatMessageResult.success);
+          expect(outcome!.$2!.status, 'delivered');
+          expect(outcome!.$2!.transport, 'direct');
+        });
+      },
+    );
+
+    test(
+      'R4 started hedge completion after live ACK cannot downgrade ordinary or private delivery',
+      () async {
+        final rows = <({String name, bool isPrivate})>[
+          (name: 'ordinary', isPrivate: false),
+          (name: 'protected-private', isPrivate: true),
+        ];
+        final observations = <Map<String, Object?>>[];
+
+        for (final row in rows) {
+          final booleanStore = Completer<bool>();
+          final detailedResult = Completer<InboxStoreOutcome>();
+          final service = FakeP2PService(sendMessageTransport: 'direct')
+            ..controlledStoreInInboxResult = booleanStore.future;
+          final detailedStore = _DetailedInboxStoreFixture(
+            controlledResult: detailedResult.future,
+          );
+          final keepCaptureOpen = Completer<void>();
+          final liveReturned = Completer<void>();
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+          FakeMessageRepository? ordinaryRepository;
+          _PrivateCustodyMessageRepository? privateRepository;
+          const privateMessageId = 'r4-late-private-custody';
+          const privateAttachmentId = '$privateMessageId-att';
+          MediaAttachmentRepository? privateMediaRepository;
+          List<MediaAttachment>? privateAttachments;
+
+          if (row.isPrivate) {
+            final attachment = MediaAttachment(
+              id: privateAttachmentId,
+              messageId: privateMessageId,
+              mime: 'image/jpeg',
+              size: 1024,
+              mediaType: 'image',
+              localPath: MediaFilePathConvention.relativePathForAttachment(
+                contactPeerId: 'target-peer',
+                blobId: privateAttachmentId,
+                mime: 'image/jpeg',
+              ),
+              downloadStatus: 'done',
+              createdAt: '2026-08-05T12:00:00.000Z',
+              contentHash:
+                  'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+              encryptionKeyBase64: 'r4-private-key',
+              encryptionNonce: 'r4-private-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ownerLane: MediaOwnerLane.direct,
+            );
+            privateRepository = _PrivateCustodyMessageRepository(
+              const ConversationMessage(
+                id: privateMessageId,
+                contactPeerId: 'target-peer',
+                senderPeerId: 'my-peer',
+                text: '',
+                timestamp: '2026-08-05T12:00:00.000Z',
+                status: 'sending',
+                isIncoming: false,
+                createdAt: '2026-08-05T12:00:00.000Z',
+                privateMediaPolicy: PrivateMediaPolicy.protected(),
+                privateMediaState: PrivateMediaLifecycleState.available,
+                privateMediaReceivedAtMs: 1000,
+                privateMediaClockHighWaterMs: 1000,
+              ),
+            );
+            privateMediaRepository = _PrivateMutationMediaRepository()
+              ..seed(<MediaAttachment>[attachment]);
+            privateAttachments = <MediaAttachment>[attachment];
+          } else {
+            ordinaryRepository = FakeMessageRepository();
+          }
+
+          final eventsFuture = captureFlowEvents(() async {
+            outcome = await sendChatMessage(
+              p2pService: service,
+              messageRepo: row.isPrivate
+                  ? privateRepository!
+                  : ordinaryRepository!,
+              targetPeerId: 'target-peer',
+              text: row.isPrivate ? '' : 'ordinary late custody',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+              messageId: row.isPrivate ? privateMessageId : null,
+              mediaAttachments: privateAttachments,
+              privateMediaPolicy: row.isPrivate
+                  ? const PrivateMediaPolicy.protected()
+                  : null,
+              mediaAttachmentRepo: privateMediaRepository,
+              storeInInboxDetailed: detailedStore.call,
+            );
+            liveReturned.complete();
+            await keepCaptureOpen.future;
+          });
+          await liveReturned.future;
+
+          final liveSettledBeforeInbox = outcome?.$2?.status == 'delivered';
+          final startedCallsBeforeLiveReturn =
+              detailedStore.callCount + service.storeInInboxCallCount;
+
+          booleanStore.complete(true);
+          detailedResult.complete(
+            const InboxStoreOutcome(
+              status: InboxStoreStatus.stored,
+              expiresAtMs: 3407001,
+            ),
+          );
+          await Future<void>.delayed(Duration.zero);
+          keepCaptureOpen.complete();
+          final events = await eventsFuture;
+
+          final ordinaryCustodyCandidates =
+              ordinaryRepository?.ordinarySettlementCalls
+                  .where((call) => call.status == 'inboxed')
+                  .toList() ??
+              const [];
+          final privateCustodyCandidates =
+              privateRepository?.settlementArguments
+                  .where((call) => call.status == 'inboxed')
+                  .toList() ??
+              const [];
+          final custodyCandidateTransport = row.isPrivate
+              ? (privateCustodyCandidates.isEmpty
+                    ? null
+                    : privateCustodyCandidates.single.transport)
+              : (ordinaryCustodyCandidates.isEmpty
+                    ? null
+                    : ordinaryCustodyCandidates.single.transport);
+          final custodyCandidateExpiry = row.isPrivate
+              ? (privateCustodyCandidates.isEmpty
+                    ? null
+                    : privateCustodyCandidates.single.relayExpiresAt)
+              : (ordinaryCustodyCandidates.isEmpty
+                    ? null
+                    : ordinaryCustodyCandidates.single.relayExpiresAt);
+          final custodyCandidateEnvelope = row.isPrivate
+              ? (privateCustodyCandidates.isEmpty
+                    ? null
+                    : privateCustodyCandidates.single.expectedEnvelope)
+              : (ordinaryCustodyCandidates.isEmpty
+                    ? null
+                    : ordinaryCustodyCandidates.single.expectedEnvelope);
+          final authoritative = row.isPrivate
+              ? privateRepository!.current
+              : ordinaryRepository!.existingMessages.values.single;
+          final eventNames = events.map((event) => event['event']).toList();
+
+          observations.add({
+            'name': row.name,
+            'liveSettledBeforeInbox': liveSettledBeforeInbox,
+            'startedCallsBeforeLiveReturn': startedCallsBeforeLiveReturn,
+            'detailedCalls': detailedStore.callCount,
+            'booleanCalls': service.storeInInboxCallCount,
+            'ordinaryCustodyCandidates': ordinaryCustodyCandidates.length,
+            'privateCustodyCandidates': privateCustodyCandidates.length,
+            'custodyCandidateTransport': custodyCandidateTransport,
+            'custodyCandidateExpiry': custodyCandidateExpiry,
+            'custodyCandidateEnvelope': custodyCandidateEnvelope,
+            'storedEnvelope': detailedStore.lastEnvelope,
+            'status': authoritative.status,
+            'transport': authoritative.transport,
+            'relayExpiresAt': authoritative.relayExpiresAt,
+            'wireEnvelope': authoritative.wireEnvelope,
+            'falseCustodyEvent': eventNames.contains(
+              'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
+            ),
+          });
+        }
+
+        expect(observations.map((row) => row['name']), <String>[
+          'ordinary',
+          'protected-private',
+        ]);
+        expect(
+          observations.map((row) => row['liveSettledBeforeInbox']),
+          everyElement(isTrue),
+          reason: observations.toString(),
+        );
+        expect(
+          observations.map((row) => row['startedCallsBeforeLiveReturn']),
+          everyElement(1),
+        );
+        expect(observations.map((row) => row['detailedCalls']), <int>[1, 1]);
+        expect(observations.map((row) => row['booleanCalls']), <int>[0, 0]);
+        expect(
+          observations.map((row) => row['ordinaryCustodyCandidates']),
+          <int>[1, 0],
+        );
+        expect(
+          observations.map((row) => row['privateCustodyCandidates']),
+          <int>[0, 1],
+        );
+        expect(
+          observations.map((row) => row['custodyCandidateTransport']),
+          everyElement('inbox'),
+        );
+        expect(
+          observations.map((row) => row['custodyCandidateExpiry']),
+          everyElement(3407001),
+        );
+        for (final observation in observations) {
+          expect(
+            observation['custodyCandidateEnvelope'],
+            observation['storedEnvelope'],
+            reason: observation['name'] as String,
+          );
+        }
+        expect(
+          observations.map((row) => row['status']),
+          everyElement('delivered'),
+        );
+        expect(
+          observations.map((row) => row['transport']),
+          everyElement('direct'),
+        );
+        expect(
+          observations.map((row) => row['relayExpiresAt']),
+          everyElement(isNull),
+        );
+        expect(
+          observations.map((row) => row['wireEnvelope']),
+          everyElement(isNull),
+        );
+        expect(
+          observations.map((row) => row['falseCustodyEvent']),
+          everyElement(isFalse),
+        );
+      },
+    );
+
+    test(
+      'R4 early uncommitted result force-starts one hedge before its bound',
+      () {
+        fakeAsync((async) {
+          final service = DurableLanFakeP2PService(
+            sendMessageResult: true,
+            sendMessageAcked: false,
+            sendMessageReply: null,
+            storeInInboxResult: true,
+          )..localPeers.add('target-peer');
+          final detailedStore = _DetailedInboxStoreFixture();
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            text: 'written-only force-starts custody',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            storeInInboxDetailed: detailedStore.call,
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+
+          final settledBeforeBound = outcome?.$2?.status == 'inboxed';
+          final detailedCallsAtSettlement = detailedStore.callCount;
+          final booleanCallsAtSettlement = service.storeInInboxCallCount;
+          async.elapse(const Duration(seconds: 3));
+          async.flushMicrotasks();
+
+          expect(settledBeforeBound, isTrue);
+          expect(detailedCallsAtSettlement, 1);
+          expect(booleanCallsAtSettlement, 0);
+          expect(detailedStore.callCount, 1);
+          expect(service.storeInInboxCallCount, 0);
+          expect(outcome!.$1, SendChatMessageResult.success);
+          expect(outcome!.$2!.status, 'inboxed');
+          expect(outcome!.$2!.transport, 'inbox');
+        });
+      },
+    );
   });
 
   group('R3 cross-layer outgoing deadline', () {
