@@ -76,10 +76,10 @@ const Duration kPublicAddrTail = Duration(milliseconds: 250);
 const Duration kPrivateAddrTail = Duration(milliseconds: 30);
 
 /// FDC-02 §6.2b: a circuit-v2 LIVE relay socket is "limited" (~128KB/direction
-/// before reset). Media — and any payload whose ENCRYPTED ENVELOPE
-/// (`jsonString.length`) exceeds this ceiling — NEVER traverses the live relay
-/// leg: it goes LAN-live, direct-live, or the durable inbox (relay-INBOX) only.
-/// Headroom under the 128KB cap. (Invariant 3 / TC-02-03/04/12.)
+/// before reset). Any payload whose ENCRYPTED ENVELOPE UTF-8 byte length exceeds
+/// this ceiling NEVER traverses the live relay leg: it goes LAN-live,
+/// direct-live, or the durable inbox (relay-INBOX) only. Headroom under the
+/// 128KB cap. (R5 / TC-339-01/03/04/05.)
 const int kLiveRelayMaxPayloadBytes = 96 * 1024;
 
 /// Backwards-compatible names for the two capped pre-send phases.
@@ -1075,12 +1075,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   // FDC-02 §6.2a/b: the staggered relay-LIVE leg joins the race only when a live
   // `/p2p-circuit` exists for the peer AND the payload may ride a limited live
-  // relay socket (not media, not over [kLiveRelayMaxPayloadBytes]). Otherwise the
-  // race is the existing LAN+direct pair and an all-fail send falls to the
-  // durable inbox (relay-INBOX, FDC-03 territory) — never the live relay socket.
+  // relay socket (the complete UTF-8 envelope fits
+  // [kLiveRelayMaxPayloadBytes]). Otherwise the race is the existing LAN+direct
+  // pair and an all-fail send falls to the durable inbox (relay-INBOX, FDC-03
+  // territory) — never the live relay socket. UTF-8 encoding stays short-circuited
+  // behind the existing-circuit check so ineligible peers pay no second encode.
   final liveRelayEligible =
       _hasLiveCircuitConnection(p2pService, targetPeerId) &&
-      _liveRelayEligible(hasAttachments, jsonString.length);
+      _liveRelayEligible(utf8.encode(jsonString).length);
 
   // Build race futures
   final raceFutures = <Future<_RaceResult>>[];
@@ -1671,11 +1673,11 @@ bool _isCircuitOnlyConnected(P2PService p2pService, String peerId) {
   );
 }
 
-/// FDC-02 §6.2b: media and oversized (encrypted envelope > [kLiveRelayMaxPayloadBytes])
-/// payloads NEVER traverse the live relay leg (the circuit-v2 socket is
-/// ~128KB-limited). They fall to LAN-live / direct-live / the durable inbox.
-bool _liveRelayEligible(bool hasAttachments, int payloadBytes) =>
-    !hasAttachments && payloadBytes <= kLiveRelayMaxPayloadBytes;
+/// FDC-02/R5: encrypted envelopes at or below [kLiveRelayMaxPayloadBytes] may
+/// traverse the live relay leg (the circuit-v2 socket is ~128KB-limited).
+/// Oversized envelopes fall to LAN-live / direct-live / the durable inbox.
+bool _liveRelayEligible(int payloadBytes) =>
+    payloadBytes <= kLiveRelayMaxPayloadBytes;
 
 /// FDC-02: the staggered relay-LIVE leg. Sends over the existing live connection
 /// — Go selects the path (normally the `/p2p-circuit`, since this leg runs only

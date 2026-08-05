@@ -16,6 +16,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 // The local sendChatMessage wrapper (with test defaults) comes from the unit
 // suite import below; hide the production entrypoints to avoid the name clash.
@@ -223,61 +224,69 @@ void main() {
       },
     );
 
-    // TC-02-12 — a media send with a live circuit reaches the receiver via inbox
-    // custody, never the live relay leg.
-    test(
-      'FDC-02 e2e: media send with live circuit reaches the receiver via inbox, '
-      'never the live circuit',
-      () async {
-        const encryptedAttachment = MediaAttachment(
-          id: 'att-fdc02-e2e-media',
-          messageId: '',
-          mime: 'image/jpeg',
-          size: 1024,
-          mediaType: 'image',
-          downloadStatus: 'done',
-          createdAt: '2026-06-26T11:00:00.000Z',
-          contentHash:
-              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-          encryptionKeyBase64: 'key-1',
-          encryptionNonce: 'nonce-1',
-          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        );
-        final sender = FakeP2PService(
-          currentState: circuitOnlyState(),
-          dialPeerResult: false, // direct leg fails at dial
-          probeRelayResult: RelayProbeResult.error, // probe tail off
-          storeInInboxResult: true, // inbox takes custody
-        );
-        const fixedId = 'msg-fdc02-e2e-media-001';
+    // TC-339-02 — an attachment envelope can race over LAN and the live relay;
+    // receiver message-ID dedup still collapses both transmissions to one row.
+    test('R5 attachment envelope uses live relay and receiver message-ID dedup '
+        'keeps one row', () async {
+      const encryptedAttachment = MediaAttachment(
+        id: 'att-fdc02-e2e-media',
+        messageId: '',
+        mime: 'image/jpeg',
+        size: 1024,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-06-26T11:00:00.000Z',
+        contentHash:
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        encryptionKeyBase64: 'key-1',
+        encryptionNonce: 'nonce-1',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final sender = DurableLanFakeP2PService(
+        localSendAck: LanSendAck.legacyAck,
+        currentState: circuitOnlyState(),
+        dialPeerResult: false, // direct leg fails at dial
+        probeRelayResult: RelayProbeResult.error, // probe tail off
+        storeInInboxResult: true, // inbox takes custody
+      )..localPeers.add(receiverPeerId);
+      sender.queuedSendMessageResults.add(
+        Future<SendMessageResult>.value(
+          const SendMessageResult(sent: true, acked: true, transport: 'relay'),
+        ),
+      );
+      const fixedId = 'msg-fdc02-e2e-media-001';
 
-        final (result, message) = await sendChatMessage(
-          p2pService: sender,
-          messageRepo: senderRepo,
-          targetPeerId: receiverPeerId,
-          text: 'photo over a live circuit, e2e?',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          messageId: fixedId,
-          mediaAttachments: const [encryptedAttachment],
-          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
-        );
+      final (result, message) = await sendChatMessage(
+        p2pService: sender,
+        messageRepo: senderRepo,
+        targetPeerId: receiverPeerId,
+        text: 'photo over a live circuit, e2e?',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: fixedId,
+        mediaAttachments: const [encryptedAttachment],
+        mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+      );
 
-        // Media never traversed the live relay leg; it took durable custody.
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(sender.relayLiveSendCount, 0);
-        expect(message!.transport, 'inbox');
+      // Sender side: the LAN write is not authenticated proof, so the
+      // committed live-relay ACK owns the delivered result.
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'relay');
+      expect(sender.localSendCallCount, 1);
+      expect(sender.relayLiveSendCount, 1);
+      expect(sender.sendCallCount, 1);
 
-        // Receiver eventually drains the inbox custody → one media row.
-        final transmissions =
-            sender.storeInInboxCallCount + sender.relayLiveSendCount;
-        for (var i = 0; i < transmissions; i++) {
-          deliverToReceiver(fixedId);
-        }
-        expect(receiverRows, hasLength(1));
-        expect(receiverRows.single, fixedId);
-      },
-    );
+      // Receiver side: replay both actual live transmissions with the fixed
+      // message ID; dedup must preserve exactly one media row.
+      final transmissions = sender.localSendCallCount + sender.sendCallCount;
+      expect(transmissions, 2);
+      for (var i = 0; i < transmissions; i++) {
+        deliverToReceiver(fixedId);
+      }
+      expect(receiverRows, hasLength(1));
+      expect(receiverRows.single, fixedId);
+    });
   });
 }

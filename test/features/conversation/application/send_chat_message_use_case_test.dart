@@ -6317,8 +6317,9 @@ void main() {
   // A live `/p2p-circuit` peer no longer reuse-short-circuits (C1 resolution A) —
   // it RACES, with a staggered relay-LIVE leg that (a) is started kRelayLegStagger
   // behind the LAN/direct legs, (b) is suppressed only if authenticated proof
-  // already committed, and (c) never carries media/large payloads. Leg-attributable proof via
-  // relayLiveSendCount (delivery alone is masked by receiver dedup — FDC-00).
+  // already committed, and (c) never carries an envelope over the live-relay
+  // byte ceiling. Leg-attributable proof via relayLiveSendCount (delivery alone
+  // is masked by receiver dedup — FDC-00).
   group('FDC-02 — staggered relay proof race', () {
     const circuitMultiaddr =
         '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit';
@@ -6430,79 +6431,331 @@ void main() {
       expect(p2pService.relayLiveSendCount, 1);
     });
 
-    // TC-02-03 — §6.2b: a media payload with a live circuit skips the relay-live
-    // leg. LAN+direct fail and the probe tail is pinned off, so it lands in inbox
-    // custody — never the live relay socket.
-    test('FDC-02 media never live-relay: media payload with a live circuit skips '
-        'the relay-live leg', () async {
-      const encryptedAttachment = MediaAttachment(
-        id: 'att-fdc02-media',
-        messageId: '',
-        mime: 'image/jpeg',
-        size: 1024,
-        mediaType: 'image',
-        downloadStatus: 'done',
-        createdAt: '2026-06-26T11:00:00.000Z',
-        contentHash:
-            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        encryptionKeyBase64: 'key-1',
-        encryptionNonce: 'nonce-1',
-        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      );
-      p2pService = FakeP2PService(
-        currentState: circuitOnlyState(),
-        dialPeerResult: false, // direct leg fails at dial
-        probeRelayResult: RelayProbeResult.error, // probe tail off
-        storeInInboxResult: true, // inbox takes custody
-      );
+    // TC-339-01: the primary encrypted blob is already uploaded separately, so
+    // relay-live eligibility is based on the final chat envelope rather than
+    // attachment presence or the blob's declared size.
+    test(
+      'R5 uploaded attachment envelope under the UTF-8 cap uses live relay',
+      () async {
+        const primaryBlobLocalPathSentinel =
+            '/private/r5-primary-blob-must-not-enter-chat-frame.enc';
+        const encryptedAttachment = MediaAttachment(
+          id: 'att-r5-uploaded',
+          messageId: 'r5-local-message-id-must-not-enter-descriptor',
+          mime: 'image/jpeg',
+          size: kLiveRelayMaxPayloadBytes + 4096,
+          mediaType: 'image',
+          localPath: primaryBlobLocalPathSentinel,
+          downloadStatus: 'done',
+          createdAt: '2026-08-05T11:00:00.000Z',
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: 'r5-encrypted-blob-key',
+          encryptionNonce: 'r5-encrypted-blob-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+          isBookmarked: true,
+          lastPlaybackPositionMs: 339,
+        );
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false, // direct leg fails at dial
+          probeRelayResult: RelayProbeResult.error, // probe tail off
+          storeInInboxResult: true, // inbox takes custody
+          sendMessageResult: true,
+          sendMessageAcked: true,
+        );
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'photo over a live circuit?',
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'photo over a live circuit?',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const [encryptedAttachment],
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.relayLiveSendCount, 1);
+        expect(p2pService.sendCallCount, 1);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'relay');
+
+        final frame = p2pService.lastSentMessage!;
+        expect(
+          utf8.encode(frame).length,
+          lessThanOrEqualTo(kLiveRelayMaxPayloadBytes),
+        );
+        expect(frame, isNot(contains(primaryBlobLocalPathSentinel)));
+
+        final inner = decodeWirePayload(frame);
+        final media = inner['media'] as List<dynamic>;
+        expect(media, hasLength(1));
+        final descriptor = Map<String, dynamic>.from(media.single as Map);
+        expect(descriptor['id'], encryptedAttachment.id);
+        expect(descriptor['mime'], encryptedAttachment.mime);
+        expect(descriptor['size'], encryptedAttachment.size);
+        expect(descriptor['contentHash'], encryptedAttachment.contentHash);
+        expect(
+          descriptor['encryptionKeyBase64'],
+          encryptedAttachment.encryptionKeyBase64,
+        );
+        expect(
+          descriptor['encryptionNonce'],
+          encryptedAttachment.encryptionNonce,
+        );
+        expect(
+          descriptor['encryptionScheme'],
+          encryptedAttachment.encryptionScheme,
+        );
+        expect(descriptor.containsKey('localPath'), isFalse);
+        expect(descriptor.containsKey('downloadStatus'), isFalse);
+        expect(descriptor.containsKey('ownerLane'), isFalse);
+        expect(descriptor.containsKey('messageId'), isFalse);
+        expect(descriptor.containsKey('isBookmarked'), isFalse);
+        expect(descriptor.containsKey('lastPlaybackPositionMs'), isFalse);
+      },
+    );
+
+    // TC-339-03: this deliberately synthetic non-base64 ciphertext exercises
+    // the Dart bridge boundary's byte domain. Its code-unit length fits while
+    // its actual UTF-8 stream frame exceeds the live-relay ceiling.
+    test(
+      'R5 multibyte envelope is capped by UTF-8 bytes not Dart code units',
+      () async {
+        const messageId = 'r5-multibyte-envelope';
+        const kem = 'r5-synthetic-kem';
+        const nonce = 'r5-synthetic-nonce';
+        final emptyEnvelope = MessagePayload.buildEncryptedEnvelope(
+          id: messageId,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          kem: kem,
+          ciphertext: '',
+          nonce: nonce,
+        );
+        final ciphertextLength =
+            kLiveRelayMaxPayloadBytes - emptyEnvelope.length;
+        expect(ciphertextLength, greaterThan(0));
+        final ciphertext = 'é' * ciphertextLength;
+        final expectedFrame = MessagePayload.buildEncryptedEnvelope(
+          id: messageId,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          kem: kem,
+          ciphertext: ciphertext,
+          nonce: nonce,
+        );
+        expect(
+          expectedFrame.length,
+          lessThanOrEqualTo(kLiveRelayMaxPayloadBytes),
+        );
+        expect(
+          utf8.encode(expectedFrame).length,
+          greaterThan(kLiveRelayMaxPayloadBytes),
+        );
+
+        final bridge = FakeBridge(
+          initialResponses: {
+            'message.encrypt': {
+              'ok': true,
+              'kem': kem,
+              'ciphertext': ciphertext,
+              'nonce': nonce,
+            },
+          },
+        );
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+          probeRelayResult: RelayProbeResult.error,
+          storeInInboxResult: true,
+          sendMessageResult: true,
+          sendMessageAcked: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'synthetic multibyte ciphertext',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          bridge: bridge,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.relayLiveSendCount, 0);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastInboxMessage, expectedFrame);
+        expect(message!.status, 'inboxed');
+        expect(message.transport, 'inbox');
+      },
+    );
+
+    // TC-339-04: calibrate ciphertext through the real outer-envelope builder
+    // so the transmitted ASCII frame lands on the inclusive ceiling exactly.
+    test('R5 live-relay UTF-8 ceiling includes exactly 96 KiB', () async {
+      const messageId = 'r5-exact-live-relay-cap';
+      const kem = 'r5-exact-cap-kem';
+      const nonce = 'r5-exact-cap-nonce';
+      final emptyEnvelope = MessagePayload.buildEncryptedEnvelope(
+        id: messageId,
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
-        mediaAttachments: const [encryptedAttachment],
-        mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        kem: kem,
+        ciphertext: '',
+        nonce: nonce,
       );
+      final ciphertextLength =
+          kLiveRelayMaxPayloadBytes - utf8.encode(emptyEnvelope).length;
+      expect(ciphertextLength, greaterThan(0));
+      final ciphertext = 'x' * ciphertextLength;
+      final expectedFrame = MessagePayload.buildEncryptedEnvelope(
+        id: messageId,
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        kem: kem,
+        ciphertext: ciphertext,
+        nonce: nonce,
+      );
+      expect(utf8.encode(expectedFrame).length, kLiveRelayMaxPayloadBytes);
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Media never traversed the live relay leg; it landed in durable custody.
-      expect(p2pService.relayLiveSendCount, 0);
-      expect(message!.transport, 'inbox');
-      expect(message.transport, isNot('relay'));
-    });
-
-    // TC-02-04 — §6.2b: a >ceiling text payload skips the relay-live leg too.
-    test('FDC-02 large payload never live-relay: a >budget text payload skips the '
-        'relay-live leg', () async {
-      // Encrypted envelope (jsonString.length) must exceed kLiveRelayMaxPayloadBytes
-      // (96KB). PassthroughCryptoBridge carries the plaintext, so a ~200K text
-      // yields a >96KB envelope.
-      final bigText = 'x' * 200000;
+      final bridge = FakeBridge(
+        initialResponses: {
+          'message.encrypt': {
+            'ok': true,
+            'kem': kem,
+            'ciphertext': ciphertext,
+            'nonce': nonce,
+          },
+        },
+      );
       p2pService = FakeP2PService(
         currentState: circuitOnlyState(),
         dialPeerResult: false,
         probeRelayResult: RelayProbeResult.error,
         storeInInboxResult: true,
+        sendMessageResult: true,
+        sendMessageAcked: true,
       );
 
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
         targetPeerId: 'target-peer',
-        text: bigText,
+        text: 'exact live-relay cap',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
+        messageId: messageId,
+        bridge: bridge,
       );
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(p2pService.relayLiveSendCount, 0);
-      expect(message!.transport, isNot('relay'));
+      expect(p2pService.lastSentMessage, expectedFrame);
+      expect(
+        utf8.encode(p2pService.lastSentMessage!).length,
+        kLiveRelayMaxPayloadBytes,
+      );
+      expect(p2pService.relayLiveSendCount, 1);
+      expect(p2pService.sendCallCount, 1);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'relay');
     });
+
+    // TC-339-05: a failed/uncommitted relay write is not delivery proof. The
+    // one existing durable inbox operation owns the fallback custody result.
+    test(
+      'R5 eligible attachment relay-live failure falls to one durable inbox deposit',
+      () async {
+        const encryptedAttachment = MediaAttachment(
+          id: 'att-r5-relay-failure',
+          messageId: '',
+          mime: 'application/pdf',
+          size: 4096,
+          mediaType: 'file',
+          localPath: '/private/r5-relay-failure-uploaded.enc',
+          downloadStatus: 'done',
+          createdAt: '2026-08-05T11:05:00.000Z',
+          contentHash:
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          encryptionKeyBase64: 'r5-relay-failure-key',
+          encryptionNonce: 'r5-relay-failure-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+          probeRelayResult: RelayProbeResult.error,
+          storeInInboxResult: true,
+          sendMessageResult: false,
+          sendMessageAcked: false,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'uploaded attachment relay failure',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const [encryptedAttachment],
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.relayLiveSendCount, 1);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(message!.status, 'inboxed');
+        expect(message.transport, 'inbox');
+        expect(message.status, isNot('delivered'));
+      },
+    );
+
+    // TC-339-04 oversized side: a >ceiling UTF-8 envelope skips relay-live.
+    test(
+      'FDC-02 large payload never live-relay: a >budget text payload skips the '
+      'relay-live leg',
+      () async {
+        // PassthroughCryptoBridge carries the ASCII plaintext, so a ~200K text
+        // yields an actual UTF-8 frame above the 96 KiB ceiling.
+        final bigText = 'x' * 200000;
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+          probeRelayResult: RelayProbeResult.error,
+          storeInInboxResult: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: bigText,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.lastInboxMessage, isNotNull);
+        expect(
+          utf8.encode(p2pService.lastInboxMessage!).length,
+          greaterThan(kLiveRelayMaxPayloadBytes),
+        );
+        expect(p2pService.relayLiveSendCount, 0);
+        expect(message!.transport, 'inbox');
+      },
+    );
 
     // TC-02-05 — P0-3 latency half: a slow discover (1.8s) under the per-step
     // discover budget still delivers live 'direct' (no starvation). Preservation
